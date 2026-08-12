@@ -1,0 +1,57 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="Myntos — regnskap med offentlig kildekode">
+  <main>
+    <h1>Myntos</h1>
+    <p class="lead">
+      Regnskap for Norge med offentlig kildekode: bilagsføring, MVA-håndtering, SAF-T-eksport og
+      direkte innlevering av skattemelding til Skatteetaten.
+    </p>
+
+    <aside class="disclaimer" role="note" aria-label="Ansvarsfraskrivelse">
+      <strong>⚠️ På eget ansvar:</strong> Myntos leveres «som den er», uten garanti og uten
+      noen form for ansvar. Programmet gir ikke regnskaps- eller skatterådgivning. Du er selv fullt
+      ut ansvarlig for at alt du bokfører og sender inn til myndighetene er riktig og levert i
+      tide. <a href="/ansvar/">Les hele ansvarsfraskrivelsen</a> før du tar programmet i bruk.
+    </aside>
+
+    <h2>Status</h2>
+    <p>
+      Prosjektet er i en tidlig fase (pre-alfa). Grunnmuren — arkitektur, sikkerhetsoppsett og
+      integrasjonsplan mot Maskinporten og Skatteetatens API-er — er på plass, mens selve
+      regnskapskjernen er under utvikling.
+    </p>
+
+    <h2>Bankpriser for bedrift</h2>
+    <p>
+      Regnskap krever bankintegrasjon, og den koster fra 89 til 550 kroner i måneden avhengig av
+      bank. <a href="/bankpriser/">Se sammenligningen av nettbank- og integrasjonspriser</a> hos 14
+      banker, med kilde og dato på hvert tall.
+    </p>
+
+    <h2>Planlagt funksjonalitet</h2>
+    <ul>
+      <li>Dobbel bokføring (hovedbok) med SAF-T-tilpasset datamodell</li>
+      <li>Bilagsføring med PDF-arkiv</li>
+      <li>MVA-beregning på standard mva-koder og automatisk MVA-melding</li>
+      <li>SAF-T Financial-eksport (lovpålagt)</li>
+      <li>Skattemelding og næringsspesifikasjon rett fra systemet</li>
+    </ul>
+  </main>
+</BaseLayout>
+
+<style>
+  .lead {
+    font-size: 1.15rem;
+  }
+  .disclaimer {
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-border);
+    border-radius: 8px;
+    padding: 0.9rem 1.1rem;
+    margin: 1.5rem 0;
+    font-size: 0.95rem;
+  }
+</style>

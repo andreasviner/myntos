@@ -1,0 +1,20 @@
+// Cloudflare Workers configuration for the Myntos frontend.
+// Deploy with: pnpm deploy   (runs `astro build && wrangler deploy`)
+//
+// "main" uses the @astrojs/cloudflare (v14+) unified entrypoint; the adapter
+// serves prerendered pages and any future SSR routes
+// (`export const prerender = false`) through it.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "myntos-frontend",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "@astrojs/cloudflare/entrypoints/server",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

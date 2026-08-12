@@ -1,0 +1,93 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Ansvarsfraskrivelse — Myntos"
+  description="Vilkår og ansvarsfraskrivelse for bruk av Myntos."
+>
+  <main>
+    <h1>Ansvarsfraskrivelse og bruksvilkår</h1>
+
+    <aside class="disclaimer" role="note" aria-label="Ansvarsfraskrivelse">
+      <strong>⚠️ All bruk av Myntos skjer på eget ansvar og egen risiko.</strong>
+    </aside>
+
+    <p>
+      Ved å bruke Myntos — programvaren, nettstedet eller andre deler av prosjektet —
+      aksepterer du disse vilkårene. Aksepterer du dem ikke, skal du ikke bruke programvaren.
+    </p>
+
+    <h2>1. Ingen garanti — leveres «som den er»</h2>
+    <p>
+      Myntos leveres <strong>«som den er»</strong> og «som tilgjengelig», uten noen form for
+      garanti, verken uttrykt eller underforstått. Programvaren er under aktiv utvikling og
+      <strong>kan inneholde feil</strong> — også i regnskapslogikk, MVA-beregninger,
+      SAF-T-eksport og innleveringer til myndighetene.
+    </p>
+
+    <h2>2. Ikke rådgivning</h2>
+    <p>
+      Ingenting programmet produserer — beregninger, rapporter, valideringsresultater eller
+      genererte meldinger — utgjør <strong>regnskaps-, skatte- eller juridisk rådgivning</strong>.
+      Prosjektet og bidragsyterne er ikke din regnskapsfører, revisor eller rådgiver, og det
+      oppstår ikke noe oppdragsforhold ved bruk av programvaren. Søk kvalifisert profesjonell
+      hjelp for din konkrete situasjon.
+    </p>
+
+    <h2>3. Ditt ansvar</h2>
+    <ul>
+      <li>
+        Du er alene ansvarlig for at <strong>alt du bokfører og alt du sender inn</strong> til
+        Skatteetaten, Altinn eller andre myndigheter er riktig og fullstendig.
+      </li>
+      <li>
+        Du må <strong>kontrollere hver innlevering før den sendes</strong> — programvaren
+        forbereder meldinger, men innsendingen og innholdet er juridisk sett ditt.
+      </li>
+      <li>
+        Du er ansvarlig for egne <strong>frister, bokførings-, oppbevarings- og
+        rapporteringsplikter</strong> etter norsk lov.
+      </li>
+      <li>
+        Du er ansvarlig for <strong>sikkerhetskopier</strong> av egne data og for å sikre egne
+        påloggingsopplysninger og Maskinporten-nøkler.
+      </li>
+    </ul>
+
+    <h2>4. Ansvarsbegrensning</h2>
+    <p>
+      Så langt gjeldende rett tillater det, er Myntos-prosjektet, dets utviklere,
+      bidragsytere og rettighetshavere <strong>ikke ansvarlige for noe krav, tap eller annen
+      forpliktelse</strong> som oppstår i forbindelse med programvaren eller bruken av den —
+      herunder direkte og indirekte tap, tap av data, tapt fortjeneste, uriktige eller forsinkede
+      innleveringer, endringsvedtak, <strong>tilleggsskatt, tvangsmulkt</strong>, gebyrer, renter
+      eller andre sanksjoner fra myndighetene.
+    </p>
+
+    <h2>5. Tredjepartstjenester</h2>
+    <p>
+      Programvaren integrerer mot tjenester som driftes av andre (Skatteetaten, Altinn,
+      Digdir/Maskinporten, skyleverandører). Prosjektet har ingen kontroll over — og tar ikke
+      ansvar for — disse tjenestene, deres tilgjengelighet eller endringer i deres API-er og
+      vilkår.
+    </p>
+
+    <h2>6. Lisens</h2>
+    <p>
+      Kildekoden er offentlig tilgjengelig, men lisensen er proprietær — den gir ingen rett til
+      å bruke, kopiere eller videredistribuere koden. Lisensen har sin egen ansvarsfraskrivelse
+      og ansvarsbegrensning (avsnitt 4 og 5). Ved motstrid om selve koden går lisensteksten foran.
+    </p>
+  </main>
+</BaseLayout>
+
+<style>
+  .disclaimer {
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-border);
+    border-radius: 8px;
+    padding: 0.9rem 1.1rem;
+    margin: 1.5rem 0;
+  }
+</style>

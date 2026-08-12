@@ -1,0 +1,45 @@
+# --- Environment & secrets (never commit) ---
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.p12
+*.pfx
+*.key
+*.jwk
+*.jwk.json
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+
+# --- Node / Astro ---
+node_modules/
+dist/
+.astro/
+.wrangler/
+*.tsbuildinfo
+
+# --- Local data (bilag uploads, dev databases) ---
+# Root-anchored: LOCAL_STORAGE_PATH is <repo>/data/bilag. An unanchored `data/`
+# would also swallow source directories such as frontend/src/data/.
+/data/
+*.sqlite3
+
+# --- OS / editors ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/*
+!.vscode/extensions.json

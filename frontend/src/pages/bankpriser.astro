@@ -1,0 +1,485 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { banker, formaterKr, gebyrRangering, SJEKKET, type Bank } from '../data/bankpriser';
+
+/**
+ * Sortert på det som faktisk avgjør valget for et regnskapsprogram: hva det
+ * koster per måned å få bankintegrasjon i det hele tatt. Banker uten publisert
+ * pris havner sist — de kan ikke sammenlignes.
+ */
+const sortert = [...banker].sort((a, b) => {
+  const pa = a.nettbankApi.nok;
+  const pb = b.nettbankApi.nok;
+  if (pa === null && pb === null) return a.navn.localeCompare(b.navn, 'nb');
+  if (pa === null) return 1;
+  if (pb === null) return -1;
+  if (pa !== pb) return pa - pb;
+  return gebyrRangering[a.skjulteGebyrer] - gebyrRangering[b.skjulteGebyrer];
+});
+
+const sjekketNorsk = new Date(SJEKKET).toLocaleDateString('nb-NO', {
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+});
+
+const medPris = banker.filter((b) => b.nettbankApi.nok !== null);
+const billigst = Math.min(...medPris.map((b) => b.nettbankApi.nok as number));
+const dyrest = Math.max(...medPris.map((b) => b.nettbankApi.nok as number));
+// Regnes ut, ikke skrives inn — påstanden skal aldri kunne bli usann av at et tall endres.
+const faktor = (dyrest / billigst).toLocaleString('nb-NO', { maximumFractionDigits: 1 });
+const utenKid = banker.filter((b) => !b.kid);
+
+const gebyrKlasse = (b: Bank) => `nivå nivå-${gebyrRangering[b.skjulteGebyrer]}`;
+---
+
+<BaseLayout
+  title="Bankpriser for bedrift — nettbank og regnskapsintegrasjon | Myntos"
+  description="Sammenligning av hva norske banker tar for nettbank bedrift, bankintegrasjon mot regnskapssystem og oppstart — med kilde og dato på hvert tall."
+>
+  <main class="wide">
+    <h1>Bankpriser for bedrift</h1>
+    <p class="lead">
+      Hva koster det å drive bedriftskonto i Norge — og hva koster det å koble kontoen til et
+      regnskapsprogram? Tallene under er hentet fra bankenes egne prislister, med kilde og dato på
+      hver rad.
+    </p>
+
+    <aside class="disclaimer" role="note" aria-label="Ansvarsfraskrivelse for prisdata">
+      <strong>⚠️ Kontroller prisen hos banken før du bestemmer deg.</strong> Denne oversikten er
+      ingen garanti for noen pris. Prislister endres uten forvarsel, priser forhandles individuelt,
+      og tall kan være feil lest eller utdatert. Myntos har ingen avtale med noen av bankene
+      og tar <strong>ikke</strong> ansvar for beslutninger tatt på grunnlag av denne siden. Alle
+      beløp er sist kontrollert {sjekketNorsk} — følg lenken i <em>Prisside</em>-kolonnen og
+      etterprøv selv. <a href="/ansvar/">Les hele ansvarsfraskrivelsen</a>.
+    </aside>
+
+    <h2>Sammenligning</h2>
+    <p class="tabellhjelp">
+      Sortert etter månedspris med regnskapsintegrasjon. Månedsprisene gjelder <em>én bruker</em>,
+      og kolonnen «Nettbank + API» er totalprisen for nettbank <em>og</em> integrasjon — ikke et
+      påslag. Priser er eks. mva. der banken oppgir det.
+    </p>
+
+    <div class="tabellramme">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Bank</th>
+            <th scope="col" class="tall">Nettbank only</th>
+            <th scope="col" class="tall">Nettbank + API</th>
+            <th scope="col" class="tall">Oppstart</th>
+            <th scope="col">Skjulte gebyrer</th>
+            <th scope="col">KID/OCR</th>
+            <th scope="col">Prisside</th>
+          </tr>
+        </thead>
+        <tbody>
+          {
+            sortert.map((b) => (
+              <tr class={b.ubekreftet ? 'ubekreftet' : undefined}>
+                <th scope="row">
+                  <span class="banknavn">{b.navn}</span>
+                  {b.tidligere && <span class="tidligere">{b.tidligere}</span>}
+                  {!b.norskBank && (
+                    <span class="merke merke-utland">Ikke norsk bank</span>
+                  )}
+                </th>
+                <td class="tall">
+                  <span class="belop">{formaterKr(b.nettbank)}</span>
+                  <span class="enhet">{b.nettbank.nok === null ? '' : '/mnd'}</span>
+                  {b.nettbank.note && <span class="note">{b.nettbank.note}</span>}
+                </td>
+                <td class="tall">
+                  <span class="belop">{formaterKr(b.nettbankApi)}</span>
+                  <span class="enhet">{b.nettbankApi.nok === null ? '' : '/mnd'}</span>
+                  {b.nettbankApi.note && <span class="note">{b.nettbankApi.note}</span>}
+                </td>
+                <td class="tall">
+                  <span class="belop">{formaterKr(b.oppstart)}</span>
+                  <span class="enhet">{b.oppstart.nok === null ? '' : 'engangs'}</span>
+                  {b.oppstart.note && <span class="note">{b.oppstart.note}</span>}
+                </td>
+                <td>
+                  <span class={gebyrKlasse(b)}>{b.skjulteGebyrer}</span>
+                  <details>
+                    <summary>Hva ligger utenfor</summary>
+                    <p>{b.skjulteGebyrerHvorfor}</p>
+                    <ul>
+                      {b.detaljer.map((d) => (
+                        <li>{d}</li>
+                      ))}
+                    </ul>
+                  </details>
+                </td>
+                <td class="midt">
+                  {b.kid ? (
+                    <span class="kid kid-ja" title="Støtter KID/OCR-innbetaling">
+                      <span aria-hidden="true">✓</span> Ja
+                    </span>
+                  ) : (
+                    <span class="kid kid-nei" title="Ingen KID/OCR — innbetalinger må matches manuelt">
+                      <span aria-hidden="true">✗</span> Nei
+                    </span>
+                  )}
+                </td>
+                <td>
+                  <a href={b.kilde} rel="noopener nofollow external">
+                    {b.kildeTekst}
+                  </a>
+                  {b.ubekreftet && <span class="note">{b.ubekreftet}</span>}
+                </td>
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="kid">Hvorfor KID-kolonnen er avgjørende</h2>
+    <p>
+      KID er nummeret som knytter en innbetaling til den fakturaen den gjelder. Uten KID og en
+      OCR-avtale får regnskapssystemet inn en innbetaling uten å vite hvilken kundefordring den
+      dekker, og hver linje må matches manuelt.
+    </p>
+    <p>
+      KID og OCR-giro er norske betalingsstandarder. Utenlandske banker og e-pengeforetak har som
+      regel ikke tilgang til dem, selv om de tilbyr «bedriftskonto i Norge» — kontoen kan mangle
+      norsk kontonummer, OCR-avtale, AvtaleGiro og bankintegrasjon mot norske regnskapssystemer.
+      Månedsprisen kan da se billig ut mens den reelle kostnaden flyttes til manuelt
+      avstemmingsarbeid.
+    </p>
+    {
+      utenKid.length > 0 && (
+        <p>
+          <strong>Uten KID/OCR i denne oversikten:</strong>{' '}
+          {utenKid.map((b) => b.navn).join(', ')}. Disse egner seg ikke som eneste bankkonto for en
+          bedrift som fakturerer med KID.
+        </p>
+      )
+    }
+
+    <h2>«API» betyr bankintegrasjon, ikke en åpen API</h2>
+    <p>
+      Ingen av bankene selger et åpent utviklergrensesnitt til denne prisen. Det du betaler for er
+      <em>bankintegrasjon</em>: at banken kobler kontoen din til et regnskapssystem den allerede har
+      godkjent — typisk Fiken, Tripletex, PowerOffice Go, Visma eller bankens eget regnskapsprodukt.
+      SpareBank 1 sier det rett ut: «Det er dessverre ikke alle regnskapsprogram som støtter
+      bankintegrasjoner.»
+    </p>
+    <p>
+      Det har praktisk betydning for et nytt regnskapsprogram som Myntos: å betale 150 eller
+      300 kroner i måneden gir ikke automatisk tilgang. Enten må systemet være på bankens liste, eller
+      så må tilgangen gå gjennom PSD2 som kontoinformasjons- og betalingsfullmektig, med den
+      konsesjonen det krever. Prisen i tabellen er derfor et gulv, ikke hele inngangsbilletten.
+    </p>
+
+    <h2>Hvordan «skjulte gebyrer» er vurdert</h2>
+    <p>
+      Nivået måler hvor stor del av den reelle månedskostnaden som ligger <em>utenfor</em>
+      månedsprisen — per bruker, per konto, per transaksjon, obligatoriske tilleggsavtaler og
+      engangsgebyr. Det er en vurdering, ikke et tall fra banken, og begrunnelsen står under
+      «Hva ligger utenfor» på hver rad.
+    </p>
+    <dl class="skala">
+      <div>
+        <dt><span class="nivå nivå-0">Ingen</span></dt>
+        <dd>Månedsprisen dekker nettbank og integrasjon. Ingen stykkpris på vanlige betalinger.</dd>
+      </div>
+      <div>
+        <dt><span class="nivå nivå-1">Lav</span></dt>
+        <dd>Ett eller to små påslag, typisk pris per ekstra bruker. Ingen etableringsgebyr av betydning.</dd>
+      </div>
+      <div>
+        <dt><span class="nivå nivå-2">Middels</span></dt>
+        <dd>Flere påslag, stykkpris på ordinære betalinger, eller et etableringsgebyr som må med i regnestykket.</dd>
+      </div>
+      <div>
+        <dt><span class="nivå nivå-3">Høy</span></dt>
+        <dd>
+          Prisen stables av flere abonnementsledd, eller oppstarten koster tusenvis av kroner. Den
+          faste kostnaden vokser med hver konto, bruker eller modul.
+        </dd>
+      </div>
+    </dl>
+
+    <h2>Hva tallene viser</h2>
+    <ul class="funn">
+      <li>
+        Spennet på bankintegrasjon er <strong>{billigst}–{dyrest} kr/mnd</strong> for samme
+        praktiske behov — {faktor} ganger forskjell mellom billigste og dyreste.
+      </li>
+      <li>
+        <strong>«0 kr» betyr aldri gratis bank.</strong> Det er prisen på ett linjeelement —
+        abonnementet — ikke på å drive konto. Hos DNB er abonnementet 0 kr, men pakken Banktjenester
+        koster 69 kr/mnd, og uten den betaler du stykkpris per betaling og årsavgift på kortet;
+        med regnskap i tillegg er DNBs annonserte pakkepris 149 kr/mnd. Sparebanken Norge annonserer
+        Nettbedrift til 0 kr — forutsatt et «basis kundeforhold» til 95 kr/mnd. SpareBank 1 SMN er
+        den eneste med et reelt 0-gulv: 0 kr abonnement, 0 kr etablering og ingen obligatorisk
+        pakke, med kontoholdsgebyr bare på hvilende konti.
+      </li>
+      <li>
+        Oppstart varierer mest av alt: fra 0 kr hos DNB og SpareBank 1 SMN til 5 000 kr hos Danske
+        Bank, der API-integrasjon alene koster 4 000 kr i engangsgebyr.
+      </li>
+      <li>
+        De store bankene er ikke de billigste. Nordea og Danske Bank er de eneste med nivå
+        «Høy» — hos Nordea fordi prisen stables per selskap, per bruker <em>og</em> per konto.
+      </li>
+      <li>
+        To banker skiftet navn i 2025: Sparebanken Vest og Sparebanken Sør er nå
+        <strong> Sparebanken Norge</strong>, og SpareBank 1 SR-Bank er nå
+        <strong> SpareBank 1 Sør-Norge</strong>. Prislistene er fortsatt ikke slått sammen.
+      </li>
+    </ul>
+
+    <h2>Metode</h2>
+    <p>
+      Hvert tall er lest ut av bankens egen publiserte prisliste på datoen i rad-kilden, ikke fra
+      tredjeparts sammenligningssider. Der banken oppgir flere pakker, er den billigste pakken som
+      faktisk inneholder regnskapsintegrasjon brukt i «Nettbank + API». Der en pris ikke er publisert,
+      står det <em>Ikke oppgitt</em> — den er ikke estimert.
+      Datagrunnlaget ligger i
+      <code>frontend/src/data/bankpriser.ts</code> og tar imot rettelser.
+    </p>
+    <p class="mangler">
+      Mangler banken din, eller er en pris feil? Prisdata blir utdatert fort — send inn en rettelse
+      med lenke til prislisten, så blir raden oppdatert med ny dato.
+    </p>
+  </main>
+</BaseLayout>
+
+<style>
+  main.wide {
+    max-width: 72rem;
+  }
+  .lead {
+    font-size: 1.15rem;
+  }
+  .disclaimer {
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-border);
+    border-radius: 8px;
+    padding: 0.9rem 1.1rem;
+    margin: 1.5rem 0 2rem;
+    font-size: 0.95rem;
+  }
+  .tabellhjelp {
+    font-size: 0.92rem;
+    color: var(--muted);
+  }
+
+  /* Tabellen er bredere enn små skjermer — den skal skrolle i sin egen ramme,
+     aldri dra hele siden sidelengs. */
+  .tabellramme {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin: 1rem 0 2.5rem;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 58rem;
+    font-size: 0.9rem;
+  }
+  thead th {
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    text-align: left;
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 0.7rem 0.8rem;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  tbody tr + tr th,
+  tbody tr + tr td {
+    border-top: 1px solid var(--border);
+  }
+  tbody th,
+  tbody td {
+    padding: 0.8rem;
+    vertical-align: top;
+    text-align: left;
+    font-weight: 400;
+  }
+  tbody tr:nth-child(even) th,
+  tbody tr:nth-child(even) td {
+    background: color-mix(in srgb, var(--border) 22%, transparent);
+  }
+  .tall {
+    text-align: right;
+  }
+  th.tall {
+    text-align: right;
+  }
+  .banknavn {
+    display: block;
+    font-weight: 600;
+  }
+  .tidligere,
+  .note {
+    display: block;
+    font-size: 0.78rem;
+    color: var(--muted);
+    line-height: 1.4;
+    margin-top: 0.15rem;
+    text-wrap: pretty;
+  }
+  .belop {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .enhet {
+    color: var(--muted);
+    font-size: 0.78rem;
+    margin-left: 0.2rem;
+  }
+  .midt {
+    text-align: center;
+  }
+  .ubekreftet .banknavn::after {
+    content: ' ·  ubekreftet';
+    font-weight: 400;
+    font-size: 0.78rem;
+    color: var(--warn-border);
+  }
+
+  .merke {
+    display: inline-block;
+    margin-top: 0.3rem;
+    font-size: 0.72rem;
+    padding: 0.05rem 0.4rem;
+    border-radius: 999px;
+    border: 1px solid var(--warn-border);
+    background: var(--warn-bg);
+    color: var(--fg);
+  }
+
+  /* Fire nivåer, skilt på både farge og tekst — fargen alene skal ikke bære
+     informasjonen. */
+  .nivå {
+    display: inline-block;
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    white-space: nowrap;
+  }
+  .nivå-0 {
+    color: #1c6b4b;
+  }
+  .nivå-1 {
+    color: #3f7a2e;
+  }
+  .nivå-2 {
+    color: #9a6205;
+  }
+  .nivå-3 {
+    color: #a33124;
+  }
+  @media (prefers-color-scheme: dark) {
+    .nivå-0 {
+      color: #6fd2a8;
+    }
+    .nivå-1 {
+      color: #a3d17f;
+    }
+    .nivå-2 {
+      color: #e3b458;
+    }
+    .nivå-3 {
+      color: #f09287;
+    }
+  }
+
+  .kid {
+    font-size: 0.82rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .kid-ja {
+    color: #1c6b4b;
+  }
+  .kid-nei {
+    color: #a33124;
+  }
+  @media (prefers-color-scheme: dark) {
+    .kid-ja {
+      color: #6fd2a8;
+    }
+    .kid-nei {
+      color: #f09287;
+    }
+  }
+
+  details {
+    margin-top: 0.45rem;
+    max-width: 22rem;
+  }
+  summary {
+    cursor: pointer;
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+  details p {
+    font-size: 0.82rem;
+    margin: 0.4rem 0;
+    text-wrap: pretty;
+  }
+  details ul {
+    font-size: 0.8rem;
+    margin: 0.4rem 0 0;
+    padding-left: 1.1rem;
+    color: var(--muted);
+  }
+  details li {
+    margin-bottom: 0.2rem;
+  }
+
+  .skala {
+    margin: 1rem 0 2rem;
+    display: grid;
+    gap: 0.6rem;
+  }
+  .skala div {
+    display: grid;
+    grid-template-columns: 6.5rem 1fr;
+    gap: 0.8rem;
+    align-items: baseline;
+  }
+  .skala dt,
+  .skala dd {
+    margin: 0;
+  }
+  .skala dd {
+    font-size: 0.92rem;
+    color: var(--muted);
+  }
+  @media (max-width: 34rem) {
+    .skala div {
+      grid-template-columns: 1fr;
+      gap: 0.2rem;
+    }
+  }
+
+  .funn li {
+    margin-bottom: 0.6rem;
+  }
+  code {
+    font-size: 0.85em;
+    background: color-mix(in srgb, var(--border) 45%, transparent);
+    padding: 0.1rem 0.3rem;
+    border-radius: 4px;
+  }
+  .mangler {
+    font-size: 0.92rem;
+    color: var(--muted);
+  }
+</style>

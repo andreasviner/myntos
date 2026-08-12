@@ -1,0 +1,8 @@
+# Normalize to LF in the repo and in working copies (matches .editorconfig)
+* text=auto eol=lf
+
+# Binary assets
+*.png binary
+*.jpg binary
+*.pdf binary
+*.woff2 binary
