@@ -36,7 +36,7 @@ dev = [
     # In-memory SQLite for the API tests, so the whole auth flow runs end to end
     # without a PostgreSQL instance.
     "aiosqlite>=0.20",
-    "ruff>=0.6",
+    "ruff>=0.16.3",
     "mypy>=1.11",
     "pre-commit>=4",
 ]
