@@ -26,7 +26,7 @@ dependencies = [
     # Reads the text layer of an uploaded faktura so the entry form can fill
     # itself in. Pure Python on purpose: the bytes come from a user, and a native
     # PDF parser is a much larger thing to trust with them.
-    "pypdf>=5.1",
+    "pypdf>=6.16.0",
 ]
 
 [dependency-groups]
