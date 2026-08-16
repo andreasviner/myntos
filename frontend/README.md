@@ -8,8 +8,12 @@ pnpm install
 pnpm dev       # http://localhost:4321
 pnpm check     # type-check (.astro + .ts)
 pnpm build     # production build → dist/
-pnpm deploy    # build + wrangler deploy (requires Cloudflare login)
+pnpm run deploy  # build + wrangler deploy (requires Cloudflare login)
 ```
+
+Run these from this `frontend/` directory — there is no package.json at the
+repo root. Note `pnpm run deploy`, not `pnpm deploy`: pnpm reserves `deploy`
+as a built-in workspace command and will not fall through to the script.
 
 The site is static-first; pages that need server rendering opt in with
 `export const prerender = false` (handled by the `@astrojs/cloudflare`

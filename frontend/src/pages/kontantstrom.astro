@@ -1,0 +1,931 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Kontantstrøm — Myntos"
+  description="Last opp fakturaen, så fyller skjemaet seg ut. Registrer inn- og utbetalinger med type og bilag."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow" id="company-name">Kontantstrøm</p>
+      <h1>Inn og ut</h1>
+    </div>
+    <label class="picker">
+      <span class="visually-hidden">Velg selskap</span>
+      <select id="company-picker" hidden></select>
+    </label>
+  </header>
+
+  <p class="status" id="page-status" hidden></p>
+  <div class="empty" id="loading">Henter registeret …</div>
+
+  <div class="split" id="content" hidden>
+    <!-- ---------------------------------------------------------------- -->
+    <!-- Entry form                                                        -->
+    <!-- ---------------------------------------------------------------- -->
+    <div class="card form-card" id="form-card">
+      <h2 class="card-title">Registrer en betaling</h2>
+      <p class="card-hint">
+        Har du fakturaen som PDF, start med den — vi leser dato, beløp og mva rett ut av teksten,
+        og foreslår kategori. Ingenting føres før du bekrefter.
+      </p>
+
+      <p class="status" id="form-status" hidden></p>
+
+      <form id="entry-form">
+        {/*
+          Opplastingen står først fordi det er der arbeidet forsvinner: alt i
+          skjemaet under står allerede på bilaget. Feltet er fortsatt valgfritt
+          — en kontantutgift uten kvittering skal kunne føres uten omveier.
+        */}
+        <div class="dropzone" id="dropzone">
+          <input
+            class="visually-hidden"
+            type="file"
+            name="document"
+            id="file-input"
+            accept="application/pdf,.pdf"
+          />
+          <label class="dropzone-cta" for="file-input">
+            <svg class="dropzone-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path
+                d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"></path>
+            </svg>
+            <strong>Last opp faktura eller kvittering</strong>
+            <span class="dropzone-hint" id="file-hint">Dra PDF-en hit, eller velg fil.</span>
+          </label>
+
+          <div class="dropzone-file" id="drop-file" hidden>
+            <span class="badge">PDF</span>
+            <span class="file-name" id="file-name"></span>
+            <button type="button" class="btn-link" id="file-clear">Fjern</button>
+          </div>
+        </div>
+
+        <p class="reading" id="doc-reading" hidden>Leser bilaget …</p>
+        <ul class="doc-warnings" id="doc-warnings" hidden></ul>
+
+        <div class="direction" role="group" aria-label="Retning">
+          <label>
+            <input type="radio" name="direction" value="inn" checked />
+            <span>Penger inn</span>
+          </label>
+          <label>
+            <input type="radio" name="direction" value="ut" />
+            <span>Penger ut</span>
+          </label>
+        </div>
+
+        <label class="field" data-field="type_code">
+          <span>Hva gjaldt det? <span class="tag" data-tag hidden></span></span>
+          <select name="type_code" id="type-select" required></select>
+          <span class="field-hint" id="type-note"></span>
+        </label>
+
+        <div class="field-row">
+          <label class="field" data-field="occurred_on">
+            <span>Dato <span class="tag" data-tag hidden></span></span>
+            <input type="date" name="occurred_on" id="date-input" required />
+          </label>
+          <label class="field" data-field="gross_amount">
+            <span>Beløp inkl. mva <span class="tag" data-tag hidden></span></span>
+            <input
+              type="number"
+              name="gross_amount"
+              step="0.01"
+              min="0.01"
+              inputmode="decimal"
+              placeholder="1250.00"
+              required
+            />
+          </label>
+        </div>
+
+        <label class="field" data-field="party_id">
+          <span>
+            Motpart <span class="muted">(valgfritt)</span>
+            <span class="tag" data-tag hidden></span>
+          </span>
+          <select name="party_id" id="party-select"></select>
+          {/* Egen linje for det bilaget sier, slik at den faste hjelpeteksten
+              med lenken til /parter blir stående. */}
+          <span class="field-hint" id="party-note" hidden></span>
+          <span class="field-hint">
+            Kunden eller leverandøren. <a href="/parter/">Registrer nye her</a>.
+          </span>
+        </label>
+
+        <label class="field" data-field="description">
+          <span>Beskrivelse <span class="tag" data-tag hidden></span></span>
+          <input
+            type="text"
+            name="description"
+            maxlength="255"
+            required
+            placeholder="Faktura 104 — Konsulenttimer mars"
+          />
+          <span class="field-hint">Dette blir teksten på bilaget i hovedboken.</span>
+        </label>
+
+        <div class="field-row">
+          <label class="field" data-field="tax_code">
+            <span>Mva-kode <span class="tag" data-tag hidden></span></span>
+            <select name="tax_code" id="tax-select"></select>
+            <span class="field-hint">Foreslått ut fra typen. Endre hvis fakturaen sier noe annet.</span>
+          </label>
+          <label class="field">
+            <span>Betalt via</span>
+            <select name="payment_method">
+              <option value="bank">Bankkonto</option>
+              <option value="kontant">Kontant</option>
+            </select>
+          </label>
+        </div>
+
+        <button class="btn btn-primary btn-block" type="submit" id="entry-submit">
+          Registrer betaling
+        </button>
+      </form>
+    </div>
+
+    <div class="card readonly-note" id="readonly" hidden>
+      <h2 class="card-title">Du har lesetilgang</h2>
+      <p class="card-hint">
+        Rollen din i denne organisasjonen lar deg se registeret, men ikke føre i det.
+      </p>
+    </div>
+
+    <!-- ---------------------------------------------------------------- -->
+    <!-- Register                                                          -->
+    <!-- ---------------------------------------------------------------- -->
+    <div class="register">
+      <div class="card">
+        <div class="table-scroll">
+          <table class="data">
+            <thead>
+              <tr>
+                <th>Dato</th>
+                <th>Bilag</th>
+                <th>Beskrivelse</th>
+                <th>Motpart</th>
+                <th>Type</th>
+                <th class="num">Netto</th>
+                <th class="num">Mva</th>
+                <th class="num">Beløp</th>
+                <th>Bilagsfil</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="entries"></tbody>
+          </table>
+        </div>
+        <p class="empty" id="entries-empty" hidden>
+          Ingen føringer ennå. Registrer den første betalingen i skjemaet.
+        </p>
+      </div>
+
+      {/* Not a disclaimer — it explains why there is no delete button. */}
+      <aside class="note" role="note">
+        <strong>Ført er ført.</strong> En betaling bokføres med en gang og kan ikke endres eller
+        slettes, slik bokføringsloven krever. En feil rettes med en motpostering, som legger seg
+        ved siden av den opprinnelige føringen.
+      </aside>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--muted);
+    margin: 0 0 0.4rem;
+  }
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .split {
+    display: grid;
+    gap: 1.5rem;
+    align-items: start;
+    grid-template-columns: minmax(20rem, 24rem) minmax(0, 1fr);
+  }
+  @media (max-width: 62rem) {
+    .split {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  .form-card {
+    position: sticky;
+    top: 5rem;
+  }
+  @media (max-width: 62rem) {
+    .form-card {
+      position: static;
+    }
+  }
+
+  /* --- Opplasting ---------------------------------------------------------- */
+
+  .dropzone {
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-small);
+    background: var(--surface-2);
+    padding: 0.35rem;
+    margin-bottom: 1rem;
+    transition:
+      border-color 120ms ease,
+      background-color 120ms ease;
+  }
+  .dropzone[data-drag='true'] {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .dropzone-cta {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 0.15rem;
+    padding: 1.1rem 0.9rem;
+    border-radius: var(--radius-small);
+    cursor: pointer;
+  }
+  .dropzone-cta:hover {
+    background: var(--surface-3);
+  }
+  /* The input is visually hidden, so its focus ring has to be borrowed. */
+  .dropzone:focus-within .dropzone-cta {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .dropzone-icon {
+    width: 1.5rem;
+    height: 1.5rem;
+    color: var(--accent);
+  }
+  .dropzone-cta strong {
+    font-size: 0.95rem;
+  }
+  .dropzone-hint {
+    font-size: 0.84rem;
+    color: var(--muted);
+  }
+  .dropzone-file {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.7rem 0.8rem;
+    font-size: 0.9rem;
+  }
+  .file-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .reading {
+    margin: -0.4rem 0 1rem;
+    font-size: 0.88rem;
+    color: var(--muted);
+  }
+  .doc-warnings {
+    list-style: none;
+    margin: 0 0 1rem;
+    padding: 0.7rem 0.85rem;
+    display: grid;
+    gap: 0.5rem;
+    background: var(--gold-soft);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--gold);
+    border-radius: var(--radius-small);
+    font-size: 0.86rem;
+    line-height: 1.5;
+  }
+
+  /* --- Felt som er fylt ut for deg ------------------------------------------- */
+
+  .tag {
+    display: none;
+    vertical-align: middle;
+    margin-left: 0.35rem;
+    padding: 0.05rem 0.45rem;
+    border-radius: var(--radius-pill);
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-line);
+    color: var(--accent);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+  .tag:not([hidden]) {
+    display: inline-block;
+  }
+  /* Gjetning, ikke avlesning: KI-forslaget skal ikke se like sikkert ut. */
+  .tag[data-source='ki'] {
+    background: var(--gold-soft);
+    border-color: var(--gold);
+    color: var(--gold);
+  }
+  .field[data-suggested='true'] input,
+  .field[data-suggested='true'] select {
+    border-color: var(--accent-line);
+    background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface-2));
+  }
+
+  .direction {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+  .direction label {
+    display: block;
+  }
+  .direction input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .direction span {
+    display: block;
+    text-align: center;
+    padding: 0.55rem 0.5rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-small);
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+  }
+  .direction input:checked + span {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-fg);
+  }
+  .direction input:focus-visible + span {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .row-actions {
+    white-space: nowrap;
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    documentUrl,
+    getCatalogue,
+    interpretDocument,
+    listCashFlow,
+    listCompanies,
+    listParties,
+    recordCashFlow,
+    reverseCashFlow,
+    uploadDocument,
+    type CashFlowEntry,
+    type CashFlowType,
+    type Catalogue,
+    type Company,
+    type Direction,
+    type InvoiceSuggestion,
+    type Party,
+  } from '../lib/api';
+  import { el, setStatus, show } from '../lib/dom';
+  import { fileSize, isoDate, kroner, todayIso } from '../lib/format';
+  import {
+    can,
+    loadSession,
+    redirectToLogin,
+    rememberCompany,
+    rememberedCompany,
+  } from '../lib/session';
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const formStatus = el<HTMLParagraphElement>('#form-status');
+  const loading = el<HTMLDivElement>('#loading');
+  const content = el<HTMLDivElement>('#content');
+  const picker = el<HTMLSelectElement>('#company-picker');
+  const typeSelect = el<HTMLSelectElement>('#type-select');
+  const taxSelect = el<HTMLSelectElement>('#tax-select');
+  const partySelect = el<HTMLSelectElement>('#party-select');
+  const typeNote = el<HTMLSpanElement>('#type-note');
+  const form = el<HTMLFormElement>('#entry-form');
+  const submit = el<HTMLButtonElement>('#entry-submit');
+  const fileInput = el<HTMLInputElement>('#file-input');
+  const dropzone = el<HTMLDivElement>('#dropzone');
+  const dropFile = el<HTMLDivElement>('#drop-file');
+  const fileName = el<HTMLSpanElement>('#file-name');
+  const reading = el<HTMLParagraphElement>('#doc-reading');
+  const warningList = el<HTMLUListElement>('#doc-warnings');
+  const body = el<HTMLTableSectionElement>('#entries');
+
+  let catalogue: Catalogue;
+  let company: Company;
+  let parties: Party[] = [];
+  let mayWrite = false;
+
+  function option(value: string, label: string): HTMLOptionElement {
+    const node = document.createElement('option');
+    node.value = value;
+    node.textContent = label;
+    return node;
+  }
+
+  function cell(value: string, className?: string): HTMLTableCellElement {
+    const td = document.createElement('td');
+    if (className !== undefined) td.className = className;
+    td.textContent = value;
+    return td;
+  }
+
+  function currentDirection(): Direction {
+    const checked = form.querySelector<HTMLInputElement>('input[name="direction"]:checked');
+    return checked?.value === 'ut' ? 'ut' : 'inn';
+  }
+
+  function selectedType(): CashFlowType | undefined {
+    return catalogue.types.find((entry) => entry.code === typeSelect.value);
+  }
+
+  /** Repopulate the type list for the chosen direction and follow its default. */
+  function fillTypes(): void {
+    const direction = currentDirection();
+    typeSelect.replaceChildren();
+    for (const entry of catalogue.types.filter((t) => t.direction === direction)) {
+      typeSelect.append(option(entry.code, entry.label));
+    }
+    applyType();
+  }
+
+  /**
+   * Fill the counterparty list, with the group the direction implies on top.
+   *
+   * Both groups stay available: a refund from a supplier is money in, and a
+   * credit note to a customer is money out, so filtering one away would make
+   * ordinary corrections impossible to record properly.
+   */
+  function fillParties(): void {
+    const previous = partySelect.value;
+    partySelect.replaceChildren(option('', '— ingen —'));
+
+    const groups: [string, Party[]][] = [
+      ['Kunder', parties.filter((party) => party.party_type === 'kunde')],
+      ['Leverandører', parties.filter((party) => party.party_type === 'leverandor')],
+    ];
+    if (currentDirection() === 'ut') groups.reverse();
+
+    for (const [label, members] of groups) {
+      if (members.length === 0) continue;
+      const group = document.createElement('optgroup');
+      group.label = label;
+      for (const party of members) {
+        group.append(option(String(party.id), `${party.party_id} — ${party.name}`));
+      }
+      partySelect.append(group);
+    }
+    partySelect.value = previous;
+  }
+
+  /** Show the type's note and preselect the VAT code it assumes. */
+  function applyType(): void {
+    const entry = selectedType();
+    typeNote.textContent = entry?.note ?? '';
+    if (entry !== undefined) taxSelect.value = entry.default_tax_code;
+  }
+
+  // --- Bilaget som fyller ut skjemaet ----------------------------------------
+
+  /**
+   * Mark a field as filled in from the document rather than typed.
+   *
+   * The label matters: a date lifted out of the text and a category a model
+   * chose are not the same kind of claim, and the person about to post the
+   * entry is the one who should decide how much to trust each of them.
+   */
+  function markField(name: string, label: string | null, source?: string): void {
+    const field = form.querySelector<HTMLElement>(`.field[data-field="${name}"]`);
+    if (field === null) return;
+    const tag = field.querySelector<HTMLElement>('[data-tag]');
+    if (label === null) {
+      delete field.dataset.suggested;
+      if (tag !== null) tag.hidden = true;
+      return;
+    }
+    field.dataset.suggested = 'true';
+    if (tag === null) return;
+    tag.textContent = label;
+    tag.hidden = false;
+    if (source === undefined) delete tag.dataset.source;
+    else tag.dataset.source = source;
+  }
+
+  function clearMarks(): void {
+    for (const field of form.querySelectorAll<HTMLElement>('.field[data-field]')) {
+      markField(field.dataset.field ?? '', null);
+    }
+    const partyNote = el<HTMLSpanElement>('#party-note');
+    partyNote.textContent = '';
+    partyNote.hidden = true;
+    warningList.replaceChildren();
+    warningList.hidden = true;
+  }
+
+  /** Put a proposal into the form, and say which parts of it came from where. */
+  function applySuggestion(suggestion: InvoiceSuggestion): void {
+    clearMarks();
+
+    const direction = form.querySelector<HTMLInputElement>(
+      `input[name="direction"][value="${suggestion.direction}"]`,
+    );
+    if (direction !== null) direction.checked = true;
+    // The lists depend on the direction, so they are rebuilt before anything is
+    // selected in them.
+    fillTypes();
+    fillParties();
+
+    if (suggestion.type_code !== null) {
+      typeSelect.value = suggestion.type_code;
+      applyType();
+      markField(
+        'type_code',
+        suggestion.type_source === 'ki' ? 'Foreslått av KI' : 'Fra bilaget',
+        suggestion.type_source ?? undefined,
+      );
+    }
+    // After applyType, which sets the type's own default.
+    if (suggestion.tax_code !== null) {
+      taxSelect.value = suggestion.tax_code;
+      markField('tax_code', 'Fra bilaget');
+    }
+    if (suggestion.occurred_on !== null) {
+      el<HTMLInputElement>('#date-input').value = suggestion.occurred_on;
+      markField('occurred_on', 'Fra bilaget');
+    }
+    if (suggestion.gross_amount !== null) {
+      const amount = form.querySelector<HTMLInputElement>('input[name="gross_amount"]');
+      if (amount !== null) amount.value = suggestion.gross_amount;
+      markField('gross_amount', 'Fra bilaget');
+    }
+    if (suggestion.description !== null) {
+      const description = form.querySelector<HTMLInputElement>('input[name="description"]');
+      if (description !== null) description.value = suggestion.description;
+      markField('description', 'Fra bilaget');
+    }
+    if (suggestion.party_id !== null) {
+      partySelect.value = String(suggestion.party_id);
+      markField('party_id', 'Fra bilaget');
+    } else if (suggestion.counterparty_name !== null) {
+      // Named on the invoice but not in the register. Saying so is more use than
+      // an empty field, since the fix is one page away.
+      const partyNote = el<HTMLSpanElement>('#party-note');
+      partyNote.textContent =
+        `Bilaget er fra ${suggestion.counterparty_name}, som ikke er registrert som part ennå.`;
+      partyNote.hidden = false;
+    }
+
+    for (const warning of suggestion.warnings) {
+      const item = document.createElement('li');
+      item.textContent = warning;
+      warningList.append(item);
+    }
+    warningList.hidden = suggestion.warnings.length === 0;
+  }
+
+  function showFile(file: File | null): void {
+    dropFile.hidden = file === null;
+    el<HTMLLabelElement>('.dropzone-cta').hidden = file !== null;
+    fileName.textContent = file === null ? '' : `${file.name} (${fileSize(file.size)})`;
+  }
+
+  /** Hand the file to the backend and let it fill the form in. */
+  async function readDocument(file: File): Promise<void> {
+    showFile(file);
+    reading.hidden = false;
+    submit.disabled = true;
+    setStatus(formStatus, '');
+    try {
+      applySuggestion(await interpretDocument(company.id, file));
+    } catch (error: unknown) {
+      // The upload itself is still fine — only the reading failed, and the form
+      // is filled in by hand exactly as it was before this feature existed.
+      setStatus(
+        formStatus,
+        error instanceof ApiError
+          ? `Vi fikk ikke lest bilaget: ${error.message} Fyll ut skjemaet selv.`
+          : 'Vi fikk ikke lest bilaget. Fyll ut skjemaet selv.',
+      );
+      if (error instanceof ApiError && (error.status === 415 || error.status === 413)) {
+        clearFile();
+      }
+    } finally {
+      reading.hidden = true;
+      submit.disabled = false;
+    }
+  }
+
+  function clearFile(): void {
+    fileInput.value = '';
+    showFile(null);
+    clearMarks();
+  }
+
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files?.[0];
+    if (file === undefined) {
+      showFile(null);
+      return;
+    }
+    void readDocument(file);
+  });
+
+  el<HTMLButtonElement>('#file-clear').addEventListener('click', clearFile);
+
+  for (const event of ['dragenter', 'dragover'] as const) {
+    dropzone.addEventListener(event, (dragEvent) => {
+      dragEvent.preventDefault();
+      dropzone.dataset.drag = 'true';
+    });
+  }
+  for (const event of ['dragleave', 'drop'] as const) {
+    dropzone.addEventListener(event, () => {
+      delete dropzone.dataset.drag;
+    });
+  }
+  dropzone.addEventListener('drop', (dropEvent) => {
+    dropEvent.preventDefault();
+    const file = dropEvent.dataTransfer?.files?.[0];
+    if (file === undefined) return;
+    // Assigning back to the input keeps one source of truth for the file that
+    // gets attached on submit, whether it was dropped or picked.
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    fileInput.files = transfer.files;
+    void readDocument(file);
+  });
+
+  // --- Registeret -------------------------------------------------------------
+
+  function renderEntries(entries: CashFlowEntry[]): void {
+    body.replaceChildren();
+    for (const entry of entries) {
+      const row = document.createElement('tr');
+      const isReversed = entry.reversed_by_id !== null;
+      row.dataset.reversed = String(isReversed);
+
+      const documents = document.createElement('td');
+      for (const attachment of entry.attachments) {
+        const link = document.createElement('a');
+        link.href = documentUrl(company.id, attachment.id);
+        link.className = 'badge';
+        link.textContent = `PDF ${fileSize(attachment.byte_size)}`;
+        link.title = attachment.filename;
+        documents.append(link, document.createTextNode(' '));
+      }
+      if (entry.attachments.length === 0 && mayWrite && !isReversed) {
+        documents.append(uploadControl(entry));
+      }
+
+      const actions = document.createElement('td');
+      actions.className = 'row-actions';
+      if (mayWrite && !isReversed && !entry.is_reversal) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn-link';
+        button.textContent = 'Reverser';
+        button.addEventListener('click', () => {
+          void undo(entry);
+        });
+        actions.append(button);
+      } else if (entry.is_reversal) {
+        actions.textContent = 'Motpostering';
+        actions.className = 'row-actions muted';
+      }
+
+      row.append(
+        cell(isoDate(entry.occurred_on)),
+        cell(entry.voucher_no),
+        cell(entry.description),
+        cell(entry.party_name ?? '—'),
+        cell(entry.type_label ?? '—'),
+        cell(kroner(entry.net_amount), 'num'),
+        cell(entry.vat_amount === '0.00' ? '—' : kroner(entry.vat_amount), 'num'),
+        cell(
+          kroner(entry.gross_amount),
+          `num ${entry.direction === 'inn' ? 'amount-in' : 'amount-out'}`,
+        ),
+        documents,
+        actions,
+      );
+      body.append(row);
+    }
+    show(el('#entries-empty'), entries.length === 0);
+  }
+
+  /** A per-row "add a PDF" control, for a bilag that arrives after the entry. */
+  function uploadControl(entry: CashFlowEntry): HTMLLabelElement {
+    const label = document.createElement('label');
+    label.className = 'btn-link';
+    label.textContent = 'Legg ved PDF';
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/pdf,.pdf';
+    input.hidden = true;
+    input.addEventListener('change', () => {
+      const file = input.files?.[0];
+      if (file === undefined) return;
+      void uploadDocument(company.id, entry.id, file)
+        .then(() => refresh())
+        .catch((error: unknown) => {
+          setStatus(
+            pageStatus,
+            error instanceof ApiError ? error.message : 'Vi fikk ikke lagret dokumentet.',
+          );
+        });
+    });
+    label.append(input);
+    return label;
+  }
+
+  async function undo(entry: CashFlowEntry): Promise<void> {
+    const confirmed = window.confirm(
+      `Motposter bilag ${entry.voucher_no}? Den opprinnelige føringen blir stående, ` +
+        'og en motsatt føring legges til.',
+    );
+    if (!confirmed) return;
+    try {
+      await reverseCashFlow(company.id, entry.id);
+      setStatus(pageStatus, `Bilag ${entry.voucher_no} er motpostert.`, 'ok');
+      await refresh();
+    } catch (error: unknown) {
+      setStatus(
+        pageStatus,
+        error instanceof ApiError ? error.message : 'Motposteringen feilet.',
+      );
+    }
+  }
+
+  async function refresh(): Promise<void> {
+    renderEntries(await listCashFlow(company.id, 200));
+  }
+
+  form.addEventListener('change', (event) => {
+    const target = event.target;
+    if (target instanceof HTMLInputElement && target.name === 'direction') {
+      fillTypes();
+      fillParties();
+      // Both lists just changed under the proposal, so neither may keep
+      // claiming to hold what the document said.
+      markField('type_code', null);
+      markField('tax_code', null);
+    }
+    if (target === typeSelect) {
+      // applyType resets the VAT code to the new type's default.
+      applyType();
+      markField('tax_code', null);
+    }
+    // A field the user has touched is no longer a proposal, and must stop
+    // claiming to be one.
+    if (target instanceof HTMLElement) {
+      const field = target.closest<HTMLElement>('.field[data-field]');
+      if (field !== null) markField(field.dataset.field ?? '', null);
+    }
+  });
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    const file = fileInput.files?.[0];
+
+    submit.disabled = true;
+    setStatus(formStatus, '');
+    void recordCashFlow(company.id, {
+      type_code: String(data.get('type_code') ?? ''),
+      occurred_on: String(data.get('occurred_on') ?? ''),
+      gross_amount: String(data.get('gross_amount') ?? ''),
+      description: String(data.get('description') ?? '').trim(),
+      tax_code: String(data.get('tax_code') ?? ''),
+      payment_method: data.get('payment_method') === 'kontant' ? 'kontant' : 'bank',
+      party_id: data.get('party_id') ? Number(data.get('party_id')) : null,
+    })
+      .then(async (entry) => {
+        // The entry is posted whether or not the document sticks; a failed
+        // upload must therefore not read as a failed registration.
+        if (file !== undefined) {
+          try {
+            await uploadDocument(company.id, entry.id, file);
+          } catch (error: unknown) {
+            setStatus(
+              pageStatus,
+              error instanceof ApiError
+                ? `Betalingen er ført, men dokumentet ble avvist: ${error.message}`
+                : 'Betalingen er ført, men dokumentet ble ikke lagret.',
+            );
+          }
+        }
+        setStatus(formStatus, `Bilag ${entry.voucher_no} er ført.`, 'ok');
+        form.reset();
+        clearFile();
+        el<HTMLInputElement>('#date-input').value = todayIso();
+        fillTypes();
+        fillParties();
+        await refresh();
+      })
+      .catch((error: unknown) => {
+        setStatus(
+          formStatus,
+          error instanceof ApiError ? error.message : 'Vi fikk ikke ført betalingen.',
+        );
+      })
+      .finally(() => {
+        submit.disabled = false;
+      });
+  });
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const [companies, loaded] = await Promise.all([listCompanies(), getCatalogue()]);
+      catalogue = loaded;
+
+      if (companies.length === 0) {
+        // Nothing to book into yet; the overview is where a company is created.
+        window.location.href = '/';
+        return;
+      }
+
+      const remembered = rememberedCompany();
+      const current = companies.find((c) => c.id === remembered) ?? companies[0];
+      if (current === undefined) return;
+      company = current;
+      rememberCompany(company.id);
+
+      picker.replaceChildren();
+      for (const item of companies) {
+        const node = option(String(item.id), item.name);
+        node.selected = item.id === company.id;
+        picker.append(node);
+      }
+      picker.hidden = companies.length < 2;
+      picker.addEventListener('change', () => {
+        rememberCompany(Number(picker.value));
+        window.location.reload();
+      });
+
+      el('#company-name').textContent = company.name;
+      mayWrite = can(session, company.organization_id, 'ledger:write');
+      show(el('#form-card'), mayWrite);
+      show(el('#readonly'), !mayWrite);
+
+      for (const code of catalogue.tax_codes) {
+        taxSelect.append(option(code.code, `${code.code} — ${code.description}`));
+      }
+      parties = await listParties(company.id);
+      fillParties();
+      el<HTMLInputElement>('#date-input').value = todayIso();
+      el('#file-hint').textContent =
+        `Dra PDF-en hit, eller velg fil. Maks ${fileSize(catalogue.max_attachment_bytes)}.`;
+      fillTypes();
+
+      await refresh();
+      loading.hidden = true;
+      content.hidden = false;
+    } catch (error: unknown) {
+      loading.hidden = true;
+      setStatus(
+        pageStatus,
+        error instanceof ApiError ? error.message : 'Vi fikk ikke hentet registeret.',
+      );
+    }
+  });
+</script>

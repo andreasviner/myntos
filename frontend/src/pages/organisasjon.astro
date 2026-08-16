@@ -1,0 +1,510 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Organisasjonen — Myntos"
+  description="Medlemmer, roller og invitasjoner i organisasjonen din."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Organisasjon</p>
+      <h1 id="organization-name">…</h1>
+    </div>
+    <label class="picker">
+      <span class="visually-hidden">Velg organisasjon</span>
+      <select id="organization-picker" hidden></select>
+    </label>
+  </header>
+
+  <p class="status" id="page-status" hidden></p>
+  <div class="empty" id="loading">Henter …</div>
+
+  <div id="content" hidden>
+    <p class="lead">
+      Abonnement og betaling hører til organisasjonen, ikke til den enkelte. Å invitere en kollega
+      inn koster derfor ingenting ekstra — og gir dem tilgang til de samme selskapene som deg.
+    </p>
+
+    {/* Bare for den som kan styre organisasjonen. Navnet er ikke pynt: det står
+        i toppen av hver side og i invitasjonene kollegaer får. */}
+    <div id="rename" hidden>
+      <h2>Navn</h2>
+      <div class="card">
+        <p class="status" id="rename-status" hidden></p>
+        <p class="card-hint" id="placeholder-note" hidden>
+          Navnet under er et vi fant på da du opprettet kontoen. Skriv inn navnet du vil at
+          organisasjonen skal hete.
+        </p>
+        <form id="rename-form" class="rename-form">
+          <label class="field">
+            <span>Navn på organisasjonen</span>
+            <input
+              type="text"
+              id="rename-input"
+              name="name"
+              required
+              maxlength="255"
+              autocomplete="organization"
+            />
+            <span class="field-hint">
+              Organisasjonen er Myntos-kontoen — den eier medlemmene og abonnementet, og kan holde
+              flere selskaper. Adressen til organisasjonen endres ikke, så lenker fortsetter å virke.
+            </span>
+          </label>
+          <button class="btn btn-primary" type="submit" id="rename-submit">Lagre navnet</button>
+        </form>
+      </div>
+    </div>
+
+    <h2>Medlemmer</h2>
+    <div class="card">
+      <div class="table-scroll">
+        <table class="data">
+          <thead>
+            <tr>
+              <th>Navn</th>
+              <th>E-post</th>
+              <th>Rolle</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="members"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="manage" hidden>
+      <h2>Inviter en kollega</h2>
+      <div class="card">
+        <p class="status" id="invite-status" hidden></p>
+        <form id="invite-form" class="invite-form">
+          <label class="field">
+            <span>E-postadresse</span>
+            <input type="email" name="email" required autocomplete="off" />
+            <span class="field-hint">
+              Invitasjonen gjelder bare denne adressen — en videresendt lenke er ikke en billett inn.
+            </span>
+          </label>
+          <label class="field">
+            <span>Rolle</span>
+            <select name="role">
+              <option value="viewer">Leser — ser regnskapet, kan ikke føre</option>
+              <option value="member" selected>Medlem — kan føre bilag</option>
+              <option value="admin">Administrator — kan også styre selskaper og medlemmer</option>
+              <option value="owner">Eier — kan alt, inkludert abonnement</option>
+            </select>
+          </label>
+          <button class="btn btn-primary" type="submit" id="invite-submit">Send invitasjon</button>
+        </form>
+
+        <div class="invite-link" id="invite-link-box" hidden>
+          <p class="card-hint">
+            <strong>Kopier lenken og send den selv.</strong> Myntos sender ikke e-post ennå, og
+            lenken vises bare denne ene gangen — vi lagrer bare et hash av den.
+          </p>
+          <div class="copy-row">
+            <input type="text" id="invite-link" readonly />
+            <button class="btn btn-ghost" type="button" id="copy-link">Kopier</button>
+          </div>
+        </div>
+      </div>
+
+      <h2>Ventende invitasjoner</h2>
+      <div class="card">
+        <div class="table-scroll">
+          <table class="data">
+            <thead>
+              <tr>
+                <th>E-post</th>
+                <th>Rolle</th>
+                <th>Utløper</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="invitations"></tbody>
+          </table>
+        </div>
+        <p class="empty" id="invitations-empty" hidden>Ingen invitasjoner venter.</p>
+      </div>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--muted);
+    margin: 0 0 0.4rem;
+  }
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .invite-form {
+    display: grid;
+    gap: 0 1rem;
+    grid-template-columns: minmax(14rem, 1fr) minmax(14rem, 1.4fr) auto;
+    align-items: start;
+  }
+  .rename-form {
+    display: grid;
+    gap: 0 1rem;
+    grid-template-columns: minmax(14rem, 1fr) auto;
+    align-items: start;
+  }
+  .invite-form button,
+  .rename-form button {
+    margin-top: 1.55rem;
+  }
+  @media (max-width: 54rem) {
+    .invite-form,
+    .rename-form {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .invite-form button,
+    .rename-form button {
+      margin-top: 0;
+    }
+  }
+  .invite-link {
+    border-top: 1px solid var(--border);
+    margin-top: 0.5rem;
+    padding-top: 1rem;
+  }
+  .copy-row {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
+  }
+  .copy-row input {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.85rem;
+  }
+  select.role {
+    min-width: 9rem;
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    changeMemberRole,
+    inviteMember,
+    listInvitations,
+    listMembers,
+    removeMember,
+    renameOrganization,
+    revokeInvitation,
+    type Invitation,
+    type Member,
+    type Membership,
+  } from '../lib/api';
+  import { el, setStatus, show } from '../lib/dom';
+  import { isoDate } from '../lib/format';
+  import { loadSession, redirectToLogin } from '../lib/session';
+
+  const ROLES: [string, string][] = [
+    ['viewer', 'Leser'],
+    ['member', 'Medlem'],
+    ['admin', 'Administrator'],
+    ['owner', 'Eier'],
+  ];
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const inviteStatus = el<HTMLParagraphElement>('#invite-status');
+  const picker = el<HTMLSelectElement>('#organization-picker');
+  const memberBody = el<HTMLTableSectionElement>('#members');
+  const invitationBody = el<HTMLTableSectionElement>('#invitations');
+
+  let membership: Membership;
+  let mayManage = false;
+
+  function cell(value: string): HTMLTableCellElement {
+    const td = document.createElement('td');
+    td.textContent = value;
+    return td;
+  }
+
+  function roleLabel(role: string): string {
+    return ROLES.find(([value]) => value === role)?.[1] ?? role;
+  }
+
+  function report(error: unknown, fallback: string): void {
+    setStatus(pageStatus, error instanceof ApiError ? error.message : fallback);
+  }
+
+  function renderMembers(members: Member[]): void {
+    memberBody.replaceChildren();
+    for (const member of members) {
+      const row = document.createElement('tr');
+
+      const role = document.createElement('td');
+      if (mayManage) {
+        const select = document.createElement('select');
+        select.className = 'role';
+        for (const [value, label] of ROLES) {
+          const node = document.createElement('option');
+          node.value = value;
+          node.textContent = label;
+          node.selected = value === member.role;
+          select.append(node);
+        }
+        select.addEventListener('change', () => {
+          void changeMemberRole(membership.organization_id, member.user_id, select.value)
+            .then(() => refresh())
+            .catch((error: unknown) => {
+              // The server refused — the last owner, or granting owner as an
+              // admin. Put the select back so it never shows a role that is
+              // not the one in force.
+              select.value = member.role;
+              report(error, 'Rollen kunne ikke endres.');
+            });
+        });
+        role.append(select);
+      } else {
+        role.textContent = roleLabel(member.role);
+      }
+
+      const actions = document.createElement('td');
+      if (mayManage || member.is_self) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn-link';
+        button.textContent = member.is_self ? 'Forlat organisasjonen' : 'Fjern';
+        button.addEventListener('click', () => {
+          void leave(member);
+        });
+        actions.append(button);
+      }
+
+      row.append(
+        cell(member.full_name + (member.is_self ? ' (deg)' : '')),
+        cell(member.email),
+        role,
+        actions,
+      );
+      memberBody.append(row);
+    }
+  }
+
+  async function leave(member: Member): Promise<void> {
+    const question = member.is_self
+      ? 'Forlate organisasjonen? Du mister tilgangen til alle selskapene i den.'
+      : `Fjerne ${member.full_name} fra organisasjonen?`;
+    if (!window.confirm(question)) return;
+    try {
+      await removeMember(membership.organization_id, member.user_id);
+      if (member.is_self) {
+        window.location.href = '/';
+        return;
+      }
+      await refresh();
+    } catch (error: unknown) {
+      report(error, 'Medlemmet kunne ikke fjernes.');
+    }
+  }
+
+  function renderInvitations(invitations: Invitation[]): void {
+    invitationBody.replaceChildren();
+    for (const invitation of invitations) {
+      const row = document.createElement('tr');
+      const actions = document.createElement('td');
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn-link';
+      button.textContent = 'Trekk tilbake';
+      button.addEventListener('click', () => {
+        void revokeInvitation(membership.organization_id, invitation.id)
+          .then(() => refresh())
+          .catch((error: unknown) => report(error, 'Invitasjonen kunne ikke trekkes tilbake.'));
+      });
+      actions.append(button);
+
+      row.append(
+        cell(invitation.email),
+        cell(roleLabel(invitation.role)),
+        cell(isoDate(invitation.expires_at.slice(0, 10))),
+        actions,
+      );
+      invitationBody.append(row);
+    }
+    show(el('#invitations-empty'), invitations.length === 0);
+  }
+
+  async function refresh(): Promise<void> {
+    renderMembers(await listMembers(membership.organization_id));
+    if (mayManage) renderInvitations(await listInvitations(membership.organization_id));
+  }
+
+  /** Show whose name is on screen, and whether it is one we made up. */
+  function showOrganization(): void {
+    el('#organization-name').textContent = membership.organization_name;
+    el<HTMLInputElement>('#rename-input').value = membership.organization_name;
+    show(el('#placeholder-note'), membership.organization_name_is_placeholder);
+    // The picker carries the same name, and a rename must not leave a stale one
+    // in a list the user is about to pick from.
+    const option = [...picker.options].find(
+      (item) => item.value === String(membership.organization_id),
+    );
+    if (option !== undefined) option.textContent = membership.organization_name;
+  }
+
+  function wireRenameForm(): void {
+    const form = el<HTMLFormElement>('#rename-form');
+    const submit = el<HTMLButtonElement>('#rename-submit');
+    const status = el<HTMLParagraphElement>('#rename-status');
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const name = el<HTMLInputElement>('#rename-input').value.trim();
+      if (name === '') {
+        setStatus(status, 'Organisasjonen må ha et navn.');
+        return;
+      }
+      submit.disabled = true;
+      setStatus(status, '');
+      void renameOrganization(membership.organization_id, name)
+        .then(() => {
+          // Mutating the cached membership rather than refetching: the session
+          // is loaded once per page, and the header on *this* page is drawn from
+          // it. A stale name here would outlive the save that succeeded.
+          membership.organization_name = name;
+          membership.organization_name_is_placeholder = false;
+          showOrganization();
+          setStatus(status, 'Navnet er lagret.', 'ok');
+        })
+        .catch((error: unknown) => {
+          setStatus(
+            status,
+            error instanceof ApiError ? error.message : 'Navnet ble ikke lagret.',
+          );
+        })
+        .finally(() => {
+          submit.disabled = false;
+        });
+    });
+  }
+
+  function wireInviteForm(): void {
+    const form = el<HTMLFormElement>('#invite-form');
+    const submit = el<HTMLButtonElement>('#invite-submit');
+    const linkBox = el<HTMLDivElement>('#invite-link-box');
+    const link = el<HTMLInputElement>('#invite-link');
+
+    el<HTMLButtonElement>('#copy-link').addEventListener('click', () => {
+      void navigator.clipboard.writeText(link.value).then(
+        () => setStatus(inviteStatus, 'Lenken er kopiert.', 'ok'),
+        // Clipboard access can be refused; selecting the text still works.
+        () => link.select(),
+      );
+    });
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const data = new FormData(form);
+      submit.disabled = true;
+      setStatus(inviteStatus, '');
+      void inviteMember(
+        membership.organization_id,
+        String(data.get('email') ?? '').trim(),
+        String(data.get('role') ?? 'member'),
+      )
+        .then(async (invitation) => {
+          if (invitation.invite_url !== null) {
+            link.value = invitation.invite_url;
+            linkBox.hidden = false;
+          }
+          setStatus(inviteStatus, `Invitasjon opprettet for ${invitation.email}.`, 'ok');
+          form.reset();
+          await refresh();
+        })
+        .catch((error: unknown) => {
+          setStatus(
+            inviteStatus,
+            error instanceof ApiError ? error.message : 'Invitasjonen ble ikke opprettet.',
+          );
+        })
+        .finally(() => {
+          submit.disabled = false;
+        });
+    });
+  }
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    const first = session.memberships[0];
+    if (first === undefined) return;
+    membership = first;
+
+    picker.replaceChildren();
+    for (const item of session.memberships) {
+      const node = document.createElement('option');
+      node.value = String(item.organization_id);
+      node.textContent = item.organization_name;
+      picker.append(node);
+    }
+    picker.hidden = session.memberships.length < 2;
+
+    // Renaming needs organization:manage, inviting needs member:manage. Each
+    // section is shown on its own permission rather than on a role, so what a
+    // role carries stays defined in one place — the backend.
+    const applyPermissions = (): void => {
+      mayManage = membership.permissions.includes('member:manage');
+      show(el('#manage'), mayManage);
+      show(el('#rename'), membership.permissions.includes('organization:manage'));
+    };
+
+    picker.addEventListener('change', () => {
+      const chosen = session.memberships.find(
+        (item) => item.organization_id === Number(picker.value),
+      );
+      if (chosen === undefined) return;
+      membership = chosen;
+      applyPermissions();
+      showOrganization();
+      void refresh().catch((error: unknown) => report(error, 'Vi fikk ikke hentet medlemmene.'));
+    });
+
+    applyPermissions();
+    showOrganization();
+    // Wired once, before any permission check: both handlers read the current
+    // `membership`, and their sections are hidden rather than removed — so
+    // switching to an organization where the caller *does* manage needs no
+    // rewiring, and one where they do not still cannot reach the form.
+    wireRenameForm();
+    wireInviteForm();
+
+    try {
+      await refresh();
+      el('#loading').hidden = true;
+      el('#content').hidden = false;
+    } catch (error: unknown) {
+      el('#loading').hidden = true;
+      report(error, 'Vi fikk ikke hentet medlemmene.');
+    }
+  });
+</script>

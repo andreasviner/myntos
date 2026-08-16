@@ -10,7 +10,12 @@ uv run ruff check . && uv run mypy src tests   # lint + types
 ```
 
 Configuration comes from the repo-root `.env` (see [`../.env.example`](../.env.example))
-or real environment variables.
+or real environment variables. The database needs the migrations applied before
+the API can do anything:
+
+```bash
+uv run alembic upgrade head
+```
 
 ## Package map
 
@@ -18,8 +23,8 @@ or real environment variables.
 | --- | --- |
 | `myntos.api` | HTTP endpoints, versioned under `/api/v1` |
 | `myntos.core` | Settings, security middleware, cross-cutting concerns |
-| `myntos.auth` | Maskinporten machine-to-machine auth |
-| `myntos.domain` | Accounting core: ledger, bilag, mva — pure business logic |
+| `myntos.auth` | Two planes: Myntos login (passwords, sessions, Google) and government auth (Maskinporten, ID-porten) |
+| `myntos.domain` | Accounting core (ledger and the cash-flow register, bilag, mva) plus accounts and organizations — pure business logic |
 | `myntos.integrations` | Skatteetaten / Altinn API clients |
 | `myntos.saft` | SAF-T Financial export |
 | `myntos.db` | SQLAlchemy base + session handling (`migrations/` holds Alembic) |

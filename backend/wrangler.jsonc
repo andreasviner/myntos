@@ -1,0 +1,113 @@
+// Cloudflare Workers + Containers configuration for the Myntos backend.
+//
+// Deploy with: upload.bat  (or `wrangler deploy` from this directory)
+//
+// The Worker in worker.js is only a front door: it routes every request to a
+// Durable Object, which runs and proxies into the FastAPI container built from
+// ./Dockerfile. See infra/cloudflare/README.md for why the backend is a
+// container rather than a Python Worker.
+//
+// Requires: Workers Paid plan, and Docker Desktop running — wrangler builds
+// the image locally before pushing it to Cloudflare's registry.
+{
+  "$schema": "../frontend/node_modules/wrangler/config-schema.json",
+  "name": "myntos-backend",
+  "main": "worker.js",
+  "compatibility_date": "2026-07-01",
+
+  // custom_domain makes Cloudflare create and own the api.myntos.no DNS record,
+  // the hostname the frontend is built against (frontend/.env.production).
+  // Same registrable domain as the site, so the SameSite=Lax session cookie is
+  // sent with fetch requests from myntos.no.
+  "routes": [{ "pattern": "api.myntos.no", "custom_domain": true }],
+
+  "containers": [
+    {
+      "class_name": "BackendContainer",
+      "image": "./Dockerfile",
+      // 1/4 vCPU, 1 GiB, 4 GB disk. FastAPI with asyncpg holds ~300 MB, and
+      // memory is billed on the *provisioned* size for every second the
+      // instance is awake — so the smallest type that fits is roughly 4x
+      // cheaper than standard-1 (~$7 vs ~$27/month always-on).
+      //
+      // What this trades away: Argon2id is deliberately CPU-hard, so logins
+      // cost perhaps 1-3 s on a quarter vCPU. Raise this to standard-1 the
+      // moment sign-in latency is worth more than the difference.
+      "instance_type": "basic",
+      // The Worker uses a single named instance; the headroom is for rolling
+      // deploys, where the old and new versions overlap.
+      "max_instances": 3,
+      // Keeps accounting data inside the EEA — the storage-location rule that
+      // shaped this whole deployment (docs/ARCHITECTURE.md).
+      "constraints": { "jurisdiction": "eu" }
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [{ "name": "BACKEND", "class_name": "BackendContainer" }]
+  },
+
+  // Container classes must be SQLite-backed.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BackendContainer"] }],
+
+  // Non-secret configuration, forwarded into the container by worker.js.
+  // Secrets are NOT here — see the list at the bottom of this file.
+  "vars": {
+    "ENVIRONMENT": "production",
+    "LOG_LEVEL": "INFO",
+
+    // Doubles as the trusted-origin allow-list for cookie-authenticated writes
+    // (myntos.api.deps), so this is not only a browser-fetch concern. Parsed by
+    // pydantic as JSON, hence the quoting.
+    "CORS_ORIGINS": "[\"https://myntos.no\"]",
+    "FRONTEND_BASE_URL": "https://myntos.no",
+
+    "SESSION_COOKIE_NAME": "myntos_session",
+    // Leading dot: the cookie is set by api.myntos.no and must be sent to
+    // myntos.no as well. Host-only would log every user out immediately.
+    "SESSION_COOKIE_DOMAIN": ".myntos.no",
+
+    // Federated sign-in. A provider only appears in the interface once its
+    // client id AND secret are set, so these are harmless until then — but the
+    // redirect URI registered with the provider must match exactly.
+    "GOOGLE_REDIRECT_URI": "https://api.myntos.no/api/v1/auth/google/callback",
+    "MICROSOFT_REDIRECT_URI": "https://api.myntos.no/api/v1/auth/microsoft/callback",
+    "VIPPS_REDIRECT_URI": "https://api.myntos.no/api/v1/auth/vipps/callback",
+    // "common" lets any Microsoft tenant in the world start a sign-in. Narrow
+    // this to your own tenant GUID before enabling Microsoft login.
+    "MICROSOFT_TENANT": "common",
+
+    // Bilag documents. Container disk is ephemeral and wiped on every stop, so
+    // "local" here would quietly destroy accounting records the first time the
+    // instance slept — R2 is the only correct value in production.
+    // The bucket must exist and must have been created with --jurisdiction eu;
+    // jurisdiction is immutable after creation. R2_ACCESS_KEY_ID and
+    // R2_SECRET_ACCESS_KEY are secrets, not vars.
+    "STORAGE_BACKEND": "r2",
+    "R2_JURISDICTION": "eu",
+    "R2_BUCKET": "myntos-bilag",
+    "R2_ACCOUNT_ID": "19775cabb3a7399bb2f9ed6f3395784d"
+  },
+
+  "observability": { "enabled": true }
+
+  // Secrets — set once per account, never in this file:
+  //
+  //   wrangler secret put DATABASE_URL           # postgresql+asyncpg://… (EEA region)
+  //   wrangler secret put R2_ACCESS_KEY_ID
+  //   wrangler secret put R2_SECRET_ACCESS_KEY
+  //   wrangler secret put GOOGLE_CLIENT_SECRET   # only if Google login is enabled
+  //   wrangler secret put GOOGLE_CLIENT_ID
+  //   wrangler secret put MICROSOFT_CLIENT_SECRET
+  //   wrangler secret put MICROSOFT_CLIENT_ID
+  //   wrangler secret put VIPPS_CLIENT_SECRET
+  //   wrangler secret put VIPPS_CLIENT_ID
+  //
+  // worker.js forwards these into the container by name; anything not in its
+  // FORWARDED_ENV list is ignored.
+  //
+  // Not solvable this way yet: MASKINPORTEN_JWK_PATH is a *file path*, and a
+  // secret binding is a string. Submitting to Altinn will need the private JWK
+  // written to disk at container start, or config changed to accept the key
+  // inline. Nothing else depends on it.
+}

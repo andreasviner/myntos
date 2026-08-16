@@ -6,7 +6,7 @@ Norwegian storage-location rules that shaped it).
 
 | Component | Where | Notes |
 | --- | --- | --- |
-| Frontend (Astro) | **Workers + static assets** | Config in `frontend/wrangler.jsonc`; deploy with `pnpm deploy`. Pages is maintenance-mode — don't use it. |
+| Frontend (Astro) | **Workers + static assets** | Config in `frontend/wrangler.jsonc`; deploy with `pnpm run deploy` from `frontend/`. Pages is maintenance-mode — don't use it. |
 | Backend (FastAPI) | **Cloudflare Containers**, `jurisdiction: "eu"` | GA since 2026-04, Workers Paid plan ($5/mo base). Build from `backend/Dockerfile`. Stateless: ephemeral disk, instances sleep. Python Workers rejected (beta, no TCP sockets → no Postgres drivers). |
 | PostgreSQL | Managed provider, **EEA region** | e.g. Supabase Stockholm (`eu-north-1`), Neon Frankfurt, or EEA-owned Aiven. Connect directly with asyncpg. Skip Hyperdrive for the container (JS-Workers-only; default query caching is unsafe for ledger reads). |
 | Bilag PDFs | **R2, `jurisdiction=eu`** | `wrangler r2 bucket create <name> --jurisdiction eu`. Jurisdiction is **immutable after creation** and uses the dedicated S3 endpoint `https://<ACCOUNT_ID>.eu.r2.cloudflarestorage.com`. Location *hints* are not a compliance mechanism. |

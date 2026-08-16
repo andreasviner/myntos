@@ -1,5 +1,6 @@
 // Cloudflare Workers configuration for the Myntos frontend.
-// Deploy with: pnpm deploy   (runs `astro build && wrangler deploy`)
+// Deploy with: pnpm run deploy   (runs `astro build && wrangler deploy`)
+// `pnpm deploy` without `run` hits pnpm's built-in workspace deploy and fails.
 //
 // "main" uses the @astrojs/cloudflare (v14+) unified entrypoint; the adapter
 // serves prerendered pages and any future SSR routes
@@ -7,6 +8,9 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "myntos-frontend",
+  // custom_domain makes Cloudflare create and own the DNS record for the apex,
+  // so there is no separate record to keep in sync with the Worker.
+  "routes": [{ "pattern": "myntos.no", "custom_domain": true }],
   "compatibility_date": "2026-07-01",
   "compatibility_flags": ["nodejs_compat"],
   "main": "@astrojs/cloudflare/entrypoints/server",

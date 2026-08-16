@@ -1,0 +1,441 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+
+/**
+ * Personvernerklæringen. Den er også det dokumentet Google, Microsoft og Vipps
+ * krever en offentlig lenke til før en OAuth-klient godkjennes, så den må ligge
+ * på en stabil URL og nevne uttrykkelig hva vi henter fra dem — derfor
+ * avsnittet «Innlogging med Google, Microsoft eller Vipps» står for seg selv.
+ *
+ * Alt som står her skal kunne ettergås i koden. Feltene i avsnitt 3 er de
+ * faktiske kolonnene i backend/src/myntos/domain/identity/models.py, og
+ * lagringsstedene i avsnitt 7 er de som er satt i core/config.py og
+ * infra/cloudflare. Endrer vi det ene, må vi endre det andre.
+ */
+const oppdatert = '13. august 2026';
+
+const grunnlag = [
+  {
+    formal: 'Opprette og drive kontoen din, og gi deg tilgang til regnskapet',
+    data: 'Navn, e-postadresse, passordhash, medlemskap i organisasjon',
+    basis: 'Avtale — GDPR art. 6(1)(b)',
+  },
+  {
+    formal: 'Innlogging med Google, Microsoft eller Vipps, når du velger det',
+    data: 'Brukeridentifikator hos leverandøren, e-postadresse, navn',
+    basis: 'Avtale — GDPR art. 6(1)(b)',
+  },
+  {
+    formal: 'Holde tjenesten sikker: gjenkjenne dine egne økter, stoppe passordgjetting, etterforske misbruk',
+    data: 'IP-adresse, nettleserstreng, tidspunkt for innlogging og utlogging',
+    basis: 'Berettiget interesse — GDPR art. 6(1)(f)',
+  },
+  {
+    formal: 'Sende deg nødvendige meldinger om kontoen (invitasjon, verifisering, varsel om sikkerhetshendelse)',
+    data: 'E-postadresse',
+    basis: 'Avtale — GDPR art. 6(1)(b)',
+  },
+  {
+    formal: 'Behandle regnskapsdataene du legger inn',
+    data: 'Bilag, føringer, kunder og leverandører',
+    basis: 'Vi er databehandler her — se avsnitt 3d',
+  },
+];
+
+const underleverandorer = [
+  {
+    navn: 'Cloudflare',
+    rolle: 'Drift av nettsted, API og dokumentlager (R2)',
+    sted: 'EØS — Workers-container og R2-bøtte er opprettet med jurisdiksjon «eu»',
+  },
+  {
+    navn: 'Løynd (Lindeman Technologies)',
+    rolle: 'KI-forslag: teksten fra bilag du laster opp, og salgsbeskrivelsen du selv skriver i fakturaskjemaet — se avsnitt 3d2 og /ki',
+    sted: 'Norge — inferensservere på norsk jord, ingen lagring',
+  },
+  {
+    navn: 'Databaseleverandør i EØS',
+    rolle: 'PostgreSQL-databasen med konto- og regnskapsdata',
+    sted: 'EØS-region',
+  },
+  {
+    navn: 'Google, Microsoft, Vipps MobilePay',
+    rolle: 'Kun hvis du velger å logge inn med dem',
+    sted: 'Se leverandørens egen personvernerklæring',
+  },
+  {
+    navn: 'Skatteetaten, Altinn, Digitaliseringsdirektoratet',
+    rolle: 'Mottakere av innleveringer du selv sender inn',
+    sted: 'Norge — de er selvstendig behandlingsansvarlige for det du sender',
+  },
+];
+---
+
+<BaseLayout
+  title="Personvernerklæring — Myntos"
+  description="Hva Myntos lagrer om deg, hvorfor, hvor lenge og hvem som har tilgang. Ingen sporing, ingen annonser, ingen videresalg av data."
+>
+  <p class="pill">Personvern</p>
+  <h1>Personvernerklæring</h1>
+  <p class="lead">
+    Myntos er et regnskapsprogram. Da er tallene dine hele poenget, og de er ikke en inntektskilde
+    for oss. Denne siden forklarer hva vi faktisk lagrer, hvorfor, hvor lenge og hvem som får se
+    noe.
+  </p>
+  <p class="meta-line">Sist oppdatert {oppdatert}.</p>
+
+  <section class="card summary">
+    <h2 class="summary-title">Kort oppsummert</h2>
+    <ul class="ticks">
+      <li>Vi selger, leier ut eller deler aldri dataene dine — heller ikke anonymisert eller aggregert.</li>
+      <li>Ingen annonser, ingen analyseverktøy og ingen tredjepartsskript på disse sidene.</li>
+      <li>Regnskapstallene dine trener ingen modeller, verken våre eller andres.</li>
+      <li>Vi bruker én informasjonskapsel, og den holder deg innlogget.</li>
+      <li>Data lagres i EØS.</li>
+      <li>Du kan hente ut alt du har lagt inn, og du kan få kontoen slettet.</li>
+    </ul>
+  </section>
+
+  <h2>1. Behandlingsansvarlig</h2>
+  <p>
+    Behandlingsansvarlig for personopplysningene som beskrives her, er
+    <strong>Lindeman Technologies</strong>, som driver Myntos på myntos.no.
+    Spørsmål om personvern, innsyn eller sletting sendes til
+    <a href="mailto:kontakt@myntos.no">kontakt@myntos.no</a>.
+  </p>
+  <p>
+    Kjører du Myntos på egen infrastruktur, gjelder ikke denne erklæringen. Da er det du som er
+    behandlingsansvarlig, og vi har ingen tilgang til noe av det du lagrer.
+  </p>
+
+  <h2>2. Ingen sporing</h2>
+  <p>
+    Nettsidene laster ingen analyseverktøy, ingen annonsenettverk, ingen sosiale
+    delingsknapper og ingen skript fra andre. Vi bygger ingen profil av deg, og vi driver ingen
+    markedsføring på grunnlag av det du gjør i programmet.
+  </p>
+
+  <h2>3. Hva vi lagrer om deg</h2>
+
+  <h3>a. Kontoopplysninger</h3>
+  <p>
+    Når du oppretter en konto, lagrer vi navnet og e-postadressen du oppgir, tidspunktet kontoen
+    ble opprettet, om e-postadressen er bekreftet, og tidspunktet for siste innlogging. Har du
+    passord, lagrer vi <strong>aldri</strong> passordet — bare en Argon2id-hash av det, som ikke
+    kan regnes tilbake. Vi teller også mislykkede innloggingsforsøk, slik at en konto kan låses
+    midlertidig etter gjentatt gjetting.
+  </p>
+
+  <h3>b. Innlogging med Google, Microsoft eller Vipps</h3>
+  <p>
+    Velger du å logge inn med en av disse, gjør vi det gjennom OpenID Connect og mottar bare det
+    som er nødvendig for å vite hvem du er: leverandørens <em>stabile brukeridentifikator</em>
+    («sub»), e-postadressen din, om leverandøren har bekreftet den, og navnet ditt. Det er alt.
+  </p>
+  <ul>
+    <li>
+      Vi ber <strong>ikke</strong> om tilgang til e-posten, kalenderen, kontaktene, filene eller
+      noe annet innhold hos leverandøren, og vi kan ikke lese noe av det.
+    </li>
+    <li>
+      Opplysningene brukes bare til å identifisere kontoen din i Myntos — aldri til annonser,
+      profilering, videresalg eller modelltrening.
+    </li>
+    <li>
+      Vi lagrer ikke leverandørens tilgangstokener etter at innloggingen er ferdig. Selve
+      innloggingsflyten lagrer en kortlevd, engangsbrukt teknisk tilstand (state, nonce, PKCE) som
+      utløper i løpet av minutter.
+    </li>
+    <li>
+      Du kan fjerne koblingen og fortsette med passord, eller motsatt. Kontoen, medlemskapene og
+      regnskapet er de samme.
+    </li>
+    <li>
+      Vi kobler en ny leverandørinnlogging til en konto som finnes fra før, bare når leverandøren
+      bekrefter at e-postadressen er verifisert. Ellers ville en uverifisert adresse vært en vei
+      inn i andres konto.
+    </li>
+  </ul>
+  <p class="note">
+    Bruken av opplysninger fra Google følger
+    <a
+      href="https://developers.google.com/terms/api-services-user-data-policy"
+      rel="noopener noreferrer">Google API Services User Data Policy</a
+    >, inkludert kravene om begrenset bruk (Limited Use).
+  </p>
+
+  <h3>c. Innloggingsøkter og sikkerhet</h3>
+  <p>
+    Hver innlogging lager en økt i databasen. Vi lagrer <strong>IP-adressen</strong> og
+    <strong>nettleserstrengen</strong> økten ble opprettet fra, samt tidspunkt for opprettelse,
+    sist aktivitet, utløp og eventuell utlogging. Formålet er at du skal kunne kjenne igjen dine
+    egne innlogginger, og at vi skal kunne etterforske et innbrudd. Selve
+    øktnøkkelen lagres bare som hash, så en lekket database inneholder ingen brukbare
+    innloggingsbevis.
+  </p>
+
+  <h3>d. Regnskapsdataene du legger inn</h3>
+  <p>
+    Bilag, PDF-er, føringer og opplysninger om kunder og leverandører — også navn, organisasjonsnummer
+    og kontaktopplysninger til andre personer — er <strong>ditt</strong> innhold. Her er du
+    behandlingsansvarlig, og vi er <strong>databehandler</strong>: vi lagrer og behandler dataene
+    på din instruksjon for å levere tjenesten, og vi bruker dem ikke til noe eget formål. Vi leser
+    dem ikke, med ett unntak: hvis du ber om hjelp med en konkret sak, eller det er strengt
+    nødvendig for å rette en feil eller stanse misbruk.
+  </p>
+
+  <h3>d2. KI-forslag</h3>
+  <p>
+    To ting du gjør selv sender tekst til <a href="https://loynd.no" rel="noopener">Løynd</a>, som
+    kjører modellen på servere i Norge. Ingenting av dette skjer i bakgrunnen, og ingenting
+    bokføres uten at du bekrefter det.
+  </p>
+  <ul>
+    <li>
+      <strong>Når du laster opp et bilag:</strong> <em>teksten</em> i dokumentet — de første 2000
+      tegnene. Modellen får ett spørsmål: hvilken kategori i kontantstrømregisteret passer? Den
+      svarer med ett tall fra en fast liste. Beløp og datoer leses ut av teksten hos oss og kommer
+      aldri fra modellen.
+    </li>
+    <li>
+      <strong>Når du ber om fakturalinjer:</strong> beskrivelsen du selv skrev i boksen — inntil
+      800 tegn. Modellen stiller den opp som linjer. Verken kjøperens navn, organisasjonsnummer
+      eller adresse følger med, og modellen regner ikke ut noe: summene beregnes hos oss.
+    </li>
+  </ul>
+  <ul>
+    <li>Ingen andre data følger med: ikke hovedboken, ikke partsregisteret, ikke kontoen din.</li>
+    <li>Løynd lagrer ikke det som sendes inn, og bilagene dine trener ingen modell.</li>
+    <li>Er PDF-en skannet, finnes det ikke noe tekstlag, og da sendes ingenting.</li>
+    <li>
+      Kjører du Myntos selv uten API-nøkkel, skjer dette ikke i det hele tatt. Hele funksjonen er
+      beskrevet på <a href="/ki/">siden om KI</a>.
+    </li>
+  </ul>
+
+  <h3>e. Invitasjoner</h3>
+  <p>
+    Inviterer du en kollega, lagrer vi e-postadressen invitasjonen er sendt til, rollen den gir,
+    hvem som sendte den og når den ble tatt i bruk. Invitasjonslenken lagres bare som hash og
+    utløper etter sju dager.
+  </p>
+
+  <h3>f. Innlevering til Skatteetaten</h3>
+  <p>
+    Innlevering skjer med din egen pålogging via <strong>ID-porten</strong>, og innholdet i
+    meldingen går til Skatteetaten og Altinn, som selv er behandlingsansvarlige for det de mottar.
+    Vi ber aldri om, og lagrer aldri, ID-porten-passordet eller BankID-opplysningene dine.
+    Funksjonen er under arbeid; se <a href="/funksjoner/">funksjonssiden</a> for status.
+  </p>
+
+  <h2>4. Behandlingsgrunnlag</h2>
+  <div class="table-scroll">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Formål</th>
+          <th>Opplysninger</th>
+          <th>Grunnlag</th>
+        </tr>
+      </thead>
+      <tbody>
+        {
+          grunnlag.map((rad) => (
+            <tr>
+              <td>{rad.formal}</td>
+              <td>{rad.data}</td>
+              <td>{rad.basis}</td>
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+
+  <h2>5. Informasjonskapsler</h2>
+  <p>
+    Myntos bruker <strong>én</strong> informasjonskapsel: <code>myntos_session</code>, som holder
+    deg innlogget. Den er nødvendig for at tjenesten skal virke, settes bare når du logger inn, og
+    er teknisk sikret (HttpOnly, Secure, SameSite). Den inneholder en tilfeldig verdi uten
+    opplysninger om deg. Ingen kapsler brukes til markedsføring eller måling — derfor er det heller
+    ingen samtykkebanner å klikke bort her.
+  </p>
+  <p>
+    I tillegg lagrer nettleseren din to små verdier lokalt (<code>localStorage</code>): valgt
+    lys/mørk visning og et hint om at du er innlogget, slik at riktig meny vises før siden er
+    ferdig lastet. De sendes aldri til oss, og du kan tømme dem ved å slette nettleserdata.
+  </p>
+
+  <h2>6. Hvem har tilgang</h2>
+  <p>
+    Vi <strong>selger ikke</strong> personopplysninger, og vi deler dem ikke med andre for deres
+    formål. De eneste som behandler data på våre vegne, er leverandørene vi trenger for å drive
+    tjenesten. De har databehandleravtale med oss og ingen rett til å bruke dataene til noe eget.
+  </p>
+  <div class="table-scroll">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Leverandør</th>
+          <th>Rolle</th>
+          <th>Sted</th>
+        </tr>
+      </thead>
+      <tbody>
+        {
+          underleverandorer.map((rad) => (
+            <tr>
+              <td>{rad.navn}</td>
+              <td>{rad.rolle}</td>
+              <td>{rad.sted}</td>
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+  <p>
+    Utover dette utleverer vi opplysninger bare når vi er rettslig forpliktet til det — for
+    eksempel ved pålegg fra domstol eller politi.
+  </p>
+
+  <h2>7. Hvor dataene lagres</h2>
+  <p>
+    Databasen ligger i en EØS-region, og bilagsarkivet ligger i en R2-bøtte opprettet med
+    jurisdiksjon «eu», som teknisk holder objektene innenfor EØS. Backend-containeren kjører også
+    med EØS-jurisdiksjon. Dette er valgt fordi norske bokføringsregler stiller krav til hvor
+    regnskapsmateriale kan oppbevares, ikke som en preferanse. Vi overfører ikke personopplysninger
+    ut av EØS for egne formål.
+  </p>
+
+  <h2>8. Hvor lenge vi lagrer</h2>
+  <ul>
+    <li>
+      <strong>Kontoopplysninger:</strong> så lenge du har en konto. Ber du om sletting, fjernes
+      kontoen med tilhørende identiteter, medlemskap og økter.
+    </li>
+    <li>
+      <strong>Øktopplysninger (IP og nettleser):</strong> beholdes en periode etter utlogging
+      fordi «når og hvorfra ble jeg logget ut» er et spørsmål som stilles etter en hendelse. De
+      slettes med kontoen.
+    </li>
+    <li>
+      <strong>Regnskapsdata:</strong> så lenge du vil, og som hovedregel minst så lenge din egen
+      oppbevaringsplikt etter bokføringsloven varer — normalt fem år etter regnskapsårets slutt.
+      Det er du som avgjør når materialet skal slettes; vi anbefaler å hente ut en eksport først.
+    </li>
+    <li>
+      <strong>Tekniske innloggingsforsøk og utløpte invitasjoner:</strong> kortlevde, og ryddes
+      bort som vedlikehold.
+    </li>
+  </ul>
+
+  <h2>9. Sikkerhet</h2>
+  <ul>
+    <li>Passord lagres som Argon2id-hash, aldri i lesbar form.</li>
+    <li>Økt- og invitasjonsnøkler lagres bare som SHA-256-hash.</li>
+    <li>All trafikk går over HTTPS, og øktkapselen sendes bare over HTTPS.</li>
+    <li>
+      En økt kan trekkes tilbake umiddelbart — både «logg meg ut overalt» og stenging av en
+      kompromittert konto virker med en gang, fordi databasen er den som avgjør om en økt er
+      gyldig.
+    </li>
+    <li>En økt utløper etter 14 dager, og etter 24 timer uten aktivitet.</li>
+    <li>Tilgang til produksjonsdata er begrenset til det som er nødvendig for drift.</li>
+  </ul>
+  <p>
+    Blir personopplysninger utsatt for et brudd som medfører risiko for deg, varsler vi
+    Datatilsynet innen 72 timer og deg direkte der loven krever det.
+  </p>
+
+  <h2>10. Dine rettigheter</h2>
+  <p>Etter personvernforordningen har du rett til å:</p>
+  <ul>
+    <li>få <strong>innsyn</strong> i hvilke opplysninger vi har om deg,</li>
+    <li>få <strong>rettet</strong> opplysninger som er feil,</li>
+    <li>få opplysninger <strong>slettet</strong>,</li>
+    <li>
+      få opplysningene <strong>utlevert</strong> i et maskinlesbart format — regnskapsdata kan du
+      dessuten eksportere selv, når du vil,
+    </li>
+    <li>kreve at behandlingen <strong>begrenses</strong>, og</li>
+    <li>
+      <strong>protestere</strong> mot behandling vi bygger på berettiget interesse.
+    </li>
+  </ul>
+  <p>
+    Send forespørselen til <a href="mailto:kontakt@myntos.no">kontakt@myntos.no</a>. Vi svarer
+    innen 30 dager. Er du uenig i hvordan vi håndterer det, kan du klage til
+    <a href="https://www.datatilsynet.no/" rel="noopener noreferrer">Datatilsynet</a>.
+  </p>
+
+  <h2>11. Barn</h2>
+  <p>
+    Myntos er et verktøy for næringsvirksomhet og er ikke rettet mot barn. Vi samler ikke bevisst
+    inn opplysninger om personer under 16 år.
+  </p>
+
+  <h2>12. Endringer</h2>
+  <p>
+    Endrer vi denne erklæringen, oppdaterer vi datoen øverst. Ved endringer av betydning varsler vi
+    registrerte brukere på e-post før de trer i kraft. Tidligere versjoner kan spores i
+    <a href="/funksjoner/#apen-kildekode">kildekoden</a>, som er offentlig — også for denne siden.
+  </p>
+
+  <p class="note">
+    Se også <a href="/vilkar/">bruksvilkårene</a> og
+    <a href="/ansvar/">ansvarsfraskrivelsen</a>. Myntos er i tidlig utvikling, og programmet
+    leveres uten garanti.
+  </p>
+</BaseLayout>
+
+<style>
+  .meta-line {
+    color: var(--faint);
+    font-size: 0.88rem;
+    margin: 0.4rem 0 2rem;
+  }
+  .summary {
+    border-color: var(--accent-line);
+    background: linear-gradient(160deg, var(--accent-soft), var(--surface) 65%);
+    margin-bottom: 1rem;
+  }
+  .summary-title {
+    margin: 0;
+    font-size: 1.15rem;
+  }
+  .ticks {
+    list-style: none;
+    padding: 0;
+    margin: 1rem 0 0;
+    display: grid;
+    gap: 0.5rem;
+  }
+  .ticks li {
+    position: relative;
+    padding-left: 1.5rem;
+    font-size: 0.95rem;
+  }
+  .ticks li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.5em;
+    width: 0.66rem;
+    height: 0.36rem;
+    border-left: 2px solid var(--accent);
+    border-bottom: 2px solid var(--accent);
+    transform: rotate(-45deg);
+  }
+  h3 {
+    margin-top: 1.6rem;
+  }
+  code {
+    font-family: var(--font-numeric);
+    font-size: 0.9em;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 0.05rem 0.3rem;
+  }
+</style>

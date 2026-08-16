@@ -1,126 +1,1392 @@
 ---
 import Logo from '../components/Logo.astro';
+import { guider } from '../data/flytting';
 
 interface Props {
   title: string;
   description?: string;
+  /** `wide` gives the application pages room for tables and forms. */
+  width?: 'narrow' | 'wide';
+  /** `full` removes the page gutter so a marketing page can run edge to edge. */
+  bleed?: boolean;
 }
 
 const {
   title,
   description = 'Myntos — regnskap for Norge med offentlig kildekode og direkte innlevering til Skatteetaten.',
+  width = 'narrow',
+  bleed = false,
 } = Astro.props;
+
+const canonical = new URL(Astro.url.pathname, Astro.site).href;
+
+/*
+  Machine-readable identity.
+
+  Google's OAuth brand review kept reporting that the consent-screen app name
+  "Myntos" did not match the home page, and that the home page did not explain
+  the app's purpose — while the rendered page said both. The site was shipping
+  no Open Graph tags and no structured data at all, so an automated check had
+  only prose to infer a name from. This states the name and purpose outright.
+
+  APP_NAME is the single place the name is asserted to machines; it must stay
+  byte-identical to the OAuth consent screen's "App name".
+*/
+const APP_NAME = 'Myntos';
+
+const structuredData = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'Organization',
+      '@id': 'https://myntos.no/#organization',
+      // Every `name` on the page must read "Myntos" — Google's brand review
+      // compares the consent-screen app name against whatever name it finds
+      // here, and an operator name in this field reads as a mismatch. The legal
+      // entity is still stated, just not as the thing the product is called.
+      name: APP_NAME,
+      legalName: 'Lindeman Technologies',
+      url: 'https://myntos.no/',
+      logo: 'https://myntos.no/favicon-192.png',
+    },
+    {
+      '@type': 'WebSite',
+      '@id': 'https://myntos.no/#website',
+      name: APP_NAME,
+      url: 'https://myntos.no/',
+      inLanguage: 'nb-NO',
+      publisher: { '@id': 'https://myntos.no/#organization' },
+    },
+    {
+      '@type': 'SoftwareApplication',
+      name: APP_NAME,
+      applicationCategory: 'FinanceApplication',
+      operatingSystem: 'Web',
+      url: 'https://myntos.no/',
+      // English deliberately: this description exists for reviewers and
+      // aggregators, not for the Norwegian customers the page itself serves.
+      description:
+        'Myntos is bookkeeping software for Norwegian companies. It records incoming and outgoing payments with their receipts, calculates value-added tax, and produces SAF-T exports and filings for the Norwegian Tax Administration.',
+      publisher: { '@id': 'https://myntos.no/#organization' },
+    },
+  ],
+};
+
+/** The Funksjoner menu. One place to edit, used by both the desktop and mobile menu. */
+const features = [
+  {
+    href: '/funksjoner/#kontantstrom',
+    title: 'Kontantstrøm og bilag',
+    blurb: 'Inn- og utbetalinger med PDF, ført med dobbel bokføring.',
+  },
+  {
+    href: '/funksjoner/#faktura',
+    title: 'Faktura og e-faktura',
+    blurb: 'Salgsdokument etter § 5-1, med EHF klar til kravet i 2027.',
+  },
+  {
+    href: '/funksjoner/#mva',
+    title: 'Merverdiavgift',
+    blurb: 'Mva-koder med datostyrte satser, regnet ut per føring.',
+  },
+  {
+    href: '/funksjoner/#saft',
+    title: 'SAF-T-eksport',
+    blurb: 'Lovpålagt eksportformat, innebygd fra første linje.',
+  },
+  {
+    href: '/funksjoner/#skattemelding',
+    title: 'Skattemelding',
+    blurb: 'Næringsspesifikasjon og innlevering via Altinn.',
+  },
+  {
+    href: '/funksjoner/#samarbeid',
+    title: 'Flere brukere',
+    blurb: 'Organisasjon, roller og invitasjoner.',
+  },
+  {
+    href: '/funksjoner/#apen-kildekode',
+    title: 'Offentlig kildekode',
+    blurb: 'Hele programmet er til å ettergå.',
+  },
+];
+
+/**
+ * Kom i gang-menyen. Oversikten først, deretter én oppføring per flytteguide
+ * — de kommer fra data/flytting.ts, som også bygger sidene, slik at menyen
+ * ikke kan peke på en guide som ikke finnes.
+ */
+const gettingStarted = [
+  {
+    href: '/kom-i-gang/',
+    title: 'Flytt regnskapet hit',
+    blurb: 'Hva du henter ut av det gamle programmet, i hvilken rekkefølge.',
+  },
+  ...guider.map((guide) => ({
+    href: `/kom-i-gang/${guide.slug}/`,
+    title: guide.menyTittel,
+    blurb: guide.menyTekst,
+  })),
+];
 ---
 
+{/*
+  data-auth starts at "ut". The page that ships is the signed-out one, which is
+  what a search engine and a browser without JavaScript should see; the inline
+  script below upgrades it before first paint for a returning visitor, and
+  lib/session.ts confirms or corrects it against the API a moment later.
+*/}
 <!doctype html>
-<html lang="nb">
+<html lang="nb" data-auth="ut">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content={description} />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#ffffff" />
+
+    {/* See APP_NAME above for why these exist. */}
+    <link rel="canonical" href={canonical} />
+    <meta name="application-name" content={APP_NAME} />
+    <meta property="og:site_name" content={APP_NAME} />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:locale" content="nb_NO" />
+    <meta property="og:image" content="https://myntos.no/favicon-192.png" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <script type="application/ld+json" is:inline set:html={JSON.stringify(structuredData)} />
+    {/*
+      The SVG is what modern browsers use, and it carries its own
+      prefers-color-scheme query, so the mark inverts with the browser chrome
+      the way it inverts on the page. The PNGs exist because Google Search wants
+      a square favicon whose side is a multiple of 48px and will not read the
+      SVG; a PNG cannot invert, so it is drawn in a third pair of colours that
+      holds up on either chrome. Regenerate all of them with `pnpm favicons`.
+    */}
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png" />
+    <link rel="icon" type="image/png" sizes="96x96" href="/favicon-96.png" />
+    <link rel="icon" type="image/png" sizes="144x144" href="/favicon-144.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png" />
+    <link rel="apple-touch-icon" href="/favicon-192.png" />
     <title>{title}</title>
+    <script is:inline>
+      // Runs before first paint: both the auth hint and the theme, so a
+      // returning visitor never sees the wrong shell or a flash of the wrong
+      // palette. Light is the default, so only an explicit "dark" is applied.
+      try {
+        const store = window.localStorage;
+        if (store.getItem('myntos.signed-in') === '1') {
+          document.documentElement.dataset.auth = 'inn';
+        }
+        if (store.getItem('myntos.theme') === 'dark') {
+          document.documentElement.dataset.theme = 'dark';
+        }
+      } catch (error) {
+        // No storage available; the signed-out light view is the safe default.
+      }
+    </script>
   </head>
   <body>
+    <a class="skip-link" href="#innhold">Hopp til innhold</a>
+
     <header class="site-header">
-      <a href="/" class="brand">
-        <Logo class="brand-logo" />
-        <span class="brand-name">Myntos</span>
-      </a>
+      <div class="site-header-inner">
+        <a href="/" class="brand">
+          <Logo class="brand-logo" />
+          <span class="brand-name">Myntos</span>
+        </a>
+
+        <button
+          type="button"
+          class="nav-toggle"
+          data-menu-trigger
+          aria-controls="hovedmeny"
+          aria-expanded="false"
+          aria-label="Åpne menyen"
+        >
+          <span class="nav-toggle-bars" aria-hidden="true"></span>
+        </button>
+
+        <nav class="site-nav" id="hovedmeny" data-menu data-collapse aria-label="Hovedmeny">
+          {/* Signed out: what the product is. */}
+          <div class="nav-group nav-primary" data-auth-only="ut">
+            <div class="nav-dropdown" data-menu>
+              <button
+                type="button"
+                class="nav-link nav-trigger"
+                data-menu-trigger
+                aria-controls="meny-funksjoner"
+                aria-expanded="false"
+              >
+                Funksjoner
+                <svg class="chevron" viewBox="0 0 12 8" aria-hidden="true" focusable="false">
+                  <path
+                    d="M1 1.5 6 6.5l5-5"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"></path>
+                </svg>
+              </button>
+              <div class="nav-menu" id="meny-funksjoner" hidden>
+                {
+                  features.map((feature) => (
+                    <a class="nav-menu-item" href={feature.href}>
+                      <span class="nav-menu-title">{feature.title}</span>
+                      <span class="nav-menu-blurb">{feature.blurb}</span>
+                    </a>
+                  ))
+                }
+              </div>
+            </div>
+
+            <div class="nav-dropdown" data-menu>
+              <button
+                type="button"
+                class="nav-link nav-trigger"
+                data-menu-trigger
+                aria-controls="meny-kom-i-gang"
+                aria-expanded="false"
+              >
+                Kom i gang
+                <svg class="chevron" viewBox="0 0 12 8" aria-hidden="true" focusable="false">
+                  <path
+                    d="M1 1.5 6 6.5l5-5"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"></path>
+                </svg>
+              </button>
+              <div class="nav-menu" id="meny-kom-i-gang" hidden>
+                {
+                  gettingStarted.map((item) => (
+                    <a class="nav-menu-item" href={item.href}>
+                      <span class="nav-menu-title">{item.title}</span>
+                      <span class="nav-menu-blurb">{item.blurb}</span>
+                    </a>
+                  ))
+                }
+              </div>
+            </div>
+
+            <a class="nav-link" href="/priser/">Priser</a>
+            <a class="nav-link" href="/bankpriser/">Bankpriser</a>
+            {/* Egen fane, ikke et avsnitt i personvernerklæringen: et
+                regnskapsprogram som sender bilag til en modell bør si det der
+                folk ser etter det, ikke der de leter. */}
+            <a class="nav-link" href="/ki/">KI</a>
+          </div>
+
+          {/* Signed in: the application. */}
+          <div class="nav-group nav-primary" data-auth-only="inn">
+            <a class="nav-link" href="/">Oversikt</a>
+            <a class="nav-link" href="/faktura/">Faktura</a>
+            <a class="nav-link" href="/kontantstrom/">Kontantstrøm</a>
+            <a class="nav-link" href="/parter/">Kunder og leverandører</a>
+            <a class="nav-link" href="/organisasjon/">Organisasjon</a>
+            <a class="nav-link" href="/ki/">KI</a>
+          </div>
+
+          <div class="nav-group nav-actions">
+            <button type="button" class="icon-btn" data-theme-toggle aria-label="Bytt tema">
+              <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <circle cx="12" cy="12" r="4.2" fill="currentColor"></circle>
+                <path
+                  d="M12 2.5v2.2M12 19.3v2.2M4.2 12H2M22 12h-2.2M6.3 6.3 4.7 4.7M19.3 19.3l-1.6-1.6M17.7 6.3l1.6-1.6M4.7 19.3l1.6-1.6"
+                  stroke="currentColor"
+                  stroke-width="1.7"
+                  stroke-linecap="round"></path>
+              </svg>
+              <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path
+                  d="M20 14.2A8.2 8.2 0 0 1 9.8 4a8.4 8.4 0 1 0 10.2 10.2Z"
+                  fill="currentColor"></path>
+              </svg>
+            </button>
+
+            <span class="nav-group" data-auth-only="ut">
+              <a class="btn btn-ghost btn-small" href="/logg-inn/">Logg inn</a>
+              {/* «Opprett konto», ikke «Kom i gang»: den etiketten er nå en
+                  meny med flytteguider, og to naboer med samme navn og ulikt
+                  mål er en felle. */}
+              <a class="btn btn-primary btn-small" href="/registrer/">Opprett konto</a>
+            </span>
+
+            <span class="nav-group" data-auth-only="inn">
+              <span class="nav-user" data-session-name></span>
+              <button type="button" class="btn btn-ghost btn-small" data-sign-out>Logg ut</button>
+            </span>
+          </div>
+        </nav>
+      </div>
     </header>
-    <slot />
-    {/* Legal disclaimer — must stay visible on every page. See /ansvar and DISCLAIMER.md. */}
+
+    <main
+      id="innhold"
+      class:list={['page', width === 'wide' && 'page-wide', bleed && 'page-bleed']}
+    >
+      <slot />
+    </main>
+
     <footer class="site-footer">
-      <p>
-        <strong>All bruk skjer på eget ansvar.</strong> Myntos leveres uten garanti og uten
-        ansvar for feil, tap eller sanksjoner. Programmet gir ikke regnskaps-, skatte- eller
-        juridisk rådgivning — du er selv ansvarlig for alt du bokfører og sender inn.
-        <a href="/ansvar/">Les hele ansvarsfraskrivelsen</a>.
-      </p>
-      {/* TODO: link the real repository URL once published */}
-      <p class="meta">
-        Kildekoden er offentlig tilgjengelig. © 2026 Andreas Lindeman. Med enerett.
-      </p>
+      <div class="site-footer-inner">
+        <div class="footer-grid">
+          <div class="footer-brand">
+            <Logo class="footer-logo" />
+            <p class="footer-tagline">
+              Regnskap for norske regler, med kildekoden i åpent lende.
+            </p>
+          </div>
+          <nav class="footer-col" aria-label="Produkt">
+            <h2>Produkt</h2>
+            <a href="/funksjoner/">Funksjoner</a>
+            <a href="/priser/">Priser</a>
+            <a href="/registrer/">Opprett konto</a>
+          </nav>
+          <nav class="footer-col" aria-label="Ressurser">
+            <h2>Ressurser</h2>
+            <a href="/kom-i-gang/">Flytt regnskapet hit</a>
+            <a href="/kom-i-gang/fiken/">Flytte fra Fiken</a>
+            <a href="/kom-i-gang/tripletex/">Flytte fra Tripletex</a>
+            <a href="/bankpriser/">Bankpriser for bedrift</a>
+            <a href="/funksjoner/#apen-kildekode">Offentlig kildekode</a>
+          </nav>
+          <nav class="footer-col" aria-label="Juridisk">
+            <h2>Juridisk</h2>
+            <a href="/vilkar/">Bruksvilkår</a>
+            <a href="/personvern/">Personvern</a>
+            <a href="/ki/">Bruk av KI</a>
+            <a href="/ansvar/">Ansvarsfraskrivelse</a>
+          </nav>
+        </div>
+        <div class="footer-base">
+          {/*
+            Names the product and the company in one sentence, and says how they
+            relate. Google's brand review reads a bare "© Lindeman Technologies"
+            as the site's name, which is not what the service is called.
+          */}
+          <p class="meta">
+            Myntos er en tjeneste fra Lindeman Technologies. © 2026. Kildekoden er offentlig
+            tilgjengelig.
+          </p>
+          {/* The full disclaimer lives on /ansvar; one line is enough here. */}
+          <p class="meta">
+            Myntos er i tidlig utvikling og leveres uten garanti.
+            <a href="/ansvar/">Ansvar og vilkår</a>.
+          </p>
+          {/*
+            The site is Norwegian; this is the one English page, for readers who
+            need to assess what the application does without reading Norwegian.
+            Linked from every page because that is where a reviewer looks.
+          */}
+          <p class="meta"><a href="/about/" lang="en">About Myntos (in English)</a></p>
+        </div>
+      </div>
     </footer>
+
+    <script>
+      import { initNav, initThemeToggle } from '../lib/chrome';
+      import { bootstrapChrome } from '../lib/session';
+
+      bootstrapChrome();
+      initThemeToggle();
+      initNav();
+    </script>
   </body>
 </html>
 
 <style is:global>
+  /* --------------------------------------------------------------------------
+     Palette.
+
+     Light is the default and therefore lives in :root; dark is the single
+     override, applied by a data attribute the visitor opts into. Every colour
+     is a token — nothing in a component should ever name a hex value, so a
+     future rebrand is one block of edits.
+     ----------------------------------------------------------------------- */
+
   :root {
+    color-scheme: light;
+
     --bg: #ffffff;
-    --fg: #1a1f1d;
-    --muted: #5b6662;
-    --accent: #0b3d2e;
-    --warn-bg: #fff7e6;
-    --warn-border: #e6a700;
-    --border: #e3e7e5;
+    --bg-tint: #f5f8f7;
+    --surface: #ffffff;
+    --surface-2: #f2f6f5;
+    --surface-3: #e8efec;
+    --fg: #0e1a17;
+    --fg-strong: #04100d;
+    --muted: #55665f;
+    --faint: #74857e;
+
+    /* Deep green reads as "ledger" without the traffic-light green of a
+       spreadsheet; it is the same hue the dark theme brightens into mint. */
+    --accent: #0b7a61;
+    --accent-hover: #096450;
+    --accent-fg: #ffffff;
+    --accent-soft: #e4f3ee;
+    --accent-line: #bfded4;
+
+    /* Warm counterweight, used for cautionary surfaces. */
+    --gold: #9a6c06;
+    --gold-soft: #fbf1d9;
+
+    /* The logo mark has its own two tokens rather than borrowing --accent.
+       The ring sits at almost the text colour and only the coin carries
+       colour, which keeps the accent reserved for things that are actually
+       clickable — a mark painted in the button colour competes with every
+       button on the page. */
+    --logo-ring: #1c1f1e;
+    --logo-coin: #0f8a68;
+
+    --border: #dfe7e4;
+    --border-strong: #c2cfcb;
+    --danger: #a4201f;
+    --danger-bg: #fdeceb;
+    --danger-line: #f0c4c2;
+    --positive: #0b7a61;
+    --negative: #a4201f;
+
+    --shadow: 0 1px 2px rgb(16 32 28 / 6%), 0 10px 28px -14px rgb(16 32 28 / 20%);
+    --shadow-lifted: 0 2px 6px rgb(16 32 28 / 8%), 0 24px 48px -22px rgb(16 32 28 / 28%);
+    --glow: radial-gradient(60rem 30rem at 50% -12rem, rgb(11 122 97 / 8%), transparent 70%);
+
+    --radius: 14px;
+    --radius-small: 9px;
+    --radius-pill: 999px;
+
+    --font: 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', sans-serif;
+    --font-numeric: ui-monospace, 'SF Mono', 'Cascadia Mono', 'Segoe UI Mono', monospace;
   }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #121614;
-      --fg: #e8ecea;
-      --muted: #9aa5a0;
-      --accent: #7fc8ab;
-      --warn-bg: #2a2410;
-      --warn-border: #b38600;
-      --border: #2a312e;
-    }
+
+  :root[data-theme='dark'] {
+    color-scheme: dark;
+
+    --bg: #0a0f0e;
+    --bg-tint: #0d1413;
+    --surface: #121b19;
+    --surface-2: #182320;
+    --surface-3: #1f2c28;
+    --fg: #e8efec;
+    --fg-strong: #ffffff;
+    --muted: #91a29c;
+    --faint: #6b7c77;
+
+    --accent: #2ed3a5;
+    --accent-hover: #58e0ba;
+    --accent-fg: #04211a;
+    --accent-soft: #10302a;
+    --accent-line: #1d4f43;
+
+    --gold: #f0b429;
+    --gold-soft: #2c2310;
+
+    --logo-ring: #eceeed;
+    --logo-coin: #5ee0b4;
+
+    --border: #23302c;
+    --border-strong: #33443f;
+    --danger: #ff8f8a;
+    --danger-bg: #2c1615;
+    --danger-line: #55231f;
+    --positive: #2ed3a5;
+    --negative: #ff8f8a;
+
+    --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 12px 32px -16px rgb(0 0 0 / 70%);
+    --shadow-lifted: 0 2px 4px rgb(0 0 0 / 40%), 0 24px 48px -20px rgb(0 0 0 / 80%);
+    --glow: radial-gradient(60rem 30rem at 50% -12rem, rgb(46 211 165 / 12%), transparent 70%);
   }
+
   * {
     box-sizing: border-box;
   }
+
+  html {
+    scroll-behavior: smooth;
+    /* Anchors from the Funksjoner menu must clear the sticky header. */
+    scroll-padding-top: 5.5rem;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
   body {
     margin: 0;
-    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
-    line-height: 1.6;
+    font-family: var(--font);
+    line-height: 1.65;
     background: var(--bg);
+    background-image: var(--glow);
+    background-repeat: no-repeat;
     color: var(--fg);
     display: flex;
     min-height: 100vh;
     flex-direction: column;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
-  main {
-    flex: 1;
-    width: 100%;
-    max-width: 46rem;
-    margin: 0 auto;
-    padding: 3rem 1.25rem;
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    line-height: 1.15;
+    letter-spacing: -0.025em;
+    color: var(--fg-strong);
+    margin: 0 0 0.6rem;
+    text-wrap: balance;
   }
+
+  h1 {
+    font-size: clamp(2.1rem, 1.4rem + 2.8vw, 3.4rem);
+    font-weight: 800;
+  }
+
+  h2 {
+    font-size: clamp(1.4rem, 1.1rem + 1.1vw, 1.95rem);
+    font-weight: 700;
+    margin-top: 3rem;
+  }
+
+  h3 {
+    font-size: 1.06rem;
+    font-weight: 650;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
   a {
     color: var(--accent);
+    text-underline-offset: 0.18em;
   }
+
+  ::selection {
+    background: var(--accent);
+    color: var(--accent-fg);
+  }
+
+  /* --- Auth-dependent chrome ---------------------------------------------- */
+
+  html[data-auth='ut'] [data-auth-only='inn'],
+  html[data-auth='inn'] [data-auth-only='ut'] {
+    display: none !important;
+  }
+
+  /* The `hidden` attribute is how every script on this site hides something, and
+     the browser's own rule for it is `display: none` from the user-agent
+     stylesheet — which *any* author rule outranks. A single `.field { display:
+     block }` was therefore enough to leave `<label class="field" hidden>`
+     visible, and the organization picker showed up on a form that had decided
+     not to ask the question. Author-origin and !important, so `hidden` means
+     hidden no matter what class the element also carries. */
+  [hidden] {
+    display: none !important;
+  }
+
+  .skip-link {
+    position: absolute;
+    left: -9999px;
+    top: 0;
+    background: var(--accent);
+    color: var(--accent-fg);
+    padding: 0.6rem 1rem;
+    border-radius: 0 0 var(--radius-small) 0;
+    z-index: 40;
+    font-weight: 600;
+  }
+
+  .skip-link:focus {
+    left: 0;
+  }
+
+  /* --- Header --------------------------------------------------------------- */
+
   .site-header {
-    max-width: 46rem;
-    margin: 0 auto;
-    padding: 1.5rem 1.25rem 0;
-    width: 100%;
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(12px);
   }
+
+  .site-header-inner,
+  .site-footer-inner,
+  .page {
+    width: 100%;
+    max-width: 52rem;
+    margin: 0 auto;
+    padding-inline: 1.25rem;
+  }
+
+  .page-wide,
+  body:has(.page-wide) .site-header-inner,
+  body:has(.page-wide) .site-footer-inner,
+  .site-footer-inner {
+    max-width: 72rem;
+  }
+
+  .site-header-inner {
+    max-width: 72rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding-block: 0.8rem;
+  }
+
   .brand {
     display: inline-flex;
     align-items: center;
-    gap: 0.6rem;
-    color: var(--fg);
+    gap: 0.55rem;
+    color: var(--fg-strong);
     text-decoration: none;
+    flex-shrink: 0;
   }
+
   .brand-logo {
-    height: 1.9rem;
+    height: 1.85rem;
     width: auto;
     display: block;
   }
+
   .brand-name {
-    font-size: 1.25rem;
-    font-weight: 700;
-    letter-spacing: -0.01em;
+    font-size: 1.22rem;
+    font-weight: 750;
+    letter-spacing: -0.02em;
   }
-  .site-footer {
-    border-top: 1px solid var(--border);
-    max-width: 46rem;
-    margin: 0 auto;
-    padding: 1.5rem 1.25rem 2rem;
-    font-size: 0.85rem;
+
+  .site-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem 1.4rem;
+    font-size: 0.94rem;
+    flex: 1;
+    justify-content: space-between;
+  }
+
+  .nav-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem 1.1rem;
+  }
+
+  .nav-primary {
+    margin-inline-start: 1.5rem;
+  }
+
+  .nav-actions {
+    margin-inline-start: auto;
+    gap: 0.5rem;
+  }
+
+  .nav-link {
+    color: var(--muted);
+    text-decoration: none;
+    font-weight: 550;
+    padding: 0.35rem 0;
+    transition: color 120ms ease;
+    white-space: nowrap;
+  }
+
+  .nav-link:hover {
+    color: var(--fg-strong);
+  }
+
+  .nav-user {
+    color: var(--muted);
+    font-weight: 550;
+    max-width: 11rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* --- Dropdown -------------------------------------------------------------- */
+
+  .nav-dropdown {
+    position: relative;
+  }
+
+  .nav-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    background: none;
+    border: none;
+    font: inherit;
+    font-weight: 550;
+    cursor: pointer;
     color: var(--muted);
   }
+
+  .nav-trigger .chevron {
+    width: 0.65rem;
+    height: 0.45rem;
+    transition: transform 160ms ease;
+  }
+
+  .nav-trigger[aria-expanded='true'] {
+    color: var(--fg-strong);
+  }
+
+  .nav-trigger[aria-expanded='true'] .chevron {
+    transform: rotate(180deg);
+  }
+
+  .nav-menu {
+    position: absolute;
+    top: calc(100% + 0.7rem);
+    left: -0.75rem;
+    width: min(30rem, calc(100vw - 2.5rem));
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.15rem;
+    padding: 0.5rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lifted);
+  }
+
+  .nav-menu-item {
+    display: block;
+    padding: 0.6rem 0.7rem;
+    border-radius: var(--radius-small);
+    text-decoration: none;
+    color: var(--fg);
+    transition: background-color 120ms ease;
+  }
+
+  .nav-menu-item:hover {
+    background: var(--surface-2);
+  }
+
+  .nav-menu-title {
+    display: block;
+    font-weight: 600;
+    font-size: 0.92rem;
+    color: var(--fg-strong);
+  }
+
+  .nav-menu-blurb {
+    display: block;
+    font-size: 0.82rem;
+    color: var(--muted);
+    line-height: 1.45;
+    margin-top: 0.1rem;
+  }
+
+  /* --- Icon button and theme toggle ------------------------------------------ */
+
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.1rem;
+    height: 2.1rem;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    transition:
+      color 120ms ease,
+      border-color 120ms ease,
+      background-color 120ms ease;
+  }
+
+  .icon-btn:hover {
+    color: var(--fg-strong);
+    border-color: var(--border-strong);
+    background: var(--surface-2);
+  }
+
+  .icon-btn svg {
+    width: 1.05rem;
+    height: 1.05rem;
+  }
+
+  /* Show the icon for the theme you would switch *to*. */
+  .icon-sun {
+    display: none;
+  }
+
+  .icon-moon {
+    display: block;
+  }
+
+  :root[data-theme='dark'] .icon-sun {
+    display: block;
+  }
+
+  :root[data-theme='dark'] .icon-moon {
+    display: none;
+  }
+
+  /* --- Mobile menu ------------------------------------------------------------ */
+
+  .nav-toggle {
+    display: none;
+    width: 2.4rem;
+    height: 2.4rem;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    background: transparent;
+    cursor: pointer;
+    color: var(--fg);
+  }
+
+  .nav-toggle-bars,
+  .nav-toggle-bars::before,
+  .nav-toggle-bars::after {
+    display: block;
+    width: 1.05rem;
+    height: 1.5px;
+    background: currentcolor;
+    border-radius: 2px;
+    transition: transform 160ms ease;
+  }
+
+  .nav-toggle-bars::before,
+  .nav-toggle-bars::after {
+    content: '';
+    position: relative;
+  }
+
+  .nav-toggle-bars::before {
+    top: -5px;
+  }
+
+  .nav-toggle-bars::after {
+    top: 3.5px;
+  }
+
+  @media (width < 62rem) {
+    .nav-toggle {
+      display: inline-flex;
+    }
+
+    .site-nav {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.25rem;
+      padding: 1rem 1.25rem 1.4rem;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      box-shadow: var(--shadow-lifted);
+    }
+
+    .site-nav[data-open='true'] {
+      display: flex;
+    }
+
+    .site-header-inner {
+      position: relative;
+      flex-wrap: wrap;
+    }
+
+    .nav-group {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.15rem;
+    }
+
+    .nav-primary,
+    .nav-actions {
+      margin-inline-start: 0;
+    }
+
+    .nav-actions {
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 0.9rem;
+      padding-top: 0.9rem;
+      border-top: 1px solid var(--border);
+    }
+
+    .nav-actions .nav-group {
+      flex-direction: row;
+      gap: 0.5rem;
+    }
+
+    .nav-link,
+    .nav-trigger {
+      padding: 0.55rem 0;
+      font-size: 1rem;
+    }
+
+    .nav-dropdown {
+      position: static;
+    }
+
+    .nav-menu {
+      position: static;
+      width: auto;
+      grid-template-columns: 1fr;
+      box-shadow: none;
+      background: var(--surface-2);
+      margin-bottom: 0.4rem;
+    }
+  }
+
+  /* --- Page and footer --------------------------------------------------------- */
+
+  main.page {
+    flex: 1;
+    padding-block: 3rem 5rem;
+  }
+
+  main.page-bleed {
+    max-width: none;
+    padding-inline: 0;
+  }
+
+  .site-footer {
+    border-top: 1px solid var(--border);
+    background: var(--bg-tint);
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
+
+  .site-footer-inner {
+    padding-block: 2.5rem 2rem;
+  }
+
+  .footer-grid {
+    display: grid;
+    gap: 2rem;
+    grid-template-columns: minmax(12rem, 1.5fr) repeat(auto-fit, minmax(8rem, 1fr));
+  }
+
+  .footer-logo {
+    height: 1.7rem;
+    width: auto;
+  }
+
+  .footer-tagline {
+    margin: 0.6rem 0 0;
+    max-width: 18rem;
+    font-size: 0.88rem;
+  }
+
+  .footer-col {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .footer-col h2 {
+    margin: 0 0 0.3rem;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--faint);
+    font-weight: 700;
+  }
+
+  .footer-col a {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.9rem;
+  }
+
+  .footer-col a:hover {
+    color: var(--fg-strong);
+  }
+
+  .footer-base {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.5rem 2rem;
+    margin-top: 2.5rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+  }
+
   .site-footer .meta {
-    margin-top: 0.75rem;
+    margin: 0;
+    font-size: 0.83rem;
+    color: var(--faint);
+  }
+
+  .site-footer .meta a {
+    color: var(--muted);
+  }
+
+  /* --- Buttons ------------------------------------------------------------ */
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius-small);
+    padding: 0.65rem 1.2rem;
+    font: inherit;
+    font-weight: 620;
+    line-height: 1.2;
+    text-decoration: none;
+    cursor: pointer;
+    white-space: nowrap;
+    transition:
+      background-color 130ms ease,
+      border-color 130ms ease,
+      color 130ms ease,
+      transform 130ms ease;
+  }
+
+  .btn:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-small {
+    padding: 0.42rem 0.85rem;
+    font-size: 0.9rem;
+  }
+
+  .btn-large {
+    padding: 0.8rem 1.5rem;
+    font-size: 1.02rem;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: var(--accent-fg);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    border-color: var(--border-strong);
+    color: var(--fg);
+  }
+
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--surface-2);
+    border-color: var(--faint);
+  }
+
+  .btn-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--accent);
+    text-decoration: underline;
+    cursor: pointer;
+  }
+
+  .btn-block {
+    width: 100%;
+  }
+
+  /* --- Cards and surfaces -------------------------------------------------- */
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.35rem 1.45rem;
+    box-shadow: var(--shadow);
+  }
+
+  .card + .card {
+    margin-top: 1rem;
+  }
+
+  .card-title {
+    margin: 0 0 0.4rem;
+    font-size: 1.05rem;
+  }
+
+  .card-hint {
+    color: var(--muted);
+    font-size: 0.93rem;
+    margin: 0;
+  }
+
+  .grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  }
+
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    font-size: 0.74rem;
+    font-weight: 700;
+    color: var(--muted);
+    margin: 0 0 0.9rem;
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.28rem 0.7rem;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--accent-line);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  /* A quiet aside. The loud version is gone on purpose — the full terms live
+     on /ansvar, and shouting on every page just teaches people not to read. */
+  .note {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border-strong);
+    border-radius: var(--radius-small);
+    padding: 0.85rem 1.05rem;
+    margin: 1.5rem 0;
+    font-size: 0.92rem;
+    color: var(--muted);
+  }
+
+  .note a {
+    color: inherit;
+    text-decoration: underline;
+  }
+
+  .disclaimer {
+    background: var(--gold-soft);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--gold);
+    border-radius: var(--radius-small);
+    padding: 0.9rem 1.1rem;
+    margin: 1.5rem 0;
+    font-size: 0.92rem;
+    color: var(--fg);
+  }
+
+  .disclaimer a {
+    color: inherit;
+  }
+
+  /* --- Forms --------------------------------------------------------------- */
+
+  .field {
+    display: block;
+    margin-bottom: 1rem;
+  }
+
+  .field > span {
+    display: block;
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-bottom: 0.35rem;
+  }
+
+  .field-hint {
+    display: block;
+    font-weight: 400;
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-top: 0.35rem;
+  }
+
+  input[type='text'],
+  input[type='email'],
+  input[type='password'],
+  input[type='date'],
+  input[type='number'],
+  input[type='file'],
+  select,
+  textarea {
+    width: 100%;
+    font: inherit;
+    color: var(--fg);
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-small);
+    padding: 0.6rem 0.75rem;
+    transition:
+      border-color 120ms ease,
+      background-color 120ms ease;
+  }
+
+  input:hover:not(:disabled),
+  select:hover:not(:disabled),
+  textarea:hover:not(:disabled) {
+    border-color: var(--faint);
+  }
+
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  button:focus-visible,
+  .btn:focus-visible,
+  a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .field-row {
+    display: grid;
+    gap: 0 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  }
+
+  .status {
+    border-radius: var(--radius-small);
+    padding: 0.65rem 0.9rem;
+    font-size: 0.92rem;
+    margin-bottom: 1rem;
+  }
+
+  .status[data-tone='error'] {
+    background: var(--danger-bg);
+    color: var(--danger);
+    border: 1px solid var(--danger-line);
+  }
+
+  .status[data-tone='ok'] {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border: 1px solid var(--accent-line);
+  }
+
+  /* --- Data ---------------------------------------------------------------- */
+
+  .table-scroll {
+    overflow-x: auto;
+  }
+
+  table.data {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.93rem;
+  }
+
+  table.data th,
+  table.data td {
+    text-align: left;
+    padding: 0.65rem 0.8rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+
+  table.data tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  table.data th {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--faint);
+    font-weight: 700;
+  }
+
+  table.data td.num,
+  table.data th.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  table.data tr[data-reversed='true'] {
+    color: var(--faint);
+    text-decoration: line-through;
+  }
+
+  .badge {
+    display: inline-block;
+    border-radius: var(--radius-pill);
+    padding: 0.1rem 0.6rem;
+    font-size: 0.76rem;
+    font-weight: 650;
+    background: var(--surface-3);
+    color: var(--muted);
+    text-decoration: none;
+  }
+
+  .badge[data-direction='inn'] {
+    background: var(--accent-soft);
+    color: var(--positive);
+  }
+
+  .badge[data-direction='ut'] {
+    background: var(--danger-bg);
+    color: var(--negative);
+  }
+
+  .amount-in {
+    color: var(--positive);
+  }
+
+  .amount-out {
+    color: var(--negative);
+  }
+
+  .muted {
+    color: var(--muted);
+  }
+
+  .lead {
+    font-size: clamp(1.05rem, 1rem + 0.35vw, 1.22rem);
+    color: var(--muted);
+    max-width: 42rem;
+    line-height: 1.6;
+  }
+
+  .empty {
+    text-align: center;
+    color: var(--muted);
+    padding: 2.5rem 1rem;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 </style>

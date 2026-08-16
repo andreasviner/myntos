@@ -16,17 +16,25 @@ what it does.
 > you submit to Skatteetaten or any other authority. Read
 > [DISCLAIMER.md](DISCLAIMER.md) before using the software.
 
-> **Status: pre-alpha.** The repository structure, tooling and security
-> baseline are in place; the accounting core and government integrations are
-> under active development. Nothing here is ready for production bookkeeping
-> yet. See [docs/ROADMAP.md](docs/ROADMAP.md).
+> **Status: pre-alpha.** Accounts, organizations, customers and suppliers, and
+> the cash-flow register with its bilag archive work end to end; the SAF-T
+> export and the government integrations do not exist yet. Nothing here is ready for production
+> bookkeeping. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## Planned features
+## Features
 
 | Feature | Notes | Status |
 | --- | --- | --- |
-| Double-entry ledger (hovedbok) | SAF-T-aligned data model from day one | Planned |
-| Bilagsføring with PDF archive | Upload and attach vouchers to journal entries | Planned |
+| Accounts and organizations | Email/password or Google sign-in; colleagues invited into an organization with roles; a subscription will attach to the organization, never to a person | Working |
+| Cash-flow register | Money in and out with a category that decides account and VAT code, gross-to-net split, immediate posting, corrections by reversal | Working |
+| Fakturering | Salgsdokument checked against bokføringsforskriften § 5-1 before it is issued, with each finding naming its paragraph; gapless machine numbering (a draft has no number, so discarding one leaves no hole); posted and archived on issue; corrected only by kreditnota | Working |
+| E-faktura (EHF / Peppol BIS Billing 3.0) | Generated and frozen at issue, ahead of the 2027-01-01 requirement in lov 19. juni 2026 nr. 39. **Transmission is not built** — that needs a Peppol access point; see [docs/integrations/efaktura.md](docs/integrations/efaktura.md) | Partly |
+| Double-entry ledger (hovedbok) | SAF-T-aligned data model from day one | Working |
+| Bilagsføring with PDF archive | PDFs attached to a posted voucher; append-only, validated by magic number, digest stored | Working |
+| Faktura read into the entry form | Upload the PDF first: date, amount, VAT, invoice number and counterparty are read out of the text layer; the category is chosen from a numbered menu by a small model hosted in Norway ([Løynd](https://loynd.no)), optional and off without a key. Nothing posts until the user confirms — see [/ki](https://myntos.no/ki/) | Working |
+| An invoice that fills itself in | The buyer comes from Enhetsregisteret on the organisasjonsnummer (name, address, and the number an EHF invoice is addressed by); the KID is assigned at issue as kundenummer + fakturanummer + kontrollsiffer, so the bank's OCR file posts to the right kundereskontro; the lines can be copied from the last invoice to the same customer, or set up from a sentence describing the sale by the same Norwegian model. Every amount is still computed by the ledger, and § 5-1 is still checked at issue | Working |
+| Customers and suppliers | SAF-T parties with balance accounts, optional on any payment | Working |
+| Document storage | Local filesystem for development, Cloudflare R2 (`jurisdiction=eu`) for production | Working |
 | MVA-håndtering | VAT calculation on the standard SAF-T mva codes, automatic MVA-melding | Planned |
 | SAF-T Financial export | Required by law (bokføringsforskriften) for electronic bookkeeping | Planned |
 | Skattemelding + næringsspesifikasjon | Validate and submit via Skatteetaten's sluttbrukersystem APIs | Planned |
@@ -47,16 +55,16 @@ Myntos/
 ├── backend/                 # Python API (FastAPI, src layout)
 │   ├── src/myntos/
 │   │   ├── api/             # HTTP endpoints (versioned)
-│   │   ├── auth/            # Maskinporten machine-to-machine auth
+│   │   ├── auth/            # Myntos login (passwords, sessions, Google) + Maskinporten/ID-porten
 │   │   ├── core/            # Configuration, security, cross-cutting concerns
 │   │   ├── db/              # SQLAlchemy base, sessions (+ migrations/)
-│   │   ├── domain/          # Accounting core: ledger, bilag, mva
-│   │   ├── integrations/    # Skatteetaten / Altinn API clients
+│   │   ├── domain/          # Accounting core: ledger, bilag, faktura, mva, identity
+│   │   ├── integrations/    # Skatteetaten / Altinn / Brreg / Løynd API clients
 │   │   ├── saft/            # SAF-T Financial export
 │   │   └── storage/         # Document storage for bilag (local / R2)
 │   ├── migrations/          # Alembic migrations
 │   └── tests/
-├── frontend/                # Astro app (pnpm)
+├── frontend/                # Astro app (pnpm) — conventions in docs/frontend-conventions.md
 ├── docs/                    # Architecture, roadmap, integration guides
 ├── infra/                   # Deployment (Cloudflare)
 └── .github/                 # CI, dependabot, PR template
@@ -79,11 +87,13 @@ uv run uvicorn myntos.main:app --reload  # http://localhost:8000/docs
 
 # 3. Frontend (separate terminal)
 cd frontend
+cp .env.example .env                           # points the site at the API
 pnpm install
 pnpm dev                                       # http://localhost:4321
 
-# Optional: local PostgreSQL (needed once the ledger lands)
+# Local PostgreSQL — the backend needs a database to do anything
 docker compose up -d db
+cd backend && uv run alembic upgrade head
 ```
 
 Run the quality gates locally before pushing (CI runs the same):

@@ -1,0 +1,360 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { guider, startISteg, importStatus, SJEKKET, type Guide } from '../../data/flytting';
+
+/**
+ * Én side per program vi har skrevet en flytteguide for. Alt innholdet ligger
+ * i data/flytting.ts, slik at menyen, oversiktssiden og disse sidene har
+ * nøyaktig én kilde — en guide som finnes i menyen men ikke som side er en
+ * 404 vi ellers ville oppdaget i produksjon.
+ */
+export function getStaticPaths() {
+  return guider.map((guide) => ({ params: { guide: guide.slug }, props: { guide } }));
+}
+
+interface Props {
+  guide: Guide;
+}
+
+const { guide } = Astro.props;
+const andre = guider.filter((other) => other.slug !== guide.slug);
+
+const sjekketNorsk = new Date(SJEKKET).toLocaleDateString('nb-NO', {
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+});
+---
+
+<BaseLayout
+  title={`${guide.menyTittel} til Myntos`}
+  description={`Slik henter du regnskapet ut av ${guide.navn}: menyveien til SAF-T-eksporten, hva du bør laste ned i tillegg, og hvordan du begynner i Myntos.`}
+  width="wide"
+>
+  <nav class="crumbs" aria-label="Brødsmuler">
+    <a href="/kom-i-gang/">Kom i gang</a>
+    <span aria-hidden="true">/</span>
+    <span>{guide.navn}</span>
+  </nav>
+
+  <div class="head">
+    <h1>{guide.menyTittel} til Myntos</h1>
+    <p class="lead">{guide.ingress}</p>
+  </div>
+
+  <div class="columns">
+    <div class="main">
+      <h2 class="first">Hent dataene ut av {guide.navn}</h2>
+      <ol class="steps">
+        {
+          guide.steg.map((steg) => (
+            <li>
+              <h3>{steg.tittel}</h3>
+              <p>{steg.tekst}</p>
+              {steg.vei !== undefined && <p class="vei">{steg.vei}</p>}
+            </li>
+          ))
+        }
+      </ol>
+
+      <h2>Verdt å vite</h2>
+      <ul class="notes">
+        {guide.verdtAVite.map((punkt) => <li>{punkt}</li>)}
+      </ul>
+    </div>
+
+    {/*
+      Nedlastingslisten står som en aside fordi den er det man kommer tilbake
+      til: stegene leser du én gang, listen krysser du av mot.
+    */}
+    <aside class="aside card" aria-labelledby="ta-vare-pa">
+      <p class="eyebrow" id="ta-vare-pa">Ta vare på dette</p>
+      <ul class="ticks">
+        {guide.taVarePa.map((fil) => <li>{fil}</li>)}
+      </ul>
+      <p class="aside-foot">
+        Oppbevaringsplikten er som hovedregel fem år etter regnskapsårets slutt, og den følger deg
+        — ikke abonnementet du nettopp sa opp.
+      </p>
+    </aside>
+  </div>
+
+  <div class="disclaimer">
+    <strong>{importStatus.tittel}.</strong>
+    {' '}{importStatus.tekst}
+  </div>
+
+  <h2>Slik starter du i Myntos</h2>
+  <ol class="steps steps-accent">
+    {
+      startISteg.map((steg) => (
+        <li>
+          <h3>{steg.tittel}</h3>
+          <p>{steg.tekst}</p>
+        </li>
+      ))
+    }
+  </ol>
+
+  <h2>Kilder</h2>
+  <p class="muted kilde-intro">
+    Menyveiene over er hentet fra {guide.navn} sine egne hjelpesider, kontrollert {sjekketNorsk}.
+    Stemmer ikke veien lenger, er kilden nærmere sannheten enn vi er.
+  </p>
+  <ul class="kilder">
+    {
+      guide.kilder.map((kilde) => (
+        <li>
+          <a href={kilde.href} rel="noopener nofollow" target="_blank">
+            {kilde.tekst}
+          </a>
+        </li>
+      ))
+    }
+  </ul>
+
+  <h2>Kommer du fra et annet sted?</h2>
+  <div class="andre">
+    {
+      andre.map((other) => (
+        <a class="chip" href={`/kom-i-gang/${other.slug}/`}>
+          {other.menyTittel}
+        </a>
+      ))
+    }
+  </div>
+
+  <div class="cta card">
+    <div>
+      <h2 class="cta-title">Opprett kontoen mens eksporten pakkes</h2>
+      <p class="card-hint">
+        Gratis, uten betalingsopplysninger. Selskapet settes opp med kontoplan og mva-koder med én
+        gang du legger inn organisasjonsnummeret.
+      </p>
+    </div>
+    <a class="btn btn-primary btn-large" href="/registrer/">Opprett konto</a>
+  </div>
+</BaseLayout>
+
+<style>
+  .crumbs {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.86rem;
+    color: var(--faint);
+    padding-top: 0.5rem;
+  }
+  .crumbs a {
+    color: var(--muted);
+    text-decoration: none;
+  }
+  .crumbs a:hover {
+    color: var(--fg-strong);
+  }
+
+  .head {
+    max-width: 44rem;
+    padding: 1rem 0 0.5rem;
+  }
+
+  .columns {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 19rem;
+    gap: 2.5rem;
+    align-items: start;
+  }
+
+  h2 {
+    margin-top: 2.6rem;
+  }
+  h2.first {
+    margin-top: 2rem;
+  }
+
+  /* Numbered by a counter rather than the list marker: the marker cannot be
+     placed against a heading that wraps, and this one has to. */
+  .steps {
+    list-style: none;
+    counter-reset: steg;
+    padding: 0;
+    margin: 1.2rem 0 0;
+  }
+  .steps li {
+    counter-increment: steg;
+    position: relative;
+    padding: 0 0 1.4rem 3.2rem;
+  }
+  .steps li::before {
+    content: counter(steg);
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 2rem;
+    height: 2rem;
+    display: grid;
+    place-items: center;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--border-strong);
+    background: var(--surface-2);
+    color: var(--muted);
+    font-size: 0.85rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  /* The connecting rule stops at the last item, which has nothing to connect to. */
+  .steps li:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    left: 1rem;
+    top: 2.3rem;
+    bottom: 0.5rem;
+    width: 1px;
+    background: var(--border);
+  }
+  .steps-accent li::before {
+    border-color: var(--accent-line);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .steps h3 {
+    margin: 0.2rem 0 0.25rem;
+  }
+  .steps p {
+    margin: 0;
+    color: var(--muted);
+    max-width: 44rem;
+  }
+
+  /* The menu path is set in the numeric face so it reads as something to be
+     retyped in another program's UI, not as prose. */
+  .steps p.vei {
+    display: inline-block;
+    margin-top: 0.6rem;
+    padding: 0.35rem 0.7rem;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius-small);
+    background: var(--surface-2);
+    font-family: var(--font-numeric);
+    font-size: 0.84rem;
+    color: var(--fg);
+  }
+
+  .notes {
+    padding-left: 1.1rem;
+    margin: 1rem 0 0;
+    color: var(--muted);
+    max-width: 44rem;
+  }
+  .notes li {
+    margin-bottom: 0.6rem;
+  }
+
+  .aside {
+    position: sticky;
+    top: 5.5rem;
+    margin-top: 2rem;
+  }
+  .aside .eyebrow {
+    margin-bottom: 0.7rem;
+  }
+  .ticks {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 0.55rem;
+  }
+  .ticks li {
+    position: relative;
+    padding-left: 1.6rem;
+    font-size: 0.92rem;
+  }
+  .ticks li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.5em;
+    width: 0.7rem;
+    height: 0.38rem;
+    border-left: 2px solid var(--accent);
+    border-bottom: 2px solid var(--accent);
+    transform: rotate(-45deg);
+  }
+  .aside-foot {
+    margin: 1.1rem 0 0;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+
+  .kilde-intro {
+    max-width: 44rem;
+    margin-top: 0;
+  }
+  .kilder {
+    padding-left: 1.1rem;
+    margin: 0.8rem 0 0;
+  }
+  .kilder li {
+    margin-bottom: 0.4rem;
+  }
+
+  .andre {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.4rem 0.85rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-pill);
+    background: var(--surface);
+    color: var(--fg);
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 550;
+    transition:
+      border-color 120ms ease,
+      background-color 120ms ease;
+  }
+  .chip:hover {
+    border-color: var(--accent-line);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .cta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.25rem;
+    margin-top: 3rem;
+    background: linear-gradient(140deg, var(--accent-soft), var(--surface) 60%);
+    border-color: var(--accent-line);
+  }
+  .cta-title {
+    margin: 0 0 0.2rem;
+    font-size: 1.3rem;
+  }
+  .cta .card-hint {
+    max-width: 34rem;
+  }
+
+  @media (width < 58rem) {
+    .columns {
+      grid-template-columns: 1fr;
+      gap: 1rem;
+    }
+    .aside {
+      position: static;
+      margin-top: 0.5rem;
+    }
+  }
+</style>

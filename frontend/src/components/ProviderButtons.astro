@@ -1,0 +1,106 @@
+---
+/**
+ * "Fortsett med …" — one button per federated provider the backend has.
+ *
+ * Belongs **above** the email/password form. Signing in with an account you
+ * already have is one click; filling in a form is four fields and a password
+ * to remember. Putting the slower path first suggests it is the expected one.
+ * The divider therefore sits under the buttons rather than over them.
+ *
+ * The list is fetched rather than hardcoded, because which providers exist is
+ * a property of the deployment: `/auth/providers` reports only the ones whose
+ * credentials are actually configured, so a button never leads to a 503. That
+ * also means the buttons cannot ship in the HTML — and when nothing is
+ * configured the whole block stays hidden, leaving the form exactly where it
+ * would otherwise have been.
+ *
+ * The thing to avoid is a failure to reach the API looking identical to "this
+ * was never built", so an error says so out loud instead of rendering nothing.
+ *
+ * Brand marks live here as templates rather than as strings in the script: the
+ * script clones them, so no SVG is ever assembled through `innerHTML`.
+ */
+interface Props {
+  /** `%s` is replaced by the provider's name. */
+  labelTemplate?: string;
+}
+
+const { labelTemplate = 'Fortsett med %s' } = Astro.props;
+---
+
+{/* Outside the block: shown when the block itself could not be filled in. */}
+<p class="status" data-provider-status hidden></p>
+<div class="provider-block" data-provider-block data-label-template={labelTemplate} hidden>
+  <div class="provider-buttons" data-provider-buttons></div>
+  <p class="divider"><span>eller med e-post</span></p>
+</div>
+
+{/* Google's mark keeps its own colours in both themes, per Google's terms. */}
+<template data-mark="google">
+  <svg class="provider-mark" viewBox="0 0 18 18" aria-hidden="true" focusable="false">
+    <path
+      fill="#4285F4"
+      d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62Z"
+    ></path>
+    <path
+      fill="#34A853"
+      d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18Z"
+    ></path>
+    <path fill="#FBBC05" d="M3.97 10.71a5.4 5.4 0 0 1 0-3.42V4.96H.96a9 9 0 0 0 0 8.08l3.01-2.33Z"
+    ></path>
+    <path
+      fill="#EA4335"
+      d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.96l3.01 2.33C4.68 5.17 6.66 3.58 9 3.58Z"
+    ></path>
+  </svg>
+</template>
+
+<template data-mark="microsoft">
+  <svg class="provider-mark" viewBox="0 0 18 18" aria-hidden="true" focusable="false">
+    <rect x="0" y="0" width="8.4" height="8.4" fill="#F25022"></rect>
+    <rect x="9.6" y="0" width="8.4" height="8.4" fill="#7FBA00"></rect>
+    <rect x="0" y="9.6" width="8.4" height="8.4" fill="#00A4EF"></rect>
+    <rect x="9.6" y="9.6" width="8.4" height="8.4" fill="#FFB900"></rect>
+  </svg>
+</template>
+
+{/*
+  A plain dot, not the Vipps wordmark: Vipps' brand guidelines require their
+  own supplied button assets, which cannot be reproduced from memory. Swap this
+  for the official asset before offering Vipps login publicly.
+*/}
+<template data-mark="vipps">
+  <svg class="provider-mark" viewBox="0 0 18 18" aria-hidden="true" focusable="false">
+    <circle cx="9" cy="9" r="8" fill="#FF5B24"></circle>
+  </svg>
+</template>
+
+<style>
+  .divider {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    color: var(--faint, var(--muted));
+    font-size: 0.82rem;
+    margin: 1.35rem 0;
+  }
+  .divider::before,
+  .divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+  .provider-buttons {
+    display: grid;
+    gap: 0.5rem;
+  }
+  .provider-buttons :global(.provider-btn) {
+    gap: 0.6rem;
+  }
+  .provider-buttons :global(.provider-mark) {
+    width: 1.05rem;
+    height: 1.05rem;
+    flex-shrink: 0;
+  }
+</style>

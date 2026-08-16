@@ -1,0 +1,237 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { guider, sjekkliste, startISteg, importStatus, SJEKKET } from '../../data/flytting';
+
+/**
+ * Oversikten over flytteguidene. Kortene er inngangen — folk kommer hit med
+ * navnet på programmet de sitter i, ikke med et spørsmål om metode — og
+ * sjekklisten under er det som gjelder uansett hvor de kommer fra.
+ *
+ * Selve guidene rendres av [guide].astro fra samme datafil, slik at menyen i
+ * BaseLayout, kortene her og sidene aldri kan komme i utakt.
+ */
+const sjekketNorsk = new Date(SJEKKET).toLocaleDateString('nb-NO', {
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+});
+---
+
+<BaseLayout
+  title="Flytt regnskapet til Myntos — kom i gang"
+  description="Slik henter du regnskapet ut av Fiken, Tripletex, PowerOffice Go, Conta eller et annet norsk regnskapsprogram, og hva du gjør med det i Myntos."
+  width="wide"
+>
+  <div class="head">
+    <p class="pill">Kom i gang</p>
+    <h1>Ta med deg regnskapet fra der du er nå</h1>
+    <p class="lead">
+      Alle norske regnskapsprogrammer må kunne gi deg dataene dine i SAF-T-format. Guidene under
+      viser hvor knappen ligger i hvert program, hva du bør laste ned i tillegg, og hvordan du
+      begynner i Myntos uten å føre det samme året to ganger.
+    </p>
+  </div>
+
+  <h2 class="section-title">Velg programmet du kommer fra</h2>
+  <div class="guide-grid">
+    {
+      guider.map((guide) => (
+        <a class="card guide-card" href={`/kom-i-gang/${guide.slug}/`}>
+          <h3 class="card-title">{guide.menyTittel}</h3>
+          <p class="card-hint">{guide.menyTekst}</p>
+          <span class="guide-go" aria-hidden="true">
+            Les guiden
+            <svg viewBox="0 0 16 12" focusable="false">
+              <path
+                d="M1 6h13M9.5 1.5 14 6l-4.5 4.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </span>
+        </a>
+      ))
+    }
+  </div>
+
+  <div class="disclaimer">
+    <strong>{importStatus.tittel}.</strong>
+    {' '}{importStatus.tekst}
+  </div>
+
+  <h2>Før du flytter</h2>
+  <p class="section-lead">
+    Rekkefølgen betyr mer enn tempoet. Det som gjør en flytting vond, er nesten alltid at ett av
+    punktene under ble gjort etter det neste.
+  </p>
+  <ol class="checklist">
+    {
+      sjekkliste.map((punkt) => (
+        <li>
+          <h3>{punkt.tittel}</h3>
+          <p>{punkt.tekst}</p>
+        </li>
+      ))
+    }
+  </ol>
+
+  <h2>Slik starter du i Myntos</h2>
+  <p class="section-lead">
+    Tre steg, og ingen av dem krever at du fører historikken på nytt. Den ligger i filene du nettopp
+    lastet ned.
+  </p>
+  <ol class="checklist checklist-accent">
+    {
+      startISteg.map((steg) => (
+        <li>
+          <h3>{steg.tittel}</h3>
+          <p>{steg.tekst}</p>
+        </li>
+      ))
+    }
+  </ol>
+
+  <div class="note">
+    Menyveiene i guidene er kontrollert mot leverandørenes egne hjelpesider {sjekketNorsk}. Menyer
+    flyttes uten forvarsel, så hver guide har kildene sine nederst — de er alltid ferskere enn oss.
+  </div>
+
+  <div class="cta card">
+    <div>
+      <h2 class="cta-title">Klar til å begynne?</h2>
+      <p class="card-hint">
+        Opprett kontoen først, så har du et sted å legge tallene når eksporten er ferdig.
+      </p>
+    </div>
+    <a class="btn btn-primary btn-large" href="/registrer/">Opprett konto</a>
+  </div>
+</BaseLayout>
+
+<style>
+  .head {
+    max-width: 44rem;
+    padding: 2rem 0 0.5rem;
+  }
+  .section-title {
+    margin-top: 2.5rem;
+  }
+  .section-lead {
+    color: var(--muted);
+    max-width: 44rem;
+    margin-top: 0;
+  }
+  .guide-grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  }
+  .guide-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    text-decoration: none;
+    color: inherit;
+    transition:
+      border-color 130ms ease,
+      transform 130ms ease,
+      box-shadow 130ms ease;
+  }
+  .guide-card:hover {
+    border-color: var(--accent-line);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lifted);
+  }
+  .guide-go {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: auto;
+    padding-top: 0.9rem;
+    color: var(--accent);
+    font-size: 0.88rem;
+    font-weight: 650;
+  }
+  .guide-go svg {
+    width: 0.95rem;
+    height: 0.72rem;
+    transition: transform 130ms ease;
+  }
+  .guide-card:hover .guide-go svg {
+    transform: translateX(3px);
+  }
+
+  /* The counter is drawn rather than listed: a plain <ol> marker cannot be
+     coloured or aligned with a heading that wraps to two lines. */
+  .checklist {
+    list-style: none;
+    counter-reset: steg;
+    padding: 0;
+    margin: 1.5rem 0 0;
+    display: grid;
+    gap: 0.35rem;
+  }
+  .checklist li {
+    counter-increment: steg;
+    position: relative;
+    padding: 0.9rem 0 0.9rem 3.2rem;
+    border-top: 1px solid var(--border);
+  }
+  .checklist li::before {
+    content: counter(steg);
+    position: absolute;
+    left: 0;
+    top: 0.95rem;
+    width: 2rem;
+    height: 2rem;
+    display: grid;
+    place-items: center;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--border-strong);
+    background: var(--surface-2);
+    color: var(--muted);
+    font-size: 0.85rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .checklist-accent li::before {
+    border-color: var(--accent-line);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .checklist h3 {
+    margin: 0 0 0.2rem;
+  }
+  .checklist p {
+    margin: 0;
+    color: var(--muted);
+    max-width: 46rem;
+  }
+
+  .cta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.25rem;
+    margin-top: 3rem;
+    background: linear-gradient(140deg, var(--accent-soft), var(--surface) 60%);
+    border-color: var(--accent-line);
+  }
+  .cta-title {
+    margin: 0 0 0.2rem;
+    font-size: 1.3rem;
+  }
+
+  @media (width < 34rem) {
+    .checklist li {
+      padding-left: 2.7rem;
+    }
+    .checklist li::before {
+      width: 1.7rem;
+      height: 1.7rem;
+    }
+  }
+</style>

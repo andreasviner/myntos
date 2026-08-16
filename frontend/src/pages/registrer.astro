@@ -1,0 +1,130 @@
+---
+import ProviderButtons from '../components/ProviderButtons.astro';
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Opprett konto — Myntos"
+  description="Opprett en Myntos-konto med e-post, Google, Microsoft eller Vipps, og inviter kollegaer inn i samme organisasjon."
+>
+  <div class="auth-page">
+    <h1>Opprett konto</h1>
+    <p class="lead">Kontoen din hører til en organisasjon. Kollegaer inviteres inn i den samme.</p>
+
+    <div class="card">
+      <p class="status" id="status" hidden></p>
+
+      <ProviderButtons labelTemplate="Registrer med %s" />
+
+      <form id="register-form" novalidate>
+        <label class="field">
+          <span>Navn</span>
+          <input type="text" name="full_name" autocomplete="name" required />
+        </label>
+        <label class="field">
+          <span>E-postadresse</span>
+          <input type="email" name="email" autocomplete="username" required />
+        </label>
+        <label class="field">
+          <span>Passord</span>
+          <input type="password" name="password" autocomplete="new-password" required />
+          {/* The minimum is filled in from the API — see the script below. Until
+              it arrives the hint says nothing it might have to take back. */}
+          <span class="field-hint" id="password-hint">Lengde teller mer enn krøllete tegn.</span>
+        </label>
+        <label class="field">
+          <span>Navn på organisasjonen <span class="muted">(valgfritt)</span></span>
+          <input type="text" name="organization_name" autocomplete="organization" />
+          <span class="field-hint">Du kan endre dette senere.</span>
+        </label>
+        <button class="btn btn-primary btn-block" type="submit" id="submit">Opprett konto</button>
+      </form>
+    </div>
+
+    {/* Samtykket må stå der kontoen faktisk opprettes — også for
+        leverandørinnlogging, som er knappene over skjemaet. */}
+    <p class="consent">
+      Ved å opprette en konto godtar du <a href="/vilkar/">bruksvilkårene</a> og
+      <a href="/personvern/">personvernerklæringen</a>.
+    </p>
+
+    <p class="switch">Har du konto allerede? <a href="/logg-inn/">Logg inn</a>.</p>
+  </div>
+</BaseLayout>
+
+<style>
+  .auth-page {
+    max-width: 26rem;
+    margin: 0 auto;
+  }
+  .consent {
+    text-align: center;
+    margin-top: 1rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .consent a {
+    color: var(--muted);
+  }
+  .switch {
+    text-align: center;
+    margin-top: 1.25rem;
+    font-size: 0.95rem;
+  }
+</style>
+
+<script>
+  import { ApiError, getProviders, registerAccount } from '../lib/api';
+  import { renderProviderButtons } from '../lib/providers';
+  import { el, setStatus } from '../lib/dom';
+  import { rememberAuth } from '../lib/session';
+
+  const status = el<HTMLParagraphElement>('#status');
+  const form = el<HTMLFormElement>('#register-form');
+  const submit = el<HTMLButtonElement>('#submit');
+  const passwordField = el<HTMLInputElement>('input[name="password"]');
+
+  // Signing up and signing in are the same call for every provider; the
+  // backend creates the account the first time it sees a subject.
+  void renderProviderButtons('/');
+
+  // The minimum length comes from the backend that enforces it, so the hint
+  // cannot end up promising a rule the server does not apply. Both requests hit
+  // the same cached call in lib/api.
+  void getProviders()
+    .then(({ password_min_length: minimum }) => {
+      el('#password-hint').textContent =
+        `Minst ${minimum} tegn. Lengde teller mer enn krøllete tegn.`;
+      // Advisory only: the form is novalidate, and the server has the last word.
+      passwordField.minLength = minimum;
+    })
+    .catch(() => {
+      // Not worth an error message: the rule is stated on rejection anyway.
+    });
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    const organizationName = String(data.get('organization_name') ?? '').trim();
+
+    submit.disabled = true;
+    setStatus(status, '');
+    void registerAccount({
+      email: String(data.get('email') ?? '').trim(),
+      password: String(data.get('password') ?? ''),
+      full_name: String(data.get('full_name') ?? '').trim(),
+      organization_name: organizationName === '' ? null : organizationName,
+    })
+      .then(() => {
+        rememberAuth('inn');
+        window.location.href = '/';
+      })
+      .catch((error: unknown) => {
+        setStatus(
+          status,
+          error instanceof ApiError ? error.message : 'Vi fikk ikke opprettet kontoen.',
+        );
+        submit.disabled = false;
+      });
+  });
+</script>

@@ -1,0 +1,309 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+
+/**
+ * There is one number on this page, and it is 0. Myntos finnes fordi regnskap
+ * for et lite norsk selskap ikke burde ha en prisliste — så siden har ingen
+ * prisliste, ingen nivåer å sammenligne og ingenting som blir dyrere senere.
+ * Backenden gir hver organisasjon `plan = "free"`, og ingenting leser feltet.
+ */
+const questions = [
+  {
+    q: 'Hva koster det?',
+    a: '0 kr. Ikke som kampanje, ikke som prøveperiode og ikke opp til et visst antall bilag. Det finnes ingen betalingsløsning i Myntos, og vi tar ikke imot kortopplysninger.',
+  },
+  {
+    q: 'Kommer det en pris senere?',
+    a: 'Nei. Et regnskapsprogram som blir dyrt når du først har flyttet inn, er nettopp det Myntos er laget som et svar på. Skulle vi noen gang bryte det løftet, kan du ta med deg hele regnskapet ut samme dag — SAF-T-eksport og PDF-arkiv er lovkrav, ikke en funksjon vi kan låse.',
+  },
+  {
+    q: 'Blir noe av det jeg bruker plutselig en betalt funksjon?',
+    a: 'Nei. Det er ingen delelinje mellom en gratis og en betalt Myntos: alt som virker, virker for alle. Det som ikke er ferdig, står som «under arbeid» på funksjonssiden — ikke bak en betalingsmur.',
+  },
+  {
+    q: 'Hva med innlevering til Altinn og Skatteetaten?',
+    a: 'Også 0 kr. Innsending er hele poenget med et norsk regnskapsprogram, og et lovpålagt skjema er ikke noe å ta ekstra betalt for.',
+  },
+  {
+    q: 'Kan jeg kjøre Myntos selv?',
+    a: 'Ja. Kildekoden er offentlig, og du kan drifte den på egen infrastruktur uten å betale oss noe — og uten å ha noen avtale med oss i det hele tatt.',
+  },
+  {
+    q: 'Hvis det er gratis, er det jeg som er produktet?',
+    a: 'Nei. Vi selger ikke dataene dine, vi deler dem ikke med noen, og vi bruker dem ikke til annonser, videresalg, «bransjeinnsikt» eller modelltrening. Regnskapet ditt er ditt — de eneste andre som ser noe, er leverandørene som lagrer dataene på våre vegne i EØS, og de har ingen rett til å bruke dem til noe eget.',
+  },
+  {
+    q: 'Hva er haken?',
+    a: 'At Myntos er tidlig. Programmet er i pre-alfa, en del mangler, og du bør ikke flytte hele regnskapet hit uten å lese hva som faktisk virker. Prisen er ikke haken.',
+  },
+];
+---
+
+<BaseLayout
+  title="Priser — Myntos"
+  description="Myntos koster 0 kr. Ingen prisliste, ingen betalingsopplysninger, ingen bindingstid — og vi selger eller deler aldri dataene dine."
+  width="wide"
+>
+  <div class="head">
+    <p class="pill">Priser</p>
+    <h1>0 kr. Alltid.</h1>
+    <p class="lead">
+      Dette er ikke en prøveperiode eller et startnivå du vokser ut av. Myntos finnes fordi
+      regnskapet til et lite norsk selskap ikke burde ha en prisliste — så siden du leser nå er
+      hele prislisten.
+    </p>
+  </div>
+
+  <div class="hero-price">
+    <p class="price">
+      <span class="amount">0</span> <span class="unit">kr / md</span>
+    </p>
+    <p class="hero-price-note">
+      Ingen betalingsopplysninger. Ingen bindingstid. Ingenting å si opp.<br />
+      Og ingen som kjøper dataene dine på veien.
+    </p>
+    <a class="btn btn-primary btn-large" href="/registrer/">Kom i gang</a>
+  </div>
+
+  <div class="tiers">
+    <article class="card tier tier-current">
+      <div class="tier-head">
+        <h2 class="tier-name">Myntos hos oss</h2>
+        <span class="pill">Virker i dag</span>
+      </div>
+      <p class="card-hint">Alt som finnes, for alle. Ingen funksjon er reservert noen andre.</p>
+      <ul class="ticks">
+        <li>Ubegrenset føring av inn- og utbetalinger</li>
+        <li>Bilagsarkiv med PDF</li>
+        <li>Merverdiavgift med datostyrte satser</li>
+        <li>Kunder og leverandører</li>
+        <li>Flere brukere med roller</li>
+        <li>Flere selskaper i samme organisasjon</li>
+        <li>Eksport av dine egne data</li>
+      </ul>
+      <p class="tier-note">Database og dokumentlager i EØS.</p>
+    </article>
+
+    <article class="card tier">
+      <div class="tier-head">
+        <h2 class="tier-name">Selvdrift</h2>
+        <span class="pill">Virker i dag</span>
+      </div>
+      <p class="card-hint">Vil du heller kjøre det selv, koster det oss ingenting og deg ingenting.</p>
+      <ul class="ticks">
+        <li>Hele kildekoden er offentlig</li>
+        <li>Din database, ditt dokumentlager</li>
+        <li>Ingen avtale med oss i det hele tatt</li>
+      </ul>
+      <a class="btn btn-ghost btn-block" href="/funksjoner/#apen-kildekode">Les mer</a>
+      <p class="tier-note">Krever at du drifter det selv.</p>
+    </article>
+
+    <article class="card tier">
+      <div class="tier-head">
+        <h2 class="tier-name">Innlevering til staten</h2>
+        <span class="pill pill-soft">Under arbeid</span>
+      </div>
+      <p class="card-hint">
+        Innsending er hele poenget med et norsk regnskapsprogram. Når det er på plass, ligger det
+        på samme pris som resten.
+      </p>
+      <ul class="ticks">
+        <li>MVA-melding via Altinn</li>
+        <li>Skattemelding med næringsspesifikasjon</li>
+        <li>SAF-T-eksport på Skatteetatens format</li>
+      </ul>
+      <a class="btn btn-ghost btn-block" href="/funksjoner/">Se hva som virker</a>
+      <p class="tier-note">Krever innlogging med ID-porten.</p>
+    </article>
+  </div>
+
+  <section class="card promise">
+    <div class="promise-head">
+      <h2 class="promise-title">0 kr — og du er ikke varen</h2>
+      <p class="card-hint">
+        Når noe er gratis, er spørsmålet med rette hva som betales med i stedet. Her er svaret:
+        ingenting. Regnskapet ditt er ikke en inntektskilde for oss, og det er det aldri meningen
+        at det skal bli.
+      </p>
+    </div>
+    <ul class="ticks promise-list">
+      <li><strong>Vi selger aldri dataene dine.</strong> Ikke til noen, ikke i noen form, ikke til noen pris.</li>
+      <li>
+        <strong>Vi deler dem ikke videre</strong> — heller ikke anonymisert, aggregert eller som
+        «innsikt om bransjen». Det er de vanlige smutthullene, og vi bruker dem ikke.
+      </li>
+      <li>
+        <strong>Ingen annonser og ingen sporing.</strong> Sidene her laster ingen
+        analyseverktøy, ingen annonsenettverk og ingen tredjepartsskript.
+      </li>
+      <li>
+        <strong>Tallene dine trener ingen modeller</strong> og bygger ingen produkter — verken
+        våre eller andres.
+      </li>
+      <li>
+        <strong>Vi selger ikke oppmerksomheten din videre.</strong> E-postadressen din brukes til
+        å drive kontoen din, ikke til å bli en liste noen andre får.
+      </li>
+      <li>
+        Det eneste vi bruker andre til, er å drifte tjenesten: database og dokumentlager i EØS.
+        De lagrer dataene på våre vegne og har ingen rett til å bruke dem til noe eget.
+      </li>
+      <li>
+        Kjører du Myntos selv, forlater tallene aldri din egen maskin — da har vi dem ikke i det
+        hele tatt.
+      </li>
+    </ul>
+  </section>
+
+  <h2>Vanlige spørsmål</h2>
+  <div class="faq">
+    {
+      questions.map((item) => (
+        <div class="card faq-item">
+          <h3 class="card-title">{item.q}</h3>
+          <p class="card-hint">{item.a}</p>
+        </div>
+      ))
+    }
+  </div>
+</BaseLayout>
+
+<style>
+  .head {
+    max-width: 44rem;
+    padding: 2rem 0 1.5rem;
+  }
+  .hero-price {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 2.25rem 1.5rem 2.5rem;
+    margin-bottom: 2.5rem;
+    border-radius: var(--radius);
+    border: 1px solid var(--accent-line);
+    background: linear-gradient(160deg, var(--accent-soft), var(--surface) 70%);
+    text-align: center;
+  }
+  .hero-price .btn {
+    margin-top: 0.6rem;
+  }
+  .hero-price-note {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.92rem;
+  }
+  .tiers {
+    display: grid;
+    gap: 1.25rem;
+    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+    align-items: start;
+  }
+  .tier {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+  .tier-current {
+    border-color: var(--accent-line);
+  }
+  .tier-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+  .tier-name {
+    margin: 0;
+    font-size: 1.1rem;
+  }
+  .tier > .card-hint {
+    margin-top: 0.8rem;
+  }
+  .price {
+    margin: 0;
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+  .amount {
+    font-size: clamp(4rem, 14vw, 6.5rem);
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    color: var(--fg-strong);
+    line-height: 1;
+  }
+  .unit {
+    color: var(--muted);
+    font-size: 1.05rem;
+    font-weight: 600;
+  }
+  .pill-soft {
+    border-color: var(--border-strong);
+    background: transparent;
+    color: var(--muted);
+  }
+  .ticks {
+    list-style: none;
+    padding: 0;
+    margin: 1.2rem 0 1.5rem;
+    display: grid;
+    gap: 0.5rem;
+    flex: 1;
+  }
+  .ticks li {
+    position: relative;
+    padding-left: 1.5rem;
+    font-size: 0.93rem;
+  }
+  .ticks li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.5em;
+    width: 0.66rem;
+    height: 0.36rem;
+    border-left: 2px solid var(--accent);
+    border-bottom: 2px solid var(--accent);
+    transform: rotate(-45deg);
+  }
+  .tier-note {
+    margin: 0.75rem 0 0;
+    font-size: 0.82rem;
+    color: var(--faint);
+    text-align: center;
+  }
+  .promise {
+    margin: 2.5rem 0 0;
+    border-color: var(--accent-line);
+    background: linear-gradient(160deg, var(--accent-soft), var(--surface) 60%);
+  }
+  .promise-head {
+    max-width: 42rem;
+  }
+  .promise-title {
+    margin: 0 0 0.5rem;
+    font-size: 1.35rem;
+  }
+  .promise-list {
+    margin: 1.5rem 0 0;
+    grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
+    gap: 0.7rem 2rem;
+  }
+  .promise-list li {
+    font-size: 0.95rem;
+  }
+  .promise-list strong {
+    color: var(--fg-strong);
+  }
+  .faq {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  }
+  .faq-item .card-title {
+    font-size: 0.99rem;
+  }
+</style>

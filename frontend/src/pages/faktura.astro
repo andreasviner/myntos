@@ -1,0 +1,1466 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Faktura — Myntos"
+  description="Skriv salgsdokument som følger bokføringsforskriften, og send det som e-faktura."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow" id="company-name">Faktura</p>
+      <h1>Salgsdokument</h1>
+    </div>
+    <a class="btn btn-ghost" href="/parter/">Kunder og leverandører</a>
+  </header>
+
+  <p class="lead">
+    Fakturaen kontrolleres mot bokføringsforskriften § 5-1 før den utstedes — og
+    <em>først</em> da får den et nummer. Et utkast kan endres og slettes fritt; en utstedt
+    faktura kan bare rettes med kreditnota, slik § 5-2-7 krever.
+  </p>
+
+  <p class="status" id="page-status" hidden></p>
+  <div class="empty" id="loading">Henter …</div>
+
+  <div id="content" hidden>
+    <div class="card readonly-note" id="readonly" hidden>
+      <h2 class="card-title">Du har lesetilgang</h2>
+      <p class="card-hint">Rollen din lar deg se fakturaene, men ikke skrive eller utstede.</p>
+    </div>
+
+    <div class="split">
+      <div>
+        <div class="card form-card" id="form-card">
+          <h2 class="card-title" id="form-title">Ny faktura</h2>
+          <p class="status" id="form-status" hidden></p>
+
+          <form id="faktura-form">
+            <fieldset class="group">
+              <legend>Kjøper</legend>
+              <label class="field">
+                <span>Kunde</span>
+                <select name="party_id" id="party-select">
+                  <option value="">Skriv inn kjøperen selv</option>
+                </select>
+              </label>
+              <p class="field-hint buyer-note" id="party-note" hidden></p>
+              <div id="manual-buyer">
+                <!--
+                  The organisasjonsnummer comes first because it fills in the
+                  four fields below it. § 5-1-2 wants the buyer identified by
+                  address *or* number, and the register supplies both from one.
+                -->
+                <label class="field">
+                  <span>Organisasjonsnummer</span>
+                  <input
+                    type="text"
+                    name="buyer_orgnr"
+                    inputmode="numeric"
+                    maxlength="11"
+                    autocomplete="off"
+                  />
+                  <span class="field-hint" id="orgnr-hint"></span>
+                </label>
+                <label class="field">
+                  <span>Navn</span>
+                  <input type="text" name="buyer_name" maxlength="255" />
+                </label>
+                <label class="field">
+                  <span>Adresse</span>
+                  <input type="text" name="buyer_address_line" maxlength="255" />
+                </label>
+                <div class="field-row">
+                  <label class="field">
+                    <span>Postnummer</span>
+                    <input type="text" name="buyer_postal_code" maxlength="16" />
+                  </label>
+                  <label class="field">
+                    <span>Poststed</span>
+                    <input type="text" name="buyer_city" maxlength="128" />
+                  </label>
+                </div>
+                <label class="check">
+                  <input type="checkbox" name="save_party" />
+                  <span>Lagre som kunde, så står den i listen neste gang</span>
+                </label>
+              </div>
+              <label class="check">
+                <input type="checkbox" name="buyer_is_business" checked />
+                <span>Kjøperen er bokføringspliktig (næringsdrivende)</span>
+              </label>
+            </fieldset>
+
+            <fieldset class="group">
+              <legend>Levering og betaling</legend>
+              <div class="field-row">
+                <label class="field">
+                  <span>Leveringsdato</span>
+                  <input type="date" name="delivery_date" />
+                  <span class="field-hint">§ 5-1-1 nr. 4</span>
+                </label>
+                <label class="field">
+                  <span>Forfallsdato</span>
+                  <input type="date" name="due_date" />
+                </label>
+              </div>
+              <label class="field">
+                <span>Leveringssted</span>
+                <input type="text" name="delivery_place" maxlength="255" placeholder="Oslo" />
+                <span class="field-hint">Stedet ytelsen ble levert. Også § 5-1-1 nr. 4.</span>
+              </label>
+              <label class="field">
+                <span>Deres referanse</span>
+                <input type="text" name="buyer_reference" maxlength="128" />
+                <span class="field-hint">Kreves av offentlige kjøpere.</span>
+              </label>
+
+              <!--
+                The KID carries the invoice number, and a draft has none — so
+                what stands here before issue is a preview, and the field is
+                read-only until someone says otherwise. See
+                backend/src/myntos/domain/faktura/kid.py.
+              -->
+              <label class="check">
+                <input type="checkbox" name="payment_reference_auto" checked />
+                <span>Bruk KID på fakturaen</span>
+              </label>
+              <div class="field kid" id="kid-box">
+                <span>KID</span>
+                <div class="kid-row">
+                  <input
+                    type="text"
+                    name="payment_reference"
+                    inputmode="numeric"
+                    maxlength="32"
+                    readonly
+                  />
+                  <button type="button" class="btn-link" id="kid-edit">Endre selv</button>
+                </div>
+                <span class="field-hint" id="kid-hint"></span>
+              </div>
+              <label class="check">
+                <input type="checkbox" name="reverse_charge" />
+                <span>Omvendt avgiftsplikt (kjøper beregner mva)</span>
+              </label>
+              <label class="field">
+                <span>Fritekst på fakturaen</span>
+                <input type="text" name="note" maxlength="1000" />
+              </label>
+            </fieldset>
+
+            <fieldset class="group">
+              <legend>Linjer</legend>
+              <p class="card-hint">
+                Hver linje må beskrive ytelsens art og omfang — § 5-1-1 nr. 3.
+              </p>
+
+              <!--
+                Only rendered when the deployment has a model configured. A
+                button that always fails is worse than no button.
+              -->
+              <div class="assist" id="ki-card" hidden>
+                <label class="field">
+                  <span>Beskriv salget, så setter vi opp linjene</span>
+                  <textarea
+                    id="ki-text"
+                    rows="3"
+                    placeholder="10 timer rådgivning i mars til 1 500 kroner timen, og to kursmapper à 450"
+                  ></textarea>
+                </label>
+                <div class="assist-actions">
+                  <button type="button" class="btn btn-ghost btn-small" id="ki-draft">
+                    Foreslå linjer
+                  </button>
+                  <a class="btn-link" href="/ki/">Hva ser modellen?</a>
+                </div>
+                <p class="status" id="ki-status" hidden></p>
+              </div>
+
+              <div id="lines"></div>
+              <div class="line-actions">
+                <button type="button" class="btn btn-ghost btn-small" id="add-line">
+                  Legg til linje
+                </button>
+                <button type="button" class="btn btn-ghost btn-small" id="copy-previous" hidden
+                ></button>
+              </div>
+            </fieldset>
+
+            <div class="totals" id="form-totals" hidden>
+              <div><span>Sum eks. mva</span><strong id="total-net">—</strong></div>
+              <div><span>Merverdiavgift</span><strong id="total-vat">—</strong></div>
+              <div class="grand"><span>Å betale</span><strong id="total-gross">—</strong></div>
+            </div>
+
+            <div class="form-actions">
+              <button class="btn btn-ghost" type="submit" id="save-draft">Lagre utkast</button>
+              <button class="btn btn-primary" type="button" id="issue" disabled>Utsted</button>
+            </div>
+            <p class="card-hint" id="issue-hint"></p>
+          </form>
+        </div>
+
+        <div class="card" id="kontroll-card" hidden>
+          <h2 class="card-title">Kontroll mot regelverket</h2>
+          <ul class="violations" id="violations"></ul>
+        </div>
+      </div>
+
+      <div>
+        <div class="card">
+          <div class="table-scroll">
+            <table class="data">
+              <thead>
+                <tr>
+                  <th>Nr.</th>
+                  <th>Dato</th>
+                  <th>Kjøper</th>
+                  <th class="num">Beløp</th>
+                  <th>Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="faktura-list"></tbody>
+            </table>
+          </div>
+          <p class="empty" id="list-empty" hidden>
+            Ingen fakturaer ennå. Den første skrives i skjemaet.
+          </p>
+        </div>
+
+        <div class="card note-card">
+          <h2 class="card-title">Om e-faktura</h2>
+          <p class="card-hint" id="efaktura-note"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--muted);
+    margin: 0 0 0.4rem;
+  }
+  .split {
+    display: grid;
+    gap: 1.5rem;
+    align-items: start;
+    grid-template-columns: minmax(20rem, 26rem) minmax(0, 1fr);
+    margin-top: 1.5rem;
+  }
+  @media (max-width: 64rem) {
+    .split {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  .group {
+    border: 0;
+    border-top: 1px solid var(--border);
+    padding: 0.75rem 0 0;
+    margin: 0 0 1rem;
+  }
+  .group:first-of-type {
+    border-top: 0;
+    padding-top: 0;
+  }
+  .group legend {
+    font-weight: 700;
+    font-size: 0.9rem;
+    padding: 0 0.4rem 0 0;
+  }
+  .check {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    margin: 0.6rem 0;
+    font-size: 0.9rem;
+  }
+  .check input {
+    margin-top: 0.2rem;
+  }
+  .buyer-note {
+    margin: -0.4rem 0 0.8rem;
+  }
+  .buyer-note[data-tone='warn'] {
+    color: var(--fg-strong);
+    border-left: 3px solid #d68910;
+    padding-left: 0.6rem;
+  }
+  .kid-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .kid-row input {
+    flex: 1;
+    min-width: 0;
+  }
+  .kid-row input[readonly] {
+    background: var(--surface-2);
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .kid-row .btn-link {
+    white-space: nowrap;
+  }
+  .assist {
+    border: 1px solid var(--accent-line);
+    background: var(--accent-soft);
+    border-radius: var(--radius-small);
+    padding: 0.8rem;
+    margin-bottom: 1rem;
+  }
+  .assist textarea {
+    resize: vertical;
+    font: inherit;
+  }
+  .assist-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    flex-wrap: wrap;
+  }
+  .assist .status {
+    margin-bottom: 0;
+  }
+  .line-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  /*
+    Everything below is built by the page's own script, and Astro scopes a
+    <style> block by stamping `data-astro-cid-*` onto the elements *in the
+    template* — which a node from `document.createElement` never gets. A plain
+    `.line { … }` here therefore compiles to a selector nothing on the page
+    matches, and the rule is silently dead.
+    So each rule is anchored on an element that is in the markup and reaches the
+    generated children with `:global()`. Same pattern as ProviderButtons.astro.
+  */
+  #lines :global(.line) {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    padding: 0.7rem;
+    margin-bottom: 0.7rem;
+  }
+  #lines :global(.line[data-source='ki']) {
+    border-left: 3px solid var(--accent-line);
+  }
+  #lines :global(.line-source) {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 700;
+    color: var(--muted);
+    margin-left: auto;
+    margin-right: 0.6rem;
+  }
+  #lines :global(.line-head) {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+  }
+  #lines :global(.line-no) {
+    font-weight: 700;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  #lines :global(.line-grid) {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+  #lines :global(.line-amount) {
+    text-align: right;
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-top: 0.4rem;
+  }
+  .totals {
+    border-top: 1px solid var(--border);
+    padding-top: 0.8rem;
+    margin-bottom: 1rem;
+  }
+  .totals div {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.2rem 0;
+    font-size: 0.92rem;
+  }
+  .totals .grand {
+    border-top: 1px solid var(--border);
+    margin-top: 0.4rem;
+    padding-top: 0.5rem;
+    font-size: 1.05rem;
+  }
+  .form-actions {
+    display: flex;
+    gap: 0.6rem;
+  }
+  .form-actions .btn {
+    flex: 1;
+  }
+  .violations {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  /* Findings, table rows and their cells are all generated — see the note above. */
+  #violations :global(li) {
+    border-left: 3px solid var(--border-strong);
+    padding: 0.4rem 0 0.4rem 0.7rem;
+    margin-bottom: 0.6rem;
+    font-size: 0.9rem;
+  }
+  #violations :global(li[data-severity='blokkerende']) {
+    border-left-color: #c0392b;
+  }
+  #violations :global(li[data-severity='advarsel']) {
+    border-left-color: #d68910;
+  }
+  #violations :global(.rule) {
+    display: block;
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin-top: 0.15rem;
+  }
+  .num {
+    text-align: right;
+  }
+  #faktura-list :global(.num) {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  #faktura-list :global(.row-actions) {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: flex-end;
+  }
+  #faktura-list :global(tr[data-credited='true'] td) {
+    opacity: 0.55;
+  }
+  .note-card {
+    margin-top: 1.5rem;
+  }
+  .btn-small {
+    padding: 0.35rem 0.7rem;
+    font-size: 0.85rem;
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    checkFaktura,
+    createFaktura,
+    createParty,
+    creditFaktura,
+    deleteFaktura,
+    draftFakturaLines,
+    fakturaEhfUrl,
+    fakturaPdfUrl,
+    getFakturaCatalogue,
+    getNextFakturaNumber,
+    issueFaktura,
+    listCompanies,
+    listFaktura,
+    listParties,
+    lookupUnit,
+    updateFaktura,
+    type Company,
+    type Faktura,
+    type FakturaCatalogue,
+    type LinePayload,
+    type Party,
+    type RegisteredUnit,
+    type Violation,
+  } from '../lib/api';
+  import { el, setStatus, show } from '../lib/dom';
+  import { isoDate, kroner, todayIso } from '../lib/format';
+  import {
+    can,
+    loadSession,
+    redirectToLogin,
+    rememberCompany,
+    rememberedCompany,
+  } from '../lib/session';
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const formStatus = el<HTMLParagraphElement>('#form-status');
+  const form = el<HTMLFormElement>('#faktura-form');
+  const linesBox = el<HTMLDivElement>('#lines');
+  const listBody = el<HTMLTableSectionElement>('#faktura-list');
+  const partySelect = el<HTMLSelectElement>('#party-select');
+  const issueButton = el<HTMLButtonElement>('#issue');
+  const saveButton = el<HTMLButtonElement>('#save-draft');
+  const partyNote = el<HTMLParagraphElement>('#party-note');
+  const copyButton = el<HTMLButtonElement>('#copy-previous');
+  const orgnrHint = el<HTMLSpanElement>('#orgnr-hint');
+
+  const ORGNR_HINT = 'Skriv nummeret, så henter vi navn og adresse fra Enhetsregisteret.';
+
+  let company: Company;
+  let catalogue: FakturaCatalogue;
+  let parties: Party[] = [];
+  let mayWrite = false;
+  /** The draft being edited, or null when the form is writing a new one. */
+  let editing: Faktura | null = null;
+  /**
+   * The invoice book as last listed. Kept rather than re-fetched because it is
+   * also what "the previous invoice to this customer" is looked up in.
+   */
+  let documents: Faktura[] = [];
+  /** The last unit Enhetsregisteret answered with, so we know what we filled in. */
+  let registered: RegisteredUnit | null = null;
+  /**
+   * The KID the next issued invoice would carry, for the read-only preview.
+   * Empty when the backend could not say — the field then explains itself in
+   * words instead, which is better than showing a number that is not one.
+   */
+  let nextKid = '';
+  /** The customer number inside it, so the preview can be explained rather than read. */
+  let nextKidCustomer: string | null = null;
+  /** True once the user has taken the KID over by hand. */
+  let kidManual = false;
+
+  // --- The line editor ---------------------------------------------------------
+  //
+  // Lines are DOM rows read back on submit rather than a mirrored array. The form
+  // is the state; a second copy would only be a way for the two to disagree.
+
+  function addLine(preset?: LinePayload, source?: 'ki'): void {
+    const index = linesBox.children.length + 1;
+    const row = document.createElement('div');
+    row.className = 'line';
+    row.dataset.line = String(index);
+    if (source !== undefined) row.dataset.source = source;
+
+    const head = document.createElement('div');
+    head.className = 'line-head';
+    const label = document.createElement('span');
+    label.className = 'line-no';
+    label.textContent = `Linje ${index}`;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn-link';
+    remove.textContent = 'Fjern';
+    remove.addEventListener('click', () => {
+      row.remove();
+      renumber();
+      recalculate();
+    });
+    head.append(label);
+    if (source === 'ki') {
+      // Said out loud, as /ki promises: a proposed line and a typed one must not
+      // look the same to the person about to issue the document.
+      const badge = document.createElement('span');
+      badge.className = 'line-source';
+      badge.textContent = 'Foreslått av KI';
+      head.append(badge);
+    }
+    head.append(remove);
+
+    const description = document.createElement('input');
+    description.type = 'text';
+    description.name = 'description';
+    description.maxLength = 500;
+    description.placeholder = 'Hva er solgt?';
+    description.required = true;
+    description.value = preset?.description ?? '';
+
+    const grid = document.createElement('div');
+    grid.className = 'line-grid';
+
+    const quantity = numberInput('quantity', preset?.quantity ?? '1', 'Antall');
+    const unit = document.createElement('select');
+    unit.name = 'unit_code';
+    for (const entry of catalogue.units) {
+      const option = document.createElement('option');
+      option.value = entry.code;
+      option.textContent = entry.label;
+      unit.append(option);
+    }
+    unit.value = preset?.unit_code ?? catalogue.default_unit;
+
+    const price = numberInput('unit_price', preset?.unit_price ?? '', 'Pris');
+
+    const tax = document.createElement('select');
+    tax.name = 'tax_code';
+    for (const option of catalogue.tax_options) {
+      const node = document.createElement('option');
+      node.value = option.tax_code;
+      node.textContent = option.label;
+      node.title = option.note;
+      tax.append(node);
+    }
+    tax.value = preset?.tax_code ?? catalogue.tax_options[0]?.tax_code ?? '3';
+
+    const discount = numberInput('discount_percent', preset?.discount_percent ?? '0', 'Rabatt %');
+
+    grid.append(quantity, unit, price, tax, discount);
+
+    const amount = document.createElement('p');
+    amount.className = 'line-amount';
+    amount.dataset.lineAmount = '';
+
+    row.append(head, description, grid, amount);
+    for (const input of [quantity, price, discount]) {
+      input.addEventListener('input', recalculate);
+    }
+    tax.addEventListener('change', recalculate);
+    linesBox.append(row);
+    recalculate();
+  }
+
+  function numberInput(name: string, value: string, placeholder: string): HTMLInputElement {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.inputMode = 'decimal';
+    input.name = name;
+    input.value = value;
+    input.placeholder = placeholder;
+    input.setAttribute('aria-label', placeholder);
+    return input;
+  }
+
+  function renumber(): void {
+    [...linesBox.children].forEach((row, index) => {
+      const label = row.querySelector('.line-no');
+      if (label !== null) label.textContent = `Linje ${index + 1}`;
+    });
+  }
+
+  function readLines(): LinePayload[] {
+    return [...linesBox.querySelectorAll<HTMLDivElement>('.line')].map((row) => ({
+      description: value(row, 'description'),
+      quantity: value(row, 'quantity') || '1',
+      unit_price: value(row, 'unit_price') || '0',
+      tax_code: value(row, 'tax_code'),
+      unit_code: value(row, 'unit_code'),
+      discount_percent: value(row, 'discount_percent') || '0',
+    }));
+  }
+
+  function value(root: ParentNode, name: string): string {
+    const node = root.querySelector<HTMLInputElement | HTMLSelectElement>(`[name="${name}"]`);
+    return (node?.value ?? '').trim();
+  }
+
+  /**
+   * A local preview of the line and document totals.
+   *
+   * Deliberately a *preview*: the backend computes the real figures, VAT per
+   * § 5-1-5 group rather than per line, and those are what get posted and
+   * printed. This is only so the person typing can see roughly where they are
+   * before saving — which is why nothing here is ever sent anywhere.
+   */
+  function recalculate(): void {
+    let net = 0;
+    let vat = 0;
+    for (const row of linesBox.querySelectorAll<HTMLDivElement>('.line')) {
+      const quantity = Number(value(row, 'quantity').replace(',', '.')) || 0;
+      const price = Number(value(row, 'unit_price').replace(',', '.')) || 0;
+      const discount = Number(value(row, 'discount_percent').replace(',', '.')) || 0;
+      const rate = rateFor(value(row, 'tax_code'));
+      const lineNet = quantity * price * (1 - discount / 100);
+      net += lineNet;
+      vat += lineNet * rate;
+      const amount = row.querySelector<HTMLParagraphElement>('[data-line-amount]');
+      if (amount !== null) amount.textContent = kroner(lineNet.toFixed(2));
+    }
+    el('#total-net').textContent = kroner(net.toFixed(2));
+    el('#total-vat').textContent = kroner(vat.toFixed(2));
+    el('#total-gross').textContent = kroner((net + vat).toFixed(2));
+    show(el('#form-totals'), linesBox.children.length > 0);
+  }
+
+  function rateFor(taxCode: string): number {
+    if (form.querySelector<HTMLInputElement>('[name="reverse_charge"]')?.checked === true) return 0;
+    const option = catalogue.tax_options.find((entry) => entry.tax_code === taxCode);
+    return option === undefined ? 0 : Number(option.rate_percent) / 100;
+  }
+
+  // --- The form ------------------------------------------------------------------
+
+  function blank(name: string): string | null {
+    const text = value(form, name);
+    return text === '' ? null : text;
+  }
+
+  function payload() {
+    const partyId = partySelect.value === '' ? null : Number(partySelect.value);
+    return {
+      party_id: partyId,
+      // Only sent when no registered customer was chosen: the backend takes the
+      // party's own details in that case, and sending both would invite them to
+      // disagree.
+      buyer_name: partyId === null ? blank('buyer_name') : null,
+      buyer_orgnr: partyId === null ? blank('buyer_orgnr') : null,
+      buyer_address_line: partyId === null ? blank('buyer_address_line') : null,
+      buyer_postal_code: partyId === null ? blank('buyer_postal_code') : null,
+      buyer_city: partyId === null ? blank('buyer_city') : null,
+      buyer_is_business:
+        form.querySelector<HTMLInputElement>('[name="buyer_is_business"]')?.checked ?? true,
+      delivery_date: blank('delivery_date'),
+      delivery_place: blank('delivery_place'),
+      due_date: blank('due_date'),
+      buyer_reference: blank('buyer_reference'),
+      ...kidPayload(),
+      note: blank('note'),
+      reverse_charge:
+        form.querySelector<HTMLInputElement>('[name="reverse_charge"]')?.checked ?? false,
+      lines: readLines(),
+    };
+  }
+
+  function resetForm(): void {
+    editing = null;
+    form.reset();
+    linesBox.replaceChildren();
+    registered = null;
+    el('#form-title').textContent = 'Ny faktura';
+    el<HTMLTextAreaElement>('#ki-text').value = '';
+    setStatus(el('#ki-status'), '');
+    orgnrHint.textContent = ORGNR_HINT;
+    setDefaults();
+    addLine();
+    updateBuyerContext();
+    kidManual = false;
+    renderKid();
+    show(el('#kontroll-card'), false);
+    issueButton.disabled = true;
+    el('#issue-hint').textContent = 'Lagre utkastet først. Nummeret settes når du utsteder.';
+  }
+
+  /**
+   * The values that are the same on almost every invoice.
+   *
+   * Delivery place is one of them, and it is a *blocking* § 5-1-1 nr. 4
+   * requirement — an empty field that refuses the issue is a worse default than
+   * the company's own town, which is where a small business delivers from.
+   */
+  function setDefaults(): void {
+    const delivery = form.querySelector<HTMLInputElement>('[name="delivery_date"]');
+    const due = form.querySelector<HTMLInputElement>('[name="due_date"]');
+    if (delivery !== null) delivery.value = todayIso();
+    if (due !== null) {
+      const date = new Date();
+      date.setDate(date.getDate() + catalogue.default_payment_term_days);
+      due.value = date.toISOString().slice(0, 10);
+    }
+    if (company.city !== null && company.city !== '') setField('delivery_place', company.city);
+  }
+
+  // --- KID -----------------------------------------------------------------------
+  //
+  // Three states out of two controls, because that is what there is to say:
+  //
+  //   auto      — Myntos sets it at issue, from the invoice number
+  //   manual    — the seller's own number, checked but not overridden
+  //   none      — no KID on this invoice at all
+  //
+  // Automatic is the default because a KID that does not carry the invoice
+  // number cannot reconcile a payment to an invoice, and working that out by
+  // hand for every invoice is not a thing anyone wants to do.
+
+  const kidWanted = (): boolean =>
+    form.querySelector<HTMLInputElement>('[name="payment_reference_auto"]')?.checked ?? true;
+
+  /** Draw the KID field for whichever of the three states is current. */
+  function renderKid(): void {
+    const field = form.querySelector<HTMLInputElement>('[name="payment_reference"]');
+    const edit = el<HTMLButtonElement>('#kid-edit');
+    const hint = el('#kid-hint');
+    if (field === null) return;
+
+    show(el('#kid-box'), kidWanted());
+    if (!kidWanted()) return;
+
+    field.readOnly = !kidManual;
+    edit.textContent = kidManual ? 'Bruk automatisk KID' : 'Endre selv';
+    if (kidManual) {
+      hint.textContent =
+        'Din egen KID. Kontrollsifferet kontrolleres mot mod10 og mod11 når du lagrer.';
+      return;
+    }
+    field.value = nextKid;
+    if (nextKid === '') {
+      hint.textContent =
+        'Settes automatisk når fakturaen utstedes: kundenummer, fakturanummer og kontrollsiffer.';
+      return;
+    }
+    // Spelled out rather than left to look like padding — the leading zeros are
+    // a customer number that is either theirs or absent, and which one it is
+    // matters when a payment has to be posted from the bank's OCR file.
+    hint.textContent =
+      `Settes når fakturaen utstedes. Blir ${nextKid} hvis ingen annen faktura ` +
+      'utstedes først — kundenummer, fakturanummer og kontrollsiffer.' +
+      (nextKidCustomer === null
+        ? ' De fem første sifrene er null fordi kjøperen ikke er en registrert kunde.'
+        : ` De fem første er kundenummeret ${nextKidCustomer}.`);
+  }
+
+  /** Refresh the preview. Quiet on failure: the field explains itself in words. */
+  async function refreshKidPreview(): Promise<void> {
+    try {
+      // The customer number is half the KID, so the preview is asked for the
+      // customer currently selected rather than for the company alone.
+      const upcoming = await getNextFakturaNumber(
+        company.id,
+        partySelect.value === '' ? null : Number(partySelect.value),
+      );
+      nextKid = upcoming.payment_reference;
+      nextKidCustomer = upcoming.customer_number;
+    } catch {
+      nextKid = '';
+      nextKidCustomer = null;
+    }
+    renderKid();
+  }
+
+  function kidPayload(): { payment_reference: string; payment_reference_auto: boolean } {
+    if (!kidWanted()) return { payment_reference: '', payment_reference_auto: false };
+    if (kidManual) {
+      return { payment_reference: value(form, 'payment_reference'), payment_reference_auto: false };
+    }
+    // Empty, not the preview: the number is the backend's to assign, and sending
+    // ours back would freeze a guess made before anyone else's invoice was issued.
+    return { payment_reference: '', payment_reference_auto: true };
+  }
+
+  // --- Filling the buyer in for the user -------------------------------------------
+  //
+  // Two sources, neither of them a guess: a customer already in the party
+  // register, or Enhetsregisteret answering for an organisasjonsnummer. Both are
+  // advisory — every field stays editable, and a register that is slow or
+  // unreachable costs a moment and a typed-in name, never the invoice.
+
+  const digitsOf = (text: string): string => text.replace(/\D+/g, '');
+
+  function selectedParty(): Party | null {
+    if (partySelect.value === '') return null;
+    const id = Number(partySelect.value);
+    return parties.find((party) => party.id === id) ?? null;
+  }
+
+  /** What the register says about a buyer, in one line under the number. */
+  function describe(unit: RegisteredUnit): string {
+    const parts = [unit.name, unit.organisation_form_description].filter(
+      (part): part is string => typeof part === 'string' && part !== '',
+    );
+    // Not a refusal — invoicing a bankrupt estate is legitimate and often
+    // necessary — but not something to discover after the document is issued.
+    if (unit.bankrupt) parts.push('registrert konkurs');
+    if (unit.under_liquidation) parts.push('under avvikling');
+    return parts.join(' · ');
+  }
+
+  function fillFromRegister(unit: RegisteredUnit): void {
+    const fill = (name: string, value: string | null, ours: string | null): void => {
+      if (value === null) return;
+      const node = form.querySelector<HTMLInputElement>(`[name="${name}"]`);
+      // An empty field, or one still holding what a previous lookup put there,
+      // is ours to fill. Anything else the user typed deliberately.
+      if (node !== null && (node.value.trim() === '' || node.value === ours)) node.value = value;
+    };
+    fill('buyer_name', unit.name, registered?.name ?? null);
+    fill('buyer_address_line', unit.address_line, registered?.address_line ?? null);
+    fill('buyer_postal_code', unit.postal_code, registered?.postal_code ?? null);
+    fill('buyer_city', unit.city, registered?.city ?? null);
+    // A unit in Enhetsregisteret is bokføringspliktig, and that is the answer
+    // that decides whether the e-invoice requirement applies to this document.
+    setChecked('buyer_is_business', true);
+    registered = unit;
+  }
+
+  /**
+   * Look the buyer up while the organisasjonsnummer is being typed.
+   *
+   * The number is also what an EHF invoice is addressed by — it becomes the
+   * Peppol participant identifier — so getting it from the register rather than
+   * from memory is what keeps the document deliverable from 2027.
+   */
+  function wireBuyerLookup(): void {
+    const field = form.querySelector<HTMLInputElement>('[name="buyer_orgnr"]');
+    if (field === null) return;
+    let pending: ReturnType<typeof setTimeout> | undefined;
+    // Only the newest lookup may write to the form: typing nine digits, then
+    // correcting one, leaves two requests in flight and no guaranteed order.
+    let latest = 0;
+
+    field.addEventListener('input', () => {
+      clearTimeout(pending);
+      updateCopyPrevious();
+      const orgnr = digitsOf(field.value);
+      if (orgnr.length !== 9) {
+        latest += 1;
+        orgnrHint.textContent = ORGNR_HINT;
+        return;
+      }
+      // A brief pause, so pasting a number costs one request and not nine.
+      pending = setTimeout(() => {
+        const ticket = ++latest;
+        orgnrHint.textContent = 'Slår opp i Enhetsregisteret …';
+        void lookupUnit(orgnr)
+          .then((unit) => {
+            if (ticket !== latest) return;
+            fillFromRegister(unit);
+            orgnrHint.textContent = describe(unit);
+            updateCopyPrevious();
+          })
+          .catch((error: unknown) => {
+            if (ticket !== latest) return;
+            registered = null;
+            orgnrHint.textContent =
+              error instanceof ApiError
+                ? `${error.message} Du kan skrive navn og adresse selv.`
+                : 'Vi fikk ikke slått opp nummeret. Du kan skrive navn og adresse selv.';
+          });
+      }, 250);
+    });
+  }
+
+  /**
+   * Show what the chosen customer already tells us, and what § 5-1-2 still wants.
+   *
+   * Display only. It is called after loading a stored draft as well as after a
+   * change, and a function that also *decided* things would quietly overwrite
+   * what that draft says — see the party-select listener, which is where the
+   * inference belongs because that is where the user actually chose.
+   */
+  function updateBuyerContext(): void {
+    const party = selectedParty();
+    show(el('#manual-buyer'), party === null);
+    if (party === null) {
+      show(partyNote, false);
+    } else {
+      const place = [party.postal_code, party.city].filter(Boolean).join(' ');
+      const known = [party.orgnr, party.address_line, place].filter(
+        (part): part is string => typeof part === 'string' && part !== '',
+      );
+      const identified = party.orgnr !== null || party.address_line !== null;
+      partyNote.dataset.tone = identified ? 'plain' : 'warn';
+      partyNote.textContent = identified
+        ? known.join(' · ')
+        : `${party.name} har verken organisasjonsnummer eller adresse. § 5-1-2 krever ett av ` +
+          'dem — fyll det inn under Kunder og leverandører før du utsteder.';
+      show(partyNote, true);
+    }
+    updateCopyPrevious();
+  }
+
+  /**
+   * The most recent invoice to this same buyer, if there is one.
+   *
+   * `documents` comes back newest first, so the first match is the latest. A
+   * draft counts: someone who wrote the lines once and did not issue them still
+   * wrote them.
+   */
+  function previousDocument(): Faktura | null {
+    const partyId = partySelect.value === '' ? null : Number(partySelect.value);
+    const orgnr = digitsOf(value(form, 'buyer_orgnr'));
+    if (partyId === null && orgnr.length !== 9) return null;
+    return (
+      documents.find(
+        (item) =>
+          item.id !== editing?.id &&
+          item.document_type === 'faktura' &&
+          item.lines.length > 0 &&
+          (partyId === null ? item.buyer_orgnr === orgnr : item.party_id === partyId),
+      ) ?? null
+    );
+  }
+
+  function updateCopyPrevious(): void {
+    const previous = previousDocument();
+    show(copyButton, mayWrite && previous !== null);
+    if (previous !== null) {
+      copyButton.textContent =
+        previous.document_number === null
+          ? 'Kopier linjene fra forrige utkast'
+          : `Kopier linjene fra faktura ${previous.document_number}`;
+    }
+  }
+
+  function copyPrevious(): void {
+    const previous = previousDocument();
+    if (previous === null) return;
+    linesBox.replaceChildren();
+    for (const line of previous.lines) {
+      addLine({
+        description: line.description,
+        quantity: line.quantity,
+        unit_price: line.unit_price,
+        tax_code: line.tax_code,
+        unit_code: line.unit_code,
+        discount_percent: line.discount_percent,
+      });
+    }
+    // References belong to the customer's own systems and rarely change between
+    // invoices, so they are worth carrying — but never over something typed.
+    if (blank('buyer_reference') === null && previous.buyer_reference !== null) {
+      setField('buyer_reference', previous.buyer_reference);
+    }
+    recalculate();
+    setStatus(
+      formStatus,
+      'Linjene er kopiert. Kontroller beskrivelse, antall og pris — og at leveringsdatoen ' +
+        'gjelder denne leveransen.',
+      'ok',
+    );
+  }
+
+  // --- Lines from a description -------------------------------------------------------
+
+  /** True while nothing in the line list would be lost by replacing it. */
+  function linesAreBlank(): boolean {
+    return [...linesBox.querySelectorAll<HTMLDivElement>('.line')].every(
+      (row) =>
+        value(row, 'description') === '' &&
+        Number(value(row, 'unit_price').replace(',', '.') || '0') === 0,
+    );
+  }
+
+  async function requestLines(): Promise<void> {
+    const text = el<HTMLTextAreaElement>('#ki-text').value.trim();
+    const status = el('#ki-status');
+    const button = el<HTMLButtonElement>('#ki-draft');
+    if (text === '') {
+      setStatus(status, 'Skriv noen ord om hva som ble solgt, så foreslår vi linjene.');
+      return;
+    }
+    button.disabled = true;
+    setStatus(status, 'Setter opp linjene …', 'ok');
+    try {
+      const draft = await draftFakturaLines(company.id, text);
+      const said = draft.warnings.join(' ');
+      if (draft.lines.length === 0) {
+        setStatus(status, said || 'Vi fikk ikke laget linjer av beskrivelsen.');
+        return;
+      }
+      // A form the user has already started is added to, never overwritten.
+      if (linesAreBlank()) linesBox.replaceChildren();
+      for (const line of draft.lines) {
+        addLine({ ...line, discount_percent: '0' }, 'ki');
+      }
+      recalculate();
+      setStatus(
+        status,
+        `${draft.lines.length} ${draft.lines.length === 1 ? 'linje' : 'linjer'} satt inn. ` +
+          `Kontroller beskrivelse, antall, pris og mva — det er du som utsteder fakturaen. ${said}`.trim(),
+        'ok',
+      );
+    } catch (error: unknown) {
+      setStatus(status, error instanceof ApiError ? error.message : 'Vi fikk ikke laget linjene.');
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  function loadIntoForm(document_: Faktura): void {
+    editing = document_;
+    registered = null;
+    orgnrHint.textContent = ORGNR_HINT;
+    el('#form-title').textContent = 'Endre utkast';
+    partySelect.value = document_.party_id === null ? '' : String(document_.party_id);
+    setField('buyer_name', document_.buyer_name);
+    setField('buyer_orgnr', document_.buyer_orgnr ?? '');
+    setField('buyer_address_line', document_.buyer_address_line ?? '');
+    setField('buyer_postal_code', document_.buyer_postal_code ?? '');
+    setField('buyer_city', document_.buyer_city ?? '');
+    setField('delivery_date', document_.delivery_date ?? '');
+    setField('delivery_place', document_.delivery_place ?? '');
+    setField('due_date', document_.due_date ?? '');
+    setField('buyer_reference', document_.buyer_reference ?? '');
+    setField('note', document_.note ?? '');
+    // A draft says which of the three KID states it is in: automatic, a number
+    // the seller typed, or none at all.
+    kidManual = !document_.payment_reference_auto && document_.payment_reference !== null;
+    setChecked('payment_reference_auto', document_.payment_reference_auto || kidManual);
+    setField('payment_reference', document_.payment_reference ?? '');
+    renderKid();
+    setChecked('buyer_is_business', document_.buyer_is_business);
+    setChecked('reverse_charge', document_.reverse_charge);
+    // Belongs to the buyer that was being typed, not to the draft being opened.
+    setChecked('save_party', false);
+
+    linesBox.replaceChildren();
+    for (const line of document_.lines) {
+      addLine({
+        description: line.description,
+        quantity: line.quantity,
+        unit_price: line.unit_price,
+        tax_code: line.tax_code,
+        unit_code: line.unit_code,
+        discount_percent: line.discount_percent,
+      });
+    }
+    if (document_.lines.length === 0) addLine();
+    updateBuyerContext();
+    renderViolations(document_.violations);
+    issueButton.disabled = false;
+    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function setField(name: string, text: string): void {
+    const node = form.querySelector<HTMLInputElement>(`[name="${name}"]`);
+    if (node !== null) node.value = text;
+  }
+
+  function setChecked(name: string, state: boolean): void {
+    const node = form.querySelector<HTMLInputElement>(`[name="${name}"]`);
+    if (node !== null) node.checked = state;
+  }
+
+  function renderViolations(violations: Violation[]): void {
+    const list = el<HTMLUListElement>('#violations');
+    list.replaceChildren();
+    for (const violation of violations) {
+      const item = document.createElement('li');
+      item.dataset.severity = violation.severity;
+      const message = document.createElement('span');
+      message.textContent = violation.message;
+      const rule = document.createElement('span');
+      rule.className = 'rule';
+      rule.textContent = violation.rule;
+      item.append(message, rule);
+      list.append(item);
+    }
+    show(el('#kontroll-card'), violations.length > 0);
+
+    const blocking = violations.filter((v) => v.severity === 'blokkerende');
+    issueButton.disabled = editing === null || blocking.length > 0;
+    el('#issue-hint').textContent =
+      editing === null
+        ? 'Lagre utkastet først. Nummeret settes når du utsteder.'
+        : blocking.length > 0
+          ? `${blocking.length} ting må rettes før fakturaen kan utstedes.`
+          : 'Utstedelse er endelig: fakturaen får nummer, bokføres og kan bare rettes med kreditnota.';
+  }
+
+  // --- The list ---------------------------------------------------------------------
+
+  function render(documents: Faktura[]): void {
+    listBody.replaceChildren();
+    for (const item of documents) {
+      const row = document.createElement('tr');
+      if (item.credited_by_document_id !== null) row.dataset.credited = 'true';
+
+      const actions = document.createElement('td');
+      actions.className = 'row-actions';
+      actions.append(link('PDF', fakturaPdfUrl(company.id, item.id)));
+      if (item.has_ehf) actions.append(link('EHF', fakturaEhfUrl(company.id, item.id)));
+      if (mayWrite && item.status === 'utkast') {
+        actions.append(
+          button('Endre', () => loadIntoForm(item)),
+          button('Slett', () => void discard(item)),
+        );
+      }
+      if (
+        mayWrite &&
+        item.status === 'utstedt' &&
+        item.document_type === 'faktura' &&
+        item.credited_by_document_id === null
+      ) {
+        actions.append(button('Krediter', () => void credit(item)));
+      }
+
+      row.append(
+        cell(item.document_number ?? 'utkast'),
+        cell(item.issue_date === null ? '—' : isoDate(item.issue_date)),
+        cell(item.buyer_name || '—'),
+        cell(kroner(item.gross_total), 'num'),
+        cell(statusLabel(item)),
+        actions,
+      );
+      listBody.append(row);
+    }
+    show(el('#list-empty'), documents.length === 0);
+  }
+
+  function statusLabel(item: Faktura): string {
+    if (item.document_type === 'kreditnota') return 'Kreditnota';
+    if (item.status === 'utkast') return 'Utkast';
+    return item.credited_by_document_id === null ? 'Utstedt' : 'Kreditert';
+  }
+
+  function cell(text: string, className?: string): HTMLTableCellElement {
+    const td = document.createElement('td');
+    if (className !== undefined) td.className = className;
+    td.textContent = text;
+    return td;
+  }
+
+  function link(text: string, href: string): HTMLAnchorElement {
+    const anchor = document.createElement('a');
+    anchor.className = 'btn-link';
+    anchor.href = href;
+    anchor.textContent = text;
+    return anchor;
+  }
+
+  function button(text: string, onClick: () => void): HTMLButtonElement {
+    const node = document.createElement('button');
+    node.type = 'button';
+    node.className = 'btn-link';
+    node.textContent = text;
+    node.addEventListener('click', onClick);
+    return node;
+  }
+
+  // --- Actions -----------------------------------------------------------------------
+
+  async function refresh(): Promise<void> {
+    documents = await listFaktura(company.id);
+    render(documents);
+    updateCopyPrevious();
+  }
+
+  function addPartyOption(party: Party): void {
+    const option = document.createElement('option');
+    option.value = String(party.id);
+    option.textContent = party.orgnr === null ? party.name : `${party.name} (${party.orgnr})`;
+    partySelect.append(option);
+  }
+
+  /**
+   * Register the typed-in buyer as a customer, when asked to.
+   *
+   * Runs before the draft is saved so the invoice can carry `party_id` and the
+   * ledger gets a kundereskontro entry — a customer added afterwards would leave
+   * this document pointing at nobody.
+   *
+   * Failure here is reported and stepped over. Not being able to save a name for
+   * next time is no reason to lose the invoice being written now.
+   */
+  async function registerBuyer(): Promise<void> {
+    const wanted = form.querySelector<HTMLInputElement>('[name="save_party"]');
+    if (wanted === null || !wanted.checked || partySelect.value !== '') return;
+    const name = value(form, 'buyer_name');
+    if (name === '') return;
+    try {
+      const party = await createParty(company.id, {
+        party_type: 'kunde',
+        name,
+        orgnr: blank('buyer_orgnr'),
+        address_line: blank('buyer_address_line'),
+        postal_code: blank('buyer_postal_code'),
+        city: blank('buyer_city'),
+      });
+      parties.push(party);
+      addPartyOption(party);
+      partySelect.value = String(party.id);
+      wanted.checked = false;
+      updateBuyerContext();
+      // They now have a customer number, and the KID carries it.
+      await refreshKidPreview();
+    } catch (error: unknown) {
+      wanted.checked = false;
+      partyNote.dataset.tone = 'warn';
+      partyNote.textContent =
+        (error instanceof ApiError ? error.message : 'Vi fikk ikke lagret kunden.') +
+        ' Fakturaen lagres likevel med kjøperen slik du skrev den.';
+      show(partyNote, true);
+    }
+  }
+
+  async function save(): Promise<Faktura> {
+    await registerBuyer();
+    const body = payload();
+    const saved =
+      editing === null
+        ? await createFaktura(company.id, body)
+        : await updateFaktura(company.id, editing.id, body);
+    editing = saved;
+    renderViolations(saved.violations);
+    await refresh();
+    return saved;
+  }
+
+  async function discard(item: Faktura): Promise<void> {
+    if (!window.confirm(`Slette utkastet til ${item.buyer_name || 'kjøperen'}?`)) return;
+    try {
+      await deleteFaktura(company.id, item.id);
+      if (editing?.id === item.id) resetForm();
+      await refresh();
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Sletting feilet.');
+    }
+  }
+
+  async function credit(item: Faktura): Promise<void> {
+    const confirmed = window.confirm(
+      `Kreditere faktura ${item.document_number}?\n\n` +
+        'Det utstedes en kreditnota som reverserer hele fakturaen, og den kan ikke angres.',
+    );
+    if (!confirmed) return;
+    try {
+      const note = await creditFaktura(company.id, item.id);
+      setStatus(pageStatus, `Kreditnota ${note.document_number} er utstedt.`, 'ok');
+      await refresh();
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Krediteringen feilet.');
+    }
+  }
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    saveButton.disabled = true;
+    setStatus(formStatus, '');
+    void save()
+      .then((saved) => {
+        setStatus(formStatus, `Utkastet er lagret (${kroner(saved.gross_total)}).`, 'ok');
+      })
+      .catch((error: unknown) => {
+        setStatus(formStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke lagret.');
+      })
+      .finally(() => {
+        saveButton.disabled = false;
+      });
+  });
+
+  issueButton.addEventListener('click', () => {
+    if (editing === null) return;
+    const confirmed = window.confirm(
+      'Utstede fakturaen?\n\n' +
+        'Den får et nummer i en ubrutt serie, bokføres, og kan etterpå bare rettes med kreditnota.',
+    );
+    if (!confirmed) return;
+    issueButton.disabled = true;
+    // Save first: the form may hold edits the draft has not seen, and issuing
+    // checks the *stored* document.
+    void save()
+      .then((saved) => issueFaktura(company.id, saved.id))
+      .then(async (issued) => {
+        setStatus(
+          formStatus,
+          `Faktura ${issued.document_number} er utstedt` +
+            `${issued.payment_reference === null ? '' : ` med KID ${issued.payment_reference}`}.`,
+          'ok',
+        );
+        await refresh();
+        // resetForm first, then the preview: the form clears the customer, and
+        // the customer is half the KID. Refreshing before the reset would leave
+        // the previous customer's number showing under an empty customer field.
+        resetForm();
+        await refreshKidPreview();
+      })
+      .catch(async (error: unknown) => {
+        setStatus(formStatus, error instanceof ApiError ? error.message : 'Utstedelsen feilet.');
+        // Re-check so the list of what is missing matches what the backend said.
+        if (editing !== null) renderViolations(await checkFaktura(company.id, editing.id));
+      });
+  });
+
+  el('#add-line').addEventListener('click', () => addLine());
+  copyButton.addEventListener('click', copyPrevious);
+  form.querySelector('[name="payment_reference_auto"]')?.addEventListener('change', () => {
+    // Turning the KID off and on again lands back on automatic, which is where
+    // someone toggling a checkbox they did not mean to touch expects to be.
+    if (!kidWanted()) kidManual = false;
+    renderKid();
+  });
+  el('#kid-edit').addEventListener('click', () => {
+    kidManual = !kidManual;
+    renderKid();
+    if (kidManual) form.querySelector<HTMLInputElement>('[name="payment_reference"]')?.focus();
+  });
+  el('#ki-draft').addEventListener('click', () => void requestLines());
+  partySelect.addEventListener('change', () => {
+    // A customer with an organisasjonsnummer is bokføringspliktig, and that
+    // answer decides whether the e-invoice requirement applies to the document.
+    // Inferred here rather than in updateBuyerContext, so that loading a stored
+    // draft shows what the draft says instead of what we would have guessed.
+    const party = selectedParty();
+    if (party !== null) setChecked('buyer_is_business', party.orgnr !== null);
+    updateBuyerContext();
+    // The KID carries their customer number, so it changes with them.
+    void refreshKidPreview();
+  });
+  form.querySelector('[name="reverse_charge"]')?.addEventListener('change', recalculate);
+  wireBuyerLookup();
+
+  // --- Boot ---------------------------------------------------------------------------
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await listCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      const remembered = rememberedCompany();
+      const current = companies.find((c) => c.id === remembered) ?? companies[0];
+      if (current === undefined) return;
+      company = current;
+      rememberCompany(company.id);
+      el('#company-name').textContent = company.name;
+
+      catalogue = await getFakturaCatalogue();
+      parties = (await listParties(company.id)).filter((p) => p.party_type === 'kunde');
+      for (const party of parties) addPartyOption(party);
+      el<HTMLTextAreaElement>('#ki-text').maxLength = catalogue.ai_max_chars;
+
+      el('#efaktura-note').textContent =
+        `Fra ${isoDate(catalogue.e_invoice_mandatory_from)} skal salg til andre bokføringspliktige ` +
+        'faktureres elektronisk (EHF/Peppol). Myntos lager EHF-filen for hver utstedte faktura — ' +
+        'selve forsendelsen krever et Peppol-aksesspunkt, som ennå ikke er koblet på.';
+
+      if (!company.vat_registered) {
+        setStatus(
+          pageStatus,
+          'Selskapet er ikke registrert i Merverdiavgiftsregisteret, så fakturaene kan ikke ' +
+            'vise mva. Endre det under Organisasjon når registreringen er på plass.',
+        );
+      }
+
+      mayWrite = can(session, company.organization_id, 'ledger:write');
+      show(el('#form-card'), mayWrite);
+      show(el('#readonly'), !mayWrite);
+      // The model is offered only where it can be used at all: a deployment
+      // without a key has opted out, and a viewer has nothing to draft.
+      show(el('#ki-card'), mayWrite && catalogue.ai_available);
+
+      // The list first, so "copy the previous invoice" knows whether there is
+      // one before the form is drawn.
+      await refresh();
+      if (mayWrite) {
+        await refreshKidPreview();
+        resetForm();
+      }
+      el('#loading').hidden = true;
+      el('#content').hidden = false;
+    } catch (error: unknown) {
+      el('#loading').hidden = true;
+      setStatus(
+        pageStatus,
+        error instanceof ApiError ? error.message : 'Vi fikk ikke hentet fakturaene.',
+      );
+    }
+  });
+</script>

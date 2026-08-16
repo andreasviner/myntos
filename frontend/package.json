@@ -10,7 +10,8 @@
     "build": "astro build",
     "preview": "astro preview",
     "check": "astro check",
-    "deploy": "astro build && wrangler deploy --config dist/client/wrangler.json"
+    "deploy": "astro build && wrangler deploy --config dist/client/wrangler.json",
+    "favicons": "node scripts/generate-favicons.mjs"
   },
   "dependencies": {
     "astro": "^7.0.0"
@@ -18,10 +19,16 @@
   "devDependencies": {
     "@astrojs/check": "^0.9.0",
     "@astrojs/cloudflare": "^14.0.0",
+    "@astrojs/sitemap": "^3.7.3",
+    "sharp": "^0.35.3",
     "typescript": "^5.6.0",
     "wrangler": "^4.83.0"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "sharp", "workerd"]
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sharp",
+      "workerd"
+    ]
   }
 }

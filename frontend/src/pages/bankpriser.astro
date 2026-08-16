@@ -45,13 +45,15 @@ const gebyrKlasse = (b: Bank) => `nivå nivå-${gebyrRangering[b.skjulteGebyrer]
       hver rad.
     </p>
 
-    <aside class="disclaimer" role="note" aria-label="Ansvarsfraskrivelse for prisdata">
-      <strong>⚠️ Kontroller prisen hos banken før du bestemmer deg.</strong> Denne oversikten er
-      ingen garanti for noen pris. Prislister endres uten forvarsel, priser forhandles individuelt,
-      og tall kan være feil lest eller utdatert. Myntos har ingen avtale med noen av bankene
-      og tar <strong>ikke</strong> ansvar for beslutninger tatt på grunnlag av denne siden. Alle
-      beløp er sist kontrollert {sjekketNorsk} — følg lenken i <em>Prisside</em>-kolonnen og
-      etterprøv selv. <a href="/ansvar/">Les hele ansvarsfraskrivelsen</a>.
+    {/*
+      This one stays: it is about the accuracy of someone else's prices, not
+      about our liability, and the tables would be misleading without it.
+    */}
+    <aside class="note" role="note" aria-label="Om prisdataene">
+      <strong>Kontroller prisen hos banken før du bestemmer deg.</strong> Prislister endres uten
+      forvarsel, priser forhandles individuelt, og tall kan være feil lest. Myntos har ingen avtale
+      med noen av bankene. Alle beløp er sist kontrollert {sjekketNorsk} — følg lenken i
+      <em>Prisside</em>-kolonnen og etterprøv selv.
     </aside>
 
     <h2>Sammenligning</h2>

@@ -60,6 +60,15 @@ CI must be green. Run the same checks locally:
 - **Legal requirements are not negotiable.** Changes touching bookkeeping
   rules (immutability of posted entries, retention, SAF-T mapping) must
   reference the relevant regulation in the PR description.
+- **KI goes through Løynd, or it does not go.** AI is welcome anywhere in the
+  product where it earns its place, but every prompt leaves through
+  `backend/src/myntos/integrations/loynd.py` — never OpenAI, Anthropic, Google
+  or a second endpoint "just for this feature". Løynd runs in Norway and stores
+  nothing, which is the only reason user documents may reach a model at all.
+  A model's answer is never posted to the ledger without a person confirming it,
+  and a new use must be described on [/ki](https://myntos.no/ki/) and in the
+  personvernerklæring in the same PR. See
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#ki-anywhere-in-the-product-one-provider-only).
 
 ## Reporting bugs and proposing features
 

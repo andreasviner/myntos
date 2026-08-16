@@ -1,0 +1,318 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Kunder og leverandører — Myntos"
+  description="Registrer kundene og leverandørene du fører betalinger mot."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow" id="company-name">Kunder og leverandører</p>
+      <h1>Hvem du handler med</h1>
+    </div>
+    <a class="btn btn-ghost" href="/kontantstrom/">Til kontantstrømmen</a>
+  </header>
+
+  <p class="lead">
+    Betalingstypen forteller Skatteetaten <em>hva</em> pengene gjaldt. Kunden eller leverandøren
+    forteller <em>hvem</em> de gjaldt — det er den delen en revisor spør etter, og den SAF-T
+    eksporterer som kunde- og leverandørreskontro.
+  </p>
+
+  <p class="status" id="page-status" hidden></p>
+  <div class="empty" id="loading">Henter …</div>
+
+  <div class="split" id="content" hidden>
+    <div class="card form-card" id="form-card">
+      <h2 class="card-title">Legg til</h2>
+      <p class="status" id="form-status" hidden></p>
+      <form id="party-form">
+        <div class="direction" role="group" aria-label="Type">
+          <label>
+            <input type="radio" name="party_type" value="kunde" checked />
+            <span>Kunde</span>
+          </label>
+          <label>
+            <input type="radio" name="party_type" value="leverandor" />
+            <span>Leverandør</span>
+          </label>
+        </div>
+
+        <label class="field">
+          <span>Navn</span>
+          <input type="text" name="name" required maxlength="255" />
+        </label>
+        <label class="field">
+          <span>Organisasjonsnummer <span class="muted">(valgfritt)</span></span>
+          <input type="text" name="orgnr" inputmode="numeric" placeholder="999 999 999" />
+          <span class="field-hint">
+            Kontrollsifferet sjekkes. Privatpersoner og utenlandske selskaper har ikke noe.
+          </span>
+        </label>
+        <div class="field-row">
+          <label class="field">
+            <span>Postnummer</span>
+            <input type="text" name="postal_code" maxlength="16" />
+          </label>
+          <label class="field">
+            <span>Poststed</span>
+            <input type="text" name="city" maxlength="128" />
+          </label>
+        </div>
+        <button class="btn btn-primary btn-block" type="submit" id="party-submit">Lagre</button>
+      </form>
+      <p class="card-hint numbering">
+        Nummeret settes automatisk — 10000 og oppover for kunder, 20000 for leverandører — og kan
+        ikke endres senere, fordi bokførte bilag viser til det.
+      </p>
+    </div>
+
+    <div class="card readonly-note" id="readonly" hidden>
+      <h2 class="card-title">Du har lesetilgang</h2>
+      <p class="card-hint">Rollen din lar deg se listen, men ikke endre den.</p>
+    </div>
+
+    <div>
+      <div class="card">
+        <div class="table-scroll">
+          <table class="data">
+            <thead>
+              <tr>
+                <th>Nr.</th>
+                <th>Navn</th>
+                <th>Type</th>
+                <th>Orgnr</th>
+                <th>Sted</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="parties"></tbody>
+          </table>
+        </div>
+        <p class="empty" id="parties-empty" hidden>
+          Ingen registrert ennå. Den første kunden eller leverandøren legges til i skjemaet.
+        </p>
+      </div>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--muted);
+    margin: 0 0 0.4rem;
+  }
+  .split {
+    display: grid;
+    gap: 1.5rem;
+    align-items: start;
+    grid-template-columns: minmax(18rem, 22rem) minmax(0, 1fr);
+    margin-top: 1.5rem;
+  }
+  @media (max-width: 58rem) {
+    .split {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  .direction {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+  .direction input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .direction span {
+    display: block;
+    text-align: center;
+    padding: 0.55rem 0.5rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-small);
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+  }
+  .direction input:checked + span {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-fg);
+  }
+  .direction input:focus-visible + span {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .numbering {
+    margin-top: 1rem;
+  }
+  .edit-row td {
+    background: var(--surface-2);
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    createParty,
+    listCompanies,
+    listParties,
+    updateParty,
+    type Company,
+    type Party,
+  } from '../lib/api';
+  import { el, setStatus, show } from '../lib/dom';
+  import { can, loadSession, redirectToLogin, rememberCompany, rememberedCompany } from '../lib/session';
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const formStatus = el<HTMLParagraphElement>('#form-status');
+  const body = el<HTMLTableSectionElement>('#parties');
+  const form = el<HTMLFormElement>('#party-form');
+  const submit = el<HTMLButtonElement>('#party-submit');
+
+  let company: Company;
+  let mayWrite = false;
+
+  function cell(value: string, className?: string): HTMLTableCellElement {
+    const td = document.createElement('td');
+    if (className !== undefined) td.className = className;
+    td.textContent = value;
+    return td;
+  }
+
+  function blank(value: FormDataEntryValue | null): string | null {
+    const text = String(value ?? '').trim();
+    return text === '' ? null : text;
+  }
+
+  function render(parties: Party[]): void {
+    body.replaceChildren();
+    for (const party of parties) {
+      const row = document.createElement('tr');
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.textContent = party.party_type === 'kunde' ? 'Kunde' : 'Leverandør';
+      const type = document.createElement('td');
+      type.append(badge);
+
+      const actions = document.createElement('td');
+      if (mayWrite) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn-link';
+        button.textContent = 'Endre navn';
+        button.addEventListener('click', () => {
+          void rename(party);
+        });
+        actions.append(button);
+      }
+
+      row.append(
+        cell(party.party_id),
+        cell(party.name),
+        type,
+        cell(party.orgnr ?? '—'),
+        cell([party.postal_code, party.city].filter(Boolean).join(' ') || '—'),
+        actions,
+      );
+      body.append(row);
+    }
+    show(el('#parties-empty'), parties.length === 0);
+  }
+
+  async function rename(party: Party): Promise<void> {
+    const name = window.prompt('Nytt navn', party.name);
+    if (name === null || name.trim() === '') return;
+    try {
+      await updateParty(company.id, party.id, {
+        name: name.trim(),
+        orgnr: party.orgnr,
+        address_line: party.address_line,
+        postal_code: party.postal_code,
+        city: party.city,
+      });
+      await refresh();
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Endringen feilet.');
+    }
+  }
+
+  async function refresh(): Promise<void> {
+    render(await listParties(company.id));
+  }
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    submit.disabled = true;
+    setStatus(formStatus, '');
+    void createParty(company.id, {
+      party_type: data.get('party_type') === 'leverandor' ? 'leverandor' : 'kunde',
+      name: String(data.get('name') ?? '').trim(),
+      orgnr: blank(data.get('orgnr')),
+      postal_code: blank(data.get('postal_code')),
+      city: blank(data.get('city')),
+    })
+      .then(async (party) => {
+        setStatus(formStatus, `${party.name} er lagret som nr. ${party.party_id}.`, 'ok');
+        form.reset();
+        await refresh();
+      })
+      .catch((error: unknown) => {
+        setStatus(formStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke lagret.');
+      })
+      .finally(() => {
+        submit.disabled = false;
+      });
+  });
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await listCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      const remembered = rememberedCompany();
+      const current = companies.find((c) => c.id === remembered) ?? companies[0];
+      if (current === undefined) return;
+      company = current;
+      rememberCompany(company.id);
+
+      el('#company-name').textContent = company.name;
+      mayWrite = can(session, company.organization_id, 'ledger:write');
+      show(el('#form-card'), mayWrite);
+      show(el('#readonly'), !mayWrite);
+
+      await refresh();
+      el('#loading').hidden = true;
+      el('#content').hidden = false;
+    } catch (error: unknown) {
+      el('#loading').hidden = true;
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet listen.');
+    }
+  });
+</script>

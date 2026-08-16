@@ -1,0 +1,85 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 6 0 R >>
+endobj
+6 0 obj
+<< /Length 2560 >>
+stream
+BT /F2 15 Tf 1 0 0 1 48 790 Tm (Nordmann Consulting AS) Tj ET
+BT /F2 15 Tf 1 0 0 1 477 790 Tm (FAKTURA) Tj ET
+BT /F1 8.5 Tf 1 0 0 1 48 772 Tm (Kirkegata 2) Tj ET
+BT /F1 8.5 Tf 1 0 0 1 48 761 Tm (0153 Oslo) Tj ET
+BT /F1 8.5 Tf 1 0 0 1 48 750 Tm (Org.nr. 910000004 MVA) Tj ET
+BT /F2 8.5 Tf 1 0 0 1 48 739 Tm (Foretaksregisteret) Tj ET
+BT /F1 8.5 Tf 1 0 0 1 445.67 770 Tm (Nr.) Tj ET
+BT /F2 8.5 Tf 1 0 0 1 542.27 770 Tm (2) Tj ET
+BT /F1 8.5 Tf 1 0 0 1 411.64 758 Tm (Fakturadato) Tj ET
+BT /F1 8.5 Tf 1 0 0 1 503.53 758 Tm (2026-08-16) Tj ET
+BT /F1 8.5 Tf 1 0 0 1 403.61 746 Tm (Leveringsdato) Tj ET
+BT /F1 8.5 Tf 1 0 0 1 503.53 746 Tm (2026-08-16) Tj ET
+BT /F1 8.5 Tf 1 0 0 1 433.39 734 Tm (Forfall) Tj ET
+BT /F1 8.5 Tf 1 0 0 1 503.53 734 Tm (2026-08-30) Tj ET
+BT /F1 7.5 Tf 1 0 0 1 48 708 Tm (Faktureres til) Tj ET
+BT /F2 10 Tf 1 0 0 1 48 695 Tm (EQUINOR ASA) Tj ET
+BT /F1 8.5 Tf 1 0 0 1 48 683 Tm (Forusbeen 50) Tj ET
+BT /F1 8.5 Tf 1 0 0 1 48 672 Tm (4035 STAVANGER) Tj ET
+BT /F1 8.5 Tf 1 0 0 1 48 661 Tm (Org.nr. 923609016) Tj ET
+BT /F1 7.5 Tf 1 0 0 1 347 673 Tm (Leveringssted) Tj ET
+BT /F1 8.5 Tf 1 0 0 1 529.52 673 Tm (Oslo) Tj ET
+BT /F2 7.5 Tf 1 0 0 1 48 634 Tm (Beskrivelse) Tj ET
+BT /F2 7.5 Tf 1 0 0 1 311.24 634 Tm (Antall) Tj ET
+BT /F2 7.5 Tf 1 0 0 1 370 634 Tm (Enhet) Tj ET
+BT /F2 7.5 Tf 1 0 0 1 439.08 634 Tm (Pris) Tj ET
+BT /F2 7.5 Tf 1 0 0 1 475.83 634 Tm (Mva) Tj ET
+BT /F2 7.5 Tf 1 0 0 1 509.07 634 Tm (Bel¯p NOK) Tj ET
+q 0.75 G 0.5 w 48 629 m 547 629 l S Q
+BT /F1 9 Tf 1 0 0 1 48 617 Tm (Kurs) Tj ET
+BT /F1 9 Tf 1 0 0 1 325 617 Tm (1) Tj ET
+BT /F1 9 Tf 1 0 0 1 370 617 Tm (EA) Tj ET
+BT /F1 9 Tf 1 0 0 1 416.97 617 Tm (2 000,00) Tj ET
+BT /F1 9 Tf 1 0 0 1 469.49 617 Tm (25 %) Tj ET
+BT /F1 9 Tf 1 0 0 1 511.97 617 Tm (2 000,00) Tj ET
+q 0.75 G 0.5 w 48 220 m 547 220 l S Q
+BT /F1 7.5 Tf 1 0 0 1 421.15 208 Tm (Grunnlag) Tj ET
+BT /F1 7.5 Tf 1 0 0 1 499.91 208 Tm (Merverdiavgift) Tj ET
+BT /F1 8.5 Tf 1 0 0 1 48 195 Tm (Avgiftspliktig omsetning, 25 %) Tj ET
+BT /F1 8.5 Tf 1 0 0 1 418.92 195 Tm (2 000,00) Tj ET
+BT /F1 8.5 Tf 1 0 0 1 521.01 195 Tm (500,00) Tj ET
+q 0.75 G 0.5 w 348 187 m 547 187 l S Q
+BT /F1 9 Tf 1 0 0 1 348 175 Tm (Sum eks. mva) Tj ET
+BT /F1 9 Tf 1 0 0 1 511.97 175 Tm (2 000,00) Tj ET
+BT /F1 9 Tf 1 0 0 1 348 161 Tm (Merverdiavgift) Tj ET
+BT /F1 9 Tf 1 0 0 1 519.48 161 Tm (500,00) Tj ET
+q 0.75 G 0.5 w 348 155 m 547 155 l S Q
+BT /F2 11 Tf 1 0 0 1 348 141 Tm (≈ betale) Tj ET
+BT /F2 11 Tf 1 0 0 1 491.97 141 Tm (2 500,00 kr) Tj ET
+BT /F2 9 Tf 1 0 0 1 48 111 Tm (Kontonummer 15062033142   KID 1234567897   Forfall 2026-08-30) Tj ET
+endstream
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000218 00000 n 
+0000000320 00000 n 
+0000000456 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+3068
+%%EOF

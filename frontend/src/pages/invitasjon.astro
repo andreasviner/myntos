@@ -1,0 +1,89 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="Invitasjon — Myntos" description="Bli med i en organisasjon på Myntos.">
+  <div class="auth-page">
+    <h1>Invitasjon</h1>
+    <p class="status" id="status" hidden></p>
+
+    <div class="card" id="panel">
+      <p id="message">Sjekker invitasjonen …</p>
+      <div class="actions" id="actions" hidden>
+        <a class="btn btn-primary" id="primary" href="/logg-inn/">Logg inn</a>
+        <a class="btn btn-ghost" id="secondary" href="/registrer/">Opprett konto</a>
+      </div>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .auth-page {
+    max-width: 30rem;
+    margin: 0 auto;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin-top: 1rem;
+  }
+</style>
+
+<script>
+  import { acceptInvitation, ApiError } from '../lib/api';
+  import { el, setStatus } from '../lib/dom';
+  import { loadSession } from '../lib/session';
+
+  const message = el<HTMLParagraphElement>('#message');
+  const status = el<HTMLParagraphElement>('#status');
+  const actions = el<HTMLDivElement>('#actions');
+  const primary = el<HTMLAnchorElement>('#primary');
+  const secondary = el<HTMLAnchorElement>('#secondary');
+
+  const token = new URLSearchParams(window.location.search).get('token');
+
+  if (token === null || token === '') {
+    message.textContent = 'Lenken mangler en invitasjonskode. Be avsenderen sende den på nytt.';
+  } else {
+    void loadSession().then((session) => {
+      if (session === null) {
+        // The invitation grants access to an account, so the account has to
+        // exist first — and it must use the invited address, or the backend
+        // will refuse the token.
+        message.textContent =
+          'Logg inn eller opprett en konto med e-postadressen invitasjonen ble sendt til. Så kommer du tilbake hit automatisk.';
+        const back = `/invitasjon/?token=${encodeURIComponent(token)}`;
+        primary.href = `/logg-inn/?neste=${encodeURIComponent(back)}`;
+        secondary.href = '/registrer/';
+        actions.hidden = false;
+        return;
+      }
+
+      message.textContent = 'Blir med i organisasjonen …';
+      void acceptInvitation(token)
+        .then((updated) => {
+          const joined = updated.memberships[updated.memberships.length - 1];
+          setStatus(
+            status,
+            `Du er nå medlem av ${joined?.organization_name ?? 'organisasjonen'}.`,
+            'ok',
+          );
+          message.textContent = 'Sender deg til oversikten …';
+          window.setTimeout(() => {
+            window.location.href = '/';
+          }, 1200);
+        })
+        .catch((error: unknown) => {
+          message.textContent =
+            error instanceof ApiError
+              ? error.message
+              : 'Invitasjonen kunne ikke brukes. Be avsenderen sende en ny.';
+          primary.href = '/';
+          primary.textContent = 'Til oversikten';
+          secondary.hidden = true;
+          actions.hidden = false;
+        });
+    });
+  }
+</script>

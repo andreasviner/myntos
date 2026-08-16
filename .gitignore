@@ -36,6 +36,9 @@ dist/
 /data/
 *.sqlite3
 
+# --- Local deploy helper (personal shortcut, not project infra) ---
+/upload.bat
+
 # --- OS / editors ---
 .DS_Store
 Thumbs.db

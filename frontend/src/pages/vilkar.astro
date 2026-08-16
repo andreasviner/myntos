@@ -1,0 +1,210 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+
+/**
+ * Bruksvilkårene: avtalen om å bruke Myntos som tjeneste hos oss.
+ *
+ * Arbeidsdelingen mellom de tre juridiske sidene er verdt å holde fast på:
+ *   /vilkar     — avtalen (konto, bruk, oppsigelse, lovvalg)   ← denne
+ *   /ansvar     — ansvarsfraskrivelsen og ansvarsbegrensningen
+ *   /personvern — hva vi lagrer om deg
+ * Ansvarsavsnittet nedenfor gjentar derfor ikke /ansvar, det inkorporerer den.
+ */
+const oppdatert = '13. august 2026';
+---
+
+<BaseLayout
+  title="Bruksvilkår — Myntos"
+  description="Vilkårene for å bruke Myntos: kontoen din, hva tjenesten er, hva den koster, og hva som gjelder ved oppsigelse."
+>
+  <p class="pill">Vilkår</p>
+  <h1>Bruksvilkår</h1>
+  <p class="lead">
+    Dette er avtalen mellom deg og oss om bruk av Myntos slik vi drifter det på myntos.no. Den er
+    skrevet for å kunne leses, ikke for å være lang.
+  </p>
+  <p class="meta-line">Sist oppdatert {oppdatert}.</p>
+
+  <aside class="disclaimer" role="note" aria-label="Merk">
+    <strong>Myntos er i pre-alfa.</strong> Programmet er under aktiv utvikling, kan inneholde feil
+    — også i regnskapslogikk — og leveres uten garanti. Les
+    <a href="/ansvar/">ansvarsfraskrivelsen</a> før du flytter et helt regnskap hit.
+  </aside>
+
+  <h2>1. Avtalen</h2>
+  <p>
+    Tjenesten leveres av <strong>Lindeman Technologies</strong> («vi», «oss»). Ved å opprette en
+    konto eller bruke tjenesten inngår du denne avtalen. Aksepterer du ikke vilkårene, skal du ikke
+    bruke tjenesten.
+  </p>
+  <p>
+    Oppretter du kontoen på vegne av et selskap eller en organisasjon, bekrefter du at du har
+    myndighet til å binde den, og «du» i disse vilkårene betyr da også virksomheten.
+  </p>
+  <p>
+    Vilkårene gjelder Myntos <strong>som tjeneste hos oss</strong>. Kjører du programvaren på egen
+    infrastruktur, er det <a href="#lisens">lisensen</a> som regulerer bruken av koden, og vi har
+    ingen driftsavtale med deg.
+  </p>
+
+  <h2>2. Kontoen din</h2>
+  <ul>
+    <li>Du må være myndig og kunne inngå avtale på egen eller virksomhetens hånd.</li>
+    <li>Opplysningene du registrerer, skal være riktige og holdes oppdatert.</li>
+    <li>
+      Du er ansvarlig for å sikre påloggingsopplysningene dine, og for alt som skjer på kontoen.
+      Mistenker du misbruk, skal du bytte passord og si fra til oss.
+    </li>
+    <li>
+      Inviterer du andre inn i organisasjonen din, er du ansvarlig for hvilke roller de får og for
+      hva de gjør med tilgangen.
+    </li>
+    <li>
+      Kontoer er personlige. Ikke del én pålogging mellom flere personer — inviter dem i stedet;
+      det koster ingenting.
+    </li>
+  </ul>
+
+  <h2>3. Hva tjenesten er</h2>
+  <p>
+    Myntos er et regnskapsprogram for norske forhold: føring av inn- og utbetalinger med dobbel
+    bokføring, bilagsarkiv, merverdiavgift, og — når det er ferdig — SAF-T-eksport og innlevering
+    via Altinn. Hva som virker i dag, står på <a href="/funksjoner/">funksjonssiden</a>, og det som
+    er merket «under arbeid», er ikke en del av det du får nå.
+  </p>
+  <p>
+    Vi lover ingen oppetid, responstid eller support. Det finnes ingen SLA, og tjenesten kan være
+    utilgjengelig uten forvarsel.
+  </p>
+
+  <h2>4. Pris</h2>
+  <p>
+    Tjenesten koster <strong>0 kr</strong>. Det finnes ingen betalingsløsning i Myntos, og vi tar
+    ikke imot kortopplysninger. Se <a href="/priser/">prissiden</a> for hva vi mener med det, og for
+    hva som gjelder dersom det noen gang skulle endres: du kan ta hele regnskapet med deg ut samme
+    dag, fordi eksport er et lovkrav og ikke en funksjon vi kan låse.
+  </p>
+
+  <h2>5. Dine data</h2>
+  <p>
+    Alt du legger inn — bilag, føringer, kunder og leverandører — er ditt. Vi tar ikke eierskap til
+    noe av det, og vi bruker det ikke til egne formål: ikke annonser, ikke videresalg, ikke
+    «bransjeinnsikt», ikke modelltrening. For personopplysninger i regnskapsdataene er du
+    behandlingsansvarlig og vi databehandler; se <a href="/personvern/">personvernerklæringen</a>.
+  </p>
+  <p>
+    Du kan eksportere dataene dine når du vil. Du er selv ansvarlig for
+    <strong>sikkerhetskopier</strong> og for å oppfylle din egen bokførings- og oppbevaringsplikt
+    etter norsk lov.
+  </p>
+  <p>
+    Du gir oss den tilgangen som er teknisk nødvendig for å lagre, vise og behandle innholdet ditt
+    for å levere tjenesten — ikke mer. Vi ser ikke gjennom regnskapet ditt, med unntak av når du ber
+    om hjelp med en konkret sak, eller når det er strengt nødvendig for å rette en feil eller stanse
+    misbruk.
+  </p>
+
+  <h2>6. Slik skal tjenesten ikke brukes</h2>
+  <p>Du skal ikke:</p>
+  <ul>
+    <li>bruke tjenesten til noe ulovlig, eller til å skjule eller forberede noe ulovlig,</li>
+    <li>
+      forsøke å få tilgang til andres data, omgå tilgangskontroller, eller lete etter sårbarheter
+      på andres kontoer,
+    </li>
+    <li>
+      belaste tjenesten på en måte som går ut over andre — automatisert masseinnsending, skraping
+      eller lasttesting uten avtale,
+    </li>
+    <li>laste opp skadelig programvare eller innhold du ikke har rett til å behandle,</li>
+    <li>
+      gi deg ut for å være en annen, eller sende inn opplysninger til myndighetene på andres vegne
+      uten fullmakt.
+    </li>
+  </ul>
+  <p>
+    Finner du en sikkerhetssvakhet, vil vi gjerne høre om den:
+    <a href="mailto:kontakt@myntos.no">kontakt@myntos.no</a>. Rapporter i god tro, uten å hente ut
+    andres data, er velkomne.
+  </p>
+
+  <h2>7. Innlevering til myndighetene</h2>
+  <p>
+    Programvaren forbereder meldinger, men <strong>innsendingen og innholdet er ditt</strong>.
+    Innlevering krever din egen pålogging med ID-porten, og du må kontrollere hver innlevering før
+    den sendes. Du er alene ansvarlig for frister, for at det du sender er riktig og fullstendig, og
+    for eventuelle konsekvenser av at det ikke er det.
+  </p>
+
+  <h2>8. Endringer i tjenesten</h2>
+  <p>
+    Vi utvikler Myntos fortløpende og kan endre, legge til eller fjerne funksjoner. Fjerner vi noe
+    du er avhengig av, forsøker vi å varsle registrerte brukere i rimelig tid på forhånd.
+    Eksportmulighetene er det siste vi ville fjerne — de er det som gjør at du kan gå.
+  </p>
+
+  <h2>9. Oppsigelse</h2>
+  <p>
+    Du kan slutte når som helst: hent ut en eksport, og be om at kontoen slettes. Det er ingen
+    bindingstid og ingenting å si opp skriftlig.
+  </p>
+  <p>
+    Vi kan stenge eller begrense en konto ved brudd på avsnitt 6, ved mistanke om misbruk, eller
+    dersom vi må for å oppfylle en rettslig plikt. Vi varsler på e-post når vi kan, og gir deg
+    normalt anledning til å hente ut dataene dine først — med mindre umiddelbar stenging er
+    nødvendig for å beskytte andre.
+  </p>
+  <p>
+    Skulle vi legge ned tjenesten, varsler vi i rimelig tid og i alle tilfeller så tidlig at du kan
+    eksportere alt du har.
+  </p>
+
+  <h2>10. Ansvar</h2>
+  <p>
+    <a href="/ansvar/">Ansvarsfraskrivelsen og ansvarsbegrensningen</a> er en del av disse
+    vilkårene. Kort sagt: tjenesten leveres «som den er», uten garanti; ingenting programmet
+    produserer er regnskaps-, skatte- eller juridisk rådgivning; og så langt loven tillater det er
+    vi ikke ansvarlige for tap, uriktige eller forsinkede innleveringer, tilleggsskatt,
+    tvangsmulkt, gebyrer eller andre sanksjoner. Les hele teksten — den er kort.
+  </p>
+  <p>
+    Er du forbruker etter norsk rett, gjelder begrensningene bare så langt forbrukerlovgivningen
+    tillater. Ingenting her begrenser ansvar for forsett eller grov uaktsomhet.
+  </p>
+
+  <h2 id="lisens">11. Rettigheter til programvaren</h2>
+  <p>
+    Kildekoden til Myntos er offentlig tilgjengelig, men <strong>lisensen er proprietær</strong>:
+    den gir ingen rett til å bruke, kopiere, endre eller videredistribuere koden. Innsyn er ikke det
+    samme som en åpen lisens. Navn, logo og merke tilhører oss. Ved motstrid mellom disse vilkårene
+    og lisensteksten om selve koden, går lisensen foran.
+  </p>
+
+  <h2>12. Endringer i vilkårene</h2>
+  <p>
+    Vi kan endre vilkårene. Datoen øverst viser når de sist ble endret, og ved endringer av betydning
+    varsler vi registrerte brukere på e-post før de trer i kraft. Fortsatt bruk etter at en endring
+    har trådt i kraft, regnes som aksept. Er du uenig, kan du eksportere dataene dine og slutte.
+  </p>
+
+  <h2>13. Lovvalg og tvister</h2>
+  <p>
+    Avtalen er underlagt <strong>norsk rett</strong>. Vi prøver å løse uenighet ved en e-post først;
+    lykkes ikke det, er verneting Oslo tingrett, med mindre ufravikelig lovgivning gir deg rett til
+    et annet.
+  </p>
+
+  <h2>14. Kontakt</h2>
+  <p>
+    <a href="mailto:kontakt@myntos.no">kontakt@myntos.no</a>. Det er også adressen for innsyn,
+    sletting og alt annet som står i <a href="/personvern/">personvernerklæringen</a>.
+  </p>
+</BaseLayout>
+
+<style>
+  .meta-line {
+    color: var(--faint);
+    font-size: 0.88rem;
+    margin: 0.4rem 0 1.5rem;
+  }
+</style>

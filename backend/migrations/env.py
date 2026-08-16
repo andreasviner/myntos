@@ -11,8 +11,12 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from myntos.core.config import get_settings
 from myntos.db.base import Base
 
-# Import model modules here so their tables register on Base.metadata, e.g.:
-# from myntos.domain.ledger import models
+# Imported for the side effect of registering tables on Base.metadata, which
+# is what autogenerate diffs against. New model modules must be added here.
+from myntos.domain.bilag import models as _bilag_models  # noqa: F401
+from myntos.domain.faktura import models as _faktura_models  # noqa: F401
+from myntos.domain.identity import models as _identity_models  # noqa: F401
+from myntos.domain.ledger import models as _ledger_models  # noqa: F401
 
 config = context.config
 

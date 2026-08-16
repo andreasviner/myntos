@@ -1,0 +1,10 @@
+# The application pages prerender as empty shells and are useless in an index;
+# they are also excluded from the sitemap (see astro.config.mjs).
+User-agent: *
+Allow: /
+Disallow: /kontantstrom/
+Disallow: /organisasjon/
+Disallow: /parter/
+Disallow: /invitasjon/
+
+Sitemap: https://myntos.no/sitemap-index.xml

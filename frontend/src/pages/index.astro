@@ -2,56 +2,678 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 ---
 
-<BaseLayout title="Myntos — regnskap med offentlig kildekode">
-  <main>
-    <h1>Myntos</h1>
-    <p class="lead">
-      Regnskap for Norge med offentlig kildekode: bilagsføring, MVA-håndtering, SAF-T-eksport og
-      direkte innlevering av skattemelding til Skatteetaten.
+<BaseLayout
+  title="Myntos — regnskap med offentlig kildekode"
+  description="Norsk regnskapsprogram med offentlig kildekode: kontantstrøm og bilag, MVA-håndtering, SAF-T-eksport og innlevering til Skatteetaten."
+  width="wide"
+>
+  {/*
+    Both views ship in the same file. The signed-out one is the default, so it
+    is what a search engine indexes and what a visitor without JavaScript sees;
+    lib/session.ts flips the document's data-auth attribute once it knows.
+  */}
+
+  <!-- ------------------------------------------------------------------ -->
+  <!-- Signed out: what Myntos is                                          -->
+  <!-- ------------------------------------------------------------------ -->
+  <section data-auth-only="ut">
+    <div class="hero">
+      <p class="pill">Pre-alfa</p>
+      {/*
+        The app name leads the h1 deliberately. Google's OAuth brand review
+        compares the consent-screen name against the home page's most prominent
+        heading, and rejected "Regnskap for norske regler, i åpent lende" as not
+        matching "Myntos". The metaphor still carries the footer tagline.
+      */}
+      <h1>Myntos — norsk regnskapsprogram<br /><span class="grad">med offentlig kildekode</span></h1>
+      <p class="lead">
+        Myntos fører inn- og utbetalinger med bilag, regner merverdiavgift, og er bygget for å
+        levere SAF-T og skattemelding til Skatteetaten. Hele kildekoden er offentlig, så du kan se
+        nøyaktig hva som skjer med tallene dine.
+      </p>
+      <div class="hero-actions">
+        <a class="btn btn-primary btn-large" href="/registrer/">Kom i gang gratis</a>
+        <a class="btn btn-ghost btn-large" href="/funksjoner/">Se funksjonene</a>
+      </div>
+      <p class="hero-note">Ingen betalingsopplysninger. Ingen bindingstid.</p>
+    </div>
+
+    <div class="grid features">
+      <article class="card feature">
+        <h3 class="card-title">Bygget på norske krav</h3>
+        <p class="card-hint">
+          Datamodellen følger SAF-T Financial fra første linje: kontoplan med
+          næringsspesifikasjon per regnskapsår, mva-koder med datostyrte satser, og bilag som ikke
+          kan endres etter føring. Rettelser skjer med motpostering, slik bokføringsloven krever.
+        </p>
+      </article>
+      <article class="card feature">
+        <h3 class="card-title">Dataene blir i EØS</h3>
+        <p class="card-hint">
+          Database og dokumentlager kjøres i EØS. Bokføringsforskriften § 7-5 tillater det mot
+          skriftlig melding til skattekontoret — og Myntos skal hjelpe deg å skrive den, ikke late
+          som kravet ikke finnes.
+        </p>
+      </article>
+      <article class="card feature">
+        <h3 class="card-title">Ingen innlåsing</h3>
+        <p class="card-hint">
+          SAF-T-eksport og PDF-arkiv er ikke en ekstrafunksjon, men et lovkrav. Du skal kunne ta
+          med deg hele regnskapet ut igjen — også hvis du slutter å bruke oss.
+        </p>
+      </article>
+      <article class="card feature">
+        <h3 class="card-title">Én organisasjon, flere hoder</h3>
+        <p class="card-hint">
+          Kontoen din hører til en organisasjon, og kollegaer inviteres inn med roller.
+          Regnskapsførere kan føre flere selskaper under samme organisasjon.
+        </p>
+      </article>
+    </div>
+
+    <h2>Slik kommer du i gang</h2>
+    <ol class="steps">
+      <li>
+        <strong>Opprett konto</strong> med e-post og passord, eller med Google, Microsoft
+        eller Vipps.
+      </li>
+      <li>
+        <strong>Registrer selskapet</strong> med organisasjonsnummer. Kontoplan, mva-koder og
+        regnskapsår settes opp automatisk.
+      </li>
+      <li>
+        <strong>Før inn- og utbetalinger</strong> med type og eventuell PDF. Typen bestemmer konto
+        og mva-kode — det er den som gjør at tallene senere kan bli en skattemelding.
+      </li>
+    </ol>
+
+    <p class="steps-note">
+      Kommer du fra Fiken, Tripletex, PowerOffice Go eller Conta?
+      <a href="/kom-i-gang/">Se hvordan du henter regnskapet ut derfra</a> — og hva du bør laste
+      ned før du sier opp abonnementet.
     </p>
 
-    <aside class="disclaimer" role="note" aria-label="Ansvarsfraskrivelse">
-      <strong>⚠️ På eget ansvar:</strong> Myntos leveres «som den er», uten garanti og uten
-      noen form for ansvar. Programmet gir ikke regnskaps- eller skatterådgivning. Du er selv fullt
-      ut ansvarlig for at alt du bokfører og sender inn til myndighetene er riktig og levert i
-      tide. <a href="/ansvar/">Les hele ansvarsfraskrivelsen</a> før du tar programmet i bruk.
-    </aside>
+    <div class="cta card">
+      <div>
+        <h2 class="cta-title">Klar til å prøve?</h2>
+        <p class="card-hint">
+          Det tar et minutt å komme i gang, og du kan ta med deg alt ut igjen når som helst.
+        </p>
+      </div>
+      <a class="btn btn-primary btn-large" href="/registrer/">Opprett konto</a>
+    </div>
+  </section>
 
-    <h2>Status</h2>
-    <p>
-      Prosjektet er i en tidlig fase (pre-alfa). Grunnmuren — arkitektur, sikkerhetsoppsett og
-      integrasjonsplan mot Maskinporten og Skatteetatens API-er — er på plass, mens selve
-      regnskapskjernen er under utvikling.
-    </p>
+  <!-- ------------------------------------------------------------------ -->
+  <!-- Signed in: the overview                                             -->
+  <!-- ------------------------------------------------------------------ -->
+  <section data-auth-only="inn" id="dashboard">
+    <header class="page-head">
+      <div>
+        <p class="eyebrow" data-session-organization></p>
+        <h1>Hei, <span data-session-name>der</span></h1>
+      </div>
+      <div class="page-head-actions" id="company-controls" hidden>
+        <label class="picker">
+          <span class="visually-hidden">Velg selskap</span>
+          <select id="company-picker"></select>
+        </label>
+        <a class="btn btn-primary" href="/kontantstrom/">Registrer betaling</a>
+      </div>
+    </header>
 
-    <h2>Bankpriser for bedrift</h2>
-    <p>
-      Regnskap krever bankintegrasjon, og den koster fra 89 til 550 kroner i måneden avhengig av
-      bank. <a href="/bankpriser/">Se sammenligningen av nettbank- og integrasjonspriser</a> hos 14
-      banker, med kilde og dato på hvert tall.
-    </p>
+    <p class="status" id="dash-status" hidden></p>
 
-    <h2>Planlagt funksjonalitet</h2>
-    <ul>
-      <li>Dobbel bokføring (hovedbok) med SAF-T-tilpasset datamodell</li>
-      <li>Bilagsføring med PDF-arkiv</li>
-      <li>MVA-beregning på standard mva-koder og automatisk MVA-melding</li>
-      <li>SAF-T Financial-eksport (lovpålagt)</li>
-      <li>Skattemelding og næringsspesifikasjon rett fra systemet</li>
-    </ul>
-  </main>
+    <div id="loading" class="empty">Henter oversikten …</div>
+
+    <!-- No company yet: the one thing that must happen first. -->
+    <div class="card onboarding" id="onboarding" hidden>
+      <h2 class="card-title">Legg til selskapet ditt</h2>
+      <p class="card-hint">
+        Vi setter opp kontoplan, mva-koder og regnskapsår automatisk, slik at du kan føre den
+        første betalingen med en gang.
+      </p>
+      <form id="company-form" class="onboarding-form">
+        {/* Bare synlig for den som har flere organisasjoner — en
+            regnskapsfører med adskilte kunder. Med bare én er det ikke et
+            spørsmål, og et valg med ett alternativ er verre enn ingen. */}
+        <label class="field" id="org-field" hidden>
+          <span>Hvilken organisasjon skal føre regnskapet?</span>
+          <select name="organization_id" id="org-select"></select>
+          <span class="field-hint">
+            Organisasjonen er Myntos-kontoen — den eier medlemmene og
+            abonnementet. Selskapet er regnskapet med organisasjonsnummer.
+          </span>
+        </label>
+        {/* Organisasjonsnummeret først: navn og adresse hentes fra
+            Enhetsregisteret så snart ni siffer er skrevet inn. */}
+        <div class="field-row">
+          <label class="field">
+            <span>Organisasjonsnummer</span>
+            <input
+              type="text"
+              name="orgnr"
+              required
+              inputmode="numeric"
+              autocomplete="off"
+              placeholder="999 999 999"
+            />
+            <span class="field-hint" id="orgnr-hint">
+              Vi henter navnet fra Enhetsregisteret.
+            </span>
+          </label>
+          <label class="field">
+            <span>Navn på selskapet</span>
+            <input type="text" name="name" required placeholder="Nordmann Consulting AS" />
+          </label>
+        </div>
+        <label class="field">
+          <span>Første regnskapsår i Myntos</span>
+          <input type="number" name="first_financial_year" min="2000" max="2100" required />
+          <span class="field-hint">
+            Du kan ikke føre på datoer før dette året — mva-satsene vi setter opp gjelder fra da.
+          </span>
+        </label>
+        {/* Ikke "opprett selskap": selskapet finnes fra før, det er regnskapet
+            vi setter opp her. */}
+        <button class="btn btn-primary" type="submit" id="company-submit">Sett opp regnskapet</button>
+      </form>
+      <p class="card-hint" id="no-permission" hidden>
+        Du har ikke tilgang til å opprette selskaper i denne organisasjonen. Be en administrator
+        om å gjøre det.
+      </p>
+    </div>
+
+    <!-- The overview proper. -->
+    <div id="overview" hidden>
+      <div class="grid stats">
+        <div class="card stat">
+          <p class="stat-label">Inn i år</p>
+          <p class="stat-value amount-in" id="stat-in">—</p>
+        </div>
+        <div class="card stat">
+          <p class="stat-label">Ut i år</p>
+          <p class="stat-value amount-out" id="stat-out">—</p>
+        </div>
+        <div class="card stat">
+          <p class="stat-label">Netto</p>
+          <p class="stat-value" id="stat-net">—</p>
+          <p class="stat-note" id="stat-count"></p>
+        </div>
+        <div class="card stat">
+          <p class="stat-label">Merverdiavgift</p>
+          <p class="stat-value" id="stat-vat">—</p>
+          <p class="stat-note" id="stat-vat-note"></p>
+        </div>
+      </div>
+
+      <h2>Siste bevegelser</h2>
+      <div class="card">
+        <div class="table-scroll">
+          <table class="data">
+            <thead>
+              <tr>
+                <th>Dato</th>
+                <th>Beskrivelse</th>
+                <th>Type</th>
+                <th class="num">Beløp</th>
+              </tr>
+            </thead>
+            <tbody id="recent"></tbody>
+          </table>
+        </div>
+        <p class="empty" id="recent-empty" hidden>
+          Ingenting ført ennå. <a href="/kontantstrom/">Registrer den første betalingen</a>.
+        </p>
+        <p class="card-hint see-all">
+          <a href="/kontantstrom/">Se hele kontantstrømmen →</a>
+        </p>
+      </div>
+
+      <h2>Største poster i år</h2>
+      <div class="card">
+        <div class="table-scroll">
+          <table class="data">
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th class="num">Antall</th>
+                <th class="num">Sum</th>
+              </tr>
+            </thead>
+            <tbody id="by-type"></tbody>
+          </table>
+        </div>
+        <p class="empty" id="by-type-empty" hidden>Ingen tall å vise for i år.</p>
+      </div>
+
+      <p class="meta-note">
+        Tallene er en oppsummering av det du selv har ført — ikke en mva-melding og ikke et
+        ferdig regnskap.
+      </p>
+    </div>
+  </section>
 </BaseLayout>
 
 <style>
-  .lead {
-    font-size: 1.15rem;
+  .hero {
+    padding: 3rem 0 2.5rem;
+    max-width: 48rem;
   }
-  .disclaimer {
-    background: var(--warn-bg);
-    border: 1px solid var(--warn-border);
-    border-radius: 8px;
-    padding: 0.9rem 1.1rem;
-    margin: 1.5rem 0;
-    font-size: 0.95rem;
+  .grad {
+    background: linear-gradient(100deg, var(--accent), var(--gold));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.7rem;
+    margin-top: 2rem;
+  }
+  .hero-note {
+    color: var(--faint);
+    font-size: 0.88rem;
+    margin-top: 1rem;
+  }
+  .features {
+    margin-top: 1rem;
+  }
+  .feature {
+    transition:
+      border-color 150ms ease,
+      transform 150ms ease;
+  }
+  .feature:hover {
+    border-color: var(--border-strong);
+    transform: translateY(-2px);
+  }
+  .steps {
+    padding-left: 1.2rem;
+    max-width: 42rem;
+  }
+  .steps li {
+    margin-bottom: 0.6rem;
+  }
+  .steps-note {
+    max-width: 42rem;
+    color: var(--muted);
+    font-size: 0.94rem;
+  }
+  .cta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.25rem;
+    margin-top: 3.5rem;
+    background: linear-gradient(140deg, var(--accent-soft), var(--surface) 60%);
+    border-color: var(--accent-line);
+  }
+  .cta-title {
+    margin: 0 0 0.2rem;
+    font-size: 1.3rem;
+  }
+  .meta-note {
+    color: var(--faint);
+    font-size: 0.86rem;
+    margin-top: 2rem;
+  }
+
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .page-head-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .picker select {
+    min-width: 12rem;
+  }
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .onboarding {
+    max-width: 38rem;
+  }
+  .onboarding-form {
+    margin-top: 1rem;
+  }
+  .stats {
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  }
+  .stat-label {
+    margin: 0;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    font-weight: 700;
+  }
+  .stat-value {
+    margin: 0.35rem 0 0;
+    font-size: 1.5rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+  .stat-note {
+    margin: 0.2rem 0 0;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .see-all {
+    margin-top: 0.9rem;
   }
 </style>
+
+<script>
+  import {
+    ApiError,
+    createCompany,
+    getSummary,
+    listCashFlow,
+    listCompanies,
+    lookupUnit,
+    type Company,
+    type RegisteredUnit,
+    type Session,
+    type Summary,
+  } from '../lib/api';
+  import { el, setStatus, show } from '../lib/dom';
+  import { isoDate, kroner } from '../lib/format';
+  import { can, loadSession, rememberCompany, rememberedCompany } from '../lib/session';
+
+  const RECENT_LIMIT = 6;
+
+  const status = el<HTMLParagraphElement>('#dash-status');
+  const loading = el<HTMLDivElement>('#loading');
+  const onboarding = el<HTMLDivElement>('#onboarding');
+  const overview = el<HTMLDivElement>('#overview');
+  const controls = el<HTMLDivElement>('#company-controls');
+  const picker = el<HTMLSelectElement>('#company-picker');
+
+  function text(value: string): Text {
+    return document.createTextNode(value);
+  }
+
+  function cell(value: string, className?: string): HTMLTableCellElement {
+    const td = document.createElement('td');
+    if (className !== undefined) td.className = className;
+    td.append(text(value));
+    return td;
+  }
+
+  function renderSummary(summary: Summary): void {
+    el('#stat-in').textContent = kroner(summary.total_in);
+    el('#stat-out').textContent = kroner(summary.total_out);
+
+    const net = el('#stat-net');
+    net.textContent = kroner(summary.net);
+    net.className = `stat-value ${Number(summary.net) < 0 ? 'amount-out' : 'amount-in'}`;
+    el('#stat-count').textContent =
+      `${summary.entry_count} ${summary.entry_count === 1 ? 'føring' : 'føringer'} i ${summary.financial_year}`;
+
+    const vat = Number(summary.vat_position);
+    el('#stat-vat').textContent = kroner(summary.vat_position);
+    el('#stat-vat-note').textContent =
+      vat >= 0 ? 'anslått å betale' : 'anslått til gode';
+
+    const body = el<HTMLTableSectionElement>('#by-type');
+    body.replaceChildren();
+    for (const item of summary.by_type.slice(0, 8)) {
+      const row = document.createElement('tr');
+      const label = document.createElement('td');
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.dataset.direction = item.direction;
+      badge.append(text(item.direction === 'inn' ? 'Inn' : 'Ut'));
+      label.append(badge, text(' '), text(item.type_label ?? item.type_code ?? 'Ukjent'));
+      row.append(label, cell(String(item.count), 'num'), cell(kroner(item.total), 'num'));
+      body.append(row);
+    }
+    show(el('#by-type-empty'), summary.by_type.length === 0);
+  }
+
+  async function renderRecent(companyId: number): Promise<void> {
+    const entries = await listCashFlow(companyId, RECENT_LIMIT);
+    const body = el<HTMLTableSectionElement>('#recent');
+    body.replaceChildren();
+    for (const entry of entries) {
+      const row = document.createElement('tr');
+      // A reversed entry stays visible — struck through, not hidden. It is
+      // still part of the record.
+      row.dataset.reversed = String(entry.reversed_by_id !== null);
+      const amount = cell(
+        kroner(entry.gross_amount),
+        `num ${entry.direction === 'inn' ? 'amount-in' : 'amount-out'}`,
+      );
+      row.append(
+        cell(isoDate(entry.occurred_on)),
+        cell(entry.description),
+        cell(entry.type_label ?? '—'),
+        amount,
+      );
+      body.append(row);
+    }
+    show(el('#recent-empty'), entries.length === 0);
+  }
+
+  async function showCompany(company: Company): Promise<void> {
+    rememberCompany(company.id);
+    const summary = await getSummary(company.id);
+    renderSummary(summary);
+    await renderRecent(company.id);
+    onboarding.hidden = true;
+    overview.hidden = false;
+  }
+
+  function prepareOnboarding(session: Session): void {
+    const allowed = session.memberships.filter((m) =>
+      can(session, m.organization_id, 'organization:manage'),
+    );
+    if (allowed.length === 0) {
+      el<HTMLFormElement>('#company-form').hidden = true;
+      el('#no-permission').hidden = false;
+      onboarding.hidden = false;
+      return;
+    }
+
+    const select = el<HTMLSelectElement>('#org-select');
+    select.replaceChildren();
+    for (const membership of allowed) {
+      const option = document.createElement('option');
+      option.value = String(membership.organization_id);
+      option.textContent = membership.organization_name;
+      select.append(option);
+    }
+    // Only worth asking when there is a real choice to make.
+    el('#org-field').hidden = allowed.length < 2;
+
+    const yearField = el<HTMLInputElement>('input[name="first_financial_year"]');
+    yearField.value = String(new Date().getFullYear());
+
+    const form = el<HTMLFormElement>('#company-form');
+    const submit = el<HTMLButtonElement>('#company-submit');
+    const registered = wireOrgnrLookup(form);
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const data = new FormData(form);
+      const orgnr = digitsOf(String(data.get('orgnr') ?? ''));
+      submit.disabled = true;
+      setStatus(status, '');
+      // The address rides along only when it belongs to the number actually
+      // being submitted — the orgnr may have been edited after the lookup.
+      const unit = registered();
+      const address = unit?.orgnr === orgnr ? unit : null;
+      void createCompany({
+        organization_id: Number(select.value),
+        orgnr,
+        name: String(data.get('name') ?? '').trim(),
+        first_financial_year: Number(data.get('first_financial_year')),
+        address_line: address?.address_line ?? null,
+        postal_code: address?.postal_code ?? null,
+        city: address?.city ?? null,
+      })
+        .then((company) => {
+          controls.hidden = false;
+          addToPicker([company], company.id);
+          return showCompany(company);
+        })
+        .catch((error: unknown) => {
+          setStatus(
+            status,
+            error instanceof ApiError ? error.message : 'Vi fikk ikke satt opp regnskapet.',
+          );
+          submit.disabled = false;
+        });
+    });
+    onboarding.hidden = false;
+  }
+
+  const digitsOf = (value: string): string => value.replace(/\D+/g, '');
+
+  /** What the register says about a unit, in one line under the orgnr field. */
+  function describe(unit: RegisteredUnit): string {
+    const parts = [unit.organisation_form_description, unit.city].filter(
+      (part): part is string => typeof part === 'string' && part !== '',
+    );
+    // Worth saying plainly: someone outside Merverdiavgiftsregisteret should not
+    // start booking output VAT, and there is no other point at which we mention it.
+    if (!unit.registered_in_vat_register) parts.push('ikke mva-registrert');
+    if (unit.bankrupt) parts.push('registrert konkurs');
+    if (unit.under_liquidation) parts.push('under avvikling');
+    return parts.join(' · ');
+  }
+
+  /**
+   * Fill in the company name from its organisasjonsnummer.
+   *
+   * The registered name is what every filing has to carry, so letting the
+   * register supply it removes the one field a person can get subtly wrong —
+   * and the mismatch would otherwise stay invisible until a submission bounces.
+   *
+   * Advisory throughout. A register that is slow, unreachable or simply does not
+   * know the number must never be what stops someone setting up their books, so
+   * every failure here ends with a hint and a form the user can still fill in.
+   *
+   * Returns an accessor for the last unit found, for the address the caller
+   * sends along on submit.
+   */
+  function wireOrgnrLookup(form: HTMLFormElement): () => RegisteredUnit | null {
+    const orgnrField = el<HTMLInputElement>('input[name="orgnr"]', form);
+    const nameField = el<HTMLInputElement>('input[name="name"]', form);
+    const hint = el('#orgnr-hint');
+
+    let found: RegisteredUnit | null = null;
+    let pending: ReturnType<typeof setTimeout> | undefined;
+    // Only the newest lookup may write to the form: typing nine digits, then
+    // correcting one, leaves two requests in flight and no guarantee of order.
+    let latest = 0;
+
+    const setName = (value: string): void => {
+      // An empty field, or one still holding what we put there, is ours to
+      // fill. Anything else the user typed deliberately, so leave it alone.
+      if (nameField.value.trim() === '' || nameField.value === found?.name) {
+        nameField.value = value;
+      }
+    };
+
+    const lookup = (orgnr: string): void => {
+      const ticket = ++latest;
+      hint.textContent = 'Slår opp i Enhetsregisteret …';
+      void lookupUnit(orgnr)
+        .then((unit) => {
+          if (ticket !== latest) return;
+          setName(unit.name);
+          found = unit;
+          hint.textContent = describe(unit);
+        })
+        .catch((error: unknown) => {
+          if (ticket !== latest) return;
+          found = null;
+          hint.textContent =
+            error instanceof ApiError
+              ? `${error.message} Du kan skrive navnet selv.`
+              : 'Vi fikk ikke slått opp nummeret. Du kan skrive navnet selv.';
+        });
+    };
+
+    orgnrField.addEventListener('input', () => {
+      clearTimeout(pending);
+      const orgnr = digitsOf(orgnrField.value);
+      if (orgnr.length !== 9) {
+        // Nothing to say yet, and nothing worth contradicting mid-typing.
+        latest += 1;
+        hint.textContent = 'Vi henter navnet fra Enhetsregisteret.';
+        return;
+      }
+      // A brief pause, so pasting a number or fixing its last digit costs one
+      // request rather than one per keystroke.
+      pending = setTimeout(() => lookup(orgnr), 250);
+    });
+
+    return () => found;
+  }
+
+  function addToPicker(companies: Company[], selectedId: number): void {
+    picker.replaceChildren();
+    for (const company of companies) {
+      const option = document.createElement('option');
+      option.value = String(company.id);
+      option.textContent = company.name;
+      option.selected = company.id === selectedId;
+      picker.append(option);
+    }
+    picker.hidden = companies.length < 2;
+  }
+
+  void loadSession().then(async (session) => {
+    if (session === null) return;
+    try {
+      const companies = await listCompanies();
+      loading.hidden = true;
+
+      if (companies.length === 0) {
+        prepareOnboarding(session);
+        return;
+      }
+
+      const remembered = rememberedCompany();
+      const current = companies.find((c) => c.id === remembered) ?? companies[0];
+      if (current === undefined) return;
+
+      controls.hidden = false;
+      addToPicker(companies, current.id);
+      picker.addEventListener('change', () => {
+        const chosen = companies.find((c) => c.id === Number(picker.value));
+        if (chosen !== undefined) void showCompany(chosen);
+      });
+      await showCompany(current);
+    } catch (error: unknown) {
+      loading.hidden = true;
+      setStatus(
+        status,
+        error instanceof ApiError ? error.message : 'Vi fikk ikke hentet oversikten.',
+      );
+    }
+  });
+</script>
