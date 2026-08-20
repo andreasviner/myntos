@@ -32,6 +32,7 @@ class RegisteredUnitResponse(BaseModel):
     postal_code: str | None
     city: str | None
     registered_in_vat_register: bool
+    registered_in_foretaksregisteret: bool
     bankrupt: bool
     under_liquidation: bool
 

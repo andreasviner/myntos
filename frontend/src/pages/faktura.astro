@@ -17,11 +17,32 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
   <p class="lead">
     Fakturaen kontrolleres mot bokføringsforskriften § 5-1 før den utstedes — og
-    <em>først</em> da får den et nummer. Et utkast kan endres og slettes fritt; en utstedt
-    faktura kan bare rettes med kreditnota, slik § 5-2-7 krever.
+    <em>først</em> da får den et nummer. Du får se den over før noe skjer; et utkast kan endres
+    og slettes fritt, mens en utstedt faktura bare kan rettes med kreditnota, slik § 5-2-7
+    krever.
   </p>
 
   <p class="status" id="page-status" hidden></p>
+
+  {/* Egen markering og ikke en status-melding, fordi den må inneholde en lenke
+      til stedet feilen rettes — setStatus() skriver textContent. Kontonummeret
+      er blokkerende: uten det ville fakturaen sagt hva kunden skylder, men ikke
+      hvor det skal betales, og en utstedt faktura kan ikke rettes. */}
+  <p class="status" id="konto-missing" data-tone="error" hidden>
+    Selskapet har ikke noe kontonummer, så ingen faktura kan utstedes — den ville sagt hva kunden
+    skylder, men ikke hvor det skal betales.
+    <a href="/organisasjon/#selskap">Legg det inn under Organisasjon</a>.
+  </p>
+
+  {/* Informasjon og ikke en feil: det er ikke noe galt med å ikke være
+      mva-registrert, og Myntos har alt satt linjene deretter. */}
+  <p class="notice" id="vat-note" hidden>
+    Selskapet er ikke registrert i Merverdiavgiftsregisteret, så linjene settes til «Ikke
+    mva-registrert» og fakturaen viser ingen merverdiavgift.
+    <a href="/organisasjon/#selskap">Endre det under Organisasjon</a> når registreringen er på
+    plass.
+  </p>
+
   <div class="empty" id="loading">Henter …</div>
 
   <div id="content" hidden>
@@ -36,7 +57,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           <h2 class="card-title" id="form-title">Ny faktura</h2>
           <p class="status" id="form-status" hidden></p>
 
-          <form id="faktura-form">
+          {/* novalidate: hver mangel skal navngis av kontrollen i «se over», med
+              paragrafen den kommer fra. Nettleserens egen boble ville stoppet
+              lagringen før den kontrollen i det hele tatt kjørte. */}
+          <form id="faktura-form" novalidate>
             <fieldset class="group">
               <legend>Kjøper</legend>
               <label class="field">
@@ -194,17 +218,58 @@ import BaseLayout from '../layouts/BaseLayout.astro';
               <div class="grand"><span>Å betale</span><strong id="total-gross">—</strong></div>
             </div>
 
+            {/* Én knapp. Utkastet lagres som en del av å se over — det er ikke
+                et eget valg brukeren skal ta stilling til, og en «lagre»-knapp
+                ved siden av «utsted» spurte om noe ingen egentlig lurte på. */}
             <div class="form-actions">
-              <button class="btn btn-ghost" type="submit" id="save-draft">Lagre utkast</button>
-              <button class="btn btn-primary" type="button" id="issue" disabled>Utsted</button>
+              <button class="btn btn-primary" type="submit" id="review">Se over fakturaen</button>
             </div>
             <p class="card-hint" id="issue-hint"></p>
           </form>
         </div>
 
-        <div class="card" id="kontroll-card" hidden>
-          <h2 class="card-title">Kontroll mot regelverket</h2>
-          <ul class="violations" id="violations"></ul>
+        {/* Steget mellom skjemaet og et nummer i en ubrutt serie. Alt som
+            tidligere sto i en window.confirm() står her, sammen med det § 5-1
+            fant og oppsummeringen av hva kunden faktisk får. */}
+        <div class="card" id="review-card" hidden>
+          <h2 class="card-title">Se over fakturaen</h2>
+          <p class="card-hint" id="review-lead"></p>
+          <p class="status" id="review-status" hidden></p>
+
+          <dl class="summary" id="review-summary"></dl>
+
+          <div id="review-findings" hidden>
+            <h3 class="findings-title" id="findings-title"></h3>
+            <ul class="violations" id="violations"></ul>
+          </div>
+
+          <div class="form-actions">
+            <button class="btn btn-primary" type="button" id="issue">Utsted fakturaen</button>
+            <button class="btn btn-ghost" type="button" id="back-to-form">Tilbake og endre</button>
+          </div>
+          {/* PDF-en finnes også for et utkast — den er merket som utkast og har
+              ikke noe nummer. Å se den er den beste måten å se over på, og den
+              skal ikke ligge nede i tabellen når det er dette steget man er på. */}
+          <p class="card-hint">
+            <a class="btn-link" id="review-pdf" href="#">Se utkastet som PDF</a>
+          </p>
+          <p class="card-hint" id="review-note"></p>
+        </div>
+
+        {/* Etter utstedelse: dokumentet ligger her, ikke nede i tabellen. Den
+            som nettopp utstedte en faktura skal sende den, og skal ikke måtte
+            bla opp for å finne den igjen. */}
+        <div class="card" id="done-card" hidden>
+          <h2 class="card-title" id="done-title"></h2>
+          <p class="card-hint" id="done-hint"></p>
+          <div class="done-actions">
+            {/* Ingen download-attributt: API-et ligger på et annet origin, og der
+                ser nettleseren bort fra den. Det som faktisk laster ned filen er
+                Content-Disposition: attachment, som API-et sender. */}
+            <a class="btn btn-primary" id="done-pdf" href="#">Last ned PDF</a>
+            <a class="btn btn-ghost" id="done-ehf" href="#" hidden>Last ned EHF</a>
+            <button class="btn btn-ghost" type="button" id="done-new">Skriv en ny faktura</button>
+          </div>
         </div>
       </div>
 
@@ -421,6 +486,53 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   .form-actions .btn {
     flex: 1;
   }
+  /* Neither an error nor a success — the two tones .status has. Its own class
+     rather than a third tone, because it is local to this page. */
+  .notice {
+    border-radius: var(--radius-small);
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    padding: 0.65rem 0.9rem;
+    font-size: 0.92rem;
+    margin-bottom: 1rem;
+  }
+  /* The review step. A definition list because that is what it is: the fields
+     of the document about to be issued, each with its value. */
+  .summary {
+    display: grid;
+    grid-template-columns: minmax(7rem, auto) minmax(0, 1fr);
+    gap: 0.35rem 1rem;
+    margin: 0 0 1.1rem;
+    font-size: 0.92rem;
+  }
+  #review-summary :global(dt) {
+    color: var(--muted);
+  }
+  #review-summary :global(dd) {
+    margin: 0;
+  }
+  #review-summary :global(dd[data-tone='warn']) {
+    color: #c0392b;
+    font-weight: 600;
+  }
+  #review-summary :global(dd.grand) {
+    font-weight: 700;
+  }
+  .findings-title {
+    font-size: 0.92rem;
+    margin: 0 0 0.6rem;
+  }
+  #review-findings {
+    border-top: 1px solid var(--border);
+    padding-top: 0.9rem;
+    margin-bottom: 1.1rem;
+  }
+  .done-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin-top: 0.9rem;
+  }
   .violations {
     list-style: none;
     margin: 0;
@@ -493,11 +605,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     type FakturaCatalogue,
     type LinePayload,
     type Party,
+    type SalesTaxOption,
     type RegisteredUnit,
     type Violation,
   } from '../lib/api';
   import { el, setStatus, show } from '../lib/dom';
-  import { isoDate, kroner, todayIso } from '../lib/format';
+  import { isoDate, kontonummer, kroner, todayIso } from '../lib/format';
   import {
     can,
     loadSession,
@@ -513,12 +626,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   const listBody = el<HTMLTableSectionElement>('#faktura-list');
   const partySelect = el<HTMLSelectElement>('#party-select');
   const issueButton = el<HTMLButtonElement>('#issue');
-  const saveButton = el<HTMLButtonElement>('#save-draft');
+  const reviewButton = el<HTMLButtonElement>('#review');
   const partyNote = el<HTMLParagraphElement>('#party-note');
   const copyButton = el<HTMLButtonElement>('#copy-previous');
   const orgnrHint = el<HTMLSpanElement>('#orgnr-hint');
 
   const ORGNR_HINT = 'Skriv nummeret, så henter vi navn og adresse fra Enhetsregisteret.';
+
+  /**
+   * The catalogue's code for "ikke mva-registrert" — see
+   * backend/src/myntos/domain/faktura/catalogue.py. The only one a company
+   * outside Merverdiavgiftsregisteret may sell under, and the backend restricts
+   * a model's proposals to it for the same reason.
+   */
+  const NO_VAT_CODE = '0';
 
   let company: Company;
   let catalogue: FakturaCatalogue;
@@ -605,16 +726,22 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
     const price = numberInput('unit_price', preset?.unit_price ?? '', 'Pris');
 
+    // Only the codes this company may actually sell under. Making the wrong
+    // answer unavailable beats catching it afterwards — which is the same call
+    // the backend makes when it lets a model propose lines. A company outside
+    // Merverdiavgiftsregisteret may not charge output VAT at all
+    // (merverdiavgiftsloven § 15-14), so for it there is one code and it is
+    // selected: the banner that says so is not a substitute for doing it.
     const tax = document.createElement('select');
     tax.name = 'tax_code';
-    for (const option of catalogue.tax_options) {
+    for (const option of sellableTaxOptions(preset?.tax_code)) {
       const node = document.createElement('option');
       node.value = option.tax_code;
       node.textContent = option.label;
       node.title = option.note;
       tax.append(node);
     }
-    tax.value = preset?.tax_code ?? catalogue.tax_options[0]?.tax_code ?? '3';
+    tax.value = preset?.tax_code ?? defaultTaxCode();
 
     const discount = numberInput('discount_percent', preset?.discount_percent ?? '0', 'Rabatt %');
 
@@ -631,6 +758,29 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     tax.addEventListener('change', recalculate);
     linesBox.append(row);
     recalculate();
+  }
+
+  /** The code a new line starts on. */
+  function defaultTaxCode(): string {
+    if (!company.vat_registered) return NO_VAT_CODE;
+    return catalogue.tax_options[0]?.tax_code ?? '3';
+  }
+
+  /**
+   * Which VAT codes this company's lines may carry.
+   *
+   * `keep` is a code already on the line being drawn — a stored draft, or one a
+   * previous state of the company allowed. It is added back if the filter would
+   * drop it, because a `<select>` whose value is not among its options shows the
+   * wrong code without saying it changed, and that is exactly the mistake this
+   * function exists to prevent.
+   */
+  function sellableTaxOptions(keep?: string): SalesTaxOption[] {
+    if (company.vat_registered) return catalogue.tax_options;
+    const allowed = catalogue.tax_options.filter(
+      (option) => option.tax_code === NO_VAT_CODE || option.tax_code === keep,
+    );
+    return allowed.length > 0 ? allowed : catalogue.tax_options;
   }
 
   function numberInput(name: string, value: string, placeholder: string): HTMLInputElement {
@@ -748,9 +898,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     updateBuyerContext();
     kidManual = false;
     renderKid();
-    show(el('#kontroll-card'), false);
-    issueButton.disabled = true;
-    el('#issue-hint').textContent = 'Lagre utkastet først. Nummeret settes når du utsteder.';
+    showStep('form');
+    el('#issue-hint').textContent =
+      'Ingenting utstedes før du har sett fakturaen over. Utkastet lagres i det du gjør det.';
   }
 
   /**
@@ -1118,9 +1268,23 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     }
     if (document_.lines.length === 0) addLine();
     updateBuyerContext();
-    renderViolations(document_.violations);
-    issueButton.disabled = false;
+    showStep('form');
+    setStatus(formStatus, '');
     form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  /**
+   * Which step the left column is showing.
+   *
+   * Three cards, one at a time: the form, the review, and what came out. They
+   * are steps rather than panels stacked down the page — the review exists so
+   * that issuing is a thing you *read* before you do, and a form still visible
+   * under it invites editing something the review has already checked.
+   */
+  function showStep(step: 'form' | 'review' | 'done'): void {
+    show(el('#form-card'), step === 'form' && mayWrite);
+    show(el('#review-card'), step === 'review');
+    show(el('#done-card'), step === 'done');
   }
 
   function setField(name: string, text: string): void {
@@ -1133,10 +1297,31 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     if (node !== null) node.checked = state;
   }
 
-  function renderViolations(violations: Violation[]): void {
+  // --- Se over ----------------------------------------------------------------------
+  //
+  // What used to be a window.confirm() with one sentence in it. An alert cannot
+  // show what § 5-1 found, cannot show what the buyer is about to receive, and
+  // cannot be read twice — and the thing it guards is irreversible.
+
+  /**
+   * Draw the review for a saved draft, and say whether it may be issued.
+   *
+   * `violations` comes from the backend rather than from anything computed here:
+   * the checks that run at issue are the ones that decide, and a second opinion
+   * in the browser could only ever disagree with the one that matters.
+   */
+  function renderReview(saved: Faktura, violations: Violation[]): void {
+    renderSummary(saved);
+    el<HTMLAnchorElement>('#review-pdf').href = fakturaPdfUrl(company.id, saved.id);
+
     const list = el<HTMLUListElement>('#violations');
     list.replaceChildren();
-    for (const violation of violations) {
+    // Blocking first: the ones that have to be acted on are the ones to read.
+    const ordered = [
+      ...violations.filter((v) => v.severity === 'blokkerende'),
+      ...violations.filter((v) => v.severity !== 'blokkerende'),
+    ];
+    for (const violation of ordered) {
       const item = document.createElement('li');
       item.dataset.severity = violation.severity;
       const message = document.createElement('span');
@@ -1147,16 +1332,106 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       item.append(message, rule);
       list.append(item);
     }
-    show(el('#kontroll-card'), violations.length > 0);
 
-    const blocking = violations.filter((v) => v.severity === 'blokkerende');
-    issueButton.disabled = editing === null || blocking.length > 0;
-    el('#issue-hint').textContent =
-      editing === null
-        ? 'Lagre utkastet først. Nummeret settes når du utsteder.'
-        : blocking.length > 0
-          ? `${blocking.length} ting må rettes før fakturaen kan utstedes.`
-          : 'Utstedelse er endelig: fakturaen får nummer, bokføres og kan bare rettes med kreditnota.';
+    const blocking = ordered.filter((v) => v.severity === 'blokkerende');
+    const warnings = ordered.length - blocking.length;
+    show(el('#review-findings'), ordered.length > 0);
+    el('#findings-title').textContent =
+      blocking.length > 0
+        ? `${blocking.length} ting må rettes først`
+        : `${warnings} ting er verdt å vite`;
+
+    issueButton.disabled = blocking.length > 0;
+    el('#review-lead').textContent =
+      blocking.length > 0
+        ? 'Utkastet er lagret. Fakturaen kan ikke utstedes slik den står nå.'
+        : 'Utkastet er lagret. Les gjennom, så utsteder du den herfra.';
+    el('#review-note').textContent =
+      blocking.length > 0
+        ? 'Gå tilbake og rett det som står over. Ingenting er utstedt, og utkastet ligger trygt.'
+        : 'Utstedelse er endelig: fakturaen får nummer i en ubrutt serie, bokføres, og kan ' +
+          'etterpå bare rettes med kreditnota.';
+    // Shown before it is scrolled to: scrollIntoView on a hidden element does
+    // nothing at all, and the card is hidden until this line runs.
+    showStep('review');
+    el('#review-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  /** What the buyer is about to receive, as the fields it will carry. */
+  function renderSummary(saved: Faktura): void {
+    const rows: [string, string, string?][] = [
+      ['Kjøper', saved.buyer_name || '—'],
+      [
+        'Identifisert med',
+        saved.buyer_orgnr !== null
+          ? `Organisasjonsnummer ${saved.buyer_orgnr}`
+          : [saved.buyer_address_line, saved.buyer_postal_code, saved.buyer_city]
+              .filter((part) => part !== null && part !== '')
+              .join(', ') || 'ingenting — § 5-1-2 krever adresse eller organisasjonsnummer',
+        saved.buyer_orgnr === null && saved.buyer_address_line === null ? 'warn' : undefined,
+      ],
+      ['Levert', saved.delivery_date === null ? '—' : isoDate(saved.delivery_date)],
+      ['Leveringssted', saved.delivery_place ?? '—'],
+      ['Forfall', saved.due_date === null ? '—' : isoDate(saved.due_date)],
+      [
+        'Linjer',
+        `${saved.lines.length} ${saved.lines.length === 1 ? 'linje' : 'linjer'}` +
+          (saved.lines.length > 0 ? ` — ${saved.lines[0]?.description ?? ''}` : ''),
+      ],
+      ['Sum eks. mva', kroner(saved.net_total)],
+      ['Merverdiavgift', kroner(saved.vat_total)],
+      ['Å betale', kroner(saved.gross_total), 'grand'],
+      // The two the invoice is paid by. Shown together because a KID without an
+      // account number is a number with nowhere to send the money.
+      [
+        'Betales til',
+        company.bank_account === null
+          ? 'ingen konto lagt inn — legg den inn under Organisasjon → Selskapet'
+          : kontonummer(company.bank_account),
+        company.bank_account === null ? 'warn' : undefined,
+      ],
+      [
+        'KID',
+        saved.payment_reference !== null
+          ? saved.payment_reference
+          : saved.payment_reference_auto
+            ? `settes ved utstedelse${nextKid === '' ? '' : ` — trolig ${nextKid}`}`
+            : 'ingen',
+      ],
+    ];
+    if (saved.markings.length > 0) rows.push(['Merking', saved.markings.join(' · ')]);
+    if (saved.note !== null && saved.note !== '') rows.push(['Fritekst', saved.note]);
+
+    const box = el<HTMLDListElement>('#review-summary');
+    box.replaceChildren();
+    for (const [label, value, tone] of rows) {
+      const dt = document.createElement('dt');
+      dt.textContent = label;
+      const dd = document.createElement('dd');
+      dd.textContent = value;
+      if (tone === 'warn') dd.dataset.tone = 'warn';
+      if (tone === 'grand') dd.className = 'grand';
+      box.append(dt, dd);
+    }
+  }
+
+  /** The issued document, with its two files, where the person who issued it is looking. */
+  function renderDone(issued: Faktura): void {
+    el('#done-title').textContent = `Faktura ${issued.document_number ?? ''} er utstedt`;
+    el('#done-hint').textContent =
+      `${kroner(issued.gross_total)} til ${issued.buyer_name}, forfall ` +
+      `${issued.due_date === null ? '—' : isoDate(issued.due_date)}` +
+      `${issued.payment_reference === null ? '' : `, KID ${issued.payment_reference}`}. ` +
+      (issued.has_ehf
+        ? 'EHF-filen er laget og lagret sammen med PDF-en — forsendelsen krever et ' +
+          'Peppol-aksesspunkt, som ennå ikke er koblet på, så filene sendes for hånd.'
+        : 'PDF-en er lagret sammen med bilaget.');
+    el<HTMLAnchorElement>('#done-pdf').href = fakturaPdfUrl(company.id, issued.id);
+    const ehf = el<HTMLAnchorElement>('#done-ehf');
+    ehf.href = fakturaEhfUrl(company.id, issued.id);
+    show(ehf, issued.has_ehf);
+    showStep('done');
+    el('#done-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   // --- The list ---------------------------------------------------------------------
@@ -1293,7 +1568,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         ? await createFaktura(company.id, body)
         : await updateFaktura(company.id, editing.id, body);
     editing = saved;
-    renderViolations(saved.violations);
     await refresh();
     return saved;
   }
@@ -1324,53 +1598,72 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     }
   }
 
+  // Submitting the form saves the draft and opens the review. Saving is not a
+  // decision the user makes — it is what has to have happened before the
+  // backend can check anything, since the checks run against the *stored*
+  // document. Nothing is issued and nothing is numbered.
   form.addEventListener('submit', (event) => {
     event.preventDefault();
-    saveButton.disabled = true;
+    reviewButton.disabled = true;
     setStatus(formStatus, '');
     void save()
       .then((saved) => {
-        setStatus(formStatus, `Utkastet er lagret (${kroner(saved.gross_total)}).`, 'ok');
+        renderReview(saved, saved.violations);
       })
       .catch((error: unknown) => {
         setStatus(formStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke lagret.');
       })
       .finally(() => {
-        saveButton.disabled = false;
+        reviewButton.disabled = false;
       });
   });
 
+  el('#back-to-form').addEventListener('click', () => {
+    showStep('form');
+    setStatus(formStatus, 'Utkastet er lagret. Endre det du vil, og se over på nytt.', 'ok');
+    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  // No confirm(): the review *is* the confirmation, and it says more than a
+  // dialog could. What is left is to do it.
   issueButton.addEventListener('click', () => {
-    if (editing === null) return;
-    const confirmed = window.confirm(
-      'Utstede fakturaen?\n\n' +
-        'Den får et nummer i en ubrutt serie, bokføres, og kan etterpå bare rettes med kreditnota.',
-    );
-    if (!confirmed) return;
+    const draft = editing;
+    if (draft === null) return;
     issueButton.disabled = true;
-    // Save first: the form may hold edits the draft has not seen, and issuing
-    // checks the *stored* document.
-    void save()
-      .then((saved) => issueFaktura(company.id, saved.id))
+    setStatus(el('#review-status'), 'Utsteder …', 'ok');
+    void issueFaktura(company.id, draft.id)
       .then(async (issued) => {
-        setStatus(
-          formStatus,
-          `Faktura ${issued.document_number} er utstedt` +
-            `${issued.payment_reference === null ? '' : ` med KID ${issued.payment_reference}`}.`,
-          'ok',
-        );
+        setStatus(el('#review-status'), '');
         await refresh();
-        // resetForm first, then the preview: the form clears the customer, and
-        // the customer is half the KID. Refreshing before the reset would leave
-        // the previous customer's number showing under an empty customer field.
+        // Cleared, then the preview refreshed, then the result shown — in that
+        // order. The form clears the customer and the customer is half the KID,
+        // so refreshing first would leave the previous customer's number under
+        // an empty field; and resetForm() puts the form step on screen, which is
+        // what renderDone() has to come after.
         resetForm();
         await refreshKidPreview();
+        renderDone(issued);
       })
       .catch(async (error: unknown) => {
-        setStatus(formStatus, error instanceof ApiError ? error.message : 'Utstedelsen feilet.');
-        // Re-check so the list of what is missing matches what the backend said.
-        if (editing !== null) renderViolations(await checkFaktura(company.id, editing.id));
+        setStatus(
+          el('#review-status'),
+          error instanceof ApiError ? error.message : 'Utstedelsen feilet.',
+        );
+        issueButton.disabled = false;
+        // Re-read the checks so what is listed matches what the backend just
+        // refused on, rather than what it said a moment earlier.
+        try {
+          renderReview(draft, await checkFaktura(company.id, draft.id));
+        } catch {
+          // The refusal above is the message that matters; a second failure
+          // here would only replace it with a less useful one.
+        }
       });
+  });
+
+  el('#done-new').addEventListener('click', () => {
+    resetForm();
+    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 
   el('#add-line').addEventListener('click', () => addLine());
@@ -1431,17 +1724,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         'faktureres elektronisk (EHF/Peppol). Myntos lager EHF-filen for hver utstedte faktura — ' +
         'selve forsendelsen krever et Peppol-aksesspunkt, som ennå ikke er koblet på.';
 
-      if (!company.vat_registered) {
-        setStatus(
-          pageStatus,
-          'Selskapet er ikke registrert i Merverdiavgiftsregisteret, så fakturaene kan ikke ' +
-            'vise mva. Endre det under Organisasjon når registreringen er på plass.',
-        );
-      }
-
       mayWrite = can(session, company.organization_id, 'ledger:write');
-      show(el('#form-card'), mayWrite);
       show(el('#readonly'), !mayWrite);
+
+      // Both notices are only worth showing to someone who can act on them, and
+      // both name the place they are acted on. The VAT one is no longer only a
+      // warning: the line editor selects «Ikke mva-registrert» and offers
+      // nothing else, so this says what has already happened.
+      show(el('#vat-note'), mayWrite && !company.vat_registered);
+      show(el('#konto-missing'), mayWrite && company.bank_account === null);
       // The model is offered only where it can be used at all: a deployment
       // without a key has opted out, and a viewer has nothing to draft.
       show(el('#ki-card'), mayWrite && catalogue.ai_available);
@@ -1451,7 +1742,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       await refresh();
       if (mayWrite) {
         await refreshKidPreview();
+        // resetForm() puts the form step on screen; a viewer gets neither it nor
+        // the review, which is what showStep() checks mayWrite for.
         resetForm();
+      } else {
+        showStep('form');
       }
       el('#loading').hidden = true;
       el('#content').hidden = false;

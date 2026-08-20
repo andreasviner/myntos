@@ -258,10 +258,19 @@ nothing — `/auth/me` answers a moment later and overrules it either way.
 | --- | --- |
 | `/` | Marketing when signed out; overview, totals and recent entries when signed in |
 | `/kontantstrom/` | The register: entry form, listing, reversal, PDF upload |
-| `/faktura/` | Salgsdokument: line editor, live § 5-1 compliance panel, issue, kreditnota, PDF and EHF download |
+| `/faktura/` | Salgsdokument: line editor, a review step that shows the § 5-1 findings before anything is issued, kreditnota, PDF and EHF download |
 | `/logg-inn/`, `/registrer/` | Password and Google sign-in; the Google button hides itself when the deployment has no Google client |
 | `/invitasjon/` | Accepts an invitation token, sending the recipient to sign in first if needed |
-| `/organisasjon/` | Name, members, roles and invitations for the organization |
+| `/organisasjon/` | Name, members, roles and invitations for the organization — and **Selskapet**, the only place the company's own details are edited: kontonummer, VAT registration, Foretaksregisteret, address |
+
+`/faktura/` is three cards and one of them at a time — the form, the review,
+and what came out. Issuing is irreversible, so the step between the form and a
+number in an unbroken series is something you **read**: it shows the fields the
+buyer is about to receive, the account the invoice is paid to, and every § 5-1
+finding, with the issue button disabled while any of them blocks. There is no
+separate "save draft" button; submitting the form saves the draft, because the
+checks run against the *stored* document. Once issued, the PDF and the EHF are
+linked from that same card rather than only from the table below.
 
 Conventions the pages rely on — and the traps that go with them — are in
 [docs/frontend-conventions.md](frontend-conventions.md). The load-bearing one:

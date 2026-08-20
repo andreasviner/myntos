@@ -29,6 +29,7 @@ from sqlalchemy.orm import selectinload
 
 from myntos.domain.identity.models import Organization, OrganizationMembership
 from myntos.domain.ledger import cashflow, parties, posting
+from myntos.domain.ledger.bankkonto import validate_bank_account
 from myntos.domain.ledger.cashflow import CashFlowDirection
 from myntos.domain.ledger.chart import (
     BANK_ACCOUNT,
@@ -127,7 +128,7 @@ async def create_company(
         vat_registered=vat_registered,
         in_foretaksregisteret=in_foretaksregisteret,
         organisation_form=organisation_form,
-        bank_account=bank_account,
+        bank_account=None if not bank_account else validate_bank_account(bank_account),
     )
     db.add(company)
     try:
@@ -229,7 +230,10 @@ async def update_company_profile(
         company.organisation_form = organisation_form or None
     if bank_account is not None:
         # Stored without the separators people type; the renderer puts them back.
-        company.bank_account = bank_account.replace(" ", "").replace(".", "") or None
+        # The empty string is how the field is cleared — anything else has to be
+        # a real account number, because this one ends up on invoices that cannot
+        # be corrected once issued.
+        company.bank_account = validate_bank_account(bank_account) if bank_account else None
     await db.flush()
     return company
 

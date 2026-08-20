@@ -19,6 +19,17 @@ Two severities, and the distinction is not cosmetic:
   knowing: a deadline already missed (§ 5-2-2), or a requirement that is not in
   force yet but will be. Blocking on these would be us inventing rules.
 
+One blocking finding is **not** a legal requirement: a missing kontonummer
+(:func:`_check_payment_account`). Nothing in § 5-1 asks for one, so by the rule
+above it would be a warning. It blocks anyway, because the outcome of letting it
+through is the same as an unlawful document and not recoverable in any other
+way: a numbered, posted, archived invoice with nowhere to pay it, an EHF file
+with no ``PaymentMeans`` at all, and a KID that went nowhere — correctable only
+by crediting the whole thing and writing it again. A warning would have been
+shown to the person who already could not see the field they needed to fill in.
+Its ``rule`` says where it comes from rather than citing a paragraph that does
+not exist; if a check here ever wants to invent law, that is the bug.
+
 The e-invoice requirement is the one that moves. Lov 19. juni 2026 nr. 39
 (pliktig digital bokføring og e-fakturering) makes documentation of sales to
 another bokføringspliktig issuable only in an electronic invoice format, with
@@ -280,7 +291,8 @@ def _check_payment(document: SalesDocument, *, today: date) -> list[Violation]:
                 message="forfallsdato mangler",
             )
         ]
-    found = _check_payment_reference(document)
+    found = _check_payment_account(document)
+    found += _check_payment_reference(document)
     if document.due_date < today:
         # Lawful — § 5-1-1 nr. 5 asks for a forfallsdato, not for a future one —
         # and the ordinary consequence of invoicing late with terms counted from
@@ -298,6 +310,36 @@ def _check_payment(document: SalesDocument, *, today: date) -> list[Violation]:
             )
         )
     return found
+
+
+def _check_payment_account(document: SalesDocument) -> list[Violation]:
+    """No kontonummer, and therefore nowhere to pay the invoice.
+
+    Blocking, and deliberately so — see this module's docstring for why a finding
+    that cites no paragraph is allowed to stop an issue. What the buyer receives
+    without it is a demand for money with no account on it, in print, and an EHF
+    file whose ``cac:PaymentMeans`` is omitted entirely rather than left empty
+    (:mod:`myntos.domain.faktura.ehf` cannot emit a partial one without failing
+    BR-49) — so the KID disappears with it.
+
+    A kreditnota is exempt: it pays nothing out, it reverses something that was
+    charged, and it is filtered out by the caller before this runs.
+
+    The number is snapshotted from the company at issue, never typed per invoice,
+    so the fix is always the same one place — which is what the message says.
+    """
+    if document.seller_bank_account:
+        return []
+    return [
+        Violation(
+            rule="Betalingsinformasjon",
+            field="seller_bank_account",
+            message=(
+                "selskapet har ikke noe kontonummer, så fakturaen ville blitt sendt uten "
+                "å si hvor den skal betales. Legg det inn under Organisasjon → Selskapet"
+            ),
+        )
+    ]
 
 
 def _check_payment_reference(document: SalesDocument) -> list[Violation]:

@@ -38,7 +38,7 @@ def make_company(client: TestClient, organization_id: int, **overrides: Any) -> 
         "postal_code": "0153",
         "city": "Oslo",
         "vat_registered": True,
-        "bank_account": "15062033142",
+        "bank_account": "15062033158",
         **overrides,
     }
     response = write(client, "POST", "/api/v1/companies", json=payload)
@@ -286,6 +286,73 @@ def test_the_seller_snapshot_survives_a_later_company_change(client: TestClient)
 
     unchanged = client.get(f"/api/v1/companies/{company['id']}/faktura/{issued['id']}").json()
     assert unchanged["seller_name"] == "Nordmann Consulting AS"
+
+
+def test_an_invoice_cannot_be_issued_without_somewhere_to_pay_it(client: TestClient) -> None:
+    """The gap that shipped once: an invoice sent with no account number on it."""
+    session = register(client)
+    company = make_company(client, session["memberships"][0]["organization_id"], bank_account=None)
+    draft = create_draft(client, company["id"])
+
+    response = issue(client, company["id"], draft["id"])
+    assert response.status_code == 422
+    assert "kontonummer" in response.json()["detail"]
+    # Still a draft, still without a number: the refusal happens before anything
+    # irreversible.
+    after = client.get(f"/api/v1/companies/{company['id']}/faktura/{draft['id']}").json()
+    assert after["status"] == "utkast"
+    assert after["document_number"] is None
+
+
+def test_adding_the_account_number_clears_the_finding_on_an_existing_draft(
+    client: TestClient,
+) -> None:
+    """Otherwise the fix would be unreachable from the draft it was needed for.
+
+    The draft carries a snapshot of the seller, so a company corrected afterwards
+    has to reach the draft — which is why saving it re-snapshots.
+    """
+    session = register(client)
+    company = make_company(client, session["memberships"][0]["organization_id"], bank_account=None)
+    draft = create_draft(client, company["id"])
+    fields = [v["field"] for v in draft["violations"]]
+    assert "seller_bank_account" in fields
+
+    assert (
+        write(
+            client,
+            "PATCH",
+            f"/api/v1/companies/{company['id']}",
+            json={"bank_account": "1506.20.33158"},
+        ).status_code
+        == 200
+    )
+
+    # Saving the draft is what the form does before it shows the review, and it
+    # is what has to pick the corrected company up.
+    saved = patch(client, company["id"], draft["id"], note="uendret").json()
+    assert saved["seller_bank_account"] == "15062033158"
+    assert [v["field"] for v in saved["violations"] if v["severity"] == "blokkerende"] == []
+    assert issue(client, company["id"], draft["id"]).status_code == 201
+
+
+def test_an_account_number_with_a_bad_check_digit_is_refused(client: TestClient) -> None:
+    session = register(client)
+    response = write(
+        client,
+        "POST",
+        "/api/v1/companies",
+        json={
+            "organization_id": session["memberships"][0]["organization_id"],
+            "orgnr": ORGNR,
+            "name": "Nordmann Consulting AS",
+            "first_financial_year": THIS_YEAR,
+            # A transposed pair — exactly what the check digit exists to catch.
+            "bank_account": "15062033518",
+        },
+    )
+    assert response.status_code == 422
+    assert "feil kontrollsiffer" in response.json()["detail"]
 
 
 def test_a_company_that_is_not_vat_registered_cannot_invoice_vat(client: TestClient) -> None:

@@ -68,6 +68,12 @@ class RegisteredUnit:
     # it — it is surfaced so someone who is not VAT-registered does not start
     # booking output VAT in the belief that they should be.
     registered_in_vat_register: bool
+    # Whether it is in Foretaksregisteret, which decides whether every
+    # salgsdokument has to carry the word "Foretaksregisteret" together with the
+    # head-office address (bokføringsforskriften § 5-1-2 second paragraph).
+    # Taken from the register rather than inferred from the organisasjonsform,
+    # for the same reason as the line above: it is evidence, not a guess.
+    registered_in_foretaksregisteret: bool
     # Both are shown rather than acted on. Bookkeeping for a bankrupt or
     # dissolving entity is legitimate and often required; silently proceeding
     # when the register says this is not the ordinary case is what would be odd.
@@ -113,6 +119,7 @@ def _unit_from(payload: dict[str, Any]) -> RegisteredUnit:
         postal_code=postal_code,
         city=city,
         registered_in_vat_register=bool(payload.get("registrertIMvaregisteret")),
+        registered_in_foretaksregisteret=bool(payload.get("registrertIForetaksregisteret")),
         bankrupt=bool(payload.get("konkurs")),
         under_liquidation=bool(payload.get("underAvvikling")),
     )

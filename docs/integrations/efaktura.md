@@ -69,7 +69,27 @@ output VAT may be charged at all (charging it unregistered means owing it
 anyway). Aksjeselskap, allmennaksjeselskap and NUF must additionally show the
 word **Foretaksregisteret** and the head-office address — hence
 `company.in_foretaksregisteret` and `company.organisation_form`, both of which
-the signup flow should take from Enhetsregisteret rather than ask for.
+the signup flow takes from Enhetsregisteret (`registrertIForetaksregisteret`)
+rather than asking for. All three are editable afterwards at
+`/organisasjon/#selskap`, which is also the only place they can be edited.
+
+### Kontonummer — not in § 5-1, and blocking anyway
+
+`company.bank_account` is not something the regulation asks for. It blocks an
+issue regardless (`compliance._check_payment_account`), because an invoice
+without it is a demand for money with no account on it: the PDF omits the line,
+and `cac:PaymentMeans` is left out of the XML **entirely** rather than emitted
+incomplete — an empty one fails BR-49 — so the KID goes with it. There is no
+edit path afterwards; the only correction is a kreditnota and a second invoice.
+
+The number is eleven digits with a mod-11 check digit over the first ten,
+weighted 2, 3, 4, 5, 6, 7 from the right — the same arithmetic as a MOD11 KID,
+which is why `domain/ledger/bankkonto.py` borrows `kid.mod11_check_digit`
+instead of writing it twice. It is validated when entered, not at issue: a
+transposed pair is caught by the person typing it, and discovered otherwise by a
+customer whose payment went nowhere. A Norwegian IBAN is reduced to the eleven
+digits inside it; a foreign one is refused, because neither renderer can present
+it correctly yet.
 
 ### § 5-1-3 — numbering
 

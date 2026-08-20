@@ -82,6 +82,47 @@ what classes the element happens to carry.
   opinion about. The company-setup form hides its organization picker below two
   options; do the same.
 
+## Irreversible actions get a step, not a dialog
+
+`window.confirm()` is fine for something a page can undo — deleting a draft,
+removing a member. It is not fine for issuing a salgsdokument, which numbers the
+document, posts it and can only be corrected with a kreditnota. `/faktura/`
+shows a **review card** instead: the fields the buyer will receive, the account
+it is paid to, and the compliance findings the backend returned, with the
+confirm button disabled while anything blocks.
+
+Two things follow from that:
+
+- The findings shown are the backend's own (`violations` on the response, or
+  `GET .../kontroll`). A second opinion computed in the browser could only ever
+  disagree with the one that decides.
+- Saving is not a question. A draft has to exist before the backend can check
+  anything, so submitting the form saves it and opens the review — there is no
+  "save draft" button beside "issue" asking the user to pick.
+
+## The company's own details live in one place
+
+`/organisasjon/#selskap` is the only editor for `bank_account`,
+`vat_registered`, `in_foretaksregisteret` and the address. It needs
+`organization:manage` — whether the business is VAT-registered is a statement
+about the entity that every future invoice repeats, not a bookkeeping entry.
+
+Anything that refuses work because one of them is missing must **link there**,
+not merely mention it. `setStatus()` writes `textContent`, so a notice that
+needs a link is markup in the page with `show()` toggling it, not a status
+string. This is load-bearing: an invoice with no kontonummer cannot be issued at
+all, and for a while the invoice page said so while offering nowhere to fix it.
+
+## Don't warn where you can decide
+
+A banner saying "this company is not VAT-registered" is not a substitute for
+selecting «Ikke mva-registrert» on the line and offering nothing else — which is
+what the line editor does, mirroring the restriction the backend puts on
+model-proposed lines. Reserve the banner for saying what has *already* been
+done. The same rule is why the company-setup form sends
+`vat_registered` / `in_foretaksregisteret` / `organisation_form` straight from
+Enhetsregisteret instead of leaving them false and warning about it afterwards.
+
 ## Text
 
 - Norwegian bokmål throughout, including code comments in `.astro` files (the

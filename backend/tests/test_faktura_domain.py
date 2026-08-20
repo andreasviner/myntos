@@ -118,6 +118,7 @@ def make_document(
         seller_country="NO",
         seller_vat_registered=vat_registered,
         seller_in_foretaksregisteret=False,
+        seller_bank_account="15062033158",
         currency_code="NOK",
         delivery_date=date(2026, 8, 1),
         delivery_place="Oslo",
@@ -242,6 +243,26 @@ def test_missing_mandatory_content_blocks_issue(field: str, value: Any, expected
     found = blocking(check(document, today=TODAY))
     assert [v.rule for v in found] == [expected_rule]
     assert found[0].field == field
+
+
+def test_an_invoice_with_nowhere_to_pay_it_is_refused() -> None:
+    # Not a § 5-1 requirement, and blocking anyway: see compliance's docstring.
+    # The alternative is a numbered, posted invoice with no account on it and no
+    # PaymentMeans in its EHF, fixable only by crediting the whole thing.
+    document = make_document(seller_bank_account=None)
+    found = blocking(check(document, today=TODAY))
+    assert [v.field for v in found] == ["seller_bank_account"]
+    assert "Organisasjon" in found[0].message
+
+
+def test_a_kreditnota_needs_no_account_number() -> None:
+    # It pays nothing out; it reverses something that was charged.
+    document = make_document(
+        document_type=DocumentType.KREDITNOTA,
+        seller_bank_account=None,
+        due_date=None,
+    )
+    assert blocking(check(document, today=TODAY)) == []
 
 
 def test_a_buyer_with_neither_address_nor_orgnr_is_not_identified() -> None:

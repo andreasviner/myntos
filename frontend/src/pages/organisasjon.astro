@@ -58,6 +58,94 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       </div>
     </div>
 
+    {/* Selskapet — det som står på fakturaene. Kontonummeret hører hit og ikke
+        på fakturaskjemaet: det er det samme på hver faktura, og en faktura som
+        er utstedt kan bare rettes med kreditnota. Derfor nekter /faktura/ å
+        utstede så lenge feltet er tomt. */}
+    <div id="selskap" hidden>
+      <h2>Selskapet</h2>
+      <div class="card">
+        <p class="card-hint">
+          Dette er det selskapet fakturaene kommer fra, og feltene under er de fakturaen selv
+          gjentar — bokføringsforskriften § 5-1-2. Endringer gjelder fakturaer som utstedes
+          etterpå; en utstedt faktura bærer sin egen kopi av alt dette.
+        </p>
+        <p class="status" id="selskap-status" hidden></p>
+        <label class="field" id="selskap-picker-field" hidden>
+          <span>Selskap</span>
+          <select id="selskap-picker"></select>
+        </label>
+
+        <form id="selskap-form" class="selskap-form">
+          <label class="field">
+            <span>Navn</span>
+            <input type="text" name="name" required maxlength="255" autocomplete="off" />
+            <span class="field-hint">Slik navnet står i Enhetsregisteret.</span>
+          </label>
+          <label class="field">
+            <span>Organisasjonsnummer</span>
+            <input type="text" id="selskap-orgnr" readonly />
+            <span class="field-hint">
+              Kan ikke endres. Det er nøkkelen til hver innsending dette regnskapet får, så et
+              nytt nummer er et nytt selskap.
+            </span>
+          </label>
+
+          <label class="field">
+            <span>Kontonummer</span>
+            <input
+              type="text"
+              name="bank_account"
+              inputmode="numeric"
+              maxlength="20"
+              placeholder="1506.20.33158"
+              autocomplete="off"
+            />
+            <span class="field-hint" id="konto-hint"></span>
+          </label>
+
+          <label class="field">
+            <span>Adresse</span>
+            <input type="text" name="address_line" maxlength="255" autocomplete="off" />
+          </label>
+          <div class="pair">
+            <label class="field">
+              <span>Postnummer</span>
+              <input type="text" name="postal_code" maxlength="16" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Sted</span>
+              <input type="text" name="city" maxlength="128" autocomplete="off" />
+            </label>
+          </div>
+
+          <label class="check">
+            <input type="checkbox" name="vat_registered" />
+            <span>
+              Registrert i Merverdiavgiftsregisteret
+              <span class="field-hint">
+                Uten dette kan fakturaene ikke vise merverdiavgift, og linjene settes til «Ikke
+                mva-registrert». Å kreve inn mva uten å være registrert er å kreve inn en avgift
+                på statens vegne uten å ha rett til det — og pengene skyldes likevel.
+              </span>
+            </span>
+          </label>
+          <label class="check">
+            <input type="checkbox" name="in_foretaksregisteret" />
+            <span>
+              Registrert i Foretaksregisteret
+              <span class="field-hint">
+                Da skal ordet «Foretaksregisteret» og hovedkontorets adresse stå på hvert
+                salgsdokument. Alle AS, ASA og NUF er registrert der.
+              </span>
+            </span>
+          </label>
+
+          <button class="btn btn-primary" type="submit" id="selskap-submit">Lagre selskapet</button>
+        </form>
+      </div>
+    </div>
+
     <h2>Medlemmer</h2>
     <div class="card">
       <div class="table-scroll">
@@ -204,6 +292,42 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   select.role {
     min-width: 9rem;
   }
+  .selskap-form {
+    display: grid;
+    gap: 0 1rem;
+    grid-template-columns: minmax(14rem, 1fr) minmax(14rem, 1fr);
+    align-items: start;
+  }
+  .selskap-form .pair {
+    display: grid;
+    gap: 0 1rem;
+    grid-template-columns: minmax(6rem, 1fr) minmax(8rem, 2fr);
+  }
+  /* The two checkboxes and the button each say something about the whole
+     company rather than about the column they happen to land in. */
+  .selskap-form .check,
+  .selskap-form button {
+    grid-column: 1 / -1;
+  }
+  .selskap-form button {
+    justify-self: start;
+    margin-top: 0.6rem;
+  }
+  .selskap-form .check .field-hint {
+    display: block;
+    margin-top: 0.15rem;
+  }
+  #selskap-orgnr {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  #selskap-picker-field {
+    max-width: 24rem;
+  }
+  @media (max-width: 54rem) {
+    .selskap-form {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
 </style>
 
 <script>
@@ -211,17 +335,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     ApiError,
     changeMemberRole,
     inviteMember,
+    listCompanies,
     listInvitations,
     listMembers,
     removeMember,
     renameOrganization,
     revokeInvitation,
+    updateCompany,
+    type Company,
     type Invitation,
     type Member,
     type Membership,
   } from '../lib/api';
   import { el, setStatus, show } from '../lib/dom';
-  import { isoDate } from '../lib/format';
+  import { isoDate, kontonummer } from '../lib/format';
   import { loadSession, redirectToLogin } from '../lib/session';
 
   const ROLES: [string, string][] = [
@@ -239,6 +366,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
   let membership: Membership;
   let mayManage = false;
+  /**
+   * Every company the caller can reach, across all their organizations. Fetched
+   * once: the picker below filters by organization rather than refetching, so
+   * switching back and forth costs nothing.
+   */
+  let companies: Company[] = [];
+  /** The company the Selskapet form is showing, or null when there is none. */
+  let selskap: Company | null = null;
 
   function cell(value: string): HTMLTableCellElement {
     const td = document.createElement('td');
@@ -370,6 +505,120 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     if (option !== undefined) option.textContent = membership.organization_name;
   }
 
+  // --- Selskapet ---------------------------------------------------------------
+  //
+  // The company's own details, and the only place they can be edited. Two of
+  // them decide what an invoice is allowed to say — see § 5-1-2 — and one of
+  // them, kontonummeret, decides whether an invoice can be issued at all: a
+  // document with nowhere to pay it is refused by the backend, because an
+  // issued invoice can only be corrected with a kreditnota.
+
+  const selskapForm = el<HTMLFormElement>('#selskap-form');
+  const selskapStatus = el<HTMLParagraphElement>('#selskap-status');
+  const selskapPicker = el<HTMLSelectElement>('#selskap-picker');
+
+  function selskapField(name: string): HTMLInputElement | null {
+    return selskapForm.querySelector<HTMLInputElement>(`[name="${name}"]`);
+  }
+
+  /** Fill the form from `selskap`, and say what is still missing. */
+  function showSelskap(): void {
+    const here = companies.filter(
+      (company) => company.organization_id === membership.organization_id,
+    );
+    // Only ask which one when there is a choice to make.
+    show(el('#selskap-picker-field'), here.length > 1);
+    selskapPicker.replaceChildren();
+    for (const company of here) {
+      const option = document.createElement('option');
+      option.value = String(company.id);
+      option.textContent = company.name;
+      selskapPicker.append(option);
+    }
+    selskap = here.find((company) => company.id === selskap?.id) ?? here[0] ?? null;
+    // Nothing to show for an organization that keeps no books yet; the front
+    // page is where a set of books is started.
+    show(
+      el('#selskap'),
+      selskap !== null && membership.permissions.includes('organization:manage'),
+    );
+    if (selskap === null) return;
+    selskapPicker.value = String(selskap.id);
+
+    el<HTMLInputElement>('#selskap-orgnr').value = selskap.orgnr;
+    const set = (name: string, value: string): void => {
+      const node = selskapField(name);
+      if (node !== null) node.value = value;
+    };
+    set('name', selskap.name);
+    set('address_line', selskap.address_line ?? '');
+    set('postal_code', selskap.postal_code ?? '');
+    set('city', selskap.city ?? '');
+    set('bank_account', selskap.bank_account === null ? '' : kontonummer(selskap.bank_account));
+    const check = (name: string, state: boolean): void => {
+      const node = selskapField(name);
+      if (node !== null) node.checked = state;
+    };
+    check('vat_registered', selskap.vat_registered);
+    check('in_foretaksregisteret', selskap.in_foretaksregisteret);
+
+    // The hint carries the consequence rather than the format: the format is in
+    // the placeholder, and the consequence is what people actually run into.
+    const hint = el('#konto-hint');
+    hint.dataset.tone = selskap.bank_account === null ? 'warn' : 'plain';
+    hint.textContent =
+      selskap.bank_account === null
+        ? 'Mangler. Uten kontonummer kan ingen faktura utstedes — den ville sagt hva kunden ' +
+          'skylder, men ikke hvor det skal betales. Kontrollsifferet kontrolleres når du lagrer.'
+        : 'Står på hver faktura, og i PaymentMeans i EHF-filen sammen med KID-en.';
+  }
+
+  function wireSelskapForm(): void {
+    const submit = el<HTMLButtonElement>('#selskap-submit');
+
+    selskapPicker.addEventListener('change', () => {
+      const chosen = companies.find((company) => company.id === Number(selskapPicker.value));
+      if (chosen === undefined) return;
+      selskap = chosen;
+      setStatus(selskapStatus, '');
+      showSelskap();
+    });
+
+    selskapForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const current = selskap;
+      if (current === null) return;
+      submit.disabled = true;
+      setStatus(selskapStatus, '');
+      // The empty string is how the account number is cleared; `null` would mean
+      // "leave it alone", and then a wrong number could never be removed.
+      void updateCompany(current.id, {
+        name: (selskapField('name')?.value ?? '').trim(),
+        address_line: (selskapField('address_line')?.value ?? '').trim(),
+        postal_code: (selskapField('postal_code')?.value ?? '').trim(),
+        city: (selskapField('city')?.value ?? '').trim(),
+        bank_account: (selskapField('bank_account')?.value ?? '').trim(),
+        vat_registered: selskapField('vat_registered')?.checked ?? false,
+        in_foretaksregisteret: selskapField('in_foretaksregisteret')?.checked ?? false,
+      })
+        .then((saved) => {
+          companies = companies.map((company) => (company.id === saved.id ? saved : company));
+          selskap = saved;
+          showSelskap();
+          setStatus(selskapStatus, 'Selskapet er lagret.', 'ok');
+        })
+        .catch((error: unknown) => {
+          setStatus(
+            selskapStatus,
+            error instanceof ApiError ? error.message : 'Selskapet ble ikke lagret.',
+          );
+        })
+        .finally(() => {
+          submit.disabled = false;
+        });
+    });
+  }
+
   function wireRenameForm(): void {
     const form = el<HTMLFormElement>('#rename-form');
     const submit = el<HTMLButtonElement>('#rename-submit');
@@ -476,6 +725,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       mayManage = membership.permissions.includes('member:manage');
       show(el('#manage'), mayManage);
       show(el('#rename'), membership.permissions.includes('organization:manage'));
+      // Editing the company needs organization:manage as well — whether the
+      // business is VAT-registered is a statement about the entity that every
+      // future invoice repeats, not a bookkeeping entry. showSelskap() checks
+      // the same permission, so switching organization cannot reveal it.
+      showSelskap();
     };
 
     picker.addEventListener('change', () => {
@@ -489,6 +743,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       void refresh().catch((error: unknown) => report(error, 'Vi fikk ikke hentet medlemmene.'));
     });
 
+    // Before applyPermissions, which draws the Selskapet section from it. A
+    // failure here is reported and stepped over: the members list is the rest of
+    // the page and does not depend on it.
+    try {
+      companies = await listCompanies();
+    } catch (error: unknown) {
+      report(error, 'Vi fikk ikke hentet selskapene.');
+    }
+
     applyPermissions();
     showOrganization();
     // Wired once, before any permission check: both handlers read the current
@@ -497,11 +760,22 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     // rewiring, and one where they do not still cannot reach the form.
     wireRenameForm();
     wireInviteForm();
+    wireSelskapForm();
 
     try {
       await refresh();
       el('#loading').hidden = true;
       el('#content').hidden = false;
+      // /faktura/ links here as #selskap when an invoice cannot be issued for
+      // want of a kontonummer. The browser resolves the fragment before any of
+      // this ran, against an element that was still hidden — so it never
+      // scrolled. Doing it here is the first moment the section exists on
+      // screen. Only for the one anchor we send people to: honouring an
+      // arbitrary hash would be a scroll nobody asked for.
+      if (window.location.hash === '#selskap' && !el('#selskap').hidden) {
+        el('#selskap').scrollIntoView({ block: 'start' });
+        selskapField('bank_account')?.focus();
+      }
     } catch (error: unknown) {
       el('#loading').hidden = true;
       report(error, 'Vi fikk ikke hentet medlemmene.');

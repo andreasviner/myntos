@@ -174,10 +174,10 @@ async def credited_by(db: AsyncSession, document_pks: Sequence[int]) -> dict[int
 def _snapshot_seller(document: SalesDocument, company: Company) -> None:
     """Copy the seller's details onto the document.
 
-    Called both when the draft is created and again at issue: the draft shows a
-    preview that has to be accurate, and the issued document has to reflect the
-    company as it stood at that moment rather than as it stood whenever the draft
-    was started.
+    Called whenever the draft is written — created or changed — and again at
+    issue: the draft shows a preview that has to be accurate, and the issued
+    document has to reflect the company as it stood at that moment rather than as
+    it stood whenever the draft was started.
     """
     document.seller_name = company.name
     document.seller_orgnr = company.orgnr
@@ -383,9 +383,18 @@ async def update_draft(
     lines: Sequence[LineInput] | None = None,
     today: date | None = None,
 ) -> SalesDocument:
-    """Change a draft. Refuses once the document has been issued."""
+    """Change a draft. Refuses once the document has been issued.
+
+    The seller is re-snapshotted along the way. Without it a draft would keep the
+    company as it stood when the draft was started, and the compliance findings
+    the caller gets back would describe that — so someone who fixed the missing
+    kontonummer, came back to the draft and saved it would still be told the
+    company has none, with no way to clear the finding. Issue re-snapshots too,
+    so this only makes the answer *before* issue agree with the answer at it.
+    """
     document = await get_document(db, company=company, document_pk=document_pk)
     _assert_draft(document)
+    _snapshot_seller(document, company)
 
     if party_pk is not None:
         party = await party_service.get_party(db, company=company, party_pk=party_pk)

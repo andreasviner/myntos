@@ -134,8 +134,17 @@ and full digital bokføring from 2030-01-01. See docs/integrations/efaktura.md.
 - [x] Company gains `vat_registered`, `in_foretaksregisteret`,
       `organisation_form` and `bank_account` — what § 5-1-2 requires a
       salgsdokument to be able to state about the seller
-- [x] Frontend `/faktura/`: line editor, live compliance panel that names the
-      paragraph, issue-with-confirmation, PDF and EHF download
+- [x] Frontend `/faktura/`: line editor, a review step that names the paragraph
+      for every finding before anything is issued, PDF and EHF linked from the
+      result rather than only from the list
+- [x] Frontend `/organisasjon/#selskap`: the company's own details — kontonummer,
+      mva-registrering, Foretaksregisteret, address. Until it existed the fields
+      § 5-1-2 requires could only be set at company creation, and were not set
+      there either
+- [x] An invoice cannot be issued without a kontonummer, and the number is
+      mod-11 checked when it is entered (`domain/ledger/bankkonto.py`). Not a
+      § 5-1 requirement — it blocks because the alternative is a numbered,
+      posted, archived invoice with nowhere to pay it
 - [ ] **Peppol access point.** Myntos produces the EHF file but does not send
       it. This is the remaining blocker for the 2027 requirement — everything
       else is in place. Either contract an access point or become one
@@ -145,8 +154,10 @@ and full digital bokføring from 2030-01-01. See docs/integrations/efaktura.md.
 - [ ] Partial kreditnota, document-level discounts, and recurring invoices
 - [ ] Validate generated EHF against the official XSD and the Peppol
       Schematron, as golden fixtures — same approach as SAF-T in phase 3
-- [ ] Fill `in_foretaksregisteret` / `organisation_form` from Enhetsregisteret
-      during company setup instead of defaulting them to "not registered"
+- [x] Fill `vat_registered` / `in_foretaksregisteret` / `organisation_form`
+      from Enhetsregisteret during company setup instead of defaulting them to
+      "not registered" — `registrertIForetaksregisteret` is in the register's
+      answer, so none of it is a guess
 - [ ] Watch the exemption rules from the 2026 law (turnover threshold, transition
       relief). They were signalled in the hearing but are **not settled**, so
       nothing is implemented against them

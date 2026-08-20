@@ -219,16 +219,19 @@ def test_delivery_carries_the_time_and_place_paragraph_5_1_1_nr_4_requires() -> 
 
 def test_payment_means_appears_only_when_there_is_somewhere_to_pay() -> None:
     """BR-49 wants a means code on any PaymentMeans present, so it is all or nothing."""
-    without = parse(ehf.render(issued()))
+    # A complete document now carries an account — compliance blocks an invoice
+    # without one — so this case has to be asked for explicitly. It still has to
+    # render: a kreditnota is exempt, and so is a document from before the check.
+    without = parse(ehf.render(issued(seller_bank_account=None)))
     assert without.find("cac:PaymentMeans", {"cac": CAC}) is None
 
     with_account = parse(
-        ehf.render(issued(seller_bank_account="15062033142", payment_reference="123456785"))
+        ehf.render(issued(seller_bank_account="15062033158", payment_reference="123456785"))
     )
     means = find(with_account, "cac:PaymentMeans")
     assert find(means, "cbc:PaymentMeansCode").text == ehf.PAYMENT_MEANS_CREDIT_TRANSFER
     assert find(means, "cbc:PaymentID").text == "123456785"
-    assert find(means, "cac:PayeeFinancialAccount/cbc:ID").text == "15062033142"
+    assert find(means, "cac:PayeeFinancialAccount/cbc:ID").text == "15062033158"
 
 
 def test_norwegian_characters_survive_the_round_trip() -> None:

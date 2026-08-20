@@ -28,6 +28,7 @@ UNIT: dict[str, Any] = {
         "poststed": "STAVANGER",
     },
     "registrertIMvaregisteret": True,
+    "registrertIForetaksregisteret": True,
 }
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -76,6 +77,7 @@ def test_lookup_returns_name_and_address(
         "postal_code": "4035",
         "city": "STAVANGER",
         "registered_in_vat_register": True,
+        "registered_in_foretaksregisteret": True,
         "bankrupt": False,
         "under_liquidation": False,
     }

@@ -189,6 +189,11 @@ export interface Company {
   /** Decides the "Foretaksregisteret" marking every AS and NUF must carry. */
   in_foretaksregisteret: boolean;
   organisation_form: string | null;
+  /**
+   * Eleven digits, no separators. Null until someone fills it in — and an
+   * invoice cannot be issued while it is, because there would be nowhere to pay
+   * it (see the `seller_bank_account` violation).
+   */
   bank_account: string | null;
 }
 
@@ -235,6 +240,8 @@ export interface RegisteredUnit {
   postal_code: string | null;
   city: string | null;
   registered_in_vat_register: boolean;
+  /** Decides the "Foretaksregisteret" marking § 5-1-2 requires on every invoice. */
+  registered_in_foretaksregisteret: boolean;
   bankrupt: boolean;
   under_liquidation: boolean;
 }

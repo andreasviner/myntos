@@ -167,13 +167,33 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             <input type="text" name="name" required placeholder="Nordmann Consulting AS" />
           </label>
         </div>
-        <label class="field">
-          <span>Første regnskapsår i Myntos</span>
-          <input type="number" name="first_financial_year" min="2000" max="2100" required />
-          <span class="field-hint">
-            Du kan ikke føre på datoer før dette året — mva-satsene vi setter opp gjelder fra da.
-          </span>
-        </label>
+        <div class="field-row">
+          <label class="field">
+            <span>Første regnskapsår i Myntos</span>
+            <input type="number" name="first_financial_year" min="2000" max="2100" required />
+            <span class="field-hint">
+              Du kan ikke føre på datoer før dette året — mva-satsene vi setter opp gjelder fra da.
+            </span>
+          </label>
+          {/* Spurt om her, mens vi har oppmerksomheten: uten kontonummer kan
+              ingen faktura utstedes, og det er en dårlig ting å oppdage midt i
+              den første. Kan stå tomt — regnskapet skal kunne føres av noen som
+              ikke fakturerer — og fylles ut under Organisasjon senere. */}
+          <label class="field">
+            <span>Kontonummer</span>
+            <input
+              type="text"
+              name="bank_account"
+              inputmode="numeric"
+              autocomplete="off"
+              placeholder="1506.20.33158"
+            />
+            <span class="field-hint">
+              Kontoen fakturaene skal betales til. Kan fylles ut senere, men en faktura kan ikke
+              utstedes før den er på plass.
+            </span>
+          </label>
+        </div>
         {/* Ikke "opprett selskap": selskapet finnes fra før, det er regnskapet
             vi setter opp her. */}
         <button class="btn btn-primary" type="submit" id="company-submit">Sett opp regnskapet</button>
@@ -520,18 +540,29 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       const orgnr = digitsOf(String(data.get('orgnr') ?? ''));
       submit.disabled = true;
       setStatus(status, '');
-      // The address rides along only when it belongs to the number actually
-      // being submitted — the orgnr may have been edited after the lookup.
+      // What the register said rides along only when it belongs to the number
+      // actually being submitted — the orgnr may have been edited after the
+      // lookup, and then none of it describes this company.
       const unit = registered();
-      const address = unit?.orgnr === orgnr ? unit : null;
+      const fromRegister = unit?.orgnr === orgnr ? unit : null;
+      // The registration flags come from Enhetsregisteret and nowhere else. They
+      // decide what every future salgsdokument may claim — whether it may show
+      // merverdiavgift at all (§ 15-14), and whether it must carry the word
+      // "Foretaksregisteret" (§ 5-1-2) — so a guess is not good enough, and
+      // leaving them false for a company that *is* registered is what made the
+      // invoice form open with a warning nobody could act on.
       void createCompany({
         organization_id: Number(select.value),
         orgnr,
         name: String(data.get('name') ?? '').trim(),
         first_financial_year: Number(data.get('first_financial_year')),
-        address_line: address?.address_line ?? null,
-        postal_code: address?.postal_code ?? null,
-        city: address?.city ?? null,
+        address_line: fromRegister?.address_line ?? null,
+        postal_code: fromRegister?.postal_code ?? null,
+        city: fromRegister?.city ?? null,
+        vat_registered: fromRegister?.registered_in_vat_register ?? false,
+        in_foretaksregisteret: fromRegister?.registered_in_foretaksregisteret ?? false,
+        organisation_form: fromRegister?.organisation_form ?? null,
+        bank_account: String(data.get('bank_account') ?? '').trim() || null,
       })
         .then((company) => {
           controls.hidden = false;

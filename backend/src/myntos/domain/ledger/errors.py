@@ -31,6 +31,15 @@ class DuplicateCompanyError(LedgerError):
     """This organization already keeps books for that orgnr."""
 
 
+class InvalidBankAccountError(LedgerError):
+    """The bank account number is not eleven digits with a valid check digit.
+
+    Refused rather than stored as typed because the number reaches the outside
+    world on every invoice, and an issued invoice cannot be corrected — see
+    :mod:`myntos.domain.ledger.bankkonto`.
+    """
+
+
 class UnknownCashFlowTypeError(LedgerError):
     """The requested cash-flow category is not in the catalogue."""
 
