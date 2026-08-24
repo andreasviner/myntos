@@ -572,7 +572,7 @@ def test_an_uploaded_invoice_proposes_the_whole_entry(client: TestClient) -> Non
     assert suggestion["type_label"] == "Telefon og internett"
     assert suggestion["tax_code"] == "1"
     assert suggestion["counterparty_orgnr"] == OTHER_ORGNR
-    assert suggestion["description"] == "Faktura 104588 — Telenor Norge AS"
+    assert suggestion["description"] == "Faktura 104588, Telenor Norge AS"
     assert "gross_amount" in suggestion["filled"]
 
 

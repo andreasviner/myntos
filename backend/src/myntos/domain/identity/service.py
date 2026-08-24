@@ -270,7 +270,7 @@ def change_password(user: User, *, current: str, new: str) -> None:
     """Replace a user's password after re-checking the current one."""
     if user.password_hash is None:
         raise NoPasswordSetError(
-            "kontoen har ikke passord — logg inn med Google, eller sett et passord først"
+            "kontoen har ikke passord, så logg inn med Google, eller sett et passord først"
         )
     if not verify_password(current, user.password_hash):
         raise InvalidCredentialsError("feil nåværende passord")

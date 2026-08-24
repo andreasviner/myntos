@@ -3,7 +3,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 ---
 
 <BaseLayout
-  title="Myntos — regnskap med offentlig kildekode"
+  title="Myntos: regnskap med offentlig kildekode"
   description="Norsk regnskapsprogram med offentlig kildekode: kontantstrøm og bilag, MVA-håndtering, SAF-T-eksport og innlevering til Skatteetaten."
   width="wide"
 >
@@ -25,7 +25,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         heading, and rejected "Regnskap for norske regler, i åpent lende" as not
         matching "Myntos". The metaphor still carries the footer tagline.
       */}
-      <h1>Myntos — norsk regnskapsprogram<br /><span class="grad">med offentlig kildekode</span></h1>
+      <h1>Myntos: norsk regnskapsprogram<br /><span class="grad">med offentlig kildekode</span></h1>
       <p class="lead">
         Myntos fører inn- og utbetalinger med bilag, regner merverdiavgift, og er bygget for å
         levere SAF-T og skattemelding til Skatteetaten. Hele kildekoden er offentlig, så du kan se
@@ -51,7 +51,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         <h3 class="card-title">Dataene blir i EØS</h3>
         <p class="card-hint">
           Database og dokumentlager kjøres i EØS. Bokføringsforskriften § 7-5 tillater det mot
-          skriftlig melding til skattekontoret — og Myntos skal hjelpe deg å skrive den, ikke late
+          skriftlig melding til skattekontoret, og Myntos skal hjelpe deg å skrive den, ikke late
           som kravet ikke finnes.
         </p>
       </article>
@@ -59,7 +59,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         <h3 class="card-title">Ingen innlåsing</h3>
         <p class="card-hint">
           SAF-T-eksport og PDF-arkiv er ikke en ekstrafunksjon, men et lovkrav. Du skal kunne ta
-          med deg hele regnskapet ut igjen — også hvis du slutter å bruke oss.
+          med deg hele regnskapet ut igjen, også hvis du slutter å bruke oss.
         </p>
       </article>
       <article class="card feature">
@@ -83,13 +83,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       </li>
       <li>
         <strong>Før inn- og utbetalinger</strong> med type og eventuell PDF. Typen bestemmer konto
-        og mva-kode — det er den som gjør at tallene senere kan bli en skattemelding.
+        og mva-kode. Det er den som gjør at tallene senere kan bli en skattemelding.
       </li>
     </ol>
 
     <p class="steps-note">
       Kommer du fra Fiken, Tripletex, PowerOffice Go eller Conta?
-      <a href="/kom-i-gang/">Se hvordan du henter regnskapet ut derfra</a> — og hva du bør laste
+      <a href="/kom-i-gang/">Se hvordan du henter regnskapet ut derfra</a>, og hva du bør laste
       ned før du sier opp abonnementet.
     </p>
 
@@ -134,14 +134,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         første betalingen med en gang.
       </p>
       <form id="company-form" class="onboarding-form">
-        {/* Bare synlig for den som har flere organisasjoner — en
+        {/* Bare synlig for den som har flere organisasjoner: en
             regnskapsfører med adskilte kunder. Med bare én er det ikke et
             spørsmål, og et valg med ett alternativ er verre enn ingen. */}
         <label class="field" id="org-field" hidden>
           <span>Hvilken organisasjon skal føre regnskapet?</span>
           <select name="organization_id" id="org-select"></select>
           <span class="field-hint">
-            Organisasjonen er Myntos-kontoen — den eier medlemmene og
+            Organisasjonen er Myntos-kontoen, og den eier medlemmene og
             abonnementet. Selskapet er regnskapet med organisasjonsnummer.
           </span>
         </label>
@@ -172,13 +172,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             <span>Første regnskapsår i Myntos</span>
             <input type="number" name="first_financial_year" min="2000" max="2100" required />
             <span class="field-hint">
-              Du kan ikke føre på datoer før dette året — mva-satsene vi setter opp gjelder fra da.
+              Du kan ikke føre på datoer før dette året. Mva-satsene vi setter opp gjelder fra da.
             </span>
           </label>
           {/* Spurt om her, mens vi har oppmerksomheten: uten kontonummer kan
               ingen faktura utstedes, og det er en dårlig ting å oppdage midt i
-              den første. Kan stå tomt — regnskapet skal kunne føres av noen som
-              ikke fakturerer — og fylles ut under Organisasjon senere. */}
+              den første. Kan stå tomt, for regnskapet skal kunne føres av noen som
+              ikke fakturerer, og det kan fylles ut under Organisasjon senere. */}
           <label class="field">
             <span>Kontonummer</span>
             <input
@@ -209,20 +209,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       <div class="grid stats">
         <div class="card stat">
           <p class="stat-label">Inn i år</p>
-          <p class="stat-value amount-in" id="stat-in">—</p>
+          <p class="stat-value amount-in" id="stat-in">-</p>
         </div>
         <div class="card stat">
           <p class="stat-label">Ut i år</p>
-          <p class="stat-value amount-out" id="stat-out">—</p>
+          <p class="stat-value amount-out" id="stat-out">-</p>
         </div>
         <div class="card stat">
           <p class="stat-label">Netto</p>
-          <p class="stat-value" id="stat-net">—</p>
+          <p class="stat-value" id="stat-net">-</p>
           <p class="stat-note" id="stat-count"></p>
         </div>
         <div class="card stat">
           <p class="stat-label">Merverdiavgift</p>
-          <p class="stat-value" id="stat-vat">—</p>
+          <p class="stat-value" id="stat-vat">-</p>
           <p class="stat-note" id="stat-vat-note"></p>
         </div>
       </div>
@@ -268,7 +268,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       </div>
 
       <p class="meta-note">
-        Tallene er en oppsummering av det du selv har ført — ikke en mva-melding og ikke et
+        Tallene er en oppsummering av det du selv har ført, ikke en mva-melding og ikke et
         ferdig regnskap.
       </p>
     </div>
@@ -478,7 +478,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     body.replaceChildren();
     for (const entry of entries) {
       const row = document.createElement('tr');
-      // A reversed entry stays visible — struck through, not hidden. It is
+      // A reversed entry stays visible: struck through, not hidden. It is
       // still part of the record.
       row.dataset.reversed = String(entry.reversed_by_id !== null);
       const amount = cell(
@@ -488,7 +488,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       row.append(
         cell(isoDate(entry.occurred_on)),
         cell(entry.description),
-        cell(entry.type_label ?? '—'),
+        cell(entry.type_label ?? '-'),
         amount,
       );
       body.append(row);
@@ -541,14 +541,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       submit.disabled = true;
       setStatus(status, '');
       // What the register said rides along only when it belongs to the number
-      // actually being submitted — the orgnr may have been edited after the
+      // actually being submitted, since the orgnr may have been edited after the
       // lookup, and then none of it describes this company.
       const unit = registered();
       const fromRegister = unit?.orgnr === orgnr ? unit : null;
       // The registration flags come from Enhetsregisteret and nowhere else. They
-      // decide what every future salgsdokument may claim — whether it may show
+      // decide what every future salgsdokument may claim: whether it may show
       // merverdiavgift at all (§ 15-14), and whether it must carry the word
-      // "Foretaksregisteret" (§ 5-1-2) — so a guess is not good enough, and
+      // "Foretaksregisteret" (§ 5-1-2), so a guess is not good enough, and
       // leaving them false for a company that *is* registered is what made the
       // invoice form open with a warning nobody could act on.
       void createCompany({
@@ -599,7 +599,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
    * Fill in the company name from its organisasjonsnummer.
    *
    * The registered name is what every filing has to carry, so letting the
-   * register supply it removes the one field a person can get subtly wrong —
+   * register supply it removes the one field a person can get subtly wrong,
    * and the mismatch would otherwise stay invisible until a submission bounces.
    *
    * Advisory throughout. A register that is slow, unreachable or simply does not

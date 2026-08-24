@@ -2,8 +2,8 @@
  * Client-side session state and the page chrome that depends on it.
  *
  * The site is prerendered, so the server that hands out the HTML has no idea
- * who is asking. The signed-out page is therefore what ships in the file — good
- * for search engines and correct when JavaScript never runs — and the signed-in
+ * who is asking. The signed-out page is therefore what ships in the file, which is good
+ * for search engines and correct when JavaScript never runs. The signed-in
  * view is revealed here.
  *
  * To avoid a flash of the wrong page for a returning user, a **hint** is kept in
@@ -49,8 +49,8 @@ async function fetchSession(): Promise<Session | null> {
   try {
     return await getSession();
   } catch (error) {
-    // 401 is the ordinary answer for a visitor, not a failure. Anything else —
-    // the API being down, CORS being wrong — is also not a reason to claim the
+    // 401 is the ordinary answer for a visitor, not a failure. Anything else,
+    // such as the API being down or CORS being wrong, is also not a reason to claim the
     // user is signed in, so both land here.
     if (error instanceof ApiError && error.isUnauthenticated) return null;
     return null;

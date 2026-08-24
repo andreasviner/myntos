@@ -5,7 +5,7 @@ import { guider, startISteg, importStatus, SJEKKET, type Guide } from '../../dat
 /**
  * Én side per program vi har skrevet en flytteguide for. Alt innholdet ligger
  * i data/flytting.ts, slik at menyen, oversiktssiden og disse sidene har
- * nøyaktig én kilde — en guide som finnes i menyen men ikke som side er en
+ * nøyaktig én kilde. En guide som finnes i menyen men ikke som side er en
  * 404 vi ellers ville oppdaget i produksjon.
  */
 export function getStaticPaths() {
@@ -73,8 +73,8 @@ const sjekketNorsk = new Date(SJEKKET).toLocaleDateString('nb-NO', {
         {guide.taVarePa.map((fil) => <li>{fil}</li>)}
       </ul>
       <p class="aside-foot">
-        Oppbevaringsplikten er som hovedregel fem år etter regnskapsårets slutt, og den følger deg
-        — ikke abonnementet du nettopp sa opp.
+        Oppbevaringsplikten er som hovedregel fem år etter regnskapsårets slutt, og den følger deg,
+        ikke abonnementet du nettopp sa opp.
       </p>
     </aside>
   </div>

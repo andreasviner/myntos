@@ -5,16 +5,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
  * Bruksvilkårene: avtalen om å bruke Myntos som tjeneste hos oss.
  *
  * Arbeidsdelingen mellom de tre juridiske sidene er verdt å holde fast på:
- *   /vilkar     — avtalen (konto, bruk, oppsigelse, lovvalg)   ← denne
- *   /ansvar     — ansvarsfraskrivelsen og ansvarsbegrensningen
- *   /personvern — hva vi lagrer om deg
+ *   /vilkar     = avtalen (konto, bruk, oppsigelse, lovvalg)   ← denne
+ *   /ansvar     = ansvarsfraskrivelsen og ansvarsbegrensningen
+ *   /personvern = hva vi lagrer om deg
  * Ansvarsavsnittet nedenfor gjentar derfor ikke /ansvar, det inkorporerer den.
  */
 const oppdatert = '13. august 2026';
 ---
 
 <BaseLayout
-  title="Bruksvilkår — Myntos"
+  title="Bruksvilkår | Myntos"
   description="Vilkårene for å bruke Myntos: kontoen din, hva tjenesten er, hva den koster, og hva som gjelder ved oppsigelse."
 >
   <p class="pill">Vilkår</p>
@@ -26,8 +26,8 @@ const oppdatert = '13. august 2026';
   <p class="meta-line">Sist oppdatert {oppdatert}.</p>
 
   <aside class="disclaimer" role="note" aria-label="Merk">
-    <strong>Myntos er i pre-alfa.</strong> Programmet er under aktiv utvikling, kan inneholde feil
-    — også i regnskapslogikk — og leveres uten garanti. Les
+    <strong>Myntos er i pre-alfa.</strong> Programmet er under aktiv utvikling, kan inneholde feil,
+    også i regnskapslogikk, og leveres uten garanti. Les
     <a href="/ansvar/">ansvarsfraskrivelsen</a> før du flytter et helt regnskap hit.
   </aside>
 
@@ -60,7 +60,7 @@ const oppdatert = '13. august 2026';
       hva de gjør med tilgangen.
     </li>
     <li>
-      Kontoer er personlige. Ikke del én pålogging mellom flere personer — inviter dem i stedet;
+      Kontoer er personlige. Ikke del én pålogging mellom flere personer. Inviter dem i stedet;
       det koster ingenting.
     </li>
   </ul>
@@ -68,8 +68,8 @@ const oppdatert = '13. august 2026';
   <h2>3. Hva tjenesten er</h2>
   <p>
     Myntos er et regnskapsprogram for norske forhold: føring av inn- og utbetalinger med dobbel
-    bokføring, bilagsarkiv, merverdiavgift, og — når det er ferdig — SAF-T-eksport og innlevering
-    via Altinn. Hva som virker i dag, står på <a href="/funksjoner/">funksjonssiden</a>, og det som
+    bokføring, bilagsarkiv, merverdiavgift, og etter hvert som det blir ferdig, SAF-T-eksport
+    og innlevering via Altinn. Hva som virker i dag, står på <a href="/funksjoner/">funksjonssiden</a>, og det som
     er merket «under arbeid», er ikke en del av det du får nå.
   </p>
   <p>
@@ -87,8 +87,8 @@ const oppdatert = '13. august 2026';
 
   <h2>5. Dine data</h2>
   <p>
-    Alt du legger inn — bilag, føringer, kunder og leverandører — er ditt. Vi tar ikke eierskap til
-    noe av det, og vi bruker det ikke til egne formål: ikke annonser, ikke videresalg, ikke
+    Alt du legger inn, enten det er bilag, føringer, kunder eller leverandører, er ditt. Vi tar
+    ikke eierskap til noe av det, og vi bruker det ikke til egne formål: ikke annonser, ikke videresalg, ikke
     «bransjeinnsikt», ikke modelltrening. For personopplysninger i regnskapsdataene er du
     behandlingsansvarlig og vi databehandler; se <a href="/personvern/">personvernerklæringen</a>.
   </p>
@@ -99,7 +99,7 @@ const oppdatert = '13. august 2026';
   </p>
   <p>
     Du gir oss den tilgangen som er teknisk nødvendig for å lagre, vise og behandle innholdet ditt
-    for å levere tjenesten — ikke mer. Vi ser ikke gjennom regnskapet ditt, med unntak av når du ber
+    for å levere tjenesten, ikke mer. Vi ser ikke gjennom regnskapet ditt, med unntak av når du ber
     om hjelp med en konkret sak, eller når det er strengt nødvendig for å rette en feil eller stanse
     misbruk.
   </p>
@@ -113,8 +113,8 @@ const oppdatert = '13. august 2026';
       på andres kontoer,
     </li>
     <li>
-      belaste tjenesten på en måte som går ut over andre — automatisert masseinnsending, skraping
-      eller lasttesting uten avtale,
+      belaste tjenesten på en måte som går ut over andre, for eksempel automatisert
+      masseinnsending, skraping eller lasttesting uten avtale,
     </li>
     <li>laste opp skadelig programvare eller innhold du ikke har rett til å behandle,</li>
     <li>
@@ -140,7 +140,7 @@ const oppdatert = '13. august 2026';
   <p>
     Vi utvikler Myntos fortløpende og kan endre, legge til eller fjerne funksjoner. Fjerner vi noe
     du er avhengig av, forsøker vi å varsle registrerte brukere i rimelig tid på forhånd.
-    Eksportmulighetene er det siste vi ville fjerne — de er det som gjør at du kan gå.
+    Eksportmulighetene er det siste vi ville fjerne. De er det som gjør at du kan gå.
   </p>
 
   <h2>9. Oppsigelse</h2>
@@ -151,7 +151,7 @@ const oppdatert = '13. august 2026';
   <p>
     Vi kan stenge eller begrense en konto ved brudd på avsnitt 6, ved mistanke om misbruk, eller
     dersom vi må for å oppfylle en rettslig plikt. Vi varsler på e-post når vi kan, og gir deg
-    normalt anledning til å hente ut dataene dine først — med mindre umiddelbar stenging er
+    normalt anledning til å hente ut dataene dine først, med mindre umiddelbar stenging er
     nødvendig for å beskytte andre.
   </p>
   <p>
@@ -165,7 +165,7 @@ const oppdatert = '13. august 2026';
     vilkårene. Kort sagt: tjenesten leveres «som den er», uten garanti; ingenting programmet
     produserer er regnskaps-, skatte- eller juridisk rådgivning; og så langt loven tillater det er
     vi ikke ansvarlige for tap, uriktige eller forsinkede innleveringer, tilleggsskatt,
-    tvangsmulkt, gebyrer eller andre sanksjoner. Les hele teksten — den er kort.
+    tvangsmulkt, gebyrer eller andre sanksjoner. Les hele teksten. Den er kort.
   </p>
   <p>
     Er du forbruker etter norsk rett, gjelder begrensningene bare så langt forbrukerlovgivningen

@@ -3,7 +3,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
 /**
  * There is one number on this page, and it is 0. Myntos finnes fordi regnskap
- * for et lite norsk selskap ikke burde ha en prisliste — så siden har ingen
+ * for et lite norsk selskap ikke burde ha en prisliste, så siden har ingen
  * prisliste, ingen nivåer å sammenligne og ingenting som blir dyrere senere.
  * Backenden gir hver organisasjon `plan = "free"`, og ingenting leser feltet.
  */
@@ -14,11 +14,11 @@ const questions = [
   },
   {
     q: 'Kommer det en pris senere?',
-    a: 'Nei. Et regnskapsprogram som blir dyrt når du først har flyttet inn, er nettopp det Myntos er laget som et svar på. Skulle vi noen gang bryte det løftet, kan du ta med deg hele regnskapet ut samme dag — SAF-T-eksport og PDF-arkiv er lovkrav, ikke en funksjon vi kan låse.',
+    a: 'Nei. Et regnskapsprogram som blir dyrt når du først har flyttet inn, er nettopp det Myntos er laget som et svar på. Skulle vi noen gang bryte det løftet, kan du ta med deg hele regnskapet ut samme dag. SAF-T-eksport og PDF-arkiv er lovkrav, ikke en funksjon vi kan låse.',
   },
   {
     q: 'Blir noe av det jeg bruker plutselig en betalt funksjon?',
-    a: 'Nei. Det er ingen delelinje mellom en gratis og en betalt Myntos: alt som virker, virker for alle. Det som ikke er ferdig, står som «under arbeid» på funksjonssiden — ikke bak en betalingsmur.',
+    a: 'Nei. Det er ingen delelinje mellom en gratis og en betalt Myntos: alt som virker, virker for alle. Det som ikke er ferdig, står som «under arbeid» på funksjonssiden, ikke bak en betalingsmur.',
   },
   {
     q: 'Hva med innlevering til Altinn og Skatteetaten?',
@@ -26,11 +26,11 @@ const questions = [
   },
   {
     q: 'Kan jeg kjøre Myntos selv?',
-    a: 'Ja. Kildekoden er offentlig, og du kan drifte den på egen infrastruktur uten å betale oss noe — og uten å ha noen avtale med oss i det hele tatt.',
+    a: 'Ja. Kildekoden er offentlig, og du kan drifte den på egen infrastruktur uten å betale oss noe, og uten å ha noen avtale med oss i det hele tatt.',
   },
   {
     q: 'Hvis det er gratis, er det jeg som er produktet?',
-    a: 'Nei. Vi selger ikke dataene dine, vi deler dem ikke med noen, og vi bruker dem ikke til annonser, videresalg, «bransjeinnsikt» eller modelltrening. Regnskapet ditt er ditt — de eneste andre som ser noe, er leverandørene som lagrer dataene på våre vegne i EØS, og de har ingen rett til å bruke dem til noe eget.',
+    a: 'Nei. Vi selger ikke dataene dine, vi deler dem ikke med noen, og vi bruker dem ikke til annonser, videresalg, «bransjeinnsikt» eller modelltrening. Regnskapet ditt er ditt. De eneste andre som ser noe, er leverandørene som lagrer dataene på våre vegne i EØS, og de har ingen rett til å bruke dem til noe eget.',
   },
   {
     q: 'Hva er haken?',
@@ -40,8 +40,8 @@ const questions = [
 ---
 
 <BaseLayout
-  title="Priser — Myntos"
-  description="Myntos koster 0 kr. Ingen prisliste, ingen betalingsopplysninger, ingen bindingstid — og vi selger eller deler aldri dataene dine."
+  title="Priser | Myntos"
+  description="Myntos koster 0 kr. Ingen prisliste, ingen betalingsopplysninger, ingen bindingstid, og vi selger eller deler aldri dataene dine."
   width="wide"
 >
   <div class="head">
@@ -49,7 +49,7 @@ const questions = [
     <h1>0 kr. Alltid.</h1>
     <p class="lead">
       Dette er ikke en prøveperiode eller et startnivå du vokser ut av. Myntos finnes fordi
-      regnskapet til et lite norsk selskap ikke burde ha en prisliste — så siden du leser nå er
+      regnskapet til et lite norsk selskap ikke burde ha en prisliste, så siden du leser nå er
       hele prislisten.
     </p>
   </div>
@@ -120,7 +120,7 @@ const questions = [
 
   <section class="card promise">
     <div class="promise-head">
-      <h2 class="promise-title">0 kr — og du er ikke varen</h2>
+      <h2 class="promise-title">0 kr, og du er ikke varen</h2>
       <p class="card-hint">
         Når noe er gratis, er spørsmålet med rette hva som betales med i stedet. Her er svaret:
         ingenting. Regnskapet ditt er ikke en inntektskilde for oss, og det er det aldri meningen
@@ -130,7 +130,7 @@ const questions = [
     <ul class="ticks promise-list">
       <li><strong>Vi selger aldri dataene dine.</strong> Ikke til noen, ikke i noen form, ikke til noen pris.</li>
       <li>
-        <strong>Vi deler dem ikke videre</strong> — heller ikke anonymisert, aggregert eller som
+        <strong>Vi deler dem ikke videre</strong>, heller ikke anonymisert, aggregert eller som
         «innsikt om bransjen». Det er de vanlige smutthullene, og vi bruker dem ikke.
       </li>
       <li>
@@ -138,7 +138,7 @@ const questions = [
         analyseverktøy, ingen annonsenettverk og ingen tredjepartsskript.
       </li>
       <li>
-        <strong>Tallene dine trener ingen modeller</strong> og bygger ingen produkter — verken
+        <strong>Tallene dine trener ingen modeller</strong> og bygger ingen produkter, verken
         våre eller andres.
       </li>
       <li>
@@ -150,7 +150,7 @@ const questions = [
         De lagrer dataene på våre vegne og har ingen rett til å bruke dem til noe eget.
       </li>
       <li>
-        Kjører du Myntos selv, forlater tallene aldri din egen maskin — da har vi dem ikke i det
+        Kjører du Myntos selv, forlater tallene aldri din egen maskin, og da har vi dem ikke i det
         hele tatt.
       </li>
     </ul>

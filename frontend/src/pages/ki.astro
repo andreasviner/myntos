@@ -2,42 +2,82 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 
 /**
- * Hva KI gjør i Myntos, og hva den ikke gjør.
+ * Hva KI gjør i Myntos, hva den ikke gjør, og hvem som kjører den.
  *
  * Siden finnes fordi et regnskapsprogram som sender bilag til en språkmodell
  * skylder brukeren tre svar: hvor det skjer, hva modellen får se, og hvem som
- * kjører den. Alt som står her skal kunne ettergås i koden — de to spørsmålene
- * ligger i backend/src/myntos/domain/bilag/classification.py og
- * domain/faktura/drafting.py, klienten i integrations/loynd.py, og grensene på
- * 2000 og 800 tegn er MAX_DOCUMENT_CHARS og MAX_REQUEST_CHARS. Endrer vi det
- * ene, må vi endre det andre.
+ * kjører den. Det tredje svaret er Løynd, og siden sier det høyt: leverandøren
+ * er halve begrunnelsen for at et bilag i det hele tatt får forlate programmet,
+ * ikke en fotnote nederst.
+ *
+ * Alt som står her skal kunne ettergås i koden. De to spørsmålene ligger i
+ * backend/src/myntos/domain/bilag/classification.py og
+ * domain/faktura/drafting.py, klienten i integrations/loynd.py, modellnavnet er
+ * LOYND_MODEL i core/config.py, og grensene på 2000 og 800 tegn er
+ * MAX_DOCUMENT_CHARS og MAX_REQUEST_CHARS. Endrer vi det ene, må vi endre det
+ * andre.
+ *
+ * De to <pre>-blokkene er sitater fra de faktiske ledetekstene. Endres et
+ * mva-navn i catalogue.py eller en kategori i cashflow.py, må sitatet her
+ * endres med.
  */
-const oppdatert = '16. august 2026';
+const oppdatert = '23. august 2026';
 ---
 
 <BaseLayout
-  title="KI i Myntos — to spørsmål, norsk maskinvare"
-  description="Myntos bruker KI to steder: å foreslå hvilken kategori et opplastet bilag hører til, og å sette opp fakturalinjer fra din egen beskrivelse. Modellen kjøres av Løynd på norske servere, og forslaget bokføres aldri av seg selv."
+  title="KI i Myntos: to spørsmål, kjørt av Løynd i Norge"
+  description="Myntos bruker KI to steder: å foreslå hvilken kategori et opplastet bilag hører til, og å sette opp fakturalinjer fra din egen beskrivelse. Modellen er loynd-lite fra Løynd, kjørt på servere i Norge uten lagring, og forslaget bokføres aldri av seg selv."
 >
   <p class="pill">Kunstig intelligens</p>
-  <h1>KI i Myntos</h1>
+  <h1>KI i Myntos, kjørt av Løynd</h1>
   <p class="lead">
     Vi bruker kunstig intelligens to steder, til to spørsmål: hvilken kategori hører betalingen
-    til, og hvordan ser salget du nettopp beskrev ut som fakturalinjer? Alt som står svart på hvitt
-    — datoer, beløp og mva — leser vi bokstavelig, og ingenting bokføres uten at du har sett det
-    først.
+    til, og hvordan ser salget du nettopp beskrev ut som fakturalinjer? Begge svarene kommer fra
+    <a href="https://loynd.no" rel="noopener">Løynd</a>, en norsk KI-tjeneste som kjører på norske
+    servere. Alt som står svart på hvitt, altså datoer, beløp og mva, leser vi bokstavelig, og
+    ingenting bokføres uten at du har sett det først.
   </p>
   <p class="meta-line">Sist oppdatert {oppdatert}.</p>
+
+  <section class="card loynd-ad">
+    <p class="eyebrow">Modellen bak forslagene</p>
+    <h2 class="ad-title">Løynd: norsk KI, på norsk maskinvare</h2>
+    <p class="ad-lead">
+      Myntos spør ikke en modell i utlandet om hva bilaget ditt gjelder. Vi spør Løynd,
+      KI-tjenesten fra Lindeman Technologies, det samme selskapet som lager Myntos.
+      Inferensserverne står på norsk jord, det som sendes inn blir ikke lagret, og det trener ingen
+      modell. Det er hele grunnen til at et bilag i det hele tatt får forlate programmet.
+    </p>
+    <ul class="ad-points">
+      <li><strong>Servere i Norge.</strong> Ingen overføring ut av EØS som må forklares bort.</li>
+      <li><strong>Ingen lagring.</strong> Bilaget blir ikke liggende hos modellen etter svaret.</li>
+      <li>
+        <strong>Ingen trening.</strong> Regnskapet ditt gjør ingen modell smartere, heller ikke vår.
+      </li>
+      <li><strong>Ett ledd færre.</strong> Samme selskap driver modellen og regnskapsprogrammet.</li>
+      <li>
+        <strong>Liten og rask.</strong> <code>loynd-lite</code> fyller ut skjemafelter, og svarer
+        mens du ser på.
+      </li>
+      <li>
+        <strong>Åpent API.</strong> OpenAI-formet, så du kan bygge på Løynd i egne prosjekter også.
+      </li>
+    </ul>
+    <p class="ad-actions">
+      <a class="btn btn-primary" href="https://loynd.no" rel="noopener">Se hva Løynd er</a>
+      <a class="btn btn-ghost" href="https://loynd.no" rel="noopener">Hent en API-nøkkel</a>
+    </p>
+  </section>
 
   <section class="card summary">
     <h2 class="summary-title">Kort oppsummert</h2>
     <ul class="ticks">
       <li>KI brukes bare når du selv laster opp et bilag eller ber om et fakturaforslag.</li>
-      <li>Modellen velger fra faste lister — kategorier og mva-satser. Den finner ikke på nye.</li>
-      <li>Beløp og datoer på et bilag kommer aldri fra modellen — de leses fra teksten i PDF-en.</li>
+      <li>Modellen er <a href="https://loynd.no" rel="noopener">Løynd</a>, kjørt på servere i Norge.</li>
+      <li>Modellen velger fra faste lister, altså kategorier og mva-satser. Den finner ikke på nye.</li>
+      <li>Beløp og datoer på et bilag kommer aldri fra modellen. De leses fra teksten i PDF-en.</li>
       <li>På en faktura er tallene dine egne: modellen stiller dem opp, den regner dem ikke ut.</li>
-      <li>Modellen kjøres av <a href="https://loynd.no" rel="noopener">Løynd</a> på servere i Norge.</li>
-      <li>Bilagene dine lagres ikke hos modellen, og de trener ingen modell.</li>
+      <li>Bilagene dine lagres ikke hos Løynd, og de trener ingen modell.</li>
       <li>Ingenting føres automatisk. Du bekrefter hver eneste føring.</li>
     </ul>
   </section>
@@ -50,7 +90,7 @@ const oppdatert = '16. august 2026';
   <h3>1. Når du laster opp et bilag</h3>
   <p>
     På <a href="/kontantstrom/">Kontantstrøm</a> leser vi tekstlaget i PDF-en og fyller ut skjemaet
-    for deg. Fordelingen mellom hva som er lest og hva som er gjettet er ikke tilfeldig:
+    for deg. Fordelingen mellom hva som er lest og hva Løynd har foreslått er ikke tilfeldig:
   </p>
 
   <div class="table-scroll">
@@ -71,8 +111,8 @@ const oppdatert = '16. august 2026';
           <td>Slått opp mot dine egne registrerte parter, på organisasjonsnummer eller navn.</td>
         </tr>
         <tr>
-          <td>Kategori — «hva gjaldt det?»</td>
-          <td><strong>KI.</strong> Dette er det eneste feltet modellen svarer på.</td>
+          <td>Kategori, altså «hva gjaldt det?»</td>
+          <td><strong>Løynd.</strong> Dette er det eneste feltet modellen svarer på.</td>
         </tr>
         <tr>
           <td>Mva-kode</td>
@@ -88,22 +128,22 @@ const oppdatert = '16. august 2026';
   <p>
     Grunnen til delingen er enkel: dato og beløp <em>står</em> på bilaget, og der er en maskin som
     leser bokstavelig alltid tryggere enn en som gjetter godt. En språkmodell som regner feil,
-    regner feil på en måte som ser riktig ut. Kategorien står derimot ingen steder på fakturaen —
-    den er en vurdering, og det er den vurderingen vi ber om hjelp til.
+    regner feil på en måte som ser riktig ut. Kategorien står derimot ingen steder på fakturaen.
+    Den er en vurdering, og det er den vurderingen vi ber Løynd om hjelp til.
   </p>
 
   <h3>2. Når du skriver en faktura</h3>
   <p>
-    På <a href="/faktura/">Faktura</a> kan du beskrive salget med egne ord — «10 timer rådgivning i
-    mars til 1 500 kroner timen, og to kursmapper à 450» — og få det satt opp som linjer. Modellen
-    stiller om setningen din til kolonner: hva, hvor mange, hvilken enhet, hvilken pris, hvilken
-    mva-sats.
+    På <a href="/faktura/">Faktura</a> kan du beskrive salget med egne ord, for eksempel «10 timer
+    rådgivning i mars til 1 500 kroner timen, og to kursmapper à 450», og få det satt opp som
+    linjer. Modellen stiller om setningen din til kolonner: hva, hvor mange, hvilken enhet, hvilken
+    pris, hvilken mva-sats.
   </p>
   <p>
     Den <em>regner ikke</em>. Tallene er dine egne, hentet fra din egen setning; linjesummen, mva-en
     og totalen regnes ut av Myntos etterpå, på nøyaktig samme måte som for en linje du taster inn
     selv. Foreslåtte linjer er merket <em>Foreslått av KI</em> i skjemaet, og de blir ikke til noen
-    faktura før du har lest dem, lagret utkastet og trykket «Utsted» — som fortsatt kontrollerer
+    faktura før du har lest dem, lagret utkastet og trykket «Utsted», som fortsatt kontrollerer
     dokumentet mot bokføringsforskriften § 5-1.
   </p>
   <p class="note">
@@ -113,8 +153,8 @@ const oppdatert = '16. august 2026';
 
   <h2>Hvordan spørsmålene stilles</h2>
   <p>
-    <strong>Kategorien.</strong> Modellen får teksten fra bilaget og en nummerert liste over
-    kategoriene som finnes i kontantstrømregisteret. Så svarer den med ett tall.
+    <strong>Kategorien.</strong> Løynd får teksten fra bilaget og en nummerert liste over
+    kategoriene som finnes i kontantstrømregisteret. Så svarer modellen med ett tall.
   </p>
   <pre class="sample"><code>1. Salg med 25 % mva (penger inn)
 2. Salg med 15 % mva (penger inn)
@@ -126,41 +166,41 @@ const oppdatert = '16. august 2026';
 Svar med kun tallet til kategorien som passer best.</code></pre>
   <p>
     Det er hele grensesnittet. Modellen kan ikke finne på en konto som ikke finnes, ikke skrive et
-    beløp, ikke endre en dato og ikke foreslå noe utenfor listen — svarer den noe annet enn et tall
-    i listen, kastes svaret, og du får vår egen lesning i stedet. Er svaret innenfor listen, står
-    det <em>Foreslått av KI</em> ved siden av feltet, slik at du vet hvilket forslag som er en
-    gjetning og hvilke som er avlest.
+    beløp, ikke endre en dato og ikke foreslå noe utenfor listen. Svarer den noe annet enn et tall i
+    listen, kastes svaret, og du får vår egen lesning i stedet. Er svaret innenfor listen, står det
+    <em>Foreslått av KI</em> ved siden av feltet, slik at du vet hvilket forslag som er en gjetning
+    og hvilke som er avlest.
   </p>
   <p>
-    <strong>Fakturalinjene.</strong> Modellen får beskrivelsen du skrev og et fast format å svare
-    i, med mva-satsene nummerert på samme måte.
+    <strong>Fakturalinjene.</strong> Modellen får beskrivelsen du skrev og et fast format å svare i,
+    med mva-satsene nummerert på samme måte.
   </p>
   <pre class="sample"><code>beskrivelse | antall | enhet | pris per enhet | mva
 
-1. 25 % — alminnelig sats
-2. 15 % — næringsmidler
+1. 25 % (alminnelig sats)
+2. 15 % (næringsmidler)
 …
 7. Ikke mva-registrert
 
 Svar med kun linjene.</code></pre>
   <p>
-    En rad som ikke har akkurat fem felter, kastes — vi gjetter ikke på hvilket felt som mangler,
-    for da kan en pris havne i antallskolonnen. Er mva-tallet utenfor listen, faller linjen tilbake
-    til den vanlige satsen, og det står i skjemaet at du må kontrollere den. Prisene tolkes som
-    priser uten mva; nevner beskrivelsen din «inkl. mva», sier vi fra om det.
+    En rad som ikke har akkurat fem felter, kastes. Vi gjetter ikke på hvilket felt som mangler, for
+    da kan en pris havne i antallskolonnen. Er mva-tallet utenfor listen, faller linjen tilbake til
+    den vanlige satsen, og det står i skjemaet at du må kontrollere den. Prisene tolkes som priser
+    uten mva; nevner beskrivelsen din «inkl. mva», sier vi fra om det.
   </p>
   <p>
-    Fordi begge oppgavene er utfylling og ikke forfatterskap, holder det med en liten modell. Det er
-    både raskere og billigere, og det er ingen grunn til å sende bilaget ditt gjennom noe større.
+    Fordi begge oppgavene er utfylling og ikke forfatterskap, holder det med en liten modell. Derfor
+    bruker vi <code>loynd-lite</code>, den lille modellen hos Løynd: den er raskere og billigere, og
+    det finnes ingen grunn til å sende bilaget ditt gjennom noe større.
   </p>
 
-  <h2>Hvem kjører modellen</h2>
+  <h2>Hvorfor Løynd</h2>
   <p>
-    <a href="https://loynd.no" rel="noopener">Løynd</a> — en norsk KI-tjeneste fra Lindeman
-    Technologies, samme selskap som lager Myntos. Inferensserverne står på norsk jord, og
-    tjenesten lagrer ikke det som sendes inn.
+    <a href="https://loynd.no" rel="noopener">Løynd</a> er en norsk KI-tjeneste fra Lindeman
+    Technologies, samme selskap som lager Myntos. Inferensserverne står på norsk jord, og tjenesten
+    lagrer ikke det som sendes inn. Det er tre grunner til at det er akkurat den:
   </p>
-  <p>Det er tre grunner til at det er akkurat den:</p>
   <ul>
     <li>
       <strong>Et bilag er ikke en tekstsnutt.</strong> Det er et forretningsdokument med navn,
@@ -173,14 +213,19 @@ Svar med kun linjene.</code></pre>
       innom en tredjepart vi bare har lest vilkårene til.
     </li>
     <li>
-      <strong>Ingen lagring, ingen trening.</strong> Regnskapet ditt trener ingen modell — verken
-      vår eller noen andres. Se <a href="/personvern/">personvernerklæringen</a>.
+      <strong>Ingen lagring, ingen trening.</strong> Regnskapet ditt trener ingen modell, verken vår
+      eller noen andres. Se <a href="/personvern/">personvernerklæringen</a>.
     </li>
   </ul>
+  <p class="ad-tail">
+    Løynd er ikke bare for regnskap. Tjenesten er et vanlig, OpenAI-formet API du kan bygge på selv,
+    med samme løfte om norske servere og ingen lagring.
+    <a href="https://loynd.no" rel="noopener">Les mer på loynd.no</a>.
+  </p>
 
   <h2>Hva modellen får se</h2>
   <p>
-    Ved opplasting: bare teksten fra bilaget, og bare de første 2000 tegnene av den — toppen av en
+    Ved opplasting: bare teksten fra bilaget, og bare de første 2000 tegnene av den. Toppen av en
     faktura har avsender, varelinjer og totalsum, og resten er betalingsinstrukser og liten skrift.
     Ved et fakturaforslag: bare de inntil 800 tegnene du selv skrev i boksen. Ikke noe annet følger
     med, i noen av tilfellene:
@@ -190,7 +235,7 @@ Svar med kun linjene.</code></pre>
     <li>Ikke kunde- og leverandørregisteret ditt, og ikke hvem fakturaen skal til.</li>
     <li>Ikke navnet ditt, e-postadressen din eller noe om kontoen din.</li>
     <li>Ikke selskapets navn eller organisasjonsnummer.</li>
-    <li>Ikke selve PDF-filen — bare tekstlaget vi har hentet ut av den.</li>
+    <li>Ikke selve PDF-filen, bare tekstlaget vi har hentet ut av den.</li>
   </ul>
   <p class="note">
     Er bilaget skannet eller fotografert, finnes det ikke noe tekstlag. Da sendes ingenting noe
@@ -207,13 +252,14 @@ Svar med kun linjene.</code></pre>
     <li><strong>Ingen profilering av deg.</strong></li>
   </ul>
 
-  <h2>Å slå det av</h2>
+  <h2>Å slå det på, og å slå det av</h2>
   <p>
-    Kjører du Myntos selv, er begge forslagene avhengige av at du setter en API-nøkkel i
-    miljøvariabelen <code>LOYND_KEY</code>. Uten nøkkel spør vi ingen om noe: bilaget leses
-    fortsatt for dato, beløp og mva, kategorien velger du selv, og fakturaskjemaet viser ikke
-    beskrivelsesboksen i det hele tatt. Funksjonen er altså noe man slår på, ikke noe man må slå
-    av.
+    Kjører du Myntos selv, er begge forslagene avhengige av at du setter en Løynd-nøkkel i
+    miljøvariabelen <code>LOYND_KEY</code>. Nøkkelen får du på
+    <a href="https://loynd.no" rel="noopener">loynd.no</a>. Uten nøkkel spør vi ingen om
+    noe: bilaget leses fortsatt for dato, beløp og mva, kategorien velger du selv, og fakturaskjemaet
+    viser ikke beskrivelsesboksen i det hele tatt. Funksjonen er altså noe man slår på, ikke noe man
+    må slå av.
   </p>
   <p class="note">
     Myntos er i tidlig utvikling. Et KI-forslag er et forslag, og ansvaret for det som bokføres,
@@ -226,6 +272,56 @@ Svar med kun linjene.</code></pre>
     color: var(--faint);
     font-size: 0.88rem;
     margin: 0.4rem 0 2rem;
+  }
+  /*
+    Løynd-kortet er sidens reklameplass. Hvem som kjører modellen er halve svaret
+    på om det er greit å sende et bilag ut av programmet i det hele tatt, så det
+    står øverst og ser ut som noe man skal klikke på, ikke som en fotnote.
+  */
+  .loynd-ad {
+    border-color: var(--accent-line);
+    background: linear-gradient(150deg, var(--accent-soft), var(--surface) 70%);
+    box-shadow: var(--shadow);
+  }
+  .ad-title {
+    margin: 0.35rem 0 0;
+    font-size: 1.45rem;
+  }
+  .ad-lead {
+    margin-top: 0.7rem;
+  }
+  .ad-points {
+    list-style: none;
+    padding: 0;
+    margin: 1.1rem 0 0;
+    display: grid;
+    gap: 0.55rem;
+  }
+  .ad-points li {
+    position: relative;
+    padding-left: 1.5rem;
+    font-size: 0.95rem;
+  }
+  .ad-points li::before {
+    content: '';
+    position: absolute;
+    left: 0.1rem;
+    top: 0.55em;
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  .ad-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin: 1.4rem 0 0;
+  }
+  .ad-tail {
+    border-left: 3px solid var(--accent-line);
+    padding-left: 0.9rem;
+    color: var(--muted);
   }
   .summary {
     border-color: var(--accent-line);

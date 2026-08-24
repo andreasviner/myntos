@@ -102,18 +102,69 @@ class Settings(BaseSettings):
         "https://test.maskinporten.no/.well-known/oauth-authorization-server"
     )
     maskinporten_scopes: str = ""
+    # The private key that signs the JWT grant. Named ``jwk`` for the variable
+    # that was already documented, but either encoding is read: a JWK document
+    # (``{"kty":"RSA",...}``, possibly wrapped in a ``{"keys":[...]}`` set) or a
+    # PEM private key. See myntos.auth.maskinporten.keys.
     maskinporten_jwk_path: Path | None = None
+    # The key id registered in Samarbeidsportalen. Only needed when the key file
+    # is a PEM, which carries no ``kid`` of its own — a JWK's own ``kid`` wins.
+    # Maskinporten looks the signing key up by this value, so a mismatch is an
+    # ``invalid_client``, not a signature error.
+    maskinporten_kid: str | None = None
+    # Acting on a client's behalf (regnskapsfører): the orgnr of the company
+    # whose delegation is being used, added to the grant as ``consumer_org``.
+    # Normally left unset and passed per request instead — a deployment that
+    # keeps books for several companies cannot have one global value.
+    maskinporten_consumer_org: str | None = None
 
     # --- ID-porten (required for validating/submitting MVA-melding & skattemelding) ---
     idporten_client_id: str | None = None
     idporten_well_known_url: str = "https://test.idporten.no/.well-known/openid-configuration"
     idporten_redirect_uri: str | None = None
+    # Scopes beyond ``openid``. These are ordered from Skatteetaten and are
+    # inert until granted, so they are configuration rather than constants:
+    # requesting one the client does not have fails the whole authorization.
+    idporten_scopes: str = ""
+    # ID-porten clients authenticate with ``private_key_jwt`` (Digdir's default
+    # and recommendation) — the same key handling as Maskinporten, a separate
+    # key because it is a separate client. A ``client_secret`` client works too;
+    # set the secret instead and leave these unset.
+    idporten_jwk_path: Path | None = None
+    idporten_kid: str | None = None
+    idporten_client_secret: SecretStr | None = None
+    # Level of assurance demanded of the login. ``idporten-loa-high`` means
+    # BankID/Buypass/Commfides rather than MinID — which is what Skatteetaten
+    # requires for submissions, and what a signature legally attached to a
+    # personnummer should demand anyway.
+    idporten_acr_values: str = "idporten-loa-high"
 
     # --- Altinn (token exchange + instance APIs) ---
     altinn_platform_base_url: str = "https://platform.tt02.altinn.no"
+    # Altinn 3 apps, one absolute URL each: the app id differs between
+    # environments (``…-etm2`` in test, ``…-v1`` in production) and so does the
+    # host, which is why these are configuration and not constants. The org
+    # prefix is part of the path — ``skd`` for Skatteetaten, ``brg`` for
+    # Brønnøysundregistrene.
+    # Test: https://skd.apps.tt02.altinn.no/skd/formueinntekt-skattemelding-v2
+    # Prod: https://skd.apps.altinn.no/skd/formueinntekt-skattemelding-v2
+    altinn_skattemelding_app_url: str | None = None
+    # Test: https://skd.apps.tt02.altinn.no/skd/mva-melding-innsending-etm2
+    # Prod: https://skd.apps.altinn.no/skd/mva-melding-innsending-v1
+    altinn_mva_app_url: str | None = None
 
     # --- Skatteetaten ---
+    # Three separate hosts, because Skatteetaten splits them by auth plane and
+    # the test names do not follow one pattern (docs/integrations/).
+    # Maskinporten plane — test: https://api-test.sits.no
+    #                      prod: https://api.skatteetaten.no
     skatteetaten_api_base_url: str | None = None
+    # ID-porten plane (skattemelding) — test: https://idporten-api-test.sits.no
+    #                                   prod: https://idporten.api.skatteetaten.no
+    skatteetaten_idporten_api_base_url: str | None = None
+    # MVA validation — test: https://idporten-api-sbstest.sits.no
+    #                  prod: https://idporten.api.skatteetaten.no
+    skatteetaten_mva_api_base_url: str | None = None
 
     # --- Løynd (the model that reads an uploaded bilag) ---
     # Optional in the same sense as the sign-in providers: without a key the
@@ -148,6 +199,16 @@ class Settings(BaseSettings):
     r2_endpoint_url: str | None = None
 
     @property
+    def maskinporten_key_file(self) -> Path | None:
+        """The Maskinporten key file as an absolute path, or ``None``."""
+        return _repo_relative(self.maskinporten_jwk_path)
+
+    @property
+    def idporten_key_file(self) -> Path | None:
+        """The ID-porten key file as an absolute path, or ``None``."""
+        return _repo_relative(self.idporten_jwk_path)
+
+    @property
     def session_cookie_secure(self) -> bool:
         """HTTPS-only cookies everywhere except local development.
 
@@ -155,6 +216,20 @@ class Settings(BaseSettings):
         secure cookies is a deployment where someone will forget.
         """
         return self.environment != "development"
+
+
+def _repo_relative(path: Path | None) -> Path | None:
+    """Resolve a configured path against the repository root, not the cwd.
+
+    ``.env`` documents ``./secrets/maskinporten.jwk.json``, and the backend is
+    normally started from ``backend/`` — so a relative path read literally would
+    point at a file that is not there. Anchoring on the repo root makes the
+    documented value mean what it looks like it means, and an absolute path
+    (what production should use) passes through untouched.
+    """
+    if path is None:
+        return None
+    return path if path.is_absolute() else (REPO_ROOT / path).resolve()
 
 
 @lru_cache

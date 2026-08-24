@@ -38,7 +38,7 @@ export function todayIso(): string {
 /**
  * A Norwegian account number as it is read: `1506.20.33158`.
  *
- * Stored and sent as eleven bare digits — the grouping is presentation only, and
+ * Stored and sent as eleven bare digits, so the grouping is presentation only, and
  * it is the same grouping the invoice PDF uses. Anything that is not eleven
  * digits comes back untouched: a value stored before the format was enforced
  * should be shown as it is rather than cut into a shape it does not have.

@@ -199,7 +199,7 @@ def _check_buyer(document: SalesDocument) -> list[Violation]:
                 rule="bokføringsforskriften § 5-1-2",
                 field="buyer_address_line",
                 message=(
-                    "kjøperen må identifiseres med adresse eller organisasjonsnummer — "
+                    "kjøperen må identifiseres med adresse eller organisasjonsnummer, "
                     "navnet alene er ikke nok"
                 ),
             )
@@ -367,8 +367,8 @@ def _check_payment_reference(document: SalesDocument) -> list[Violation]:
             field="payment_reference",
             message=(
                 f"kontrollsifferet i KID-en {document.payment_reference} går ikke opp, verken "
-                f"etter mod10 eller mod11. Nettbanken til kjøperen vil trolig avvise den — "
-                f"kontroller nummeret, eller la Myntos sette det"
+                f"etter mod10 eller mod11. Nettbanken til kjøperen vil trolig avvise den. "
+                f"Kontroller nummeret, eller la Myntos sette det"
             ),
             severity=Severity.ADVARSEL,
         )
@@ -435,7 +435,7 @@ def _check_vat(document: SalesDocument, lines: list[SalesDocumentLine]) -> list[
                 field="lines",
                 message=(
                     "omsetning utenfor merverdiavgiftsloven kan ikke stå på samme "
-                    "faktura som avgiftspliktig omsetning — skriv to fakturaer"
+                    "faktura som avgiftspliktig omsetning. Skriv to fakturaer"
                 ),
             )
         )
@@ -454,7 +454,7 @@ def _check_vat(document: SalesDocument, lines: list[SalesDocumentLine]) -> list[
                     field="reverse_charge",
                     message=(
                         f"fakturaen er merket omvendt avgiftsplikt, så det beregnes ikke "
-                        f"merverdiavgift — heller ikke på de {len(charged)} linjene som "
+                        f"merverdiavgift, heller ikke på de {len(charged)} linjene som "
                         f"har en avgiftspliktig mva-kode"
                     ),
                     severity=Severity.ADVARSEL,
@@ -493,8 +493,7 @@ def _check_e_invoice(document: SalesDocument, *, today: date) -> list[Violation]
             message=(
                 "kjøperen er bokføringspliktig, og da skal salgsdokumentet sendes som "
                 "elektronisk faktura. Uten kjøperens organisasjonsnummer kan den ikke "
-                "adresseres i Peppol"
-                + ("" if mandatory else " — kravet gjelder fra 1. januar 2027")
+                "adresseres i Peppol" + ("" if mandatory else ". Kravet gjelder fra 1. januar 2027")
             ),
             severity=Severity.BLOKKERENDE if mandatory else Severity.ADVARSEL,
         )

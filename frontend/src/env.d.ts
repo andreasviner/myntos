@@ -6,7 +6,7 @@ interface ImportMetaEnv {
    *
    * Inlined at build time, so a deployment that points at the wrong backend
    * has to be rebuilt, not reconfigured. Defaults to `http://localhost:8000`
-   * when unset — see `frontend/.env.example`.
+   * when unset. See `frontend/.env.example`.
    */
   readonly PUBLIC_API_BASE_URL?: string;
 }

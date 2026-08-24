@@ -3,7 +3,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 ---
 
 <BaseLayout
-  title="Faktura — Myntos"
+  title="Faktura | Myntos"
   description="Skriv salgsdokument som følger bokføringsforskriften, og send det som e-faktura."
   width="wide"
 >
@@ -16,7 +16,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   </header>
 
   <p class="lead">
-    Fakturaen kontrolleres mot bokføringsforskriften § 5-1 før den utstedes — og
+    Fakturaen kontrolleres mot bokføringsforskriften § 5-1 før den utstedes, og
     <em>først</em> da får den et nummer. Du får se den over før noe skjer; et utkast kan endres
     og slettes fritt, mens en utstedt faktura bare kan rettes med kreditnota, slik § 5-2-7
     krever.
@@ -25,11 +25,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   <p class="status" id="page-status" hidden></p>
 
   {/* Egen markering og ikke en status-melding, fordi den må inneholde en lenke
-      til stedet feilen rettes — setStatus() skriver textContent. Kontonummeret
+      til stedet feilen rettes. setStatus() skriver textContent. Kontonummeret
       er blokkerende: uten det ville fakturaen sagt hva kunden skylder, men ikke
       hvor det skal betales, og en utstedt faktura kan ikke rettes. */}
   <p class="status" id="konto-missing" data-tone="error" hidden>
-    Selskapet har ikke noe kontonummer, så ingen faktura kan utstedes — den ville sagt hva kunden
+    Selskapet har ikke noe kontonummer, så ingen faktura kan utstedes. Den ville sagt hva kunden
     skylder, men ikke hvor det skal betales.
     <a href="/organisasjon/#selskap">Legg det inn under Organisasjon</a>.
   </p>
@@ -141,7 +141,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
               </label>
 
               <!--
-                The KID carries the invoice number, and a draft has none — so
+                The KID carries the invoice number, and a draft has none, so
                 what stands here before issue is a preview, and the field is
                 read-only until someone says otherwise. See
                 backend/src/myntos/domain/faktura/kid.py.
@@ -177,7 +177,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             <fieldset class="group">
               <legend>Linjer</legend>
               <p class="card-hint">
-                Hver linje må beskrive ytelsens art og omfang — § 5-1-1 nr. 3.
+                Hver linje må beskrive ytelsens art og omfang, jf. § 5-1-1 nr. 3.
               </p>
 
               <!--
@@ -213,12 +213,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             </fieldset>
 
             <div class="totals" id="form-totals" hidden>
-              <div><span>Sum eks. mva</span><strong id="total-net">—</strong></div>
-              <div><span>Merverdiavgift</span><strong id="total-vat">—</strong></div>
-              <div class="grand"><span>Å betale</span><strong id="total-gross">—</strong></div>
+              <div><span>Sum eks. mva</span><strong id="total-net">-</strong></div>
+              <div><span>Merverdiavgift</span><strong id="total-vat">-</strong></div>
+              <div class="grand"><span>Å betale</span><strong id="total-gross">-</strong></div>
             </div>
 
-            {/* Én knapp. Utkastet lagres som en del av å se over — det er ikke
+            {/* Én knapp. Utkastet lagres som en del av å se over. Det er ikke
                 et eget valg brukeren skal ta stilling til, og en «lagre»-knapp
                 ved siden av «utsted» spurte om noe ingen egentlig lurte på. */}
             <div class="form-actions">
@@ -247,7 +247,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             <button class="btn btn-primary" type="button" id="issue">Utsted fakturaen</button>
             <button class="btn btn-ghost" type="button" id="back-to-form">Tilbake og endre</button>
           </div>
-          {/* PDF-en finnes også for et utkast — den er merket som utkast og har
+          {/* PDF-en finnes også for et utkast, og den er merket som utkast og har
               ikke noe nummer. Å se den er den beste måten å se over på, og den
               skal ikke ligge nede i tabellen når det er dette steget man er på. */}
           <p class="card-hint">
@@ -415,7 +415,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   /*
     Everything below is built by the page's own script, and Astro scopes a
     <style> block by stamping `data-astro-cid-*` onto the elements *in the
-    template* — which a node from `document.createElement` never gets. A plain
+    template*, which a node from `document.createElement` never gets. A plain
     `.line { … }` here therefore compiles to a selector nothing on the page
     matches, and the rule is silently dead.
     So each rule is anchored on an element that is in the markup and reaches the
@@ -486,7 +486,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   .form-actions .btn {
     flex: 1;
   }
-  /* Neither an error nor a success — the two tones .status has. Its own class
+  /* Neither an error nor a success, the two tones .status has. Its own class
      rather than a third tone, because it is local to this page. */
   .notice {
     border-radius: var(--radius-small);
@@ -538,7 +538,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     margin: 0;
     padding: 0;
   }
-  /* Findings, table rows and their cells are all generated — see the note above. */
+  /* Findings, table rows and their cells are all generated. See the note above. */
   #violations :global(li) {
     border-left: 3px solid var(--border-strong);
     padding: 0.4rem 0 0.4rem 0.7rem;
@@ -634,7 +634,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   const ORGNR_HINT = 'Skriv nummeret, så henter vi navn og adresse fra Enhetsregisteret.';
 
   /**
-   * The catalogue's code for "ikke mva-registrert" — see
+   * The catalogue's code for "ikke mva-registrert". See
    * backend/src/myntos/domain/faktura/catalogue.py. The only one a company
    * outside Merverdiavgiftsregisteret may sell under, and the backend restricts
    * a model's proposals to it for the same reason.
@@ -656,7 +656,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   let registered: RegisteredUnit | null = null;
   /**
    * The KID the next issued invoice would carry, for the read-only preview.
-   * Empty when the backend could not say — the field then explains itself in
+   * Empty when the backend could not say, and the field then explains itself in
    * words instead, which is better than showing a number that is not one.
    */
   let nextKid = '';
@@ -727,7 +727,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     const price = numberInput('unit_price', preset?.unit_price ?? '', 'Pris');
 
     // Only the codes this company may actually sell under. Making the wrong
-    // answer unavailable beats catching it afterwards — which is the same call
+    // answer unavailable beats catching it afterwards, which is the same call
     // the backend makes when it lets a model propose lines. A company outside
     // Merverdiavgiftsregisteret may not charge output VAT at all
     // (merverdiavgiftsloven § 15-14), so for it there is one code and it is
@@ -769,7 +769,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   /**
    * Which VAT codes this company's lines may carry.
    *
-   * `keep` is a code already on the line being drawn — a stored draft, or one a
+   * `keep` is a code already on the line being drawn: a stored draft, or one a
    * previous state of the company allowed. It is added back if the filter would
    * drop it, because a `<select>` whose value is not among its options shows the
    * wrong code without saying it changed, and that is exactly the mistake this
@@ -823,7 +823,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
    * Deliberately a *preview*: the backend computes the real figures, VAT per
    * § 5-1-5 group rather than per line, and those are what get posted and
    * printed. This is only so the person typing can see roughly where they are
-   * before saving — which is why nothing here is ever sent anywhere.
+   * before saving, which is why nothing here is ever sent anywhere.
    */
   function recalculate(): void {
     let net = 0;
@@ -907,7 +907,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
    * The values that are the same on almost every invoice.
    *
    * Delivery place is one of them, and it is a *blocking* § 5-1-1 nr. 4
-   * requirement — an empty field that refuses the issue is a worse default than
+   * requirement, and an empty field that refuses the issue is a worse default than
    * the company's own town, which is where a small business delivers from.
    */
   function setDefaults(): void {
@@ -926,9 +926,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   //
   // Three states out of two controls, because that is what there is to say:
   //
-  //   auto      — Myntos sets it at issue, from the invoice number
-  //   manual    — the seller's own number, checked but not overridden
-  //   none      — no KID on this invoice at all
+  //   auto      = Myntos sets it at issue, from the invoice number
+  //   manual    = the seller's own number, checked but not overridden
+  //   none      = no KID on this invoice at all
   //
   // Automatic is the default because a KID that does not carry the invoice
   // number cannot reconcile a payment to an invoice, and working that out by
@@ -960,12 +960,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         'Settes automatisk når fakturaen utstedes: kundenummer, fakturanummer og kontrollsiffer.';
       return;
     }
-    // Spelled out rather than left to look like padding — the leading zeros are
+    // Spelled out rather than left to look like padding, because the leading zeros are
     // a customer number that is either theirs or absent, and which one it is
     // matters when a payment has to be posted from the bank's OCR file.
     hint.textContent =
       `Settes når fakturaen utstedes. Blir ${nextKid} hvis ingen annen faktura ` +
-      'utstedes først — kundenummer, fakturanummer og kontrollsiffer.' +
+      'utstedes først: kundenummer, fakturanummer og kontrollsiffer.' +
       (nextKidCustomer === null
         ? ' De fem første sifrene er null fordi kjøperen ikke er en registrert kunde.'
         : ` De fem første er kundenummeret ${nextKidCustomer}.`);
@@ -1003,7 +1003,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   //
   // Two sources, neither of them a guess: a customer already in the party
   // register, or Enhetsregisteret answering for an organisasjonsnummer. Both are
-  // advisory — every field stays editable, and a register that is slow or
+  // advisory, since every field stays editable, and a register that is slow or
   // unreachable costs a moment and a typed-in name, never the invoice.
 
   const digitsOf = (text: string): string => text.replace(/\D+/g, '');
@@ -1019,8 +1019,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     const parts = [unit.name, unit.organisation_form_description].filter(
       (part): part is string => typeof part === 'string' && part !== '',
     );
-    // Not a refusal — invoicing a bankrupt estate is legitimate and often
-    // necessary — but not something to discover after the document is issued.
+    // Not a refusal, since invoicing a bankrupt estate is legitimate and often
+    // necessary, but not something to discover after the document is issued.
     if (unit.bankrupt) parts.push('registrert konkurs');
     if (unit.under_liquidation) parts.push('under avvikling');
     return parts.join(' · ');
@@ -1047,8 +1047,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   /**
    * Look the buyer up while the organisasjonsnummer is being typed.
    *
-   * The number is also what an EHF invoice is addressed by — it becomes the
-   * Peppol participant identifier — so getting it from the register rather than
+   * The number is also what an EHF invoice is addressed by, since it becomes the
+   * Peppol participant identifier, so getting it from the register rather than
    * from memory is what keeps the document deliverable from 2027.
    */
   function wireBuyerLookup(): void {
@@ -1096,7 +1096,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
    *
    * Display only. It is called after loading a stored draft as well as after a
    * change, and a function that also *decided* things would quietly overwrite
-   * what that draft says — see the party-select listener, which is where the
+   * what that draft says. See the party-select listener, which is where the
    * inference belongs because that is where the user actually chose.
    */
   function updateBuyerContext(): void {
@@ -1114,7 +1114,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       partyNote.textContent = identified
         ? known.join(' · ')
         : `${party.name} har verken organisasjonsnummer eller adresse. § 5-1-2 krever ett av ` +
-          'dem — fyll det inn under Kunder og leverandører før du utsteder.';
+          'dem. Fyll det inn under Kunder og leverandører før du utsteder.';
       show(partyNote, true);
     }
     updateCopyPrevious();
@@ -1168,14 +1168,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       });
     }
     // References belong to the customer's own systems and rarely change between
-    // invoices, so they are worth carrying — but never over something typed.
+    // invoices, so they are worth carrying, but never over something typed.
     if (blank('buyer_reference') === null && previous.buyer_reference !== null) {
       setField('buyer_reference', previous.buyer_reference);
     }
     recalculate();
     setStatus(
       formStatus,
-      'Linjene er kopiert. Kontroller beskrivelse, antall og pris — og at leveringsdatoen ' +
+      'Linjene er kopiert. Kontroller beskrivelse, antall og pris, og at leveringsdatoen ' +
         'gjelder denne leveransen.',
       'ok',
     );
@@ -1218,7 +1218,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       setStatus(
         status,
         `${draft.lines.length} ${draft.lines.length === 1 ? 'linje' : 'linjer'} satt inn. ` +
-          `Kontroller beskrivelse, antall, pris og mva — det er du som utsteder fakturaen. ${said}`.trim(),
+          `Kontroller beskrivelse, antall, pris og mva. Det er du som utsteder fakturaen. ${said}`.trim(),
         'ok',
       );
     } catch (error: unknown) {
@@ -1277,7 +1277,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
    * Which step the left column is showing.
    *
    * Three cards, one at a time: the form, the review, and what came out. They
-   * are steps rather than panels stacked down the page — the review exists so
+   * are steps rather than panels stacked down the page, because the review exists so
    * that issuing is a thing you *read* before you do, and a form still visible
    * under it invites editing something the review has already checked.
    */
@@ -1301,7 +1301,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   //
   // What used to be a window.confirm() with one sentence in it. An alert cannot
   // show what § 5-1 found, cannot show what the buyer is about to receive, and
-  // cannot be read twice — and the thing it guards is irreversible.
+  // cannot be read twice, and the thing it guards is irreversible.
 
   /**
    * Draw the review for a saved draft, and say whether it may be issued.
@@ -1360,23 +1360,23 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   /** What the buyer is about to receive, as the fields it will carry. */
   function renderSummary(saved: Faktura): void {
     const rows: [string, string, string?][] = [
-      ['Kjøper', saved.buyer_name || '—'],
+      ['Kjøper', saved.buyer_name || '-'],
       [
         'Identifisert med',
         saved.buyer_orgnr !== null
           ? `Organisasjonsnummer ${saved.buyer_orgnr}`
           : [saved.buyer_address_line, saved.buyer_postal_code, saved.buyer_city]
               .filter((part) => part !== null && part !== '')
-              .join(', ') || 'ingenting — § 5-1-2 krever adresse eller organisasjonsnummer',
+              .join(', ') || 'ingenting, og § 5-1-2 krever adresse eller organisasjonsnummer',
         saved.buyer_orgnr === null && saved.buyer_address_line === null ? 'warn' : undefined,
       ],
-      ['Levert', saved.delivery_date === null ? '—' : isoDate(saved.delivery_date)],
-      ['Leveringssted', saved.delivery_place ?? '—'],
-      ['Forfall', saved.due_date === null ? '—' : isoDate(saved.due_date)],
+      ['Levert', saved.delivery_date === null ? '-' : isoDate(saved.delivery_date)],
+      ['Leveringssted', saved.delivery_place ?? '-'],
+      ['Forfall', saved.due_date === null ? '-' : isoDate(saved.due_date)],
       [
         'Linjer',
         `${saved.lines.length} ${saved.lines.length === 1 ? 'linje' : 'linjer'}` +
-          (saved.lines.length > 0 ? ` — ${saved.lines[0]?.description ?? ''}` : ''),
+          (saved.lines.length > 0 ? `: ${saved.lines[0]?.description ?? ''}` : ''),
       ],
       ['Sum eks. mva', kroner(saved.net_total)],
       ['Merverdiavgift', kroner(saved.vat_total)],
@@ -1386,7 +1386,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       [
         'Betales til',
         company.bank_account === null
-          ? 'ingen konto lagt inn — legg den inn under Organisasjon → Selskapet'
+          ? 'ingen konto lagt inn, legg den inn under Organisasjon → Selskapet'
           : kontonummer(company.bank_account),
         company.bank_account === null ? 'warn' : undefined,
       ],
@@ -1395,7 +1395,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         saved.payment_reference !== null
           ? saved.payment_reference
           : saved.payment_reference_auto
-            ? `settes ved utstedelse${nextKid === '' ? '' : ` — trolig ${nextKid}`}`
+            ? `settes ved utstedelse${nextKid === '' ? '' : `, trolig ${nextKid}`}`
             : 'ingen',
       ],
     ];
@@ -1420,10 +1420,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     el('#done-title').textContent = `Faktura ${issued.document_number ?? ''} er utstedt`;
     el('#done-hint').textContent =
       `${kroner(issued.gross_total)} til ${issued.buyer_name}, forfall ` +
-      `${issued.due_date === null ? '—' : isoDate(issued.due_date)}` +
+      `${issued.due_date === null ? '-' : isoDate(issued.due_date)}` +
       `${issued.payment_reference === null ? '' : `, KID ${issued.payment_reference}`}. ` +
       (issued.has_ehf
-        ? 'EHF-filen er laget og lagret sammen med PDF-en — forsendelsen krever et ' +
+        ? 'EHF-filen er laget og lagret sammen med PDF-en. Forsendelsen krever et ' +
           'Peppol-aksesspunkt, som ennå ikke er koblet på, så filene sendes for hånd.'
         : 'PDF-en er lagret sammen med bilaget.');
     el<HTMLAnchorElement>('#done-pdf').href = fakturaPdfUrl(company.id, issued.id);
@@ -1463,8 +1463,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
       row.append(
         cell(item.document_number ?? 'utkast'),
-        cell(item.issue_date === null ? '—' : isoDate(item.issue_date)),
-        cell(item.buyer_name || '—'),
+        cell(item.issue_date === null ? '-' : isoDate(item.issue_date)),
+        cell(item.buyer_name || '-'),
         cell(kroner(item.gross_total), 'num'),
         cell(statusLabel(item)),
         actions,
@@ -1523,7 +1523,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
    * Register the typed-in buyer as a customer, when asked to.
    *
    * Runs before the draft is saved so the invoice can carry `party_id` and the
-   * ledger gets a kundereskontro entry — a customer added afterwards would leave
+   * ledger gets a kundereskontro entry, and a customer added afterwards would leave
    * this document pointing at nobody.
    *
    * Failure here is reported and stepped over. Not being able to save a name for
@@ -1599,7 +1599,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   }
 
   // Submitting the form saves the draft and opens the review. Saving is not a
-  // decision the user makes — it is what has to have happened before the
+  // decision the user makes. It is what has to have happened before the
   // backend can check anything, since the checks run against the *stored*
   // document. Nothing is issued and nothing is numbered.
   form.addEventListener('submit', (event) => {
@@ -1635,7 +1635,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       .then(async (issued) => {
         setStatus(el('#review-status'), '');
         await refresh();
-        // Cleared, then the preview refreshed, then the result shown — in that
+        // Cleared, then the preview refreshed, then the result shown, in that
         // order. The form clears the customer and the customer is half the KID,
         // so refreshing first would leave the previous customer's number under
         // an empty field; and resetForm() puts the form step on screen, which is
@@ -1721,8 +1721,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
       el('#efaktura-note').textContent =
         `Fra ${isoDate(catalogue.e_invoice_mandatory_from)} skal salg til andre bokføringspliktige ` +
-        'faktureres elektronisk (EHF/Peppol). Myntos lager EHF-filen for hver utstedte faktura — ' +
-        'selve forsendelsen krever et Peppol-aksesspunkt, som ennå ikke er koblet på.';
+        'faktureres elektronisk (EHF/Peppol). Myntos lager EHF-filen for hver utstedte faktura. ' +
+        'Selve forsendelsen krever et Peppol-aksesspunkt, som ennå ikke er koblet på.';
 
       mayWrite = can(session, company.organization_id, 'ledger:write');
       show(el('#readonly'), !mayWrite);

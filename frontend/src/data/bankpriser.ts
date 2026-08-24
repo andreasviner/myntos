@@ -2,7 +2,7 @@
  * Prisdata for bedriftsbank + regnskapsintegrasjon.
  *
  * Alle tall er hentet manuelt fra bankenes egne, offentlige prislister på den
- * datoen som står i `sjekket`. Prislister endres uten forvarsel — `kilde` peker
+ * datoen som står i `sjekket`. Prislister endres uten forvarsel, så `kilde` peker
  * alltid på siden tallet er hentet fra, slik at leseren kan etterprøve det.
  *
  * Konvensjoner:
@@ -28,13 +28,13 @@ export interface Pris {
 export interface Bank {
   id: string;
   navn: string;
-  /** Tidligere navn eller fusjonsopphav — banker skifter navn, folk søker på det gamle. */
+  /** Tidligere navn eller fusjonsopphav. Banker skifter navn, folk søker på det gamle. */
   tidligere?: string;
   nettbank: Pris;
   nettbankApi: Pris;
   oppstart: Pris;
   skjulteGebyrer: SkjulteGebyrer;
-  /** Begrunnelsen for nivået over. Vises i tabellen — nivået skal aldri stå udokumentert. */
+  /** Begrunnelsen for nivået over. Vises i tabellen, for nivået skal aldri stå udokumentert. */
   skjulteGebyrerHvorfor: string;
   /** Støtter KID/OCR-innbetaling. Uten dette kan norsk bokføring ikke avstemmes maskinelt. */
   kid: boolean;
@@ -68,7 +68,7 @@ export const banker: Bank[] = [
       'Ekstra bruker: 50 kr/mnd',
       'Tilknytning annen nettbank: 90 kr per bedrift',
       'Etablering av integrasjon: 0 kr',
-      'Kontoholdsgebyr: 500 kr/år — men bare for konti uten transaksjoner foregående kalenderår og innskudd under 10 000 kr, altså ikke for en bedrift i drift',
+      'Kontoholdsgebyr: 500 kr/år, men bare for konti uten transaksjoner foregående kalenderår og innskudd under 10 000 kr, altså ikke for en bedrift i drift',
     ],
     kilde: 'https://www.sparebank1.no/nb/smn/bedrift/kundeservice/bestill/prisliste.html',
     kildeTekst: 'sparebank1.no/smn/bedrift/priser',
@@ -79,18 +79,18 @@ export const banker: Bank[] = [
     navn: 'DNB',
     nettbank: {
       nok: 0,
-      note: 'selve abonnementet, første bruker — men se pakkeprisene under: 69 kr/mnd er det reelle gulvet i drift',
+      note: 'selve abonnementet, første bruker, men se pakkeprisene under: 69 kr/mnd er det reelle gulvet i drift',
     },
     nettbankApi: { nok: 150, note: 'integrert med økonomisystem' },
     oppstart: { nok: 0, note: 'med BankID' },
     skjulteGebyrer: 'Middels',
     skjulteGebyrerHvorfor:
-      'Abonnementet er 0 kr, men det er ikke det samme som gratis bank: uten pakken Banktjenester til 69 kr/mnd betaler du stykkpris per betaling og årsavgift på bedriftskortet. Resten av kostnaden ligger også i stykkpris — per bruker, per varsling, per utenlandskonto og per fullmaktsavtale.',
+      'Abonnementet er 0 kr, men det er ikke det samme som gratis bank: uten pakken Banktjenester til 69 kr/mnd betaler du stykkpris per betaling og årsavgift på bedriftskortet. Resten av kostnaden ligger også i stykkpris: per bruker, per varsling, per utenlandskonto og per fullmaktsavtale.',
     kid: true,
     norskBank: true,
     detaljer: [
-      'Banktjenester (pakke for nye ENK og AS): 69 kr/mnd — dekker tre nettbankbrukere, 30 KID-utbetalinger og 30 lønnsutbetalinger per mnd, samt årsavgift på bedriftskort Visa Business',
-      'Bank og regnskap i ett: 149 kr/mnd — 69 kr Banktjenester + 80 kr DNB Regnskap Mini (valgfritt), der Regnskap Mini inkluderer integrasjon med nettbank',
+      'Banktjenester (pakke for nye ENK og AS): 69 kr/mnd, dekker tre nettbankbrukere, 30 KID-utbetalinger og 30 lønnsutbetalinger per mnd, samt årsavgift på bedriftskort Visa Business',
+      'Bank og regnskap i ett: 149 kr/mnd, altså 69 kr Banktjenester + 80 kr DNB Regnskap Mini (valgfritt), der Regnskap Mini inkluderer integrasjon med nettbank',
       'Ekstra bruker: 40–45 kr/mnd',
       'Kodebrikke uten BankID: 200 kr per bruker',
       'Kontoinformasjon fra utenlandsk bank: 50 kr/konto/mnd',
@@ -134,7 +134,7 @@ export const banker: Bank[] = [
     kid: true,
     norskBank: true,
     detaljer: [
-      'Betaling (med/uten melding, KID, lønn): 3 kr — 1,50 kr i Komplett',
+      'Betaling (med/uten melding, KID, lønn): 3 kr, og 1,50 kr i Komplett',
       'Pakken Komplett: 249 kr/mnd',
       'Betaling til utlandet: 50 kr',
       'Bedriftskort: 300 kr i årsgebyr + 2,50 kr per transaksjon',
@@ -240,7 +240,7 @@ export const banker: Bank[] = [
     oppstart: { nok: 1500, note: 'etablering av filtjenester (Nettbedrift 0 kr)' },
     skjulteGebyrer: 'Middels',
     skjulteGebyrerHvorfor:
-      'Filtjenester dobler månedsprisen til 500 kr. sFTP og filkommunikasjon har ingen publisert pris i det hele tatt — du må kontakte Cash Management for tilbud.',
+      'Filtjenester dobler månedsprisen til 500 kr. sFTP og filkommunikasjon har ingen publisert pris i det hele tatt, så du må kontakte Cash Management for tilbud.',
     kid: true,
     norskBank: true,
     detaljer: [
@@ -256,13 +256,13 @@ export const banker: Bank[] = [
   {
     id: 'sparebanken-norge-sor',
     navn: 'Sparebanken Norge (Sør)',
-    tidligere: 'tidl. Sparebanken Sør — fusjonert med Sparebanken Vest 2025',
+    tidligere: 'tidl. Sparebanken Sør, fusjonert med Sparebanken Vest 2025',
     nettbank: { nok: 95, note: 'basis kundeforhold; Nettbedrift i seg selv 0 kr' },
     nettbankApi: { nok: 445, note: '95 kr basis + 350 kr regnskapsintegrasjon/filtjenester' },
     oppstart: { nok: 0, note: 'SFTP-oppsett hos TietoEVRY: 10 000 kr' },
     skjulteGebyrer: 'Middels',
     skjulteGebyrerHvorfor:
-      'Nettbedrift er annonsert til 0 kr, men forutsetter «basis kundeforhold» til 95 kr/mnd — en obligatorisk kostnad som ikke framgår av nettbankprisen. Betaling med melding koster 5,50 kr.',
+      'Nettbedrift er annonsert til 0 kr, men forutsetter «basis kundeforhold» til 95 kr/mnd, en obligatorisk kostnad som ikke framgår av nettbankprisen. Betaling med melding koster 5,50 kr.',
     kid: true,
     norskBank: true,
     detaljer: [
@@ -284,7 +284,7 @@ export const banker: Bank[] = [
     oppstart: { nok: 320, note: 'etablering per bedrift' },
     skjulteGebyrer: 'Høy',
     skjulteGebyrerHvorfor:
-      'Ingen enkelt månedspris finnes — prisen stables av abonnement per selskap, per bruker og per konto. Hver ny konto og hver ny ansatt øker den faste kostnaden. Corporate Access Account Reporting koster 2 500 kr å etablere.',
+      'Ingen enkelt månedspris finnes. Prisen stables av abonnement per selskap, per bruker og per konto. Hver ny konto og hver ny ansatt øker den faste kostnaden. Corporate Access Account Reporting koster 2 500 kr å etablere.',
     kid: true,
     norskBank: true,
     detaljer: [
@@ -323,13 +323,13 @@ export const banker: Bank[] = [
   {
     id: 'sparebanken-norge-vest',
     navn: 'Sparebanken Norge (Vest)',
-    tidligere: 'tidl. Sparebanken Vest — fusjonert med Sparebanken Sør 2025',
+    tidligere: 'tidl. Sparebanken Vest, fusjonert med Sparebanken Sør 2025',
     nettbank: { nok: null },
     nettbankApi: { nok: null },
     oppstart: { nok: null },
     skjulteGebyrer: 'Middels',
     skjulteGebyrerHvorfor:
-      'Nivået er antatt likt Sør-delen av samme bank, som har identisk kategoristruktur i prislisten. Ikke etterprøvd — behandle det som ubekreftet.',
+      'Nivået er antatt likt Sør-delen av samme bank, som har identisk kategoristruktur i prislisten. Ikke etterprøvd, så behandle det som ubekreftet.',
     kid: true,
     norskBank: true,
     detaljer: [
@@ -347,7 +347,7 @@ export const banker: Bank[] = [
     navn: 'Lunar Business',
     tidligere: 'dansk e-pengeforetak, ikke norsk bank',
     nettbank: { nok: 69, note: 'Solo, for enkeltpersonforetak' },
-    nettbankApi: { nok: null, note: 'ingen bankintegrasjon — bare CSV-eksport' },
+    nettbankApi: { nok: null, note: 'ingen bankintegrasjon, bare CSV-eksport' },
     oppstart: { nok: 0 },
     skjulteGebyrer: 'Lav',
     skjulteGebyrerHvorfor:
@@ -356,7 +356,7 @@ export const banker: Bank[] = [
     norskBank: false,
     detaljer: [
       'Ingen KID/OCR-innbetaling og ingen OCR-avtale',
-      'Ingen bankintegrasjon mot regnskapssystem — kontoutskrift eksporteres som CSV',
+      'Ingen bankintegrasjon mot regnskapssystem. Kontoutskrift eksporteres som CSV',
       'Inkluderer Visa-kort, 3 % innskuddsrente inntil 1 mill. kr',
     ],
     kilde: 'https://www.lunar.app/no/bedrift/priser',
@@ -365,7 +365,7 @@ export const banker: Bank[] = [
   },
 ];
 
-/** Rangeringsvekt for sortering — samme rekkefølge som skalaen leses. */
+/** Rangeringsvekt for sortering, i samme rekkefølge som skalaen leses. */
 export const gebyrRangering: Record<SkjulteGebyrer, number> = {
   Ingen: 0,
   Lav: 1,

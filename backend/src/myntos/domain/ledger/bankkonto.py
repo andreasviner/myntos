@@ -52,8 +52,8 @@ def validate_bank_account(value: str) -> str:
         )
     if mod11_check_digit(cleaned[:10]) != cleaned[10]:
         raise InvalidBankAccountError(
-            f"kontonummeret {format_bank_account(cleaned)} har feil kontrollsiffer — "
-            f"kontroller det mot nettbanken"
+            f"kontonummeret {format_bank_account(cleaned)} har feil kontrollsiffer. "
+            f"Kontroller det mot nettbanken"
         )
     return cleaned
 

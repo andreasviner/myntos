@@ -14,6 +14,40 @@ The submission path therefore looks like:
 4. The Altinn token drives the instance API calls (validate → submit →
    feedback).
 
-Implemented in the MVA milestone (docs/ROADMAP.md); flow details in
-docs/integrations/mva.md and docs/integrations/maskinporten.md.
+Steps 1-3 are implemented — the flow itself in :mod:`.client`, the exchange in
+:mod:`myntos.integrations.altinn.tokens`. What is deliberately *not* here is
+where a government token lives between the callback and the submission: that
+belongs to the MVA milestone (docs/ROADMAP.md phase 4) together with the
+review-and-confirm step, because it is a question about a submission's audit
+trail rather than about authentication.
+
+Flow details in docs/integrations/mva.md and docs/integrations/maskinporten.md.
 """
+
+from myntos.auth.idporten.client import (
+    GovernmentLogin,
+    IdPortenClient,
+    IdPortenError,
+    IdPortenNotConfiguredError,
+    PkcePair,
+    build_client,
+    configured_scope,
+    get_client,
+    is_configured,
+    new_pkce_pair,
+    reset_client,
+)
+
+__all__ = [
+    "GovernmentLogin",
+    "IdPortenClient",
+    "IdPortenError",
+    "IdPortenNotConfiguredError",
+    "PkcePair",
+    "build_client",
+    "configured_scope",
+    "get_client",
+    "is_configured",
+    "new_pkce_pair",
+    "reset_client",
+]

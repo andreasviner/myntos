@@ -3,7 +3,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 ---
 
 <BaseLayout
-  title="Organisasjonen — Myntos"
+  title="Organisasjonen | Myntos"
   description="Medlemmer, roller og invitasjoner i organisasjonen din."
   width="wide"
 >
@@ -24,7 +24,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   <div id="content" hidden>
     <p class="lead">
       Abonnement og betaling hører til organisasjonen, ikke til den enkelte. Å invitere en kollega
-      inn koster derfor ingenting ekstra — og gir dem tilgang til de samme selskapene som deg.
+      inn koster derfor ingenting ekstra, og gir dem tilgang til de samme selskapene som deg.
     </p>
 
     {/* Bare for den som kan styre organisasjonen. Navnet er ikke pynt: det står
@@ -49,7 +49,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
               autocomplete="organization"
             />
             <span class="field-hint">
-              Organisasjonen er Myntos-kontoen — den eier medlemmene og abonnementet, og kan holde
+              Organisasjonen er Myntos-kontoen, og den eier medlemmene og abonnementet, og kan holde
               flere selskaper. Adressen til organisasjonen endres ikke, så lenker fortsetter å virke.
             </span>
           </label>
@@ -58,7 +58,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       </div>
     </div>
 
-    {/* Selskapet — det som står på fakturaene. Kontonummeret hører hit og ikke
+    {/* Selskapet, altså det som står på fakturaene. Kontonummeret hører hit og ikke
         på fakturaskjemaet: det er det samme på hver faktura, og en faktura som
         er utstedt kan bare rettes med kreditnota. Derfor nekter /faktura/ å
         utstede så lenge feltet er tomt. */}
@@ -67,7 +67,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       <div class="card">
         <p class="card-hint">
           Dette er det selskapet fakturaene kommer fra, og feltene under er de fakturaen selv
-          gjentar — bokføringsforskriften § 5-1-2. Endringer gjelder fakturaer som utstedes
+          gjentar, jf. bokføringsforskriften § 5-1-2. Endringer gjelder fakturaer som utstedes
           etterpå; en utstedt faktura bærer sin egen kopi av alt dette.
         </p>
         <p class="status" id="selskap-status" hidden></p>
@@ -126,7 +126,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
               <span class="field-hint">
                 Uten dette kan fakturaene ikke vise merverdiavgift, og linjene settes til «Ikke
                 mva-registrert». Å kreve inn mva uten å være registrert er å kreve inn en avgift
-                på statens vegne uten å ha rett til det — og pengene skyldes likevel.
+                på statens vegne uten å ha rett til det, og pengene skyldes likevel.
               </span>
             </span>
           </label>
@@ -172,16 +172,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             <span>E-postadresse</span>
             <input type="email" name="email" required autocomplete="off" />
             <span class="field-hint">
-              Invitasjonen gjelder bare denne adressen — en videresendt lenke er ikke en billett inn.
+              Invitasjonen gjelder bare denne adressen, og en videresendt lenke er ikke en billett inn.
             </span>
           </label>
           <label class="field">
             <span>Rolle</span>
             <select name="role">
-              <option value="viewer">Leser — ser regnskapet, kan ikke føre</option>
-              <option value="member" selected>Medlem — kan føre bilag</option>
-              <option value="admin">Administrator — kan også styre selskaper og medlemmer</option>
-              <option value="owner">Eier — kan alt, inkludert abonnement</option>
+              <option value="viewer">Leser: ser regnskapet, kan ikke føre</option>
+              <option value="member" selected>Medlem: kan føre bilag</option>
+              <option value="admin">Administrator: kan også styre selskaper og medlemmer</option>
+              <option value="owner">Eier: kan alt, inkludert abonnement</option>
             </select>
           </label>
           <button class="btn btn-primary" type="submit" id="invite-submit">Send invitasjon</button>
@@ -190,7 +190,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         <div class="invite-link" id="invite-link-box" hidden>
           <p class="card-hint">
             <strong>Kopier lenken og send den selv.</strong> Myntos sender ikke e-post ennå, og
-            lenken vises bare denne ene gangen — vi lagrer bare et hash av den.
+            lenken vises bare denne ene gangen, for vi lagrer bare et hash av den.
           </p>
           <div class="copy-row">
             <input type="text" id="invite-link" readonly />
@@ -409,7 +409,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           void changeMemberRole(membership.organization_id, member.user_id, select.value)
             .then(() => refresh())
             .catch((error: unknown) => {
-              // The server refused — the last owner, or granting owner as an
+              // The server refused: the last owner, or granting owner as an
               // admin. Put the select back so it never shows a role that is
               // not the one in force.
               select.value = member.role;
@@ -508,7 +508,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   // --- Selskapet ---------------------------------------------------------------
   //
   // The company's own details, and the only place they can be edited. Two of
-  // them decide what an invoice is allowed to say — see § 5-1-2 — and one of
+  // them decide what an invoice is allowed to say (see § 5-1-2), and one of
   // them, kontonummeret, decides whether an invoice can be issued at all: a
   // document with nowhere to pay it is refused by the backend, because an
   // issued invoice can only be corrected with a kreditnota.
@@ -568,7 +568,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     hint.dataset.tone = selskap.bank_account === null ? 'warn' : 'plain';
     hint.textContent =
       selskap.bank_account === null
-        ? 'Mangler. Uten kontonummer kan ingen faktura utstedes — den ville sagt hva kunden ' +
+        ? 'Mangler. Uten kontonummer kan ingen faktura utstedes. Den ville sagt hva kunden ' +
           'skylder, men ikke hvor det skal betales. Kontrollsifferet kontrolleres når du lagrer.'
         : 'Står på hver faktura, og i PaymentMeans i EHF-filen sammen med KID-en.';
   }
@@ -720,12 +720,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
     // Renaming needs organization:manage, inviting needs member:manage. Each
     // section is shown on its own permission rather than on a role, so what a
-    // role carries stays defined in one place — the backend.
+    // role carries stays defined in one place: the backend.
     const applyPermissions = (): void => {
       mayManage = membership.permissions.includes('member:manage');
       show(el('#manage'), mayManage);
       show(el('#rename'), membership.permissions.includes('organization:manage'));
-      // Editing the company needs organization:manage as well — whether the
+      // Editing the company needs organization:manage as well, because whether the
       // business is VAT-registered is a statement about the entity that every
       // future invoice repeats, not a bookkeeping entry. showSelskap() checks
       // the same permission, so switching organization cannot reveal it.
@@ -755,7 +755,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     applyPermissions();
     showOrganization();
     // Wired once, before any permission check: both handlers read the current
-    // `membership`, and their sections are hidden rather than removed — so
+    // `membership`, and their sections are hidden rather than removed, so
     // switching to an organization where the caller *does* manage needs no
     // rewiring, and one where they do not still cannot reach the form.
     wireRenameForm();
@@ -768,7 +768,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       el('#content').hidden = false;
       // /faktura/ links here as #selskap when an invoice cannot be issued for
       // want of a kontonummer. The browser resolves the fragment before any of
-      // this ran, against an element that was still hidden — so it never
+      // this ran, against an element that was still hidden, so it never
       // scrolled. Doing it here is the first moment the section exists on
       // screen. Only for the one anchor we send people to: honouring an
       // arbitrary hash would be a scroll nobody asked for.

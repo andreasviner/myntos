@@ -3,7 +3,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 ---
 
 <BaseLayout
-  title="Kunder og leverandører — Myntos"
+  title="Kunder og leverandører | Myntos"
   description="Registrer kundene og leverandørene du fører betalinger mot."
   width="wide"
 >
@@ -17,7 +17,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
   <p class="lead">
     Betalingstypen forteller Skatteetaten <em>hva</em> pengene gjaldt. Kunden eller leverandøren
-    forteller <em>hvem</em> de gjaldt — det er den delen en revisor spør etter, og den SAF-T
+    forteller <em>hvem</em> de gjaldt. Det er den delen en revisor spør etter, og den SAF-T
     eksporterer som kunde- og leverandørreskontro.
   </p>
 
@@ -64,7 +64,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         <button class="btn btn-primary btn-block" type="submit" id="party-submit">Lagre</button>
       </form>
       <p class="card-hint numbering">
-        Nummeret settes automatisk — 10000 og oppover for kunder, 20000 for leverandører — og kan
+        Nummeret settes automatisk, 10000 og oppover for kunder og 20000 for leverandører, og det kan
         ikke endres senere, fordi bokførte bilag viser til det.
       </p>
     </div>
@@ -230,8 +230,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         cell(party.party_id),
         cell(party.name),
         type,
-        cell(party.orgnr ?? '—'),
-        cell([party.postal_code, party.city].filter(Boolean).join(' ') || '—'),
+        cell(party.orgnr ?? '-'),
+        cell([party.postal_code, party.city].filter(Boolean).join(' ') || '-'),
         actions,
       );
       body.append(row);

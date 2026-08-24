@@ -4,7 +4,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 /**
  * Personvernerklæringen. Den er også det dokumentet Google, Microsoft og Vipps
  * krever en offentlig lenke til før en OAuth-klient godkjennes, så den må ligge
- * på en stabil URL og nevne uttrykkelig hva vi henter fra dem — derfor
+ * på en stabil URL og nevne uttrykkelig hva vi henter fra dem. Derfor
  * avsnittet «Innlogging med Google, Microsoft eller Vipps» står for seg selv.
  *
  * Alt som står her skal kunne ettergås i koden. Feltene i avsnitt 3 er de
@@ -18,27 +18,27 @@ const grunnlag = [
   {
     formal: 'Opprette og drive kontoen din, og gi deg tilgang til regnskapet',
     data: 'Navn, e-postadresse, passordhash, medlemskap i organisasjon',
-    basis: 'Avtale — GDPR art. 6(1)(b)',
+    basis: 'Avtale, GDPR art. 6(1)(b)',
   },
   {
     formal: 'Innlogging med Google, Microsoft eller Vipps, når du velger det',
     data: 'Brukeridentifikator hos leverandøren, e-postadresse, navn',
-    basis: 'Avtale — GDPR art. 6(1)(b)',
+    basis: 'Avtale, GDPR art. 6(1)(b)',
   },
   {
     formal: 'Holde tjenesten sikker: gjenkjenne dine egne økter, stoppe passordgjetting, etterforske misbruk',
     data: 'IP-adresse, nettleserstreng, tidspunkt for innlogging og utlogging',
-    basis: 'Berettiget interesse — GDPR art. 6(1)(f)',
+    basis: 'Berettiget interesse, GDPR art. 6(1)(f)',
   },
   {
     formal: 'Sende deg nødvendige meldinger om kontoen (invitasjon, verifisering, varsel om sikkerhetshendelse)',
     data: 'E-postadresse',
-    basis: 'Avtale — GDPR art. 6(1)(b)',
+    basis: 'Avtale, GDPR art. 6(1)(b)',
   },
   {
     formal: 'Behandle regnskapsdataene du legger inn',
     data: 'Bilag, føringer, kunder og leverandører',
-    basis: 'Vi er databehandler her — se avsnitt 3d',
+    basis: 'Vi er databehandler her, se avsnitt 3d',
   },
 ];
 
@@ -46,12 +46,12 @@ const underleverandorer = [
   {
     navn: 'Cloudflare',
     rolle: 'Drift av nettsted, API og dokumentlager (R2)',
-    sted: 'EØS — Workers-container og R2-bøtte er opprettet med jurisdiksjon «eu»',
+    sted: 'EØS, der Workers-container og R2-bøtte er opprettet med jurisdiksjon «eu»',
   },
   {
     navn: 'Løynd (Lindeman Technologies)',
-    rolle: 'KI-forslag: teksten fra bilag du laster opp, og salgsbeskrivelsen du selv skriver i fakturaskjemaet — se avsnitt 3d2 og /ki',
-    sted: 'Norge — inferensservere på norsk jord, ingen lagring',
+    rolle: 'KI-forslag: teksten fra bilag du laster opp, og salgsbeskrivelsen du selv skriver i fakturaskjemaet. Se avsnitt 3d2 og /ki',
+    sted: 'Norge, med inferensservere på norsk jord og ingen lagring',
   },
   {
     navn: 'Databaseleverandør i EØS',
@@ -66,13 +66,13 @@ const underleverandorer = [
   {
     navn: 'Skatteetaten, Altinn, Digitaliseringsdirektoratet',
     rolle: 'Mottakere av innleveringer du selv sender inn',
-    sted: 'Norge — de er selvstendig behandlingsansvarlige for det du sender',
+    sted: 'Norge, og de er selvstendig behandlingsansvarlige for det du sender',
   },
 ];
 ---
 
 <BaseLayout
-  title="Personvernerklæring — Myntos"
+  title="Personvernerklæring | Myntos"
   description="Hva Myntos lagrer om deg, hvorfor, hvor lenge og hvem som har tilgang. Ingen sporing, ingen annonser, ingen videresalg av data."
 >
   <p class="pill">Personvern</p>
@@ -87,7 +87,7 @@ const underleverandorer = [
   <section class="card summary">
     <h2 class="summary-title">Kort oppsummert</h2>
     <ul class="ticks">
-      <li>Vi selger, leier ut eller deler aldri dataene dine — heller ikke anonymisert eller aggregert.</li>
+      <li>Vi selger, leier ut eller deler aldri dataene dine, heller ikke anonymisert eller aggregert.</li>
       <li>Ingen annonser, ingen analyseverktøy og ingen tredjepartsskript på disse sidene.</li>
       <li>Regnskapstallene dine trener ingen modeller, verken våre eller andres.</li>
       <li>Vi bruker én informasjonskapsel, og den holder deg innlogget.</li>
@@ -121,7 +121,7 @@ const underleverandorer = [
   <p>
     Når du oppretter en konto, lagrer vi navnet og e-postadressen du oppgir, tidspunktet kontoen
     ble opprettet, om e-postadressen er bekreftet, og tidspunktet for siste innlogging. Har du
-    passord, lagrer vi <strong>aldri</strong> passordet — bare en Argon2id-hash av det, som ikke
+    passord, lagrer vi <strong>aldri</strong> passordet, bare en Argon2id-hash av det, som ikke
     kan regnes tilbake. Vi teller også mislykkede innloggingsforsøk, slik at en konto kan låses
     midlertidig etter gjentatt gjetting.
   </p>
@@ -138,7 +138,7 @@ const underleverandorer = [
       noe annet innhold hos leverandøren, og vi kan ikke lese noe av det.
     </li>
     <li>
-      Opplysningene brukes bare til å identifisere kontoen din i Myntos — aldri til annonser,
+      Opplysningene brukes bare til å identifisere kontoen din i Myntos, aldri til annonser,
       profilering, videresalg eller modelltrening.
     </li>
     <li>
@@ -176,8 +176,8 @@ const underleverandorer = [
 
   <h3>d. Regnskapsdataene du legger inn</h3>
   <p>
-    Bilag, PDF-er, føringer og opplysninger om kunder og leverandører — også navn, organisasjonsnummer
-    og kontaktopplysninger til andre personer — er <strong>ditt</strong> innhold. Her er du
+    Bilag, PDF-er, føringer og opplysninger om kunder og leverandører, også navn, organisasjonsnummer
+    og kontaktopplysninger til andre personer, er <strong>ditt</strong> innhold. Her er du
     behandlingsansvarlig, og vi er <strong>databehandler</strong>: vi lagrer og behandler dataene
     på din instruksjon for å levere tjenesten, og vi bruker dem ikke til noe eget formål. Vi leser
     dem ikke, med ett unntak: hvis du ber om hjelp med en konkret sak, eller det er strengt
@@ -192,13 +192,13 @@ const underleverandorer = [
   </p>
   <ul>
     <li>
-      <strong>Når du laster opp et bilag:</strong> <em>teksten</em> i dokumentet — de første 2000
+      <strong>Når du laster opp et bilag:</strong> <em>teksten</em> i dokumentet, altså de første 2000
       tegnene. Modellen får ett spørsmål: hvilken kategori i kontantstrømregisteret passer? Den
       svarer med ett tall fra en fast liste. Beløp og datoer leses ut av teksten hos oss og kommer
       aldri fra modellen.
     </li>
     <li>
-      <strong>Når du ber om fakturalinjer:</strong> beskrivelsen du selv skrev i boksen — inntil
+      <strong>Når du ber om fakturalinjer:</strong> beskrivelsen du selv skrev i boksen, inntil
       800 tegn. Modellen stiller den opp som linjer. Verken kjøperens navn, organisasjonsnummer
       eller adresse følger med, og modellen regner ikke ut noe: summene beregnes hos oss.
     </li>
@@ -257,7 +257,7 @@ const underleverandorer = [
     Myntos bruker <strong>én</strong> informasjonskapsel: <code>myntos_session</code>, som holder
     deg innlogget. Den er nødvendig for at tjenesten skal virke, settes bare når du logger inn, og
     er teknisk sikret (HttpOnly, Secure, SameSite). Den inneholder en tilfeldig verdi uten
-    opplysninger om deg. Ingen kapsler brukes til markedsføring eller måling — derfor er det heller
+    opplysninger om deg. Ingen kapsler brukes til markedsføring eller måling. Derfor er det heller
     ingen samtykkebanner å klikke bort her.
   </p>
   <p>
@@ -295,7 +295,7 @@ const underleverandorer = [
     </table>
   </div>
   <p>
-    Utover dette utleverer vi opplysninger bare når vi er rettslig forpliktet til det — for
+    Utover dette utleverer vi opplysninger bare når vi er rettslig forpliktet til det, for
     eksempel ved pålegg fra domstol eller politi.
   </p>
 
@@ -321,7 +321,7 @@ const underleverandorer = [
     </li>
     <li>
       <strong>Regnskapsdata:</strong> så lenge du vil, og som hovedregel minst så lenge din egen
-      oppbevaringsplikt etter bokføringsloven varer — normalt fem år etter regnskapsårets slutt.
+      oppbevaringsplikt etter bokføringsloven varer, normalt fem år etter regnskapsårets slutt.
       Det er du som avgjør når materialet skal slettes; vi anbefaler å hente ut en eksport først.
     </li>
     <li>
@@ -336,7 +336,7 @@ const underleverandorer = [
     <li>Økt- og invitasjonsnøkler lagres bare som SHA-256-hash.</li>
     <li>All trafikk går over HTTPS, og øktkapselen sendes bare over HTTPS.</li>
     <li>
-      En økt kan trekkes tilbake umiddelbart — både «logg meg ut overalt» og stenging av en
+      En økt kan trekkes tilbake umiddelbart. Både «logg meg ut overalt» og stenging av en
       kompromittert konto virker med en gang, fordi databasen er den som avgjør om en økt er
       gyldig.
     </li>
@@ -355,7 +355,7 @@ const underleverandorer = [
     <li>få <strong>rettet</strong> opplysninger som er feil,</li>
     <li>få opplysninger <strong>slettet</strong>,</li>
     <li>
-      få opplysningene <strong>utlevert</strong> i et maskinlesbart format — regnskapsdata kan du
+      få opplysningene <strong>utlevert</strong> i et maskinlesbart format. Regnskapsdata kan du
       dessuten eksportere selv, når du vil,
     </li>
     <li>kreve at behandlingen <strong>begrenses</strong>, og</li>
@@ -379,7 +379,7 @@ const underleverandorer = [
   <p>
     Endrer vi denne erklæringen, oppdaterer vi datoen øverst. Ved endringer av betydning varsler vi
     registrerte brukere på e-post før de trer i kraft. Tidligere versjoner kan spores i
-    <a href="/funksjoner/#apen-kildekode">kildekoden</a>, som er offentlig — også for denne siden.
+    <a href="/funksjoner/#apen-kildekode">kildekoden</a>, som er offentlig, også for denne siden.
   </p>
 
   <p class="note">

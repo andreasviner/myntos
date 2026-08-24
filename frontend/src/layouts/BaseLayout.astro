@@ -13,7 +13,7 @@ interface Props {
 
 const {
   title,
-  description = 'Myntos — regnskap for Norge med offentlig kildekode og direkte innlevering til Skatteetaten.',
+  description = 'Myntos: regnskap for Norge med offentlig kildekode og direkte innlevering til Skatteetaten.',
   width = 'narrow',
   bleed = false,
 } = Astro.props;
@@ -25,7 +25,7 @@ const canonical = new URL(Astro.url.pathname, Astro.site).href;
 
   Google's OAuth brand review kept reporting that the consent-screen app name
   "Myntos" did not match the home page, and that the home page did not explain
-  the app's purpose — while the rendered page said both. The site was shipping
+  the app's purpose, while the rendered page said both. The site was shipping
   no Open Graph tags and no structured data at all, so an automated check had
   only prose to infer a name from. This states the name and purpose outright.
 
@@ -40,7 +40,7 @@ const structuredData = {
     {
       '@type': 'Organization',
       '@id': 'https://myntos.no/#organization',
-      // Every `name` on the page must read "Myntos" — Google's brand review
+      // Every `name` on the page must read "Myntos", because Google's brand review
       // compares the consent-screen app name against whatever name it finds
       // here, and an operator name in this field reads as a mismatch. The legal
       // entity is still stated, just not as the thing the product is called.
@@ -112,8 +112,8 @@ const features = [
 ];
 
 /**
- * Kom i gang-menyen. Oversikten først, deretter én oppføring per flytteguide
- * — de kommer fra data/flytting.ts, som også bygger sidene, slik at menyen
+ * Kom i gang-menyen. Oversikten først, deretter én oppføring per flytteguide.
+ * De kommer fra data/flytting.ts, som også bygger sidene, slik at menyen
  * ikke kan peke på en guide som ikke finnes.
  */
 const gettingStarted = [
@@ -409,7 +409,7 @@ const gettingStarted = [
 
      Light is the default and therefore lives in :root; dark is the single
      override, applied by a data attribute the visitor opts into. Every colour
-     is a token — nothing in a component should ever name a hex value, so a
+     is a token, because nothing in a component should ever name a hex value, so a
      future rebrand is one block of edits.
      ----------------------------------------------------------------------- */
 
@@ -441,7 +441,7 @@ const gettingStarted = [
     /* The logo mark has its own two tokens rather than borrowing --accent.
        The ring sits at almost the text colour and only the coin carries
        colour, which keeps the accent reserved for things that are actually
-       clickable — a mark painted in the button colour competes with every
+       clickable, since a mark painted in the button colour competes with every
        button on the page. */
     --logo-ring: #1c1f1e;
     --logo-coin: #0f8a68;
@@ -591,7 +591,7 @@ const gettingStarted = [
 
   /* The `hidden` attribute is how every script on this site hides something, and
      the browser's own rule for it is `display: none` from the user-agent
-     stylesheet — which *any* author rule outranks. A single `.field { display:
+     stylesheet, which *any* author rule outranks. A single `.field { display:
      block }` was therefore enough to leave `<label class="field" hidden>`
      visible, and the organization picker showed up on a form that had decided
      not to ask the question. Author-origin and !important, so `hidden` means
@@ -1175,7 +1175,7 @@ const gettingStarted = [
     text-transform: uppercase;
   }
 
-  /* A quiet aside. The loud version is gone on purpose — the full terms live
+  /* A quiet aside. The loud version is gone on purpose: the full terms live
      on /ansvar, and shouting on every page just teaches people not to read. */
   .note {
     background: var(--surface-2);

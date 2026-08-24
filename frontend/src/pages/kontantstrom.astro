@@ -3,7 +3,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 ---
 
 <BaseLayout
-  title="Kontantstrøm — Myntos"
+  title="Kontantstrøm | Myntos"
   description="Last opp fakturaen, så fyller skjemaet seg ut. Registrer inn- og utbetalinger med type og bilag."
   width="wide"
 >
@@ -28,7 +28,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     <div class="card form-card" id="form-card">
       <h2 class="card-title">Registrer en betaling</h2>
       <p class="card-hint">
-        Har du fakturaen som PDF, start med den — vi leser dato, beløp og mva rett ut av teksten,
+        Har du fakturaen som PDF, start med den. Vi leser dato, beløp og mva rett ut av teksten,
         og foreslår kategori. Ingenting føres før du bekrefter.
       </p>
 
@@ -37,8 +37,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       <form id="entry-form">
         {/*
           Opplastingen står først fordi det er der arbeidet forsvinner: alt i
-          skjemaet under står allerede på bilaget. Feltet er fortsatt valgfritt
-          — en kontantutgift uten kvittering skal kunne føres uten omveier.
+          skjemaet under står allerede på bilaget. Feltet er fortsatt valgfritt,
+          for en kontantutgift uten kvittering skal kunne føres uten omveier.
         */}
         <div class="dropzone" id="dropzone">
           <input
@@ -129,7 +129,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             name="description"
             maxlength="255"
             required
-            placeholder="Faktura 104 — Konsulenttimer mars"
+            placeholder="Faktura 104, konsulenttimer mars"
           />
           <span class="field-hint">Dette blir teksten på bilaget i hovedboken.</span>
         </label>
@@ -191,7 +191,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         </p>
       </div>
 
-      {/* Not a disclaimer — it explains why there is no delete button. */}
+      {/* Not a disclaimer. It explains why there is no delete button. */}
       <aside class="note" role="note">
         <strong>Ført er ført.</strong> En betaling bokføres med en gang og kan ikke endres eller
         slettes, slik bokføringsloven krever. En feil rettes med en motpostering, som legger seg
@@ -494,7 +494,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
    */
   function fillParties(): void {
     const previous = partySelect.value;
-    partySelect.replaceChildren(option('', '— ingen —'));
+    partySelect.replaceChildren(option('', 'ingen valgt'));
 
     const groups: [string, Party[]][] = [
       ['Kunder', parties.filter((party) => party.party_type === 'kunde')],
@@ -507,7 +507,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       const group = document.createElement('optgroup');
       group.label = label;
       for (const party of members) {
-        group.append(option(String(party.id), `${party.party_id} — ${party.name}`));
+        group.append(option(String(party.id), `${party.party_id}: ${party.name}`));
       }
       partySelect.append(group);
     }
@@ -634,7 +634,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     try {
       applySuggestion(await interpretDocument(company.id, file));
     } catch (error: unknown) {
-      // The upload itself is still fine — only the reading failed, and the form
+      // The upload itself is still fine, and only the reading failed, and the form
       // is filled in by hand exactly as it was before this feature existed.
       setStatus(
         formStatus,
@@ -733,10 +733,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         cell(isoDate(entry.occurred_on)),
         cell(entry.voucher_no),
         cell(entry.description),
-        cell(entry.party_name ?? '—'),
-        cell(entry.type_label ?? '—'),
+        cell(entry.party_name ?? '-'),
+        cell(entry.type_label ?? '-'),
         cell(kroner(entry.net_amount), 'num'),
-        cell(entry.vat_amount === '0.00' ? '—' : kroner(entry.vat_amount), 'num'),
+        cell(entry.vat_amount === '0.00' ? '-' : kroner(entry.vat_amount), 'num'),
         cell(
           kroner(entry.gross_amount),
           `num ${entry.direction === 'inn' ? 'amount-in' : 'amount-out'}`,
@@ -908,7 +908,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       show(el('#readonly'), !mayWrite);
 
       for (const code of catalogue.tax_codes) {
-        taxSelect.append(option(code.code, `${code.code} — ${code.description}`));
+        taxSelect.append(option(code.code, `${code.code}: ${code.description}`));
       }
       parties = await listParties(company.id);
       fillParties();

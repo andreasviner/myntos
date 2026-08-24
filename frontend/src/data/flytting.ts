@@ -4,7 +4,7 @@
  *
  * Menyveiene under er hentet fra leverandørenes egne hjelpesider på datoen i
  * `sjekket`, og `kilder` peker alltid tilbake dit. Menyer flyttes uten
- * forvarsel — derfor står kilden ved siden av hvert steg framfor å bli gjemt i
+ * forvarsel. Derfor står kilden ved siden av hvert steg framfor å bli gjemt i
  * en fotnote, og derfor beskriver stegene *hva* du leter etter og ikke bare
  * hvor det lå sist vi så etter.
  *
@@ -33,7 +33,7 @@ export interface Guide {
   navn: string;
   /** Tittelen i menyen og på kortet. */
   menyTittel: string;
-  /** Én linje i menyen — hva som er det særegne ved akkurat dette programmet. */
+  /** Én linje i menyen: hva som er det særegne ved akkurat dette programmet. */
   menyTekst: string;
   ingress: string;
   /** Slik henter du dataene ut av det gamle programmet. */
@@ -57,13 +57,13 @@ export const guider: Guide[] = [
       {
         tittel: 'Åpne eksportsiden',
         tekst:
-          'Alle eksportene i Fiken ligger samlet under Foretak. Du trenger ikke å avslutte noe for å laste ned — eksporten kan kjøres så mange ganger du vil.',
+          'Alle eksportene i Fiken ligger samlet under Foretak. Du trenger ikke å avslutte noe for å laste ned, og eksporten kan kjøres så mange ganger du vil.',
         vei: 'Foretak → Eksport av regnskap',
       },
       {
         tittel: 'Last ned SAF-T-eksporten',
         tekst:
-          'Fiken lager SAF-T per regnskapsår. Last ned filen for hvert år du har ført i Fiken, ikke bare det siste — det er hele historikken Skatteetaten kan be om, ikke inneværende år.',
+          'Fiken lager SAF-T per regnskapsår. Last ned filen for hvert år du har ført i Fiken, ikke bare det siste. Det er hele historikken Skatteetaten kan be om, ikke inneværende år.',
       },
       {
         tittel: 'Last ned komplett eksport',
@@ -119,7 +119,7 @@ export const guider: Guide[] = [
       {
         tittel: 'Vent på ZIP-en',
         tekst:
-          'Et år med mange bilag tar tid å pakke. Lukker du fanen for tidlig, må du starte eksporten på nytt — det er ingen kø som fortsetter i bakgrunnen.',
+          'Et år med mange bilag tar tid å pakke. Lukker du fanen for tidlig, må du starte eksporten på nytt, for det er ingen kø som fortsetter i bakgrunnen.',
       },
       {
         tittel: 'Ta med listene',
@@ -130,7 +130,7 @@ export const guider: Guide[] = [
     taVarePa: [
       'SAF-T-eksport (ZIP) for hvert regnskapsår i Tripletex',
       'Kunde- og leverandørliste som CSV',
-      'Egne rapporter du er vant til å se på, som PDF — de finnes ikke i SAF-T',
+      'Egne rapporter du er vant til å se på, som PDF. De finnes ikke i SAF-T',
     ],
     verdtAVite: [
       'Eksporten speiler regnskapet i det øyeblikket du kjører den. Fører du noe etterpå, stemmer ikke filen lenger, og du må kjøre den på nytt.',
@@ -155,7 +155,7 @@ export const guider: Guide[] = [
     slug: 'poweroffice-go',
     navn: 'PowerOffice Go',
     menyTittel: 'Flytte fra PowerOffice Go',
-    menyTekst: 'Eksportkø med versjonsvalg — v1.30 eller v1.40.',
+    menyTekst: 'Eksportkø med versjonsvalg: v1.30 eller v1.40.',
     ingress:
       'PowerOffice Go kjører eksporten som en jobb du bestiller og henter når den er ferdig. Til gjengjeld får du velge SAF-T-versjon selv, noe de færreste programmene lar deg gjøre.',
     steg: [
@@ -177,7 +177,7 @@ export const guider: Guide[] = [
       {
         tittel: 'Eksporter bilags-PDF-ene',
         tekst:
-          'Bilagsdokumentene hentes som egen eksport. Det er dem du trenger ved et bokettersyn — selve SAF-T-filen er tallene, ikke kvitteringene.',
+          'Bilagsdokumentene hentes som egen eksport. Det er dem du trenger ved et bokettersyn. Selve SAF-T-filen er tallene, ikke kvitteringene.',
       },
     ],
     taVarePa: [
@@ -187,7 +187,7 @@ export const guider: Guide[] = [
     ],
     verdtAVite: [
       'Eksporten krever at det er satt en kontaktperson i firmainnstillingene på klienten. Mangler den, feiler jobben uten at det er åpenbart hvorfor.',
-      'Er du klient hos en regnskapsfører, er det de som har tilgangen til eksporten. Dataene er dine — be om filene skriftlig, så har du det dokumentert.',
+      'Er du klient hos en regnskapsfører, er det de som har tilgangen til eksporten. Dataene er dine, så be om filene skriftlig, så har du det dokumentert.',
     ],
     kilder: [
       {
@@ -206,7 +206,7 @@ export const guider: Guide[] = [
     menyTittel: 'Flytte fra Conta',
     menyTekst: 'SAF-T ligger under rapportene, ved siden av Skatteetaten.',
     ingress:
-      'I Conta ligger SAF-T-eksporten der den logisk hører hjemme: under rapportene, i seksjonen for det som skal til Skatteetaten. Eksporten er en ZIP, og den låser ikke perioden — det må du gjøre selv.',
+      'I Conta ligger SAF-T-eksporten der den logisk hører hjemme: under rapportene, i seksjonen for det som skal til Skatteetaten. Eksporten er en ZIP, og den låser ikke perioden. Det må du gjøre selv.',
     steg: [
       {
         tittel: 'Gå til regnskapsrapportene',
@@ -251,7 +251,7 @@ export const guider: Guide[] = [
     menyTittel: 'Flytte fra et annet program',
     menyTekst: 'DNB Regnskap, SpareBank 1, Visma, Luca og resten.',
     ingress:
-      'Alle norske regnskapssystemer må kunne levere SAF-T Regnskap — det er et krav fra Skatteetaten, ikke en funksjon leverandøren velger. Så selv om menyen ser annerledes ut enn i guidene over, finnes filen.',
+      'Alle norske regnskapssystemer må kunne levere SAF-T Regnskap. Det er et krav fra Skatteetaten, ikke en funksjon leverandøren velger. Så selv om menyen ser annerledes ut enn i guidene over, finnes filen.',
     steg: [
       {
         tittel: 'Let etter ordet SAF-T',
@@ -318,12 +318,12 @@ export const sjekkliste: Steg[] = [
   {
     tittel: 'Avslutt perioden før du eksporterer',
     tekst:
-      'En SAF-T-fil er et øyeblikksbilde. Fører du noe i perioden etter eksporten, må filen lages på nytt — ellers har du to versjoner av samme år.',
+      'En SAF-T-fil er et øyeblikksbilde. Fører du noe i perioden etter eksporten, må filen lages på nytt, ellers har du to versjoner av samme år.',
   },
   {
     tittel: 'Last ned alt før du sier opp',
     tekst:
-      'Oppbevaringsplikten er som hovedregel fem år etter regnskapsårets slutt, og den følger deg — ikke abonnementet ditt. Når abonnementet er sagt opp, er ikke lenger nedlastingsknappen ditt problem å nå, men ditt problem å ha mistet.',
+      'Oppbevaringsplikten er som hovedregel fem år etter regnskapsårets slutt, og den følger deg, ikke abonnementet ditt. Når abonnementet er sagt opp, er ikke lenger nedlastingsknappen ditt problem å nå, men ditt problem å ha mistet.',
   },
   {
     tittel: 'Lagre kopien et sted du finner den igjen',
@@ -334,7 +334,7 @@ export const sjekkliste: Steg[] = [
 
 /**
  * Hva som faktisk skjer i Myntos etterpå. Dette er dagens sannhet, ikke
- * planen — automatisk innlesing av SAF-T står i veikartet og er ikke bygget,
+ * planen: automatisk innlesing av SAF-T står i veikartet og er ikke bygget,
  * og en flytteguide som later som noe annet er verdiløs akkurat i det
  * øyeblikket noen prøver å følge den.
  */
@@ -352,7 +352,7 @@ export const startISteg: Steg[] = [
   {
     tittel: 'Før fra og med datoen du flyttet',
     tekst:
-      'Registrer inn- og utbetalinger med type og PDF. Historikken fram til flyttedatoen ligger i SAF-T-filen og bilagsarkivet fra det gamle programmet — den skal ikke føres på nytt.',
+      'Registrer inn- og utbetalinger med type og PDF. Historikken fram til flyttedatoen ligger i SAF-T-filen og bilagsarkivet fra det gamle programmet, og den skal ikke føres på nytt.',
   },
 ];
 
@@ -360,5 +360,5 @@ export const startISteg: Steg[] = [
 export const importStatus = {
   tittel: 'Automatisk import er ikke bygget ennå',
   tekst:
-    'Myntos kan i dag ikke lese en SAF-T-fil inn i regnskapet ditt, og inngående balanse legges ikke inn via skjermbildene. Det står i veikartet, og datamodellen er formet for det, men det virker ikke i dag. Derfor handler guidene her om å få dataene trygt ut av det gamle programmet, og om å begynne i Myntos på et periodeskille — det er den flyttingen som faktisk lar seg gjennomføre nå.',
+    'Myntos kan i dag ikke lese en SAF-T-fil inn i regnskapet ditt, og inngående balanse legges ikke inn via skjermbildene. Det står i veikartet, og datamodellen er formet for det, men det virker ikke i dag. Derfor handler guidene her om å få dataene trygt ut av det gamle programmet, og om å begynne i Myntos på et periodeskille. Det er den flyttingen som faktisk lar seg gjennomføre nå.',
 };

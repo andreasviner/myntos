@@ -39,7 +39,7 @@ what it does.
 | SAF-T Financial export | Required by law (bokføringsforskriften) for electronic bookkeeping | Planned |
 | Skattemelding + næringsspesifikasjon | Validate and submit via Skatteetaten's sluttbrukersystem APIs | Planned |
 | Årsregnskap to Regnskapsregisteret | Machine filing via Brønnøysundregistrene's Altinn 3 apps (system fills, user signs with ID-porten) | Planned |
-| Maskinporten + ID-porten auth | Maskinporten covers retrieval APIs; **submission legally requires an ID-porten login** (Skatteetaten policy, 2026) | Interfaces in place |
+| Maskinporten + ID-porten auth | The JWT grant, the ID-porten authorization-code flow, the Altinn token exchange and the Altinn 3 instance lifecycle are implemented and tested against stubs. Maskinporten covers retrieval APIs; **submission legally requires an ID-porten login** (Skatteetaten policy, 2026), which is why `submit` takes a person's token as a required argument. Unused until a client is registered with Digdir — see [docs/integrations/maskinporten.md](docs/integrations/maskinporten.md) | Working, not provisioned |
 
 ## Tech stack
 

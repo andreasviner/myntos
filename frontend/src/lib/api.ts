@@ -2,7 +2,7 @@
  * Typed client for the Myntos API.
  *
  * The site is static and the API lives on its own origin, so every call is a
- * cross-origin fetch with `credentials: 'include'` — the session cookie is
+ * cross-origin fetch with `credentials: 'include'`, because the session cookie is
  * httpOnly and Secure, which means no script here can read it, only send it.
  * That is the whole point: an XSS bug on this page cannot steal a login.
  *
@@ -27,7 +27,7 @@ export class ApiError extends Error {
     this.code = code;
   }
 
-  /** True when the caller simply is not signed in — not an error worth showing. */
+  /** True when the caller simply is not signed in, not an error worth showing. */
   get isUnauthenticated(): boolean {
     return this.status === 401;
   }
@@ -128,7 +128,7 @@ export interface ProviderSummary {
 
 export interface Providers {
   password: boolean;
-  /** The enforced minimum — never hardcode this number in a form hint. */
+  /** The enforced minimum. Never hardcode this number in a form hint. */
   password_min_length: number;
   /** Only the providers this deployment has actually configured. */
   providers: ProviderSummary[];
@@ -190,7 +190,7 @@ export interface Company {
   in_foretaksregisteret: boolean;
   organisation_form: string | null;
   /**
-   * Eleven digits, no separators. Null until someone fills it in — and an
+   * Eleven digits, no separators. Null until someone fills it in, and an
    * invoice cannot be issued while it is, because there would be nowhere to pay
    * it (see the `seller_bank_account` violation).
    */
@@ -251,7 +251,7 @@ export interface RegisteredUnit {
  *
  * Rejects with an `ApiError` whose `code` distinguishes the cases worth telling
  * apart: `invalid_orgnr` (the number cannot be right), `unit_not_found`,
- * `unit_deleted`, and `register_unavailable` (ask again later — or type it in).
+ * `unit_deleted`, and `register_unavailable` (ask again later, or type it in).
  */
 export const lookupUnit = (orgnr: string): Promise<RegisteredUnit> =>
   request<RegisteredUnit>(`/api/v1/enhetsregisteret/${encodeURIComponent(orgnr)}`);
@@ -271,7 +271,7 @@ export interface Invitation {
   email: string;
   role: string;
   expires_at: string;
-  /** Only ever populated on the response that created it — the token is stored hashed. */
+  /** Only ever populated on the response that created it, since the token is stored hashed. */
   invite_url: string | null;
 }
 
@@ -557,7 +557,7 @@ export interface FakturaCatalogue {
    * Whether this deployment has a model configured at all.
    *
    * False means the deployment has opted out (no `LOYND_KEY`), not that
-   * something is broken — the form leaves the box out rather than offering a
+   * something is broken, so the form leaves the box out rather than offering a
    * button that always fails.
    */
   ai_available: boolean;
@@ -591,7 +591,7 @@ export interface Faktura {
   id: number;
   document_type: DocumentType;
   status: InvoiceStatus;
-  /** Null until issued — numbering a draft is how a series acquires gaps. */
+  /** Null until issued. Numbering a draft is how a series acquires gaps. */
   document_number: string | null;
 
   party_id: number | null;
@@ -615,7 +615,7 @@ export interface Faktura {
   currency_code: string;
   buyer_reference: string | null;
   order_reference: string | null;
-  /** The KID. Null on a draft even when one is coming — it carries the invoice number. */
+  /** The KID. Null on a draft even when one is coming, since it carries the invoice number. */
   payment_reference: string | null;
   /** Whether issuing assigns that KID from the invoice number. */
   payment_reference_auto: boolean;
@@ -661,7 +661,7 @@ export interface FakturaPayload {
   buyer_reference?: string | null;
   order_reference?: string | null;
   /**
-   * A KID to use. The empty string clears it — `null` means "leave it alone"
+   * A KID to use. The empty string clears it, and `null` means "leave it alone"
    * throughout this payload, so it could not otherwise be removed once set.
    * Sending one turns `payment_reference_auto` off.
    */
@@ -672,7 +672,7 @@ export interface FakturaPayload {
   lines?: LinePayload[];
 }
 
-/** One line a model proposed — the same shape `LinePayload` takes back. */
+/** One line a model proposed, in the same shape `LinePayload` takes back. */
 export interface DraftedLine {
   description: string;
   quantity: string;
@@ -683,7 +683,7 @@ export interface DraftedLine {
 
 export interface LineDraft {
   /**
-   * Empty whenever nothing usable came back — no key, no answer, or an answer
+   * Empty whenever nothing usable came back: no key, no answer, or an answer
    * we could not read. All three are ordinary outcomes, and `warnings` says
    * which one happened.
    */
@@ -706,7 +706,7 @@ export interface NextNumber {
  * A preview and not a reservation: an invoice issued in between moves the
  * series on, so the interface labels it rather than presenting it as settled.
  *
- * `partyId` is the customer the invoice is going to — the KID carries their
+ * `partyId` is the customer the invoice is going to, and the KID carries their
  * customer number, so the preview changes when the customer does.
  */
 export const getNextFakturaNumber = (

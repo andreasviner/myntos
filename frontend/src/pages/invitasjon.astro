@@ -2,7 +2,7 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 ---
 
-<BaseLayout title="Invitasjon — Myntos" description="Bli med i en organisasjon på Myntos.">
+<BaseLayout title="Invitasjon | Myntos" description="Bli med i en organisasjon på Myntos.">
   <div class="auth-page">
     <h1>Invitasjon</h1>
     <p class="status" id="status" hidden></p>
@@ -49,7 +49,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     void loadSession().then((session) => {
       if (session === null) {
         // The invitation grants access to an account, so the account has to
-        // exist first — and it must use the invited address, or the backend
+        // exist first, and it must use the invited address, or the backend
         // will refuse the token.
         message.textContent =
           'Logg inn eller opprett en konto med e-postadressen invitasjonen ble sendt til. Så kommer du tilbake hit automatisk.';

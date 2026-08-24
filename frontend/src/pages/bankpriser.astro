@@ -5,7 +5,7 @@ import { banker, formaterKr, gebyrRangering, SJEKKET, type Bank } from '../data/
 /**
  * Sortert på det som faktisk avgjør valget for et regnskapsprogram: hva det
  * koster per måned å få bankintegrasjon i det hele tatt. Banker uten publisert
- * pris havner sist — de kan ikke sammenlignes.
+ * pris havner sist, siden de ikke kan sammenlignes.
  */
 const sortert = [...banker].sort((a, b) => {
   const pa = a.nettbankApi.nok;
@@ -26,7 +26,7 @@ const sjekketNorsk = new Date(SJEKKET).toLocaleDateString('nb-NO', {
 const medPris = banker.filter((b) => b.nettbankApi.nok !== null);
 const billigst = Math.min(...medPris.map((b) => b.nettbankApi.nok as number));
 const dyrest = Math.max(...medPris.map((b) => b.nettbankApi.nok as number));
-// Regnes ut, ikke skrives inn — påstanden skal aldri kunne bli usann av at et tall endres.
+// Regnes ut, ikke skrives inn, slik at påstanden aldri skal kunne bli usann av at et tall endres.
 const faktor = (dyrest / billigst).toLocaleString('nb-NO', { maximumFractionDigits: 1 });
 const utenKid = banker.filter((b) => !b.kid);
 
@@ -34,13 +34,13 @@ const gebyrKlasse = (b: Bank) => `nivå nivå-${gebyrRangering[b.skjulteGebyrer]
 ---
 
 <BaseLayout
-  title="Bankpriser for bedrift — nettbank og regnskapsintegrasjon | Myntos"
-  description="Sammenligning av hva norske banker tar for nettbank bedrift, bankintegrasjon mot regnskapssystem og oppstart — med kilde og dato på hvert tall."
+  title="Bankpriser for bedrift: nettbank og regnskapsintegrasjon | Myntos"
+  description="Sammenligning av hva norske banker tar for nettbank bedrift, bankintegrasjon mot regnskapssystem og oppstart, med kilde og dato på hvert tall."
 >
   <main class="wide">
     <h1>Bankpriser for bedrift</h1>
     <p class="lead">
-      Hva koster det å drive bedriftskonto i Norge — og hva koster det å koble kontoen til et
+      Hva koster det å drive bedriftskonto i Norge, og hva koster det å koble kontoen til et
       regnskapsprogram? Tallene under er hentet fra bankenes egne prislister, med kilde og dato på
       hver rad.
     </p>
@@ -52,14 +52,14 @@ const gebyrKlasse = (b: Bank) => `nivå nivå-${gebyrRangering[b.skjulteGebyrer]
     <aside class="note" role="note" aria-label="Om prisdataene">
       <strong>Kontroller prisen hos banken før du bestemmer deg.</strong> Prislister endres uten
       forvarsel, priser forhandles individuelt, og tall kan være feil lest. Myntos har ingen avtale
-      med noen av bankene. Alle beløp er sist kontrollert {sjekketNorsk} — følg lenken i
+      med noen av bankene. Alle beløp er sist kontrollert {sjekketNorsk}. Følg lenken i
       <em>Prisside</em>-kolonnen og etterprøv selv.
     </aside>
 
     <h2>Sammenligning</h2>
     <p class="tabellhjelp">
       Sortert etter månedspris med regnskapsintegrasjon. Månedsprisene gjelder <em>én bruker</em>,
-      og kolonnen «Nettbank + API» er totalprisen for nettbank <em>og</em> integrasjon — ikke et
+      og kolonnen «Nettbank + API» er totalprisen for nettbank <em>og</em> integrasjon, ikke et
       påslag. Priser er eks. mva. der banken oppgir det.
     </p>
 
@@ -120,7 +120,7 @@ const gebyrKlasse = (b: Bank) => `nivå nivå-${gebyrRangering[b.skjulteGebyrer]
                       <span aria-hidden="true">✓</span> Ja
                     </span>
                   ) : (
-                    <span class="kid kid-nei" title="Ingen KID/OCR — innbetalinger må matches manuelt">
+                    <span class="kid kid-nei" title="Ingen KID/OCR, innbetalinger må matches manuelt">
                       <span aria-hidden="true">✗</span> Nei
                     </span>
                   )}
@@ -146,7 +146,7 @@ const gebyrKlasse = (b: Bank) => `nivå nivå-${gebyrRangering[b.skjulteGebyrer]
     </p>
     <p>
       KID og OCR-giro er norske betalingsstandarder. Utenlandske banker og e-pengeforetak har som
-      regel ikke tilgang til dem, selv om de tilbyr «bedriftskonto i Norge» — kontoen kan mangle
+      regel ikke tilgang til dem, selv om de tilbyr «bedriftskonto i Norge». Kontoen kan mangle
       norsk kontonummer, OCR-avtale, AvtaleGiro og bankintegrasjon mot norske regnskapssystemer.
       Månedsprisen kan da se billig ut mens den reelle kostnaden flyttes til manuelt
       avstemmingsarbeid.
@@ -165,7 +165,7 @@ const gebyrKlasse = (b: Bank) => `nivå nivå-${gebyrRangering[b.skjulteGebyrer]
     <p>
       Ingen av bankene selger et åpent utviklergrensesnitt til denne prisen. Det du betaler for er
       <em>bankintegrasjon</em>: at banken kobler kontoen din til et regnskapssystem den allerede har
-      godkjent — typisk Fiken, Tripletex, PowerOffice Go, Visma eller bankens eget regnskapsprodukt.
+      godkjent: typisk Fiken, Tripletex, PowerOffice Go, Visma eller bankens eget regnskapsprodukt.
       SpareBank 1 sier det rett ut: «Det er dessverre ikke alle regnskapsprogram som støtter
       bankintegrasjoner.»
     </p>
@@ -179,7 +179,7 @@ const gebyrKlasse = (b: Bank) => `nivå nivå-${gebyrRangering[b.skjulteGebyrer]
     <h2>Hvordan «skjulte gebyrer» er vurdert</h2>
     <p>
       Nivået måler hvor stor del av den reelle månedskostnaden som ligger <em>utenfor</em>
-      månedsprisen — per bruker, per konto, per transaksjon, obligatoriske tilleggsavtaler og
+      månedsprisen: per bruker, per konto, per transaksjon, obligatoriske tilleggsavtaler og
       engangsgebyr. Det er en vurdering, ikke et tall fra banken, og begrunnelsen står under
       «Hva ligger utenfor» på hver rad.
     </p>
@@ -209,14 +209,14 @@ const gebyrKlasse = (b: Bank) => `nivå nivå-${gebyrRangering[b.skjulteGebyrer]
     <ul class="funn">
       <li>
         Spennet på bankintegrasjon er <strong>{billigst}–{dyrest} kr/mnd</strong> for samme
-        praktiske behov — {faktor} ganger forskjell mellom billigste og dyreste.
+        praktiske behov, altså {faktor} ganger forskjell mellom billigste og dyreste.
       </li>
       <li>
-        <strong>«0 kr» betyr aldri gratis bank.</strong> Det er prisen på ett linjeelement —
-        abonnementet — ikke på å drive konto. Hos DNB er abonnementet 0 kr, men pakken Banktjenester
+        <strong>«0 kr» betyr aldri gratis bank.</strong> Det er prisen på ett linjeelement, selve
+        abonnementet, ikke på å drive konto. Hos DNB er abonnementet 0 kr, men pakken Banktjenester
         koster 69 kr/mnd, og uten den betaler du stykkpris per betaling og årsavgift på kortet;
         med regnskap i tillegg er DNBs annonserte pakkepris 149 kr/mnd. Sparebanken Norge annonserer
-        Nettbedrift til 0 kr — forutsatt et «basis kundeforhold» til 95 kr/mnd. SpareBank 1 SMN er
+        Nettbedrift til 0 kr, forutsatt et «basis kundeforhold» til 95 kr/mnd. SpareBank 1 SMN er
         den eneste med et reelt 0-gulv: 0 kr abonnement, 0 kr etablering og ingen obligatorisk
         pakke, med kontoholdsgebyr bare på hvilende konti.
       </li>
@@ -226,7 +226,7 @@ const gebyrKlasse = (b: Bank) => `nivå nivå-${gebyrRangering[b.skjulteGebyrer]
       </li>
       <li>
         De store bankene er ikke de billigste. Nordea og Danske Bank er de eneste med nivå
-        «Høy» — hos Nordea fordi prisen stables per selskap, per bruker <em>og</em> per konto.
+        «Høy», hos Nordea fordi prisen stables per selskap, per bruker <em>og</em> per konto.
       </li>
       <li>
         To banker skiftet navn i 2025: Sparebanken Vest og Sparebanken Sør er nå
@@ -240,12 +240,12 @@ const gebyrKlasse = (b: Bank) => `nivå nivå-${gebyrRangering[b.skjulteGebyrer]
       Hvert tall er lest ut av bankens egen publiserte prisliste på datoen i rad-kilden, ikke fra
       tredjeparts sammenligningssider. Der banken oppgir flere pakker, er den billigste pakken som
       faktisk inneholder regnskapsintegrasjon brukt i «Nettbank + API». Der en pris ikke er publisert,
-      står det <em>Ikke oppgitt</em> — den er ikke estimert.
+      står det <em>Ikke oppgitt</em>, og den er ikke estimert.
       Datagrunnlaget ligger i
       <code>frontend/src/data/bankpriser.ts</code> og tar imot rettelser.
     </p>
     <p class="mangler">
-      Mangler banken din, eller er en pris feil? Prisdata blir utdatert fort — send inn en rettelse
+      Mangler banken din, eller er en pris feil? Prisdata blir utdatert fort, så send inn en rettelse
       med lenke til prislisten, så blir raden oppdatert med ny dato.
     </p>
   </main>
@@ -271,7 +271,7 @@ const gebyrKlasse = (b: Bank) => `nivå nivå-${gebyrRangering[b.skjulteGebyrer]
     color: var(--muted);
   }
 
-  /* Tabellen er bredere enn små skjermer — den skal skrolle i sin egen ramme,
+  /* Tabellen er bredere enn små skjermer, så den skal skrolle i sin egen ramme,
      aldri dra hele siden sidelengs. */
   .tabellramme {
     overflow-x: auto;
@@ -363,7 +363,7 @@ const gebyrKlasse = (b: Bank) => `nivå nivå-${gebyrRangering[b.skjulteGebyrer]
     color: var(--fg);
   }
 
-  /* Fire nivåer, skilt på både farge og tekst — fargen alene skal ikke bære
+  /* Fire nivåer, skilt på både farge og tekst, for fargen alene skal ikke bære
      informasjonen. */
   .nivå {
     display: inline-block;

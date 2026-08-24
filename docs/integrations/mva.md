@@ -51,6 +51,19 @@ ordered manually from Skatteetaten), then exchanged for an Altinn token
 the app 401s). Maskinporten is only accepted for the MVA read/information
 APIs.
 
+**Scope audit, 2026-08-24** (probed live, not read off a page):
+
+| Scope | ID-porten client `5aa404aa` | Maskinporten `f8293b48` |
+| --- | --- | --- |
+| `skatteetaten:mvameldingvalidering` | **granted** | not registered |
+| `skatteetaten:mvameldinginnsending` | **not registered** | not registered |
+
+So validation is reachable today and submission is not. Neither belongs on the
+Maskinporten client: both steps require a person, so a machine token would have
+nowhere to use them. Getting `mvameldinginnsending` is the one portal action
+left for this path, and the note further down about multi-week grant handling
+applies to it - it is not obviously a self-serve checkbox.
+
 1. POST the mva-melding XML to the **validation API** (always validate first)
 2. Create an instance in Skatteetaten's Altinn 3 app
 3. PUT the `mvaMeldingInnsending` metadata XML (orgnr/fnr, period, category,
@@ -80,9 +93,28 @@ hosts in older docs.
 
 ## Testing
 
-Only **synthetic Tenor Testdatasøk users** work for ID-porten/Altinn test
-login — ordinary Digdir test users don't. Getting scopes + an ID-porten
-integration is partly manual with multi-week lead time; it gates any
-end-to-end milestone (see ROADMAP phase 0b). After Altinn 2 shuts down
-(June 2026), customers must delegate the new MVA tilgangspakker (available
-since 2026-04-15) or on-behalf submissions fail authorization.
+Test logins use **TestID** with **synthetic** people from Tenor Testdatasøk
+(`skatteetaten.no/skjema/testdata/`, logged into with a real ID-porten login of
+your own). A synthetic fødselsnummer carries **+80 on the month digits** — born
+in November 2024 gives `0191…` — which is how one is recognised, and why it can
+never collide with a real number. Digdir now recommends TestID for everyone
+rather than the older password-based test users; it has no password and lets the
+caller pick the assurance level.
+
+**Headless login is supported in test, and it is worth building against.**
+ID-porten's `/authorize` accepts
+
+    login_hint=testid:<synthetic pid>_idporten-loa-high
+
+and authenticates without a person or a browser, redirecting straight back with
+a code. The result is a full token — refreshable, introspectable, and carrying
+`amr=TestID` — so the whole submission chain (ID-porten token → Altinn exchange
+→ instance → `process/next` twice → receipt) is automatable end to end. Test
+only; production has no equivalent, and the `amr` claim is how a token from it
+is told apart. Verified against docs.digdir.no 2026-08-24.
+
+Getting scopes and an ID-porten integration is partly manual with multi-week
+lead time; it gates any end-to-end milestone (see ROADMAP phase 0b). After
+Altinn 2 shuts down (June 2026), customers must delegate the new MVA
+tilgangspakker (available since 2026-04-15) or on-behalf submissions fail
+authorization.

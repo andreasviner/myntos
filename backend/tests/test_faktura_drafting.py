@@ -61,7 +61,7 @@ def test_the_prompt_holds_the_description_the_format_and_the_menu() -> None:
 
     assert "10 timer rådgivning" in prompt
     assert "beskrivelse | antall | enhet | pris per enhet | mva" in prompt
-    assert "1. 25 % — alminnelig sats" in prompt
+    assert "1. 25 % (alminnelig sats)" in prompt
     assert prompt.rstrip().endswith("Svar med kun linjene.")
 
 
@@ -240,7 +240,7 @@ async def test_a_restricted_menu_is_the_one_the_model_is_shown() -> None:
     model = Answering("Klipp | 1 | stk | 500 | 1")
     proposal = await drafting.draft_lines(SALE, ask=model, allowed_tax_codes=("0",))
 
-    assert "25 % — alminnelig sats" not in model.prompts[0]
+    assert "25 % (alminnelig sats)" not in model.prompts[0]
     assert proposal.lines[0].tax_code == "0"
 
 

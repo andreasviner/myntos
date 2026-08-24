@@ -16,15 +16,61 @@ Samarbeidsportalen) — start phase 0b early, it gates everything after it.
 
 ## Phase 0b — Government onboarding (parallel to everything, slow, manual)
 
+The code this onboarding feeds is in place — Maskinporten's JWT grant,
+ID-porten's authorization-code flow, the Altinn token exchange and the instance
+lifecycle all exist and are tested against stubs (see
+docs/integrations/maskinporten.md for the module map). What remains below is
+registration and access, which cannot be done from a repository.
+
 - [ ] Samarbeidsportalen access (test: self-signup with org-domain email)
-- [ ] Register Maskinporten client (test), generate per-installation JWK
-- [ ] Apply for Skatteetaten API access via their ekstern-Jira form and
-      accept the bruksvilkår — required **for test as well as production**;
-      until granted, `skatteetaten:*` scopes show "Tilgang mangler" and are
-      unusable. Covers `skatteetaten:formueinntekt/skattemelding`,
-      `skatteetaten:mvameldingvalidering`, `skatteetaten:mvameldinginnsending`
-- [ ] ID-porten integration (test.idporten.no) + Tenor synthetic test users
-- [ ] TT02/Altinn test setup (`skd.apps.tt02.altinn.no`)
+- [ ] Register Maskinporten client (test), register the per-installation public
+      JWK — `uv run python -m myntos.auth.digdir_key show maskinporten` prints
+      it and the `kid` to put in `MASKINPORTEN_KID`
+- [x] Skatteetaten API access for **test**, via their ekstern-Jira form plus
+      the bruksvilkår. Verified 2026-08-23 by requesting each scope against
+      test.maskinporten.no: `skatteetaten:formueinntekt/skattemelding` and
+      `…/eiendom` both issue tokens on the test Maskinporten client, so the
+      skattemelding read and validate paths are unblocked in test
+- [ ] The same access for **production**, which is a separate grant — and the
+      two MVA scopes (`skatteetaten:mvameldingvalidering`,
+      `skatteetaten:mvameldinginnsending`), which are ID-porten scopes and
+      therefore untestable until the ID-porten client exists
+- [x] ID-porten integration (test.idporten.no): client registered with
+      `private_key_jwt` and its own key. Verified 2026-08-23 —
+      `python -m myntos.auth.digdir_check` starts an authorization request and
+      ID-porten accepts the client id and redirect URI. Note the redirect URI
+      is the loopback **literal** (`http://127.0.0.1:8000/...`): ID-porten
+      follows RFC 8252 and rejects the name `localhost`
+- [x] Tenor synthetic test users, in `test_data/` with a README recording which
+      have tax data. TestID headless login verified end to end 2026-08-24:
+      `python -m myntos.auth.digdir_check --person 12869599229` completes a real
+      ID-porten login (`acr=idporten-loa-high`), which is what finally exercises
+      the ID-porten `kid`
+- [x] Scopes on the **ID-porten** client (`5aa404aa`), which had only `openid`.
+      `altinn:enduser` fixed the Altinn token exchange and
+      `skatteetaten:formueinntekt/skattemelding` the person's own fetch, both
+      verified 2026-08-24: the whole auth chain now completes for a machine and
+      for a person, and the skattemelding API answers in Norwegian prose rather
+      than an empty 403. Registering a scope is per client, which was the trap -
+      the organisation-level grant had been there all along
+- [x] `digdir:skattemelding` on both clients, granted and **verified 2026-08-24**:
+      a real skattemelding fetched for AS `314067630` (2025) as its daglig leder
+      `08866995401`, via `digdir_check --person 08866995401 --org 314067630
+      --year 2025`. Response saved as
+      test_data/skattemelding-314067630-2025.xml. The auth work is done: every
+      remaining 403 is a data or representation answer, not a credential one
+- [ ] Retrieval **without a person present**. The machine plane still answers 400
+      `SME-EKSTERN-005` for a named taxpayer even with both scopes, because a
+      machine token has no logged-in user whose rights can be checked. Needs
+      either an Altinn delegation from each client company, or the Altinn 3
+      systembruker model. Decide which before building the unattended paths
+- [ ] **2026-12-01: Altinn roles stop counting in access checks** (tilgangspakker
+      replace them). The proven fetch works because daglig leder is a role, so
+      re-verify the whole org path before that date
+- [x] Altinn test platform: the Maskinporten-to-Altinn token exchange against
+      `platform.tt02.altinn.no` works (verified 2026-08-23)
+- [ ] A first real instance against `skd.apps.tt02.altinn.no` — needs a Tenor
+      taxpayer, so it waits on the line above
 
 ## Phase 1 — Accounting core
 
@@ -189,10 +235,17 @@ and full digital bokføring from 2030-01-01. See docs/integrations/efaktura.md.
 
 - [ ] MVA calculation per SAF-T code; aggregation to MvaSpesifikasjonslinje
       (exclusion list: codes 0, 7, 20, 21, 22 must never be reported)
-- [ ] ID-porten OIDC flow (`auth/idporten`) + Altinn token exchange
-- [ ] Validation API → Altinn 3 instance flow → feedback (persist
-      valideringsresultat, kvittering PDF, betalingsinformasjon/KID with the
-      period's bilag)
+- [x] ID-porten OIDC flow (`auth/idporten`) + Altinn token exchange
+      (`integrations/altinn/tokens`): PKCE, `private_key_jwt` client
+      authentication, and the `acr` claim checked rather than merely requested.
+      What is deliberately left to this milestone is where a government token
+      lives between the callback and the submission — an audit-trail question,
+      not an authentication one — and the HTTP routes that start the flow
+- [ ] Validation API → Altinn 3 instance flow → feedback: the channel exists
+      (`integrations/skatteetaten/mva`), including fetching the three documents
+      as a set. What remains is building the melding and persisting
+      valideringsresultat, kvittering PDF and betalingsinformasjon/KID with the
+      period's bilag
 - [ ] Review-and-confirm UI before any submission (user sees the full melding)
 
 ## Phase 5 — Skattemelding + næringsspesifikasjon
@@ -200,9 +253,12 @@ and full digital bokføring from 2030-01-01. See docs/integrations/efaktura.md.
 - [ ] Build næringsspesifikasjon from the ledger (formats per
       github.com/Skatteetaten/skattemeldingen, api-v2)
 - [ ] Fetch current skattemelding (Maskinporten), validate + submit,
-      receipts. Systembruker may fetch/validate/create instance/upload, but
-      the **final submit requires an ID-porten-logged-in person** — the
-      review-and-sign UI step is the mandatory checkpoint
+      receipts. The client is written (`integrations/skatteetaten/client`) and
+      `submit` takes the person's Altinn token as a required argument, so the
+      rule that a systembruker may fetch/validate/create/upload but **the final
+      submit requires an ID-porten-logged-in person** is visible in the
+      signature. What remains is the envelope, the async job API for
+      næringsspesifikasjoner over 10 MB, and the review-and-sign UI step
 - [ ] Regnskapsfører/multi-client: `consumer_org` delegation now; Altinn 3
       systembruker + tilgangspakker as they land (Altinn 2 shuts down
       June 2026; old role delegations die then)

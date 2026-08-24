@@ -215,7 +215,7 @@ _TYPES: tuple[CashFlowType, ...] = (
         default_tax_code="1",
         note=(
             "Abonnementer og programvare. Utenlandske leverandører fakturerer ofte "
-            "uten norsk mva — da gjelder omvendt avgiftsplikt."
+            "uten norsk mva, og da gjelder omvendt avgiftsplikt."
         ),
     ),
     CashFlowType(
@@ -286,7 +286,7 @@ _TYPES: tuple[CashFlowType, ...] = (
         direction=CashFlowDirection.UT,
         account_number="7790",
         default_tax_code="1",
-        note="Bruk denne bare når ingen av de andre passer — den sier lite til Skatteetaten.",
+        note="Bruk denne bare når ingen av de andre passer. Den sier lite til Skatteetaten.",
     ),
     CashFlowType(
         code="privatuttak",

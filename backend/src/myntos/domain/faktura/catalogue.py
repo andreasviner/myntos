@@ -39,28 +39,28 @@ class SalesTaxOption:
 SALES_TAX_OPTIONS: tuple[SalesTaxOption, ...] = (
     SalesTaxOption(
         tax_code="3",
-        label="25 % — alminnelig sats",
+        label="25 % (alminnelig sats)",
         income_account="3000",
         note="Vanlig avgiftspliktig salg av varer og tjenester.",
     ),
     SalesTaxOption(
         tax_code="31",
-        label="15 % — næringsmidler",
+        label="15 % (næringsmidler)",
         income_account="3010",
         note="Mat og drikke, og vann og avløp fra 1. juli 2025.",
     ),
     SalesTaxOption(
         tax_code="32",
-        label="12 % — persontransport, overnatting",
+        label="12 % (persontransport, overnatting)",
         income_account="3020",
         note="Persontransport, overnatting, kino, museer og idrettsarrangement.",
     ),
     SalesTaxOption(
         tax_code="5",
-        label="0 % — avgiftsfritt salg",
+        label="0 % (avgiftsfritt salg)",
         income_account="3100",
         note=(
-            "Fritatt etter merverdiavgiftsloven kapittel 6 — for eksempel bøker og "
+            "Fritatt etter merverdiavgiftsloven kapittel 6, for eksempel bøker og "
             "aviser. Du har fortsatt fradragsrett for inngående mva."
         ),
     ),
@@ -69,7 +69,7 @@ SALES_TAX_OPTIONS: tuple[SalesTaxOption, ...] = (
         label="Unntatt merverdiavgift",
         income_account="3100",
         note=(
-            "Utenfor merverdiavgiftsloven — helsetjenester, undervisning, "
+            "Utenfor merverdiavgiftsloven: helsetjenester, undervisning, "
             "finansielle tjenester. Kan ikke stå på samme faktura som "
             "avgiftspliktig salg."
         ),

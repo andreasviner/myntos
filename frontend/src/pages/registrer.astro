@@ -4,7 +4,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 ---
 
 <BaseLayout
-  title="Opprett konto — Myntos"
+  title="Opprett konto | Myntos"
   description="Opprett en Myntos-konto med e-post, Google, Microsoft eller Vipps, og inviter kollegaer inn i samme organisasjon."
 >
   <div class="auth-page">
@@ -28,7 +28,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         <label class="field">
           <span>Passord</span>
           <input type="password" name="password" autocomplete="new-password" required />
-          {/* The minimum is filled in from the API — see the script below. Until
+          {/* The minimum is filled in from the API. See the script below. Until
               it arrives the hint says nothing it might have to take back. */}
           <span class="field-hint" id="password-hint">Lengde teller mer enn krøllete tegn.</span>
         </label>
@@ -41,7 +41,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       </form>
     </div>
 
-    {/* Samtykket må stå der kontoen faktisk opprettes — også for
+    {/* Samtykket må stå der kontoen faktisk opprettes, også for
         leverandørinnlogging, som er knappene over skjemaet. */}
     <p class="consent">
       Ved å opprette en konto godtar du <a href="/vilkar/">bruksvilkårene</a> og

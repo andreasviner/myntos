@@ -55,11 +55,54 @@ Scopes: `skatteetaten:formueinntekt/skattemelding` (+ `…/eiendom`), plus
 access / 90-day refresh. Scope checks are not yet enforced on all tokens but
 **will be turned on** — request scopes properly from day one.
 
+**The skattemelding scope belongs on both clients**, and this is easy to get
+wrong because the two failures look nothing alike (verified 2026-08-24):
+
+- On the **Maskinporten** client it is what a systembruker fetch authenticates
+  with. Ours has it, and it works — but a fetch for a person still fails
+  `400 SME-EKSTERN-005` ("ikke mulig å sjekke om pålogget bruker har nødvendige
+  rettigheter til å representere skattepliktig"), because a machine with no
+  delegation has no authority over that taxpayer.
+- On the **ID-porten** client it is what a person's own fetch needs. Without it
+  the token carries only `openid`, and Skatteetaten answers **403 with an empty
+  body** — no mention of a scope anywhere. Adding it to `IDPORTEN_SCOPES` before
+  it is registered on the client is at least honest about the cause: ID-porten
+  refuses the authorization with `invalid_scope — Scope
+  skatteetaten:formueinntekt/skattemelding not registered on client`.
+
+Organization-level access is granted once and covers both; registering the scope
+on each client is a separate step per client.
+
 **As of June 2026:** a systembruker (Maskinporten, no human) may fetch,
 validate, create the instance and upload — but the **final submission
 requires an ID-porten-logged-in person** (Altinn resource:
 `app_skd_formueinntekt-skattemelding-v2`). The UI's review-and-submit step is
 the mandatory human checkpoint, not a nicety.
+
+## What a fetch actually returns
+
+From the first real response (test_data/skattemelding-314067630-2025.xml, an AS
+for 2025), because the shape is not obvious and costs an afternoon to discover:
+
+```
+<skattemeldingOgNaeringsspesifikasjonforespoerselResponse>
+  <dokumenter><skattemeldingdokument>
+    <id>SKI:755:32858</id>
+    <encoding>utf-8</encoding>
+    <content>PD94bWwg...</content>      <-- base64, and the real document
+    <type>skattemeldingUpersonligUtkast</type>
+  </skattemeldingdokument></dokumenter>
+```
+
+The envelope is XML wrapping a **base64-encoded** inner XML document; a parser
+that reads the envelope's namespace and stops has found nothing. Decoded, the
+inner document is `urn:no:skatteetaten:fastsetting:formueinntekt:skattemelding:
+upersonlig:ekstern:v5` - note `upersonlig`, which is the schema family for a
+company, against `personlig` for a fodselsnummer. `type` names both the group
+and the variant (`skattemeldingUpersonligUtkast`).
+
+The utkast for a synthetic company is nearly empty - `partsnummer` and
+`inntektsaar` and nothing else - so it proves the transport, not the parsing.
 
 ## Taxpayer groups (2026)
 

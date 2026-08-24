@@ -3,8 +3,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import { guider, sjekkliste, startISteg, importStatus, SJEKKET } from '../../data/flytting';
 
 /**
- * Oversikten over flytteguidene. Kortene er inngangen — folk kommer hit med
- * navnet på programmet de sitter i, ikke med et spørsmål om metode — og
+ * Oversikten over flytteguidene. Kortene er inngangen, for folk kommer hit med
+ * navnet på programmet de sitter i, ikke med et spørsmål om metode. Og
  * sjekklisten under er det som gjelder uansett hvor de kommer fra.
  *
  * Selve guidene rendres av [guide].astro fra samme datafil, slik at menyen i
@@ -18,7 +18,7 @@ const sjekketNorsk = new Date(SJEKKET).toLocaleDateString('nb-NO', {
 ---
 
 <BaseLayout
-  title="Flytt regnskapet til Myntos — kom i gang"
+  title="Flytt regnskapet til Myntos: kom i gang"
   description="Slik henter du regnskapet ut av Fiken, Tripletex, PowerOffice Go, Conta eller et annet norsk regnskapsprogram, og hva du gjør med det i Myntos."
   width="wide"
 >
@@ -96,7 +96,7 @@ const sjekketNorsk = new Date(SJEKKET).toLocaleDateString('nb-NO', {
 
   <div class="note">
     Menyveiene i guidene er kontrollert mot leverandørenes egne hjelpesider {sjekketNorsk}. Menyer
-    flyttes uten forvarsel, så hver guide har kildene sine nederst — de er alltid ferskere enn oss.
+    flyttes uten forvarsel, så hver guide har kildene sine nederst. De er alltid ferskere enn oss.
   </div>
 
   <div class="cta card">

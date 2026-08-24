@@ -596,7 +596,7 @@ async def _build_voucher(
         record_id="1",
         account=accounts[RECEIVABLES_ACCOUNT],
         party=party,
-        description=f"{label} — {document.buyer_name}",
+        description=f"{label}, {document.buyer_name}",
         debit=computed.payable,
         credit=ZERO,
     )
@@ -647,7 +647,7 @@ async def _build_voucher(
         period=document.issue_date.month,
         transaction_date=document.issue_date,
         gl_posting_date=document.issue_date,
-        description=f"{label} — {document.buyer_name}",
+        description=f"{label}, {document.buyer_name}",
         voucher_type=document.document_type.value,
         # SAF-T SourceDocumentID: the invoice number this entry documents.
         source_document_id=document.document_number,

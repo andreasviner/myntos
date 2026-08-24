@@ -1,6 +1,6 @@
 ---
 /**
- * "Fortsett med …" — one button per federated provider the backend has.
+ * "Fortsett med …": one button per federated provider the backend has.
  *
  * Belongs **above** the email/password form. Signing in with an account you
  * already have is one click; filling in a form is four fields and a password
@@ -10,7 +10,7 @@
  * The list is fetched rather than hardcoded, because which providers exist is
  * a property of the deployment: `/auth/providers` reports only the ones whose
  * credentials are actually configured, so a button never leads to a 503. That
- * also means the buttons cannot ship in the HTML — and when nothing is
+ * also means the buttons cannot ship in the HTML, and when nothing is
  * configured the whole block stays hidden, leaving the form exactly where it
  * would otherwise have been.
  *

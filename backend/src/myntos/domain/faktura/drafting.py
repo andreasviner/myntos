@@ -207,7 +207,7 @@ def tax_for(field: str, menu: tuple[TaxChoice, ...]) -> TaxChoice | None:
     """The VAT treatment a field names, by menu number *or* by rate.
 
     The menu asks for a number, and models mostly answer with one — but a model
-    shown "1. 25 % — alminnelig sats" also quite reasonably answers "25 %", which
+    shown "1. 25 % (alminnelig sats)" also quite reasonably answers "25 %", which
     is the rate rather than the choice. Both are read, because refusing the
     second would mean falling back to a default on an answer that was in fact
     unambiguous.
@@ -357,9 +357,7 @@ def parse_lines(reply: str, menu: tuple[TaxChoice, ...]) -> LineProposal:
             "Legg dem til selv hvis noe mangler."
         )
     if unreadable_price:
-        proposal.warnings.append(
-            "Vi fant ikke prisen på alle linjene — fyll inn de som står tomme."
-        )
+        proposal.warnings.append("Vi fant ikke prisen på alle linjene. Fyll inn de som står tomme.")
     if guessed_tax:
         proposal.warnings.append(
             f"Mva-satsen på minst én linje er satt til «{menu[0].label}» fordi forslaget "
@@ -395,7 +393,7 @@ async def draft_lines(
         proposal.warnings.insert(
             0,
             "Vi fikk ikke laget fakturalinjer av beskrivelsen. Skriv gjerne hva som ble "
-            "solgt, hvor mye og til hvilken pris — eller fyll inn linjene selv.",
+            "solgt, hvor mye og til hvilken pris, eller fyll inn linjene selv.",
         )
         return proposal
 
@@ -403,6 +401,6 @@ async def draft_lines(
     if any(hint in low for hint in _GROSS_HINTS):
         proposal.warnings.append(
             "Beskrivelsen nevner priser inkludert mva. Fakturalinjer prises uten mva, "
-            "og merverdiavgiften legges til nederst — kontroller prisene."
+            "og merverdiavgiften legges til nederst. Kontroller prisene."
         )
     return proposal

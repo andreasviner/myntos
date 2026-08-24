@@ -761,7 +761,7 @@ def apply_type(
         suggestion.filled.append("type_code")
     else:
         warn(
-            "Vi fant ikke ut hva dette gjelder. Velg type selv — den bestemmer hvilken konto "
+            "Vi fant ikke ut hva dette gjelder. Velg type selv. Den bestemmer hvilken konto "
             "beløpet havner på, og dermed hva Skatteetaten får se."
         )
 
@@ -792,7 +792,7 @@ def apply_type(
             )
     elif reading.vat_amount == 0:
         warn(
-            "Fakturaen ser ut til å være uten mva. Kontroller mva-koden — kjøp fra utlandet "
+            "Fakturaen ser ut til å være uten mva. Kontroller mva-koden. Kjøp fra utlandet "
             "kan utløse omvendt avgiftsplikt."
         )
 
@@ -823,7 +823,7 @@ def suggest(
     if not text.strip():
         suggestion.warnings.append(
             "Vi fant ingen tekst i PDF-en. Er den skannet eller fotografert, må du fylle "
-            "ut feltene selv — dokumentet blir lagret som bilag uansett."
+            "ut feltene selv. Dokumentet blir lagret som bilag uansett."
         )
         return suggestion
 
@@ -861,7 +861,7 @@ def suggest(
                 "Datoen vi fant ligger fram i tid. Bokfør på datoen betalingen faktisk skjedde."
             )
     else:
-        suggestion.warnings.append("Vi fant ingen fakturadato — velg dato selv.")
+        suggestion.warnings.append("Vi fant ingen fakturadato. Velg dato selv.")
 
     # --- Amount ---
     if found.gross_amount is not None:
@@ -874,10 +874,10 @@ def suggest(
             and abs(found.gross_amount - (found.net_amount + found.vat_amount)) > 1
         ):
             suggestion.warnings.append(
-                "Beløpene på fakturaen summerer seg ikke helt — kontroller totalen."
+                "Beløpene på fakturaen summerer seg ikke helt. Kontroller totalen."
             )
     else:
-        suggestion.warnings.append("Vi fant ikke totalbeløpet — skriv det inn selv.")
+        suggestion.warnings.append("Vi fant ikke totalbeløpet. Skriv det inn selv.")
 
     # --- What it was for, and the VAT code that follows from it ---
     if suggestion.direction is CashFlowDirection.INN:
@@ -902,7 +902,7 @@ def suggest(
     if suggestion.counterparty_name is not None:
         parts.append(suggestion.counterparty_name)
     if parts:
-        suggestion.description = " — ".join(parts)[:255]
+        suggestion.description = ", ".join(parts)[:255]
         suggestion.filled.append("description")
 
     # --- Things worth saying out loud ---

@@ -4,7 +4,7 @@
  * The theme is light by default and stored only when the visitor actively
  * chooses one, so a fresh browser gets light without a flash and a returning
  * visitor gets what they picked. The *first* application happens in an inline
- * script in the document head — before first paint — because doing it here
+ * script in the document head, before first paint, because doing it here
  * would show the wrong palette for a frame. This module only handles the
  * toggle afterwards.
  */
@@ -58,7 +58,7 @@ export function initThemeToggle(): void {
  *
  * Both are plain buttons with `aria-expanded`, so they work from the keyboard
  * and announce their state. Everything closes on Escape and on a click that
- * lands outside — the two things people expect and libraries usually forget.
+ * lands outside: the two things people expect and libraries usually forget.
  */
 export function initNav(): void {
   const triggers = [...document.querySelectorAll<HTMLButtonElement>('[data-menu-trigger]')];
@@ -70,7 +70,7 @@ export function initNav(): void {
     const menu = menuFor(trigger);
     trigger.setAttribute('aria-expanded', String(open));
     if (menu === null) return;
-    // A panel marked data-collapse is only collapsible at narrow widths — the
+    // A panel marked data-collapse is only collapsible at narrow widths, and the
     // header nav is one. Using the `hidden` attribute on it would hide the
     // whole navigation from screen readers on desktop, where it is plainly
     // visible; a data attribute lets CSS decide per breakpoint instead.

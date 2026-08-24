@@ -165,7 +165,7 @@ def test_a_purchase_becomes_money_out_with_a_type_and_a_vat_code() -> None:
     assert suggestion.tax_code == "1"
     assert suggestion.occurred_on == date(2026, 3, 14)
     assert suggestion.gross_amount == Decimal("1808.75")
-    assert suggestion.description == "Faktura 104588 — Telenor Norge AS"
+    assert suggestion.description == "Faktura 104588, Telenor Norge AS"
     assert suggestion.counterparty_orgnr == "910000004"
     # Everything proposed is accounted for, and nothing else claims to be.
     assert set(suggestion.filled) == {
@@ -208,7 +208,7 @@ def test_the_counterparty_on_our_own_invoice_is_the_customer() -> None:
 
     assert suggestion.party_id == 7
     assert suggestion.counterparty_name == "Bergen Byggservice AS"
-    assert suggestion.description == "Faktura 2026-014 — Bergen Byggservice AS"
+    assert suggestion.description == "Faktura 2026-014, Bergen Byggservice AS"
 
 
 # --- Where a guess would be worse than a question ---------------------------------

@@ -3,7 +3,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
 /**
  * The anchors here are linked directly from the Funksjoner menu in
- * BaseLayout — keep the ids in sync with that list.
+ * BaseLayout. Keep the ids in sync with that list.
  *
  * `status` is deliberately part of the content rather than a footnote: half of
  * this is built and half is not, and a features page that hides which is which
@@ -15,7 +15,7 @@ const sections = [
     kicker: 'Føring',
     title: 'Kontantstrøm og bilag',
     status: 'virker' as const,
-    body: 'Registrer inn- og utbetalinger fra bruttobeløpet. Myntos splitter i netto og merverdiavgift, fører det som en balansert postering med dobbel bokføring, og legger PDF-en ved som bilag. Arkivet er append-only — det finnes ingen slettevei, fordi oppbevaringsplikten ikke har noen.',
+    body: 'Registrer inn- og utbetalinger fra bruttobeløpet. Myntos splitter i netto og merverdiavgift, fører det som en balansert postering med dobbel bokføring, og legger PDF-en ved som bilag. Arkivet er append-only, og det finnes ingen slettevei, fordi oppbevaringsplikten ikke har noen.',
     points: [
       'Typen bestemmer konto og mva-kode, med antakelsen skrevet ut',
       'Rettelser skjer med motpostering, aldri ved å endre historikk',
@@ -27,10 +27,10 @@ const sections = [
     kicker: 'Salg',
     title: 'Faktura og e-faktura',
     status: 'virker' as const,
-    body: 'Fakturaen kontrolleres mot bokføringsforskriften § 5-1 før den utstedes, og får først da et nummer — et utkast som slettes etterlater ingen luke i serien. Utstedelsen bokfører fordringen og utgående mva, fryser EHF-filen og legger en lesbar PDF i bilagsarkivet. En utstedt faktura kan bare rettes med kreditnota, slik § 5-2-7 krever.',
+    body: 'Fakturaen kontrolleres mot bokføringsforskriften § 5-1 før den utstedes, og får først da et nummer. Et utkast som slettes etterlater ingen luke i serien. Utstedelsen bokfører fordringen og utgående mva, fryser EHF-filen og legger en lesbar PDF i bilagsarkivet. En utstedt faktura kan bare rettes med kreditnota, slik § 5-2-7 krever.',
     points: [
       'Kontrollen sier hvilken paragraf som mangler noe, ikke bare at noe mangler',
-      'EHF/Peppol BIS Billing 3.0 — formatet kravet fra 1. januar 2027 gjelder',
+      'EHF/Peppol BIS Billing 3.0, formatet kravet fra 1. januar 2027 gjelder',
       'Avgiftspliktig, avgiftsfritt og unntatt salg summeres hver for seg (§ 5-1-5)',
     ],
   },
@@ -39,7 +39,7 @@ const sections = [
     kicker: 'Avgift',
     title: 'Merverdiavgift',
     status: 'virker' as const,
-    body: 'Mva-kodene er knyttet til standard SAF-T-koder og har datostyrte satser, ikke én sats per kode. Det høres pedantisk ut helt til en sats endres midt i året — som da vann og avløp gikk fra 25 til 15 prosent 1. juli 2025 på samme kode som mat.',
+    body: 'Mva-kodene er knyttet til standard SAF-T-koder og har datostyrte satser, ikke én sats per kode. Det høres pedantisk ut helt til en sats endres midt i året, slik vann og avløp gikk fra 25 til 15 prosent 1. juli 2025 på samme kode som mat.',
     points: [
       'Satsen kopieres ned på den førte linjen, så historikk ikke kan skrives om',
       'Beløp regnes i eksakte desimaler; flyttall kommer aldri nær et kronebeløp',
@@ -63,7 +63,7 @@ const sections = [
     kicker: 'Innlevering',
     title: 'Skattemelding og næringsspesifikasjon',
     status: 'underveis' as const,
-    body: 'Næringsspesifikasjonen bygges fra hovedboken og leveres gjennom Altinn. Selve innsendingen krever at et menneske logger inn med ID-porten og godkjenner — det er Skatteetatens krav, og et vi ikke prøver å gå rundt.',
+    body: 'Næringsspesifikasjonen bygges fra hovedboken og leveres gjennom Altinn. Selve innsendingen krever at et menneske logger inn med ID-porten og godkjenner. Det er Skatteetatens krav, og et vi ikke prøver å gå rundt.',
     points: [
       'Henting, validering og opplasting kan skje maskinelt',
       'Siste steg er alltid en gjennomgang du selv bekrefter',
@@ -100,7 +100,7 @@ const label = { virker: 'Virker i dag', underveis: 'Under arbeid' };
 ---
 
 <BaseLayout
-  title="Funksjoner — Myntos"
+  title="Funksjoner | Myntos"
   description="Hva Myntos gjør: kontantstrøm og bilag, merverdiavgift, SAF-T-eksport, skattemelding, roller og offentlig kildekode."
   width="wide"
 >
