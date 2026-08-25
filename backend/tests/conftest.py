@@ -74,6 +74,21 @@ def test_settings() -> Iterator[None]:
         patcher.setenv(f"{provider}_CLIENT_ID", "")
         patcher.setenv(f"{provider}_CLIENT_SECRET", "")
         patcher.setenv(f"{provider}_REDIRECT_URI", "")
+    # And the government login, which is the same trap with higher stakes: this
+    # repository's own .env holds a working ID-porten test client, so a suite
+    # that read it would assert on a configured deployment here and an
+    # unconfigured one in CI. Tests that want it configured set these
+    # themselves.
+    for name in (
+        "IDPORTEN_CLIENT_ID",
+        "IDPORTEN_CLIENT_SECRET",
+        "IDPORTEN_JWK_PATH",
+        "IDPORTEN_KID",
+        "IDPORTEN_REDIRECT_URI",
+        "IDPORTEN_SCOPES",
+        "GOVERNMENT_TOKEN_KEY",
+    ):
+        patcher.setenv(name, "")
     get_settings.cache_clear()
     yield
     patcher.undo()

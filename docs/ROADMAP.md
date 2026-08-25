@@ -69,11 +69,37 @@ registration and access, which cannot be done from a repository.
       re-verify the whole org path before that date
 - [x] Altinn test platform: the Maskinporten-to-Altinn token exchange against
       `platform.tt02.altinn.no` works (verified 2026-08-23)
-- [ ] A first real instance against `skd.apps.tt02.altinn.no` — needs a Tenor
-      taxpayer, so it waits on the line above
-
-## Phase 1 — Accounting core
-
+- [x] A first real instance on both TT02 apps, **verified 2026-08-24**:
+      `skd/formueinntekt-skattemelding-v2` as daglig leder `08866995401` for AS
+      `314067630`, and `skd/mva-melding-innsending-v1` as `05849898878` for
+      `311124226`. Created and read back only - `process/next` was deliberately
+      not called, since the second call submits. It found three things unit tests
+      against stubs could not:
+      - `ALTINN_MVA_APP_URL` pointed at `mva-melding-innsending-etm2`, which
+        **does not exist** on tt02 (418). The test app carries the same `-v1`
+        name as production; environments differ by host, not by app name
+      - `METADATA_DATA_TYPE` was `mvaMeldingInnsending`; the app declares
+        `no.skatteetaten.fastsetting.avgift.mva.mvameldinginnsending.v1.0`
+      - `ATTACHMENT_DATA_TYPE` was `mvamelding-vedlegg`; the app declares
+        `binaerVedlegg`
+      Each would have been a 400 at upload time. Every data-type constant in
+      both clients is now read off `GET {app}/api/v1/applicationmetadata`
+- [x] Upload a data element and advance the process, **verified live 2026-08-24**
+      on `skd/formueinntekt-skattemelding-v2`: create -> upload
+      `skattemeldingOgNaeringsspesifikasjon` -> `process/next` all succeed. It
+      found a bug no stub could: Altinn requires **Content-Disposition on every
+      upload**, and we only sent it when a caller passed a filename - so the
+      envelope and the MVA metadata, both uploaded unnamed, would always have
+      failed with 400 "The request must include a Content-Disposition header"
+- [ ] The **second** `process/next`, which submits. Everything before it is
+      proven. Needs a real envelope rather than the minimal one used to prove
+      the transport, since a submission is a filing even in TT02
+- [ ] The MVA validation call, live. `idporten-api-sbstest.sits.no` resolves but
+      resets the connection (three attempts, while its sibling hosts answer), so
+      this is blocked on Skatteetaten's test environment rather than on us. The
+      URL and path match their documentation. While looking, found that the
+      endpoint documents `Content-Type: application/xml` where we were sending
+      `text/xml` - fixed
 - [x] SAF-T-aligned schema: kontoplan with **per-financial-year
       GroupingCategory/GroupingCode mapping**, customers/suppliers with
       balance accounts, **date-effective VAT-code + rate tables** (mapped to
@@ -237,10 +263,24 @@ and full digital bokføring from 2030-01-01. See docs/integrations/efaktura.md.
       (exclusion list: codes 0, 7, 20, 21, 22 must never be reported)
 - [x] ID-porten OIDC flow (`auth/idporten`) + Altinn token exchange
       (`integrations/altinn/tokens`): PKCE, `private_key_jwt` client
-      authentication, and the `acr` claim checked rather than merely requested.
-      What is deliberately left to this milestone is where a government token
-      lives between the callback and the submission — an audit-trail question,
-      not an authentication one — and the HTTP routes that start the flow
+      authentication, and the `acr` claim checked rather than merely requested
+- [x] The HTTP routes, and where a government token lives between the callback
+      and the submission (`api/v1/skatt`, `auth/idporten/vault`,
+      `government_login_attempt`). What was decided, and why:
+      - **A row, not process memory.** The backend sleeps between requests, so
+        the same reasoning `OAuthLoginAttempt` records applies here
+      - **A separate table from the sign-in flow.** One table would let a
+        government callback complete a sign-in, or the reverse. A Myntos session
+        is never evidence of anything to Skatteetaten, so the two never share a
+        row
+      - **Encrypted with Fernet, and no key means the feature is off** rather
+        than the token being stored readable. It authorizes filing in a named
+        person's name
+      - **Bound to the user who started the flow**, expiring at ID-porten's own
+        `exp`, single use. A leaked callback URL cannot attach a government
+        identity to another account
+      - The `acr` check happens once, at the callback, so nothing downstream has
+        to remember to verify what it is trusting
 - [ ] Validation API → Altinn 3 instance flow → feedback: the channel exists
       (`integrations/skatteetaten/mva`), including fetching the three documents
       as a set. What remains is building the melding and persisting

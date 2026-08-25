@@ -54,9 +54,16 @@ from myntos.integrations.altinn.instances import (
 SCOPE = "skatteetaten:formueinntekt/skattemelding"
 
 # The Altinn data types of the app. Names, not guesses: an unknown dataType is a
-# 400 from Altinn with no hint as to the right one.
+# 400 from Altinn with no hint as to the right one. All three verified against
+# the app's own metadata on 2026-08-24, which is the only authority:
+#   GET {altinn_skattemelding_app_url}/api/v1/applicationmetadata
 ENVELOPE_DATA_TYPE = "skattemeldingOgNaeringsspesifikasjon"
 ATTACHMENT_DATA_TYPE = "skattemelding-vedlegg"
+
+# Skatteetaten's answer to a submission - the validation result and, once
+# processed, the receipt. Named "tilbakemelding" by the app, which matches
+# nothing else in this module and is easy to look for under the wrong name.
+FEEDBACK_DATA_TYPE = "tilbakemelding"
 
 # Skatteetaten's flag, not Altinn's. See the module docstring.
 XML_CONTENT_TYPE = "text/xml"
@@ -239,6 +246,21 @@ class SkattemeldingClient:
         receipt's data element being present.
         """
         return await self._app.get_instance(ref, token=altinn_token)
+
+    async def feedback(self, ref: InstanceRef, *, altinn_token: str) -> bytes | None:
+        """Skatteetaten's answer to a submission, or ``None`` if it has not come.
+
+        ``receipt`` says whether the instance has finished; this returns what
+        Skatteetaten actually said about it. ``None`` is the ordinary early
+        answer rather than a failure - the document appears some time after
+        Altinn accepts the submission - so a caller polls, and the absence is
+        not worth an exception.
+        """
+        instance = await self._app.get_instance(ref, token=altinn_token)
+        element = instance.element_of_type(FEEDBACK_DATA_TYPE)
+        if element is None:
+            return None
+        return await self._app.download_data(ref, token=altinn_token, element_id=element.id)
 
     async def upload_attachments(
         self,

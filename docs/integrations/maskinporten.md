@@ -175,6 +175,36 @@ organisation anybody holds Altinn rights for, so that path rests on
 > survive; what a role holder automatically gets will not. Re-verify before
 > then.
 
+## Applying for a scope Skatteetaten has not granted
+
+Adding a scope in Samarbeidsportalen only *declares* it. The portal then shows
+**"Tilgang mangler"** and the client-level banner "Det er lagt til scopes pa
+klienten som virksomheten din ikke har tilgang til". Requesting such a scope in a
+token fails the **whole** request, so a declared-but-ungranted scope must stay
+out of `MASKINPORTEN_SCOPES` and `IDPORTEN_SCOPES` until the grant lands.
+
+Access is applied for through **Skatteetaten's own service desk**, not through
+Digdir and not through the portal:
+
+    https://eksternjira.sits.no/plugins/servlet/desk/site/global
+
+One request can cover several services and both test and production, and it
+requires accepting the terms of use for the services asked for. Two
+prerequisites catch people out:
+
+1. **Access to the service desk itself** has to be delegated in Altinn before
+   the form can be submitted - Hovedadministrator or Begrenset signeringsrett.
+2. **A konsumentavtale and an egenerklaering** must be signed by the
+   organisation, and production access is only granted after a *successful test*
+   in the test environment. So the test integration is a prerequisite for
+   production, not a parallel track.
+
+No processing time is published, and the MVA scopes are documented as being
+handled manually, so assume weeks rather than days.
+
+Sources: skatteetaten.no "Her kan du soke om tilgang til tjenester for
+innrapportering" and "Fa tilgang til data".
+
 ## Acting for clients (regnskapsfører)
 
 - **Today (classic):** customer delegates the API scope to the supplier in

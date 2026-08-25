@@ -44,11 +44,22 @@ SUBMISSION_SCOPE = "skatteetaten:mvameldinginnsending"
 # The app's data types. The metadata element goes up first: it names the
 # taxpayer, the period, the category and the innsendingstype, and the melding is
 # read in the light of it.
-METADATA_DATA_TYPE = "mvaMeldingInnsending"
+# The four data types, taken from the app's own applicationmetadata on
+# 2026-08-24 rather than from documentation. Two of these were previously
+# guessed and wrong; a wrong dataType is a 400 at upload time, so if the app
+# version ever changes, re-read the metadata instead of adjusting by feel:
+#   GET {altinn_mva_app_url}/api/v1/applicationmetadata
+METADATA_DATA_TYPE = "no.skatteetaten.fastsetting.avgift.mva.mvameldinginnsending.v1.0"
 MELDING_DATA_TYPE = "mvamelding"
-ATTACHMENT_DATA_TYPE = "mvamelding-vedlegg"
+ATTACHMENT_DATA_TYPE = "binaerVedlegg"
 
+# Two different XML media types, and not interchangeably. The Altinn data
+# uploads want text/xml; Skatteetaten's validation endpoint documents
+# application/xml for itself. One constant used to serve both, which meant
+# the validation call sent the wrong one:
+#   https://skatteetaten.github.io/mva-meldingen/documentation/api/
 XML_CONTENT_TYPE = "text/xml"
+VALIDATION_CONTENT_TYPE = "application/xml"
 
 # The three documents to persist with the period's bilag once the process ends.
 FEEDBACK_DATA_TYPES = ("valideringsresultat", "betalingsinformasjon", "kvittering")
@@ -118,7 +129,7 @@ class MvaMeldingClient:
         """
         headers = {
             "Authorization": f"Bearer {id_porten_token}",
-            "Content-Type": XML_CONTENT_TYPE,
+            "Content-Type": VALIDATION_CONTENT_TYPE,
             "Accept": "application/xml",
         }
         async with _client() as http:

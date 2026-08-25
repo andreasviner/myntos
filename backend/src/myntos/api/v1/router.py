@@ -11,6 +11,7 @@ from myntos.api.v1 import (
     health,
     organizations,
     parties,
+    skatt,
 )
 
 api_router = APIRouter()
@@ -22,3 +23,4 @@ api_router.include_router(parties.router)
 api_router.include_router(cashflow.router)
 api_router.include_router(faktura.router)
 api_router.include_router(enhetsregisteret.router)
+api_router.include_router(skatt.router)

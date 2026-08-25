@@ -13,15 +13,30 @@
  *    every side, so scaling by the viewBox leaves the mark floating in the
  *    middle of the tile. The real bounds are measured here by rasterising the
  *    paths and trimming, rather than guessed.
- * 2. **The mark is 4% wider than it is tall.** Filling the height exactly would
- *    push the width past the tile and flatten the outer edge of the ring, so
- *    the width goes edge to edge instead and the leftover 4% becomes a hair of
- *    padding above and below, about one pixel at 48px.
+ * 2. **The mark is 4% wider than it is tall.** Filling the box exactly would
+ *    push the width past it and flatten the outer edge of the ring, so the
+ *    width goes edge to edge instead and the leftover 4% becomes a hair of
+ *    padding above and below.
  *
  * Google Search requires a favicon that is square and a multiple of 48px, which
- * is what SIZES holds. The canvas stays square; the ink does not, and everything
- * here is drawn on transparency, so the icon never punches a tile into whatever
- * surface it lands on. See THEMES for how it stays legible without one.
+ * is what SIZES holds.
+ *
+ * The two formats are deliberately different. The SVG is transparent and
+ * inverts with the browser chrome, so it never punches a tile into whatever
+ * surface it lands on. The PNGs are opaque, because the surfaces that take a
+ * PNG composite it themselves: Google Search draws the icon on its own light
+ * card, and iOS composites black behind a transparent apple-touch-icon. A
+ * transparent mark leaves those consumers to fill the space around the ink,
+ * and they fill it with padding, which is what makes the logo read as small.
+ * BACKGROUND takes that decision back: the tile is ours, so the mark occupies
+ * it fully.
+ *
+ * Do not add padding here. The ink goes edge to edge on purpose, and the tile
+ * is what absorbs whatever the consumer does to the corners. The one cost is
+ * measured: against a circular mask the M's upper-right tip reaches 8.5% of the
+ * tile past the inscribed circle, so 2.3% of the ink can clip. Insetting to
+ * save it shrinks the mark everywhere, which is the problem it was meant to
+ * solve.
  */
 
 import { readFile, writeFile } from 'node:fs/promises';
@@ -44,22 +59,24 @@ const CANVAS = 32;
 const SIZES = [48, 96, 144, 192];
 
 /**
- * Three colourways, because the icon sits on a surface it cannot see.
+ * The raster tile, matching --surface and the theme-color meta in BaseLayout,
+ * so the icon reads as one piece with the site rather than as a floating mark.
+ */
+const BACKGROUND = '#ffffff';
+
+/**
+ * Two colourways, because the icon sits on a surface it cannot see.
  *
- * `light` and `dark` are the --logo-ring / --logo-coin tokens from BaseLayout,
- * and the SVG carries both behind a prefers-color-scheme query, so it inverts
- * with the browser chrome exactly as the mark inverts on the page.
+ * These are the --logo-ring / --logo-coin tokens from BaseLayout, and the SVG
+ * carries both behind a prefers-color-scheme query, so it inverts with the
+ * browser chrome exactly as the mark inverts on the page.
  *
- * `mix` exists because a PNG has no such escape hatch, and neither theme's pair
- * survives the other's surface: near-black ink vanishes on a dark tab strip,
- * near-white ink vanishes on a light one. These two clear 3:1 against white, a
- * near-black chrome, and the black that iOS composites behind a transparent
- * apple-touch-icon, so the raster set is legible wherever it lands.
+ * A PNG has no such escape hatch, but it does not need one: it brings its own
+ * BACKGROUND, so the `light` pair is on the surface it was picked for.
  */
 const THEMES = {
   light: { ring: '#1c1f1e', coin: '#0f8a68' },
   dark: { ring: '#eceeed', coin: '#5ee0b4' },
-  mix: { ring: '#6e837b', coin: '#0f8a68' },
 };
 
 /** Resolution used only for measuring; higher just means a finer bound. */
@@ -93,7 +110,7 @@ async function measure(paths) {
   };
 }
 
-function buildSvg(paths, ink, { adaptive }) {
+function buildSvg(paths, ink, { adaptive, background = null }) {
   // Contain, not cover: scale by the larger dimension so nothing is clipped.
   const scale = CANVAS / Math.max(ink.w, ink.h);
   const round = (value) => Number(value.toFixed(4));
@@ -103,7 +120,7 @@ function buildSvg(paths, ink, { adaptive }) {
   // The fill attributes are not redundant with the stylesheet: they are what a
   // renderer that ignores the CSS falls back to, and Safari is one of those,
   // since it takes the SVG but not the media query, so it must land on `base`.
-  const base = adaptive ? THEMES.light : THEMES.mix;
+  const base = THEMES.light;
   const style = adaptive
     ? `
   <style>
@@ -115,9 +132,12 @@ function buildSvg(paths, ink, { adaptive }) {
     }
   </style>`
     : '';
+  const tile = background
+    ? `\n  <rect width="${CANVAS}" height="${CANVAS}" fill="${background}"/>`
+    : '';
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CANVAS} ${CANVAS}">
-  <!-- Generated by scripts/generate-favicons.mjs. Edit the logo, not this file. -->${style}
+  <!-- Generated by scripts/generate-favicons.mjs. Edit the logo, not this file. -->${style}${tile}
   <g transform="matrix(${round(scale)} 0 0 ${round(scale)} ${tx} ${ty})">
     <path class="ring" d="${paths[0]}" fill="${base.ring}"/>
     <path class="coin" d="${paths[1]}" fill="${base.coin}"/>
@@ -130,8 +150,9 @@ const paths = await readPaths();
 const ink = await measure(paths);
 const svg = buildSvg(paths, ink, { adaptive: true });
 // Rasterised separately: sharp renders with no colour-scheme preference, so
-// feeding it the adaptive SVG would silently bake in the light-mode pair.
-const pngSvg = buildSvg(paths, ink, { adaptive: false });
+// feeding it the adaptive SVG would silently bake the media query's absence in
+// as a decision, and the raster set wants the tile besides.
+const pngSvg = buildSvg(paths, ink, { adaptive: false, background: BACKGROUND });
 
 await writeFile(join(PUBLIC_DIR, 'favicon.svg'), svg, 'utf8');
 console.log(
@@ -142,9 +163,11 @@ console.log(
 for (const size of SIZES) {
   const file = join(PUBLIC_DIR, `favicon-${size}.png`);
   // density scales the SVG rasteriser so the render is sharp rather than an
-  // upscaled 32px bitmap.
+  // upscaled 32px bitmap. flatten is a belt-and-braces pass over the tile the
+  // SVG already paints, so the file can never ship an alpha channel.
   await sharp(Buffer.from(pngSvg), { density: (72 * size) / CANVAS })
-    .resize(size, size, { background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .resize(size, size, { background: BACKGROUND })
+    .flatten({ background: BACKGROUND })
     .png({ compressionLevel: 9 })
     .toFile(file);
   console.log(`favicon-${size}.png`);

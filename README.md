@@ -17,9 +17,13 @@ what it does.
 > [DISCLAIMER.md](DISCLAIMER.md) before using the software.
 
 > **Status: pre-alpha.** Accounts, organizations, customers and suppliers, and
-> the cash-flow register with its bilag archive work end to end; the SAF-T
-> export and the government integrations do not exist yet. Nothing here is ready for production
-> bookkeeping. See [docs/ROADMAP.md](docs/ROADMAP.md).
+> the cash-flow register with its bilag archive work end to end. The
+> government integrations authenticate and read: Maskinporten and ID-porten
+> tokens, the Altinn exchange, fetching a skattemelding, and creating an
+> Altinn 3 instance are all verified against Skatteetaten's test
+> environment. **Nothing has been submitted**, and the SAF-T export does not
+> exist. Nothing here is ready for production bookkeeping. See
+> [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Features
 

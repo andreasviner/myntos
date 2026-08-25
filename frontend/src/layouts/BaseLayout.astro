@@ -164,8 +164,9 @@ const gettingStarted = [
       prefers-color-scheme query, so the mark inverts with the browser chrome
       the way it inverts on the page. The PNGs exist because Google Search wants
       a square favicon whose side is a multiple of 48px and will not read the
-      SVG; a PNG cannot invert, so it is drawn in a third pair of colours that
-      holds up on either chrome. Regenerate all of them with `pnpm favicons`.
+      SVG; a PNG cannot invert, so it carries an opaque white tile instead. The
+      tile is the point: left transparent, the consumer pads the space around
+      the ink itself and the mark reads small. Regenerate with `pnpm favicons`.
     */}
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48.png" />

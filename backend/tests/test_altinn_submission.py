@@ -43,6 +43,7 @@ from myntos.integrations.skatteetaten import mva as mva_module
 from myntos.integrations.skatteetaten.client import (
     ATTACHMENT_DATA_TYPE,
     ENVELOPE_DATA_TYPE,
+    FEEDBACK_DATA_TYPE,
     SkatteetatenError,
     SkatteetatenNotConfiguredError,
     SkattemeldingClient,
@@ -55,7 +56,7 @@ from myntos.integrations.skatteetaten.mva import (
 )
 
 APP_URL = "https://skd.apps.tt02.altinn.no/skd/formueinntekt-skattemelding-v2"
-MVA_APP_URL = "https://skd.apps.tt02.altinn.no/skd/mva-melding-innsending-etm2"
+MVA_APP_URL = "https://skd.apps.tt02.altinn.no/skd/mva-melding-innsending-v1"
 SKATTEETATEN_URL = "https://api-test.sits.no"
 # The same API on the ID-porten plane. Note "idporten-api-test" here against
 # "idporten-api-sbstest" for MVA below: three hosts, no shared pattern.
@@ -327,6 +328,46 @@ async def test_process_next_keeps_the_instance_reference_it_was_given(
     assert instance.ref == ref
 
 
+async def test_an_unnamed_upload_still_carries_content_disposition(
+    altinn: StubAltinn,
+) -> None:
+    """Altinn rejects an upload without it, whether or not a name was given.
+
+    Verified against tt02 on 2026-08-24: the answer is
+    400 "The request must include a Content-Disposition header", which sounds
+    like a problem with the body and is not. The envelope and the MVA metadata
+    are both uploaded unnamed, so this covers the ordinary path rather than an
+    edge case.
+    """
+    await AppInstanceClient(APP_URL).upload_data(
+        InstanceRef.parse(INSTANCE_ID),
+        token="altinn-token",
+        data_type="skattemeldingOgNaeringsspesifikasjon",
+        content=b"<x/>",
+        content_type="text/xml",
+    )
+    _, _, _, disposition = altinn.uploads[-1]
+    assert disposition == ('attachment; filename="skattemeldingOgNaeringsspesifikasjon.xml"')
+
+
+async def test_a_named_upload_keeps_the_name_it_was_given(altinn: StubAltinn) -> None:
+    """The default is a fallback, not an override.
+
+    Attachments are named by the caller because Altinn shows the name to a human
+    and refuses duplicates within an instance.
+    """
+    await AppInstanceClient(APP_URL).upload_data(
+        InstanceRef.parse(INSTANCE_ID),
+        token="altinn-token",
+        data_type="skattemelding-vedlegg",
+        content=b"%PDF-1.4",
+        content_type="application/pdf",
+        filename="bilag-42.pdf",
+    )
+    _, _, _, disposition = altinn.uploads[-1]
+    assert disposition == 'attachment; filename="bilag-42.pdf"'
+
+
 # --- Skattemelding ----------------------------------------------------------------
 
 
@@ -521,6 +562,45 @@ async def test_submitting_a_skattemelding_uses_the_person_s_token(
     assert set(altinn.tokens) == {"person-token"}
 
 
+async def test_the_skattemelding_feedback_document_is_fetched_by_its_own_name(
+    altinn: StubAltinn,
+) -> None:
+    """The app calls it "tilbakemelding", which matches nothing else here.
+
+    Every other data type in this module is named after the thing it carries, so
+    the one that is not is worth a test that would fail if somebody "tidied" it
+    into skattemelding-tilbakemelding or valideringsresultat.
+    """
+    altinn.data_elements.append(
+        {
+            "id": "feedback-1",
+            "dataType": FEEDBACK_DATA_TYPE,
+            "contentType": "text/xml",
+            "size": 7,
+            "filename": None,
+        }
+    )
+    altinn.downloads["feedback-1"] = b"<svar/>"
+
+    client = _skattemelding(StubTokenProvider())
+    document = await client.feedback(InstanceRef.parse(INSTANCE_ID), altinn_token="person-token")
+    assert document == b"<svar/>"
+
+
+async def test_missing_skattemelding_feedback_is_none_rather_than_an_error(
+    altinn: StubAltinn,
+) -> None:
+    """Skatteetaten answers a while after Altinn accepts the submission.
+
+    So the ordinary state right after submitting is "not yet", and a caller
+    polling for it should not have to catch an exception to discover that.
+    """
+    client = _skattemelding(StubTokenProvider())
+    assert (
+        await client.feedback(InstanceRef.parse(INSTANCE_ID), altinn_token="person-token") is None
+    )
+
+
 # --- MVA-melding ------------------------------------------------------------------
 
 
@@ -551,7 +631,11 @@ async def test_the_mva_validation_api_takes_the_id_porten_token_directly(
     assert result.content == b"<valideringsresultat/>"
     assert seen["path"] == "/api/mva/grensesnittstoette/mva-melding/valider"
     assert seen["auth"] == "Bearer person-token"
-    assert seen["content_type"] == "text/xml"
+    # application/xml here, text/xml for the Altinn uploads. Skatteetaten
+    # documents this endpoint as application/xml, and the two are not
+    # interchangeable to a strict server - so the difference is asserted rather
+    # than left to whichever constant is nearest.
+    assert seen["content_type"] == "application/xml"
 
 
 async def test_the_metadata_goes_up_before_the_melding(altinn: StubAltinn) -> None:

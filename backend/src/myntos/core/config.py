@@ -139,6 +139,15 @@ class Settings(BaseSettings):
     # personnummer should demand anyway.
     idporten_acr_values: str = "idporten-loa-high"
 
+    # Fernet key (urlsafe base64, 32 bytes) that a government access token is
+    # encrypted with at rest. Unset, the government login is unavailable rather
+    # than stored in the clear: the token authorizes filing a tax return on a
+    # named person's behalf, and that is not something to keep in a readable
+    # column because a key was inconvenient. Generate one with:
+    #   python -c "from cryptography.fernet import Fernet; \
+    #              print(Fernet.generate_key().decode())"
+    government_token_key: str = ""
+
     # --- Altinn (token exchange + instance APIs) ---
     altinn_platform_base_url: str = "https://platform.tt02.altinn.no"
     # Altinn 3 apps, one absolute URL each: the app id differs between

@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 import sys
 from dataclasses import dataclass
 
@@ -91,6 +92,7 @@ class Report:
     """What happened, accumulated so the summary can be written at the end."""
 
     failed = False
+    warned = False
 
     def ok(self, step: str, detail: str = "") -> None:
         self._line(_OK, step, detail)
@@ -103,6 +105,7 @@ class Report:
         self._line(_SKIP, step, detail)
 
     def warn(self, step: str, detail: str) -> None:
+        self.warned = True
         self._line(_WARN, step, detail)
 
     @staticmethod
@@ -405,6 +408,10 @@ async def _check_fetch(
     report.ok(label, f"utkast {year} for {identifier}: {len(content)} bytes of XML")
 
 
+# A 5xx carries no meaning about the request, so it is matched before the
+# table below rather than being given a phrase of its own.
+_SERVER_ERROR = re.compile(r"failed \(5\d\d\)")
+
 # What Skatteetaten's own words mean, for the three answers seen so far. Worth
 # translating because two of them are 403s that say nothing about
 # authorization: the auth chain can be entirely correct and still land here.
@@ -432,6 +439,12 @@ _MEANINGS = (
 
 def _reading(error: str, pid: str, year: int) -> str:
     """A line saying what Skatteetaten's answer actually means."""
+    if _SERVER_ERROR.search(error):
+        return (
+            "Skatteetaten's own fault, not the setup: a 5xx means the test API\n"
+            "  is degraded. Seen as both 504s and HTML error pages from the\n"
+            "  gateway. Wait and run this again before changing anything"
+        )
     for phrase, meaning in _MEANINGS:
         if phrase in error:
             return meaning
@@ -468,6 +481,10 @@ async def run(
     if pid is None:
         print("The machine half of the chain works: token, exchange, instance APIs.")
         print("Add --person <synthetic fnr> to test the person-present half too.")
+        return 0
+    if report.warned:
+        print("Every credential works. Something above answered, but not with what")
+        print("was asked for - read the warnings before treating this as green.")
         return 0
     print("The whole chain works, for a machine and for a person.")
     return 0

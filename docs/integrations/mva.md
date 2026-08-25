@@ -44,28 +44,69 @@ upstream: `Skatteetaten/mva-meldingen … kodelister/sats.xml`.
 
 ## Submission flow (sluttbrukersystem)
 
-Auth is **ID-porten** (OIDC authorization-code; scopes `openid`,
-`skatteetaten:mvameldingvalidering`, `skatteetaten:mvameldinginnsending` —
-ordered manually from Skatteetaten), then exchanged for an Altinn token
+Auth is **ID-porten** (OIDC authorization-code; scopes `openid` and
+`skatteetaten:mvameldingvalidering`), then exchanged for an Altinn token
 (`…/authentication/api/v1/exchange/id-porten` — a raw ID-porten token against
 the app 401s). Maskinporten is only accepted for the MVA read/information
 APIs.
 
-**Scope audit, 2026-08-24** (probed live, not read off a page):
+**Scope audit, 2026-08-24** (probed live, and checked against the portal's own
+scope picker):
 
-| Scope | ID-porten client `5aa404aa` | Maskinporten `f8293b48` |
+| Scope | ID-porten `5aa404aa` | Maskinporten `f8293b48` |
 | --- | --- | --- |
 | `skatteetaten:mvameldingvalidering` | **granted** | not registered |
-| `skatteetaten:mvameldinginnsending` | **not registered** | not registered |
+| `skatteetaten:mvameldinginnsending` | **retired** | **retired** |
 
-So validation is reachable today and submission is not. Neither belongs on the
-Maskinporten client: both steps require a person, so a machine token would have
-nowhere to use them. Getting `mvameldinginnsending` is the one portal action
-left for this path, and the note further down about multi-week grant handling
-applies to it - it is not obviously a self-serve checkbox.
+`mvameldinginnsending` is **gone, on Skatteetaten's own instruction**: the 2022
+scope of that name "should no longer be used and should be replaced with
+`altinn:instances.read` and `altinn:instances.write`". That is why it is missing
+from Samarbeidsportalen's picker, and the code says why it was retired:
+`MvaMeldingClient` makes exactly one Skatteetaten REST call, to
+`/api/mva/grensesnittstoette/mva-melding/valider`. Everything after it -
+instance, uploads, submission, feedback - goes through the Altinn app, which
+authorizes on the exchanged Altinn token.
 
-1. POST the mva-melding XML to the **validation API** (always validate first)
-2. Create an instance in Skatteetaten's Altinn 3 app
+**So nothing needs to be applied for to submit an MVA-melding.**
+`mvameldingvalidering` (granted) plus `altinn:instances.read`/`.write` (granted)
+is the complete credential set for the documented flow. An earlier version of
+this file claimed a second Skatteetaten scope was required; it was wrong, and the
+replacement instruction is the reason.
+
+What the picker does offer, none of it required today:
+
+| Scope | For | Worth it |
+| --- | --- | --- |
+| `mvaregisteravgiftssubjekt` | MVA-register: who is registered and liable | yes, on **Maskinporten** - `registrertIMvaregisteret` decides whether output VAT is booked at all, and this is the authoritative source rather than Brreg's copy |
+| `mvameldinginnsendingstatus` | "Innsendingsstatus og frister" | yes, on **Maskinporten** - drives which periods are due per client |
+| `mvamelding` | the melding itself | later, when we add a fetch. There is no fetch method today |
+| `mvameldingsopplysning`, `mvafastsetting` | meldingsopplysninger, assessment | no code path |
+| `mvainnsendingsstatustest`, `mvameldinginnsendingsstatus` | test-suffixed and undescribed near-duplicates of the two above | no - prefer the described one of each pair |
+
+The two "yes" rows belong on the **Maskinporten** client, not ID-porten: they are
+lookups with no person in them. Validation and submission are the opposite, and
+stay on ID-porten.
+
+**Data types, read off the app on 2026-08-24** (not from documentation - the
+app is the only authority, and `GET {app}/api/v1/applicationmetadata` returns
+them):
+
+| Purpose | dataType id |
+| --- | --- |
+| metadata | `no.skatteetaten.fastsetting.avgift.mva.mvameldinginnsending.v1.0` |
+| the melding | `mvamelding` |
+| attachments | `binaerVedlegg` |
+| feedback | `valideringsresultat`, `betalingsinformasjon`, `kvittering` |
+
+The app also declares `tidligereinnsendtvedlegg`, `miljo`, `utfyllingslogg`,
+`signeringslogg`, `godkjenningslogg`, `attesteringslogg` and `portalLenker`,
+none of which we use yet. The logs are the audit trail a bokforingspliktig may
+want to keep.
+
+Note the test app is `mva-melding-innsending-v1`, the **same name as
+production** - `-etm2` does not exist on tt02 and answers 418. Environments are
+separated by host, not by app name.
+
 3. PUT the `mvaMeldingInnsending` metadata XML (orgnr/fnr, period, category,
    `innsendingstype`)
 4. POST the mva-melding XML (`datatype=mvamelding`)
@@ -84,7 +125,7 @@ UI requirement: the user must see the full aggregated melding (all lines +
 | | Test | Production |
 | --- | --- | --- |
 | Validation | `https://idporten-api-sbstest.sits.no/api/mva/grensesnittstoette/mva-melding/valider` | `https://idporten.api.skatteetaten.no/api/mva/grensesnittstoette/mva-melding/valider` |
-| Altinn 3 app | `https://skd.apps.tt02.altinn.no/skd/mva-melding-innsending-etm2/instances` | `https://skd.apps.altinn.no/skd/mva-melding-innsending-v1/instances` |
+| Altinn 3 app | `https://skd.apps.tt02.altinn.no/skd/mva-melding-innsending-v1/instances` | `https://skd.apps.altinn.no/skd/mva-melding-innsending-v1/instances` |
 | ID-porten | `https://test.idporten.no/.well-known/openid-configuration` | `https://idporten.no/.well-known/openid-configuration` |
 
 The Altinn **app id differs between environments** (`…-etm2` vs `…-v1`) —

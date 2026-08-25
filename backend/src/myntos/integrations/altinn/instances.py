@@ -195,11 +195,17 @@ class AppInstanceClient:
         ``content_type`` is required rather than inferred — see this module's
         docstring on ``text/xml``.
         """
-        headers = {"Content-Type": content_type}
-        if filename is not None:
-            # Altinn reads the filename off Content-Disposition, and rejects
-            # duplicates within an instance.
-            headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+        # Altinn requires Content-Disposition on every upload, named or not:
+        # without it the answer is 400 "The request must include a
+        # Content-Disposition header", which reads like a problem with the body.
+        # It also reads the filename off this header and rejects duplicates
+        # within an instance, so an unnamed upload still needs a stable name.
+        headers = {
+            "Content-Type": content_type,
+            "Content-Disposition": (
+                f'attachment; filename="{filename or _default_filename(data_type, content_type)}"'
+            ),
+        }
         payload = await self._request(
             "POST",
             f"/instances/{ref.path}/data",
@@ -349,6 +355,23 @@ class AppInstanceClient:
         if not isinstance(payload, dict):
             raise AltinnInstanceError(f"{method} {path} answered with unexpected JSON")
         return payload
+
+
+# Extensions for the content types these apps actually accept. A data element
+# with no filename still needs one, and Altinn shows it to a human in the portal,
+# so the data type is a better name than anything generated.
+_EXTENSIONS = {
+    "text/xml": ".xml",
+    "application/xml": ".xml",
+    "application/pdf": ".pdf",
+    "application/json": ".json",
+}
+
+
+def _default_filename(data_type: str, content_type: str) -> str:
+    """A filename for an upload whose caller did not name one."""
+    media_type = content_type.split(";")[0].strip().lower()
+    return f"{data_type}{_EXTENSIONS.get(media_type, '')}"
 
 
 def _element_from(payload: dict[str, Any]) -> DataElement:

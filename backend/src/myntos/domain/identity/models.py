@@ -58,6 +58,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     UniqueConstraint,
 )
@@ -394,3 +395,67 @@ class OAuthLoginAttempt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class GovernmentLoginAttempt(Base):
+    """An in-flight ID-porten login, and the token it produces.
+
+    Deliberately **not** :class:`OAuthLoginAttempt`, though the OIDC mechanics
+    are the same. That table signs somebody *into Myntos*; this one records a
+    person who is already signed in proving to *Skatteetaten* who they are. One
+    table for both would mean a government callback could complete a sign-in, or
+    a sign-in callback could authorize a filing - and the distinction is the
+    whole point: a Myntos session is never evidence of anything to Skatteetaten.
+
+    The row carries the flow's state on the way out and the sealed token on the
+    way back, because they share one short lifetime and one owner. ``user_id``
+    is stamped at the start: the person who began the login is the only one who
+    may finish it, so a leaked callback URL cannot attach a government identity
+    to somebody else's account.
+
+    ``sealed_token`` is Fernet ciphertext - see :mod:`myntos.auth.idporten.vault`
+    for why it is encrypted rather than stored plainly, and why a missing key
+    disables the feature instead of downgrading it.
+
+    Nothing prunes this table yet, the same housekeeping debt
+    :class:`OAuthLoginAttempt` records. Here it matters more: an expired row is
+    harmless, but rows should not accumulate government identifiers for years,
+    so pruning is a privacy job as much as a tidiness one.
+    """
+
+    __tablename__ = "government_login_attempt"
+    __table_args__ = (
+        UniqueConstraint("state", name="uq_government_login_attempt_state"),
+        CheckConstraint("expires_at > created_at", name="expires_after_creation"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="CASCADE"))
+    state: Mapped[str] = mapped_column(String(64))
+    nonce: Mapped[str] = mapped_column(String(64))
+    # RFC 7636 allows 43 to 128 characters.
+    code_verifier: Mapped[str] = mapped_column(String(128))
+    # Site-relative, validated before storing, for the same open-redirect
+    # reason as the sign-in flow.
+    redirect_to: Mapped[str | None] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    # When the *attempt* stops being completable. Minutes.
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # --- Filled in by the callback, once the person has authenticated --------
+
+    sealed_token: Mapped[bytes | None] = mapped_column(LargeBinary)
+    # ID-porten's own expiry for the access token. Never extended locally: a
+    # token kept past it cannot do anything, so keeping it is pure liability.
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The person's fodselsnummer, from the pid claim. Stored because Skatteetaten
+    # and Altinn identify the submitter by it and the UI must be able to show
+    # *who* is about to file - not as an identifier for anything else.
+    pid: Mapped[str | None] = mapped_column(String(11))
+    # Level of assurance actually reached. Recorded rather than assumed: it is
+    # what evidences that the submission met Skatteetaten's requirement.
+    acr: Mapped[str | None] = mapped_column(String(64))
+    # Stamped when the token has been used for a submission, so a second one
+    # cannot ride on the same authorization.
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
