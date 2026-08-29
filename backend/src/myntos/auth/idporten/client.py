@@ -451,8 +451,22 @@ def is_configured(settings: Settings | None = None) -> bool:
     return bool(
         (settings.idporten_client_id or "").strip()
         and (settings.idporten_redirect_uri or "").strip()
-        and (settings.idporten_key_file is not None or _secret(settings))
+        and (_key_file_present(settings) or _secret(settings))
     )
+
+
+def _key_file_present(settings: Settings) -> bool:
+    """Whether the configured client key is actually there to be read.
+
+    That the *path* is set is not the question. A path naming a file that does
+    not exist is the ordinary shape of a half-finished deployment: the variable
+    is copied from the template, and the key is copied afterwards, or forgotten.
+    Answering "configured" from the path alone offers a login that fails deeper
+    in :func:`build_client` with an unreadable-key error, which is the precise
+    outcome this function exists to prevent.
+    """
+    path = settings.idporten_key_file
+    return path is not None and path.is_file()
 
 
 def _secret(settings: Settings) -> str | None:
