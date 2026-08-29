@@ -38,6 +38,12 @@ class ExtractedText:
 
     text: str
     page_count: int
+    # What the file says about itself, from the PDF's own metadata. A webshop
+    # receipt often prints its own name nowhere in the body and carries it here
+    # instead: "Order details | eBay" is the only place in an eBay order
+    # confirmation that the word "eBay" occurs as text at all. Worth as much as
+    # a whole page of the body to whoever has to work out who sold this.
+    title: str | None = None
     # Password-protected, and not with the empty password. Nothing to read.
     encrypted: bool = False
     # Malformed enough that pypdf gave up. Distinguished from "no text" because
@@ -66,10 +72,34 @@ def extract_text(content: bytes) -> ExtractedText:
         pages = reader.pages[:MAX_PAGES]
         parts = [page.extract_text() or "" for page in pages]
         page_count = len(reader.pages)
+        title = _title(reader)
     except (PyPdfError, ValueError, OSError, RecursionError):
         # Damaged, truncated or hostile. Logged rather than raised: the upload
         # itself is still a valid PDF as far as the archive is concerned.
         logger.info("could not extract text from an uploaded PDF", exc_info=True)
         return ExtractedText(text="", page_count=0, unreadable=True)
 
-    return ExtractedText(text="\n".join(parts)[:MAX_TEXT_CHARS], page_count=page_count)
+    return ExtractedText(text="\n".join(parts)[:MAX_TEXT_CHARS], page_count=page_count, title=title)
+
+
+# A PDF title is written by whoever produced the file, so it is treated like any
+# other untrusted string: collapsed, bounded, and discarded when it is one of the
+# placeholders a word processor leaves behind.
+MAX_TITLE_CHARS = 200
+_USELESS_TITLES = frozenset(
+    {"untitled", "uten navn", "document", "dokument", "microsoft word", "pdf", "print"}
+)
+
+
+def _title(reader: PdfReader) -> str | None:
+    """The document's own title, when it has one worth having."""
+    try:
+        raw = reader.metadata.title if reader.metadata is not None else None
+    except (PyPdfError, ValueError, KeyError, AttributeError):
+        return None
+    if not isinstance(raw, str):
+        return None
+    cleaned = " ".join(raw.split())[:MAX_TITLE_CHARS]
+    if len(cleaned) < 3 or cleaned.casefold() in _USELESS_TITLES:
+        return None
+    return cleaned

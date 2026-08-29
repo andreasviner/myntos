@@ -12,7 +12,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
  * lagringsstedene i avsnitt 7 er de som er satt i core/config.py og
  * infra/cloudflare. Endrer vi det ene, må vi endre det andre.
  */
-const oppdatert = '13. august 2026';
+const oppdatert = '27. august 2026';
 
 const grunnlag = [
   {
@@ -50,7 +50,7 @@ const underleverandorer = [
   },
   {
     navn: 'Løynd (Lindeman Technologies)',
-    rolle: 'KI-forslag: teksten fra bilag du laster opp, og salgsbeskrivelsen du selv skriver i fakturaskjemaet. Se avsnitt 3d2 og /ki',
+    rolle: 'KI-forslag: bilag du laster opp (selve PDF-filen, til tekstuthenting), og salgsbeskrivelsen du selv skriver i fakturaskjemaet. Kan slås helt av per selskap. Se avsnitt 3d2 og /ki',
     sted: 'Norge, med inferensservere på norsk jord og ingen lagring',
   },
   {
@@ -192,10 +192,14 @@ const underleverandorer = [
   </p>
   <ul>
     <li>
-      <strong>Når du laster opp et bilag:</strong> <em>teksten</em> i dokumentet, altså de første 2000
-      tegnene. Modellen får ett spørsmål: hvilken kategori i kontantstrømregisteret passer? Den
-      svarer med ett tall fra en fast liste. Beløp og datoer leses ut av teksten hos oss og kommer
-      aldri fra modellen.
+      <strong>Når du laster opp et bilag:</strong> <em>selve PDF-filen</em>, til Løynds
+      tekstuthenting. Den åpner filen, gir teksten tilbake og lagrer den ikke. Deretter får
+      modellen to spørsmål om de første 2000 tegnene av den teksten, sammen med filens tittel:
+      hvilken kategori i kontantstrømregisteret passer, og hva står det på bilaget der vår egen
+      lesning kom tom tilbake? Kategorien svarer den med ett tall fra en fast liste. Det andre
+      svaret er fire linjer: dato, valuta, selger og én setning om hva som ble kjøpt. Datoen og
+      selgernavnet må være avskrevet ordrett fra det modellen fikk se, ellers kastes de, og datoen
+      leses uansett av oss. Beløp kommer aldri fra modellen.
     </li>
     <li>
       <strong>Når du ber om fakturalinjer:</strong> beskrivelsen du selv skrev i boksen, inntil
@@ -206,7 +210,20 @@ const underleverandorer = [
   <ul>
     <li>Ingen andre data følger med: ikke hovedboken, ikke partsregisteret, ikke kontoen din.</li>
     <li>Løynd lagrer ikke det som sendes inn, og bilagene dine trener ingen modell.</li>
-    <li>Er PDF-en skannet, finnes det ikke noe tekstlag, og da sendes ingenting.</li>
+    <li>
+      Er PDF-en skannet, er den bilder av ord og ikke tekst. Verken vi eller Løynd kjører OCR, så
+      da kommer det ingen tekst tilbake og skjemaet må fylles ut for hånd.
+    </li>
+    <li>
+      Er bilaget i utenlandsk valuta, slår vi opp dagskursen hos Norges Bank for å foreslå beløpet
+      i kroner. Det eneste som sendes dit, er valutakoden og datoen: ingenting om deg, selskapet
+      eller bilaget.
+    </li>
+    <li>
+      <strong>Du kan slå det helt av.</strong> Bryteren står per selskap på
+      <a href="/ki/">siden om KI</a>. Er den av, forlater ingen dokumenter programmet, heller ikke
+      til tekstuthenting, og skjemaene fylles ut av vår egen lesing av PDF-en.
+    </li>
     <li>
       Kjører du Myntos selv uten API-nøkkel, skjer dette ikke i det hele tatt. Hele funksjonen er
       beskrevet på <a href="/ki/">siden om KI</a>.

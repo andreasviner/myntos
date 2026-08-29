@@ -195,6 +195,37 @@ export interface Company {
    * it (see the `seller_bank_account` violation).
    */
   bank_account: string | null;
+  /**
+   * Whether this company's bilag may be shown to a model at all.
+   *
+   * Per company rather than per user: it is a statement about a set of books,
+   * and it has to hold whoever happens to be logged in. Off means no upload to
+   * Løynd anywhere in the app, not merely a hidden button.
+   */
+  ki_enabled: boolean;
+  /**
+   * Whether somebody has proved through Altinn that they may act for this orgnr.
+   *
+   * False is the ordinary state for books somebody just typed an orgnr into,
+   * and the header says «ubekreftet» rather than hiding anything: bookkeeping
+   * is not gated on it, ownership is. `verifyCompany` is what changes it.
+   */
+  verified: boolean;
+  /** When ownership was confirmed. ISO 8601, or null while unconfirmed. */
+  verified_at: string | null;
+
+  // --- Copied from Enhetsregisteret ---
+  // Refreshed by `refreshCompany`, and automatically when a company is created
+  // or confirmed. The register is the authority for all of them.
+  industry_code: string | null;
+  industry_description: string | null;
+  website: string | null;
+  phone: string | null;
+  email: string | null;
+  /** Set when this company is a subunit: the main unit it belongs to. */
+  parent_orgnr: string | null;
+  /** When the register was last read. Null until it has been read once. */
+  register_synced_at: string | null;
 }
 
 export const listCompanies = (): Promise<Company[]> => request<Company[]>('/api/v1/companies');
@@ -225,12 +256,46 @@ export const updateCompany = (
     in_foretaksregisteret?: boolean;
     organisation_form?: string | null;
     bank_account?: string | null;
+    ki_enabled?: boolean;
   },
 ): Promise<Company> => json<Company>(`/api/v1/companies/${companyId}`, 'PATCH', payload);
 
+/**
+ * Confirm through Altinn that these books belong to the caller.
+ *
+ * Requires the ID-porten login, and reads the same list `listAuthorizedParties`
+ * does. Three rejections worth branching on, by `code` and status:
+ *
+ * - **409, no code** — no usable government login. Offer the ID-porten button.
+ * - **403 `not_authorized_for_party`** — Altinn does not list this orgnr for
+ *   this person. Rights are granted in Altinn, not here.
+ * - **409 `company_already_claimed`** — another organization confirmed this
+ *   orgnr first. Show the message and the way out: ask an administrator there,
+ *   or keep these books unconfirmed.
+ */
+export const verifyCompany = (companyId: number): Promise<Company> =>
+  request<Company>(`/api/v1/companies/${companyId}/bekreft`, { method: 'POST' });
+
+/** The code a 409 from `verifyCompany` carries when somebody claimed it first. */
+export const ALREADY_CLAIMED = 'company_already_claimed';
+
 // --- Enhetsregisteret --------------------------------------------------------------
 
-/** What Brønnøysundregistrene has on file for an organisasjonsnummer. */
+/** Registered share capital, for the organisation forms that have one. */
+export interface Capital {
+  /** A decimal string, never a number: kroner do not survive a float. */
+  amount: string;
+  currency: string;
+  shares: number | null;
+}
+
+/**
+ * What Brønnøysundregistrene has on file for an organisasjonsnummer.
+ *
+ * Everything the register holds, not the handful the signup form fills in: the
+ * lookup is one request either way, and each field left out is a field somebody
+ * types instead.
+ */
 export interface RegisteredUnit {
   orgnr: string;
   name: string;
@@ -244,6 +309,66 @@ export interface RegisteredUnit {
   registered_in_foretaksregisteret: boolean;
   bankrupt: boolean;
   under_liquidation: boolean;
+  under_forced_liquidation: boolean;
+  municipality: string | null;
+  municipality_number: string | null;
+  country: string | null;
+  /** Only set when it differs from the business address — usually a postboks. */
+  postal_address_line: string | null;
+  postal_address_postal_code: string | null;
+  postal_address_city: string | null;
+  /** SN2007. The næringsspesifikasjon asks for the first one. */
+  industry_code: string | null;
+  industry_description: string | null;
+  /** Up to two more, as [code, description] pairs. */
+  secondary_industries: [string, string][];
+  website: string | null;
+  phone: string | null;
+  mobile: string | null;
+  email: string | null;
+  /** ISO dates, as the register gives them. */
+  established_on: string | null;
+  registered_on: string | null;
+  registered_in_foretaksregisteret_on: string | null;
+  registered_in_vat_register_on: string | null;
+  /** The last annual accounts the register has received, as a year. */
+  last_submitted_annual_accounts: string | null;
+  /** Set on a subunit: the main unit it belongs to, and where its roles live. */
+  parent_orgnr: string | null;
+  in_group: boolean;
+  /** Null when nobody has reported one, which is not the same as zero. */
+  employees: number | null;
+  language: string | null;
+  sector_code: string | null;
+  sector_description: string | null;
+  capital: Capital | null;
+  purpose: string[];
+  activity: string[];
+  /** Names this unit used to have. */
+  former_names: string[];
+  registered_in_frivillighetsregisteret: boolean;
+  registered_in_stiftelsesregisteret: boolean;
+  is_subunit: boolean;
+}
+
+/**
+ * One registered role: a board member, a daglig leder, a revisor.
+ *
+ * Names only. The register pairs a person with a birth date; that is personal
+ * data with no bookkeeping use and the backend drops it.
+ */
+export interface RegisteredRole {
+  /** The rollegruppe: `STYR`, `DAGL`, `REVI`, `REGN`, `INNH`… */
+  group: string;
+  group_description: string;
+  /** The role within it: `LEDE`, `MEDL`, `VARA`… */
+  code: string;
+  description: string;
+  name: string;
+  /** Set when the holder is a company, as revisor and regnskapsfører usually are. */
+  orgnr: string | null;
+  /** "Representant for de ansatte" and the like, when the register says. */
+  elected_by: string | null;
 }
 
 /**
@@ -255,6 +380,99 @@ export interface RegisteredUnit {
  */
 export const lookupUnit = (orgnr: string): Promise<RegisteredUnit> =>
   request<RegisteredUnit>(`/api/v1/enhetsregisteret/${encodeURIComponent(orgnr)}`);
+
+/**
+ * Who holds a registered role in the unit: styre, daglig leder, revisor…
+ *
+ * A second request to Brønnøysund, so it is asked for separately: the signup
+ * form wants a name and an address, and this is for the page that shows who the
+ * company is. A subunit's roles are read from its main unit by the backend.
+ *
+ * An empty list is a legitimate answer, not an error.
+ */
+export const lookupRoles = (orgnr: string): Promise<RegisteredRole[]> =>
+  request<RegisteredRole[]>(`/api/v1/enhetsregisteret/${encodeURIComponent(orgnr)}/roller`);
+
+/** A company after a register refresh, and everything the register knows. */
+export interface CompanyRefresh {
+  company: Company;
+  /** Which stored fields the register moved. Empty when it agreed with all. */
+  changed: string[];
+  unit: RegisteredUnit;
+  roles: RegisteredRole[];
+}
+
+/**
+ * Re-read everything Enhetsregisteret says about this company.
+ *
+ * Businesses move, cross the VAT threshold and change their næring, and none of
+ * those tells Myntos anything — this is how the stored copy catches up. The
+ * name is deliberately never overwritten: a name somebody edited on purpose and
+ * one that has gone stale are indistinguishable from the server.
+ *
+ * Also runs by itself when a company is created and when one is confirmed.
+ */
+export const refreshCompany = (companyId: number): Promise<CompanyRefresh> =>
+  request<CompanyRefresh>(`/api/v1/companies/${companyId}/hent`, { method: 'POST' });
+
+// --- Altinn: the companies the person may report for -------------------------------
+
+/** Whether an ID-porten login exists, and who it belongs to. */
+export interface GovernmentLoginStatus {
+  /** False when the deployment has no ID-porten client. Offer nothing then. */
+  available: boolean;
+  logged_in: boolean;
+  /** The person who logged in. A fødselsnummer, so it is shown, never stored. */
+  pid: string | null;
+  acr: string | null;
+  expires_at: string | null;
+}
+
+export const getGovernmentLoginStatus = (): Promise<GovernmentLoginStatus> =>
+  request<GovernmentLoginStatus>('/api/v1/skatt/status');
+
+/**
+ * Where to send the browser to log in with ID-porten.
+ *
+ * A full page navigation, like the federated sign-in above and for the same
+ * reason: BankID will not run in a fetch. `redirectTo` is validated
+ * server-side as site-relative, so it cannot become an open redirect.
+ */
+export const governmentLoginStartUrl = (redirectTo: string): string =>
+  `${API_BASE_URL}/api/v1/skatt/idporten/start?redirect_to=${encodeURIComponent(redirectTo)}`;
+
+/** One company Altinn says the logged-in person may report for. */
+export interface AuthorizedParty {
+  orgnr: string;
+  name: string;
+  /** Altinn's own key for the party, carried through to a later submission. */
+  party_id: number;
+  /** "AS", "ENK", "BEDR"… when Altinn knows it. */
+  unit_type: string | null;
+  /** The main unit, when this is a subunit of one. */
+  parent_orgnr: string | null;
+  /** Altinn's own role codes: DAGL, REGN, LEDE. Not translated. */
+  roles: string[];
+  /**
+   * True when another organization has already confirmed ownership of this
+   * orgnr, so confirming it here would be refused.
+   *
+   * Said next to the choice rather than after a failed save. Which organization
+   * holds the claim is deliberately not disclosed: the caller is not a member
+   * of it, and the way in is to ask them for access.
+   */
+  claimed: boolean;
+}
+
+/**
+ * The companies the person may report for, from Altinn's access management.
+ *
+ * Requires the ID-porten login, and does not spend it. Rejects with 409 when
+ * there is none — check `getGovernmentLoginStatus()` first; the 409 is the
+ * answer to a login that expired between the two calls, not the normal path.
+ */
+export const listAuthorizedParties = (): Promise<AuthorizedParty[]> =>
+  request<AuthorizedParty[]>('/api/v1/skatt/altinn/authorized-parties');
 
 // --- Members and invitations -----------------------------------------------------
 
@@ -401,6 +619,16 @@ export interface CashFlowEntry {
   description: string;
   is_reversal: boolean;
   reversed_by_id: number | null;
+  /**
+   * The entry this one was posted to replace, when it came from an edit.
+   *
+   * An edit leaves three vouchers: the original, its reversal and this one.
+   * The link is what lets the register show them as one correction rather than
+   * as three unrelated payments, and it comes from the database rather than
+   * from matching dates and amounts, which would eventually pair two genuine
+   * payments made the same day.
+   */
+  corrects_id: number | null;
   attachments: AttachmentInfo[];
 }
 
@@ -426,21 +654,30 @@ export interface Summary {
 }
 
 /** Where a proposed category came from. See /ki. */
-export type TypeSource = 'dokument' | 'ki';
+/** Where one proposed field came from: the text of the bilag, or Løynd. */
+/**
+ * Where a proposed value came from.
+ *
+ * `beregnet` is neither of the other two: it is arithmetic on something read,
+ * and the only thing that produces it is a foreign total multiplied by a
+ * published Norges Bank rate. Shown differently because the user can check it
+ * against a rate table, which is true of no other proposal.
+ */
+export type FieldSource = 'dokument' | 'ki' | 'beregnet';
 
 /**
  * What an uploaded document appears to say, as form values.
  *
  * Everything is nullable: the backend proposes only what it actually found, so
- * a null means "we could not tell", never "zero" or "none". `filled` names the
- * fields that came from the document, which is what lets the form mark them as
- * read rather than typed.
+ * a null means "we could not tell", never "zero" or "none". `sources` names the
+ * fields that were proposed and where each one came from, which is what lets the
+ * form mark them as read rather than typed, and a reading apart from a guess.
  */
 export interface InvoiceSuggestion {
   direction: Direction;
   type_code: string | null;
   type_label: string | null;
-  type_source: TypeSource | null;
+  type_source: FieldSource | null;
   tax_code: string | null;
   occurred_on: string | null;
   gross_amount: string | null;
@@ -451,8 +688,26 @@ export interface InvoiceSuggestion {
   counterparty_orgnr: string | null;
   invoice_number: string | null;
   currency_code: string | null;
+  /**
+   * The total as the bilag prints it, when that is not in kroner.
+   *
+   * `gross_amount` is null in that case on purpose: the ledger is in kroner, and
+   * what the account was charged is on the bank statement rather than on the
+   * document. This is the number to show the user while they look it up.
+   */
+  foreign_amount: string | null;
+  /**
+   * Norges Bank's rate, and the day it is quoted for, when `gross_amount` was
+   * worked out from `foreign_amount` instead of read off the page. Both are
+   * shown next to the amount so the multiplication can be repeated by hand.
+   */
+  exchange_rate: string | null;
+  rate_quoted_on: string | null;
   filled: string[];
+  sources: Record<string, FieldSource>;
   warnings: string[];
+  /** Whether a model was actually consulted. False when KI is off, unconfigured, or down. */
+  ki_used: boolean;
 }
 
 export const getCatalogue = (): Promise<Catalogue> => request<Catalogue>('/api/v1/cashflow/types');
@@ -489,6 +744,28 @@ export const recordCashFlow = (
   },
 ): Promise<CashFlowEntry> =>
   json<CashFlowEntry>(`/api/v1/companies/${companyId}/cashflow`, 'POST', payload);
+
+/**
+ * Change a registered payment.
+ *
+ * A posted voucher cannot be altered, so the backend reverses the original and
+ * posts the corrected version, both in one transaction. The register ends up
+ * showing three entries; the user sees one edit. Returns the corrected entry.
+ */
+export const editCashFlow = (
+  companyId: number,
+  voucherId: number,
+  payload: {
+    type_code: string;
+    occurred_on: string;
+    gross_amount: string;
+    description: string;
+    tax_code?: string | null;
+    payment_method: 'bank' | 'kontant';
+    party_id?: number | null;
+  },
+): Promise<CashFlowEntry> =>
+  json<CashFlowEntry>(`/api/v1/companies/${companyId}/cashflow/${voucherId}`, 'PUT', payload);
 
 export const reverseCashFlow = (companyId: number, voucherId: number): Promise<CashFlowEntry> =>
   request<CashFlowEntry>(`/api/v1/companies/${companyId}/cashflow/${voucherId}/reversal`, {

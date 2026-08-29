@@ -12,7 +12,17 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       <p class="eyebrow" id="company-name">Faktura</p>
       <h1>Salgsdokument</h1>
     </div>
-    <a class="btn btn-ghost" href="/parter/">Kunder og leverandører</a>
+    <div class="head-actions">
+      {/* En faktura kommer fra ett bestemt selskap, og det er selskapet som
+          står som selger på den. Derfor står valget her og ikke bare på
+          forsiden: å oppdage at utkastet gjaldt feil selskap etter at det er
+          utstedt kan bare rettes med kreditnota. */}
+      <label class="picker">
+        <span class="visually-hidden">Velg selskap</span>
+        <select id="company-picker" hidden></select>
+      </label>
+      <a class="btn btn-ghost" href="/parter/">Kunder og leverandører</a>
+    </div>
   </header>
 
   <p class="lead">
@@ -317,6 +327,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     margin: 0;
     font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
   }
+  .head-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .head-actions select {
+    min-width: 12rem;
+  }
   .eyebrow {
     text-transform: uppercase;
     letter-spacing: 0.08em;
@@ -595,7 +614,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     getFakturaCatalogue,
     getNextFakturaNumber,
     issueFaktura,
-    listCompanies,
     listFaktura,
     listParties,
     lookupUnit,
@@ -609,15 +627,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     type RegisteredUnit,
     type Violation,
   } from '../lib/api';
+  import { currentCompany, loadCompanies, mountCompanyPicker } from '../lib/company';
   import { el, setStatus, show } from '../lib/dom';
   import { isoDate, kontonummer, kroner, todayIso } from '../lib/format';
-  import {
-    can,
-    loadSession,
-    redirectToLogin,
-    rememberCompany,
-    rememberedCompany,
-  } from '../lib/session';
+  import { can, loadSession, redirectToLogin } from '../lib/session';
 
   const pageStatus = el<HTMLParagraphElement>('#page-status');
   const formStatus = el<HTMLParagraphElement>('#form-status');
@@ -1702,16 +1715,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       return;
     }
     try {
-      const companies = await listCompanies();
+      const companies = await loadCompanies();
       if (companies.length === 0) {
         window.location.href = '/';
         return;
       }
-      const remembered = rememberedCompany();
-      const current = companies.find((c) => c.id === remembered) ?? companies[0];
+      const current = currentCompany(companies);
       if (current === undefined) return;
       company = current;
-      rememberCompany(company.id);
+      // Switching reloads rather than re-deriving: a draft on screen belongs to
+      // the company it was started under, and so do the customers, the next
+      // invoice number and the § 5-1 checks. Carrying any of that across would
+      // be a document issued in the wrong company's name, correctable only by
+      // kreditnota.
+      mountCompanyPicker(el<HTMLSelectElement>('#company-picker'), companies, company);
       el('#company-name').textContent = company.name;
 
       catalogue = await getFakturaCatalogue();
@@ -1734,8 +1751,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       show(el('#vat-note'), mayWrite && !company.vat_registered);
       show(el('#konto-missing'), mayWrite && company.bank_account === null);
       // The model is offered only where it can be used at all: a deployment
-      // without a key has opted out, and a viewer has nothing to draft.
-      show(el('#ki-card'), mayWrite && catalogue.ai_available);
+      // without a key has opted out, a company that turned KI off on /ki has
+      // opted out for this set of books, and a viewer has nothing to draft.
+      show(el('#ki-card'), mayWrite && catalogue.ai_available && company.ki_enabled);
 
       // The list first, so "copy the previous invoice" knows whether there is
       // one before the form is drawn.

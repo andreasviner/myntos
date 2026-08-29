@@ -31,6 +31,26 @@ class DuplicateCompanyError(LedgerError):
     """This organization already keeps books for that orgnr."""
 
 
+class CompanyAlreadyClaimedError(LedgerError):
+    """Somebody else has already confirmed ownership of this orgnr.
+
+    Raised only when confirming, never when creating: a second set of books for
+    the same client is legitimate (see :class:`~myntos.domain.ledger.models.Company`),
+    a second *confirmed* one is not. The message says what the person can
+    actually do about it — ask the organization that holds the claim, or keep
+    the unconfirmed books they just made — and deliberately does not name that
+    organization, which they have no membership in.
+    """
+
+
+class NotAuthorizedForPartyError(LedgerError):
+    """Altinn does not list this orgnr among the parties the person may act for.
+
+    The whole point of the confirmation: the evidence comes from Altinn's access
+    management rather than from the person asserting it.
+    """
+
+
 class InvalidBankAccountError(LedgerError):
     """The bank account number is not eleven digits with a valid check digit.
 

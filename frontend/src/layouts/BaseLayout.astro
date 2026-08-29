@@ -286,13 +286,18 @@ const gettingStarted = [
             <a class="nav-link" href="/ki/">KI</a>
           </div>
 
-          {/* Signed in: the application. */}
+          {/* Signed in: the application.
+
+              Kort med vilje. Toppen er ikke et innholdsfortegnelse over alle
+              sidene, den er de få stedene man går rett til flere ganger om
+              dagen. Kontantstrømmen nås fra oversikten, der tallene som får
+              deg til å gå dit står; kunder og leverandører nås fra fakturaen
+              og fra kontantstrømmen, der man faktisk trenger dem. En lenke
+              som står overalt er ikke lettere å finne enn én som står der
+              man er. */}
           <div class="nav-group nav-primary" data-auth-only="inn">
             <a class="nav-link" href="/">Oversikt</a>
             <a class="nav-link" href="/faktura/">Faktura</a>
-            <a class="nav-link" href="/kontantstrom/">Kontantstrøm</a>
-            <a class="nav-link" href="/parter/">Kunder og leverandører</a>
-            <a class="nav-link" href="/organisasjon/">Organisasjon</a>
             <a class="nav-link" href="/ki/">KI</a>
           </div>
 
@@ -321,8 +326,56 @@ const gettingStarted = [
               <a class="btn btn-primary btn-small" href="/registrer/">Opprett konto</a>
             </span>
 
+            {/* Selskapet først, personen under.
+
+                Hver side i programmet handler om et regnskap, ikke om en konto:
+                en regnskapsfører som bytter klient må se hvilken klient med ett
+                blikk, mens ens eget navn aldri endrer seg. Derfor er navnet på
+                selskapet det store og innloggingen det lille.
+
+                Hele selskapsnavnet er lenken til innstillingene. Det er der man
+                bytter selskap, retter adressen og bekrefter eierskapet, og det
+                er det man peker på når man tenker «dette selskapet». */}
             <span class="nav-group" data-auth-only="inn">
-              <span class="nav-user" data-session-name></span>
+              <a
+                class="icon-btn"
+                href="/organisasjon/"
+                aria-label="Innstillinger"
+                title="Innstillinger"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path
+                    d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.7"></path>
+                  <path
+                    d="M19.4 13.5a7.7 7.7 0 0 0 0-3l1.7-1.3-1.9-3.3-2 .8a7.7 7.7 0 0 0-2.6-1.5L14.3 3h-3.8l-.3 2.2a7.7 7.7 0 0 0-2.6 1.5l-2-.8L3.7 9.2l1.7 1.3a7.7 7.7 0 0 0 0 3l-1.7 1.3 1.9 3.3 2-.8a7.7 7.7 0 0 0 2.6 1.5l.3 2.2h3.8l.3-2.2a7.7 7.7 0 0 0 2.6-1.5l2 .8 1.9-3.3-1.7-1.3Z"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.7"
+                    stroke-linejoin="round"></path>
+                </svg>
+              </a>
+
+              <a class="nav-identity" href="/organisasjon/#selskap">
+                <span class="nav-company">
+                  <span class="nav-company-name" data-session-company></span>
+                  {/* En prikk, ikke et ord. At eierskapet ikke er bekreftet er
+                      verdt å vite og ikke verdt å lese hver gang: den fulle
+                      setningen står i det gule varselet på siden prikken
+                      lenker til. */}
+                  <span
+                    class="nav-dot"
+                    data-session-unverified
+                    hidden
+                    role="img"
+                    aria-label="Ikke bekreftet"
+                    title="Ingen har bekreftet i Altinn at de kan opptre for dette selskapet ennå."
+                  ></span>
+                </span>
+                <span class="nav-user" data-session-name></span>
+              </a>
               <button type="button" class="btn btn-ghost btn-small" data-sign-out>Logg ut</button>
             </span>
           </div>
@@ -395,9 +448,14 @@ const gettingStarted = [
 
     <script>
       import { initNav, initThemeToggle } from '../lib/chrome';
+      import { bootstrapHeaderCompany } from '../lib/company';
       import { bootstrapChrome } from '../lib/session';
 
       bootstrapChrome();
+      // After bootstrapChrome, which puts the organization name in the header
+      // as a stand-in; this replaces it with the company once the books are
+      // known, and shares the one /companies request with the page below.
+      bootstrapHeaderCompany();
       initThemeToggle();
       initNav();
     </script>
@@ -711,10 +769,55 @@ const gettingStarted = [
     color: var(--fg-strong);
   }
 
+  /* Selskapet over, personen under: to linjer i én kolonne, slik at høyden
+     holder seg innenfor headeren og navnet ikke dytter knappene. */
+  .nav-identity {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.05rem;
+    line-height: 1.25;
+    min-width: 0;
+    text-decoration: none;
+  }
+
+  .nav-company {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+  }
+
+  .nav-company-name {
+    color: var(--fg-strong);
+    font-weight: 650;
+    max-width: 13rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .nav-identity:hover .nav-company-name {
+    text-decoration: underline;
+    text-underline-offset: 0.2rem;
+  }
+
+  /* En prikk holder fordi den bare betyr «se her». Rød fordi den skal fanges
+     opp i et sideblikk, liten fordi ingenting er i stykker: regnskapet føres
+     som før, og det som mangler er et bevis ingen har lagt fram ennå. */
+  .nav-dot {
+    flex: none;
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 999px;
+    background: var(--danger);
+  }
+
   .nav-user {
     color: var(--muted);
-    font-weight: 550;
-    max-width: 11rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+    max-width: 13rem;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -809,6 +912,7 @@ const gettingStarted = [
     background: transparent;
     color: var(--muted);
     cursor: pointer;
+    text-decoration: none;
     transition:
       color 120ms ease,
       border-color 120ms ease,
@@ -1334,6 +1438,104 @@ const gettingStarted = [
   table.data tr[data-reversed='true'] {
     color: var(--faint);
     text-decoration: line-through;
+  }
+
+  /* --- Sammenslåtte føringer -----------------------------------------------
+     Rader i registeret bygges i JavaScript, og et element laget med
+     createElement får aldri attributtet Astro bruker for å avgrense stiler til
+     én side. Alt som gjelder en rad må derfor stå her, ikke i <style> på siden
+     som lager den. Det er også riktig sted: både forsiden og «Inn og ut»
+     folder de samme gruppene.
+  ------------------------------------------------------------------------- */
+
+  table.data tr[hidden] {
+    display: none;
+  }
+
+  /* Merknaden under en rad som står for mer enn ett bilag. */
+  table.data .fold-note {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--faint);
+    /* Aldri gjennomstreket, selv når raden over er det: den forklarer
+       strekingen og ville blitt uleselig av den. */
+    text-decoration: none;
+  }
+
+  /* Bilagene som ligger under en sammenslått rad. */
+  table.data tr[data-member] > td {
+    color: var(--faint);
+  }
+  table.data tr[data-member] > td:first-child {
+    padding-left: 1.9rem;
+  }
+
+  .row-toggle {
+    background: none;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    text-align: left;
+  }
+  .row-toggle::before {
+    content: '';
+    flex: none;
+    width: 0;
+    height: 0;
+    border-left: 0.34rem solid currentColor;
+    border-top: 0.28rem solid transparent;
+    border-bottom: 0.28rem solid transparent;
+    transition: transform 120ms ease;
+  }
+  .row-toggle[aria-expanded='true']::before {
+    transform: rotate(90deg);
+  }
+  .row-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* Knappene på en rad. Flex framfor mellomrom i teksten, som var det som holdt
+     dem fra hverandre før og forsvant sammen med tekstnoden. */
+  table.data td.row-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.15rem 0.7rem;
+  }
+
+  /* Opplysningene som ikke har egen kolonne, som en linje under føringen de
+     gjelder. */
+  table.data .detail-row > td {
+    padding-top: 0;
+    background: var(--surface-2);
+  }
+  /* Uten dette ser detaljlinjen ut som om den hører til føringen under. */
+  table.data tr:has(+ .detail-row:not([hidden])) > td {
+    border-bottom: none;
+  }
+  .detail {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: 0.5rem 1.25rem;
+    margin: 0;
+    padding: 0.7rem 0 0.2rem;
+  }
+  .detail dt {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--faint);
+    font-weight: 700;
+  }
+  .detail dd {
+    margin: 0.15rem 0 0;
+    font-variant-numeric: tabular-nums;
   }
 
   .badge {

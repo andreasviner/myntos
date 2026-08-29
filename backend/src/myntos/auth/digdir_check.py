@@ -28,8 +28,9 @@ Step 8 is as far as this goes without test data. Given one, it goes further::
     uv run python -m myntos.auth.digdir_check --person <synthetic fnr>
 
 which logs in as that synthetic person through TestID, exchanges the token for
-an Altinn one, and reads their skattemelding — the three steps a machine token
-cannot do, and the only way the ID-porten `kid` is ever exercised. The person
+an Altinn one, lists the companies they may report for, and reads their
+skattemelding — the steps a machine token cannot do, and the only way the
+ID-porten `kid` is ever exercised. The person
 must be synthetic (Tenor, +80 on the month digits) and have tax data for the
 income year; `test_data/README.md` records which of ours do.
 
@@ -64,6 +65,7 @@ from myntos.auth.maskinporten.client import (
 )
 from myntos.auth.signing_keys import SigningKeyError, load_signing_key
 from myntos.core.config import Settings, get_settings
+from myntos.integrations.altinn.authorized_parties import fetch_authorized_parties, flatten
 from myntos.integrations.altinn.tokens import (
     INSTANCE_SCOPES,
     AltinnError,
@@ -370,10 +372,43 @@ async def _check_person_chain(
         # that answers whether this person may represent the taxpayer at all.
     else:
         report.ok("altinn exchange (person)", f"usable until {altinn.usable_until:%H:%M:%S} UTC")
+        await _check_authorized_parties(altinn.value, report)
 
     await _check_fetch(settings, report, login, pid, year, label="skattemelding fetch")
     if org is not None:
         await _check_fetch(settings, report, login, org, year, label="skattemelding fetch (org)")
+
+
+async def _check_authorized_parties(altinn_token: str, report: Report) -> None:
+    """Which companies this person may report for, as Altinn sees it.
+
+    A read, and the cheapest possible proof that
+    ``altinn:accessmanagement/authorizedparties`` is actually granted: the scope
+    is inert until Digdir grants it, and the failure without it is a 403 that
+    names nothing. The count is reported rather than the list — a synthetic
+    person can hold rights for a good many companies, and the interesting answer
+    is whether the call is answered at all.
+
+    Not a ``return`` on failure, and not fatal to the run: the list is a
+    convenience in the setup form, and everything after this step works without
+    it.
+    """
+    try:
+        parties = await fetch_authorized_parties(altinn_token)
+    except AltinnError as error:
+        report.warn("altinn authorized parties", str(error))
+        return
+    reportable = [party for party in flatten(parties) if party.is_usable and party.is_organization]
+    if not reportable:
+        # Answered, so the scope is there. An empty list is a fact about the
+        # person, not a fault: a synthetic person with no Altinn roles has none.
+        report.ok("altinn authorized parties", "answered, but this person holds no companies")
+        return
+    first = reportable[0]
+    report.ok(
+        "altinn authorized parties",
+        f"{len(reportable)} companies, e.g. {first.name} ({first.orgnr})",
+    )
 
 
 async def _check_fetch(

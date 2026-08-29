@@ -26,19 +26,30 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     <!-- Entry form                                                        -->
     <!-- ---------------------------------------------------------------- -->
     <div class="card form-card" id="form-card">
-      <h2 class="card-title">Registrer en betaling</h2>
-      <p class="card-hint">
-        Har du fakturaen som PDF, start med den. Vi leser dato, beløp og mva rett ut av teksten,
-        og foreslår kategori. Ingenting føres før du bekrefter.
-      </p>
+      <h2 class="card-title" id="form-title">Registrer en betaling</h2>
+
+      {/* Shown only while an entry is open for editing. It says what saving
+          will do before it does it, because "Lagre endringer" on a bilag that
+          is about to become three bilag should not be a surprise. */}
+      <p class="editing-note" id="editing-note" role="status" hidden></p>
 
       <p class="status" id="form-status" hidden></p>
 
       <form id="entry-form">
         {/*
-          Opplastingen står først fordi det er der arbeidet forsvinner: alt i
-          skjemaet under står allerede på bilaget. Feltet er fortsatt valgfritt,
-          for en kontantutgift uten kvittering skal kunne føres uten omveier.
+          Siden begynner med én ting å gjøre.
+
+          Skjemaet under var alltid der først, tolv felter langt, med
+          opplastingen på toppen som et tilbud. Men alle tolv står allerede på
+          bilaget, så for nesten alle er det riktige svaret «last opp PDF-en og
+          se over». Å vise de tolv feltene før noen har lastet opp noe, er å be
+          brukeren om å gjøre arbeidet vi nettopp har lovet å gjøre for dem.
+
+          Så feltene er skjult til det finnes noe å fylle dem med. To ting
+          åpner dem: en PDF som er lest, eller knappen for å fylle inn selv.
+          Den andre veien er ikke en nødløsning — en kontantutgift uten
+          kvittering skal føres uten omveier — men den er den mindre vanlige,
+          og står deretter.
         */}
         <div class="dropzone" id="dropzone">
           <input
@@ -72,86 +83,99 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         <p class="reading" id="doc-reading" hidden>Leser bilaget …</p>
         <ul class="doc-warnings" id="doc-warnings" hidden></ul>
 
-        <div class="direction" role="group" aria-label="Retning">
-          <label>
-            <input type="radio" name="direction" value="inn" checked />
-            <span>Penger inn</span>
-          </label>
-          <label>
-            <input type="radio" name="direction" value="ut" />
-            <span>Penger ut</span>
-          </label>
-        </div>
+        <p class="manual" id="manual-row">
+          <button type="button" class="btn-link" id="manual-entry">
+            Ingen PDF? Fyll inn manuelt
+          </button>
+        </p>
 
-        <label class="field" data-field="type_code">
-          <span>Hva gjaldt det? <span class="tag" data-tag hidden></span></span>
-          <select name="type_code" id="type-select" required></select>
-          <span class="field-hint" id="type-note"></span>
-        </label>
+        <div class="fields" id="form-fields" hidden>
+          <div class="direction" role="group" aria-label="Retning">
+            <label>
+              <input type="radio" name="direction" value="inn" checked />
+              <span>Penger inn</span>
+            </label>
+            <label>
+              <input type="radio" name="direction" value="ut" />
+              <span>Penger ut</span>
+            </label>
+          </div>
 
-        <div class="field-row">
-          <label class="field" data-field="occurred_on">
-            <span>Dato <span class="tag" data-tag hidden></span></span>
-            <input type="date" name="occurred_on" id="date-input" required />
+          <label class="field" data-field="type_code">
+            <span>Hva gjaldt det? <span class="tag" data-tag hidden></span></span>
+            <select name="type_code" id="type-select" required></select>
+            <span class="field-hint" id="type-note"></span>
           </label>
-          <label class="field" data-field="gross_amount">
-            <span>Beløp inkl. mva <span class="tag" data-tag hidden></span></span>
+
+          <div class="field-row">
+            <label class="field" data-field="occurred_on">
+              <span>Dato <span class="tag" data-tag hidden></span></span>
+              <input type="date" name="occurred_on" id="date-input" required />
+            </label>
+            <label class="field" data-field="gross_amount">
+              <span>Beløp inkl. mva <span class="tag" data-tag hidden></span></span>
+              <input
+                type="number"
+                name="gross_amount"
+                step="0.01"
+                min="0.01"
+                inputmode="decimal"
+                placeholder="1250.00"
+                required
+              />
+            </label>
+          </div>
+
+          <label class="field" data-field="party_id">
+            <span>
+              Motpart <span class="muted">(valgfritt)</span>
+              <span class="tag" data-tag hidden></span>
+            </span>
+            <select name="party_id" id="party-select"></select>
+            {/* Egen linje for det bilaget sier, slik at den faste hjelpeteksten
+                med lenken til /parter blir stående. */}
+            <span class="field-hint" id="party-note" hidden></span>
+            <span class="field-hint">
+              Kunden eller leverandøren. <a href="/parter/">Registrer nye her</a>.
+            </span>
+          </label>
+
+          <label class="field" data-field="description">
+            <span>Beskrivelse <span class="tag" data-tag hidden></span></span>
             <input
-              type="number"
-              name="gross_amount"
-              step="0.01"
-              min="0.01"
-              inputmode="decimal"
-              placeholder="1250.00"
+              type="text"
+              name="description"
+              maxlength="255"
               required
+              placeholder="Faktura 104, konsulenttimer mars"
             />
+            <span class="field-hint">Dette blir teksten på bilaget i hovedboken.</span>
           </label>
+
+          <div class="field-row">
+            <label class="field" data-field="tax_code">
+              <span>Mva-kode <span class="tag" data-tag hidden></span></span>
+              <select name="tax_code" id="tax-select"></select>
+              <span class="field-hint">Foreslått ut fra typen. Endre hvis fakturaen sier noe annet.</span>
+            </label>
+            <label class="field">
+              <span>Betalt via</span>
+              <select name="payment_method">
+                <option value="bank">Bankkonto</option>
+                <option value="kontant">Kontant</option>
+              </select>
+            </label>
+          </div>
+
+          <button class="btn btn-primary btn-block" type="submit" id="entry-submit">
+            Registrer betaling
+          </button>
+          <p class="cancel-edit" id="cancel-edit" hidden>
+            <button type="button" class="btn-link" id="cancel-edit-button">
+              Avbryt redigering
+            </button>
+          </p>
         </div>
-
-        <label class="field" data-field="party_id">
-          <span>
-            Motpart <span class="muted">(valgfritt)</span>
-            <span class="tag" data-tag hidden></span>
-          </span>
-          <select name="party_id" id="party-select"></select>
-          {/* Egen linje for det bilaget sier, slik at den faste hjelpeteksten
-              med lenken til /parter blir stående. */}
-          <span class="field-hint" id="party-note" hidden></span>
-          <span class="field-hint">
-            Kunden eller leverandøren. <a href="/parter/">Registrer nye her</a>.
-          </span>
-        </label>
-
-        <label class="field" data-field="description">
-          <span>Beskrivelse <span class="tag" data-tag hidden></span></span>
-          <input
-            type="text"
-            name="description"
-            maxlength="255"
-            required
-            placeholder="Faktura 104, konsulenttimer mars"
-          />
-          <span class="field-hint">Dette blir teksten på bilaget i hovedboken.</span>
-        </label>
-
-        <div class="field-row">
-          <label class="field" data-field="tax_code">
-            <span>Mva-kode <span class="tag" data-tag hidden></span></span>
-            <select name="tax_code" id="tax-select"></select>
-            <span class="field-hint">Foreslått ut fra typen. Endre hvis fakturaen sier noe annet.</span>
-          </label>
-          <label class="field">
-            <span>Betalt via</span>
-            <select name="payment_method">
-              <option value="bank">Bankkonto</option>
-              <option value="kontant">Kontant</option>
-            </select>
-          </label>
-        </div>
-
-        <button class="btn btn-primary btn-block" type="submit" id="entry-submit">
-          Registrer betaling
-        </button>
       </form>
     </div>
 
@@ -163,21 +187,91 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     </div>
 
     <!-- ---------------------------------------------------------------- -->
+    <!-- Oversikt                                                          -->
+    <!-- ---------------------------------------------------------------- -->
+    {/*
+      Hva som hører hjemme ved siden av skjemaet.
+
+      Ikke en gjentakelse av forsiden. Det som er verdt å vite mens du fører,
+      er ikke det samme som det som er verdt å vite når du logger inn: her er
+      det saldoen føringen din er i ferd med å endre, avgiften som bygger seg
+      opp, og — den eneste som ber om noe — føringene som mangler bilag.
+      Dokumentasjonskravet i bokføringsloven § 10 er det letteste å bryte ved
+      et uhell, fordi ingenting går galt før noen spør.
+    */}
+    <aside class="side">
+      <div class="card">
+        <h2 class="card-title">Oversikt</h2>
+        <p class="card-hint" id="side-year">Henter tall …</p>
+
+        <dl class="figures">
+          <div class="figure figure-lead">
+            <dt>Kasse og bank</dt>
+            <dd id="fig-cash">-</dd>
+          </div>
+          <div class="figure">
+            <dt>Inn</dt>
+            <dd class="amount-in" id="fig-in">-</dd>
+          </div>
+          <div class="figure">
+            <dt>Ut</dt>
+            <dd class="amount-out" id="fig-out">-</dd>
+          </div>
+          <div class="figure">
+            <dt>Netto</dt>
+            <dd id="fig-net">-</dd>
+          </div>
+          <div class="figure">
+            <dt>Mva <span class="muted" id="fig-vat-note"></span></dt>
+            <dd id="fig-vat">-</dd>
+          </div>
+        </dl>
+
+        <p class="side-flag" id="missing-docs" hidden></p>
+
+        {/* Not a disclaimer. It explains why there is no delete button, and
+            which of the two buttons that leaves does what. Folded away because
+            it answers a question you only ask once. */}
+        <details class="side-info">
+          <summary>Hvorfor kan ingenting slettes?</summary>
+          <p>
+            En betaling bokføres med en gang og kan ikke endres eller slettes, slik
+            bokføringsloven krever.
+          </p>
+          <p>
+            <strong>Rediger</strong> gjør derfor to ting når du lagrer: motposterer den
+            opprinnelige føringen og legger inn den rettede. Alle tre bilagene blir stående i
+            regnskapet, men registeret viser dem som én linje — den som gjelder nå. Trekanten
+            foran datoen henter fram de to eldre.
+          </p>
+          <p>
+            <strong>Reverser</strong> er for betalinger som ikke skulle vært ført i det hele
+            tatt.
+          </p>
+        </details>
+      </div>
+    </aside>
+
+    <!-- ---------------------------------------------------------------- -->
     <!-- Register                                                          -->
     <!-- ---------------------------------------------------------------- -->
-    <div class="register">
+    {/*
+      Fem kolonner, ikke ni.
+
+      Motpart, type, konto, netto, mva og mva-kode sto alle i tabellen før, og
+      de gjorde hver linje til noe man måtte lese framfor å skumme. De står
+      fortsatt der, men bak «Vis info» på den linjen de gjelder: det er
+      opplysninger du slår opp om én føring, ikke noe du sammenligner nedover.
+    */}
+    <section class="register">
       <div class="card">
         <div class="table-scroll">
-          <table class="data">
+          <table class="data register-table">
             <thead>
               <tr>
                 <th>Dato</th>
                 <th>Bilag</th>
                 <th>Beskrivelse</th>
-                <th>Motpart</th>
-                <th>Type</th>
-                <th class="num">Netto</th>
-                <th class="num">Mva</th>
                 <th class="num">Beløp</th>
                 <th>Bilagsfil</th>
                 <th></th>
@@ -190,14 +284,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           Ingen føringer ennå. Registrer den første betalingen i skjemaet.
         </p>
       </div>
-
-      {/* Not a disclaimer. It explains why there is no delete button. */}
-      <aside class="note" role="note">
-        <strong>Ført er ført.</strong> En betaling bokføres med en gang og kan ikke endres eller
-        slettes, slik bokføringsloven krever. En feil rettes med en motpostering, som legger seg
-        ved siden av den opprinnelige føringen.
-      </aside>
-    </div>
+    </section>
   </div>
 </BaseLayout>
 
@@ -230,25 +317,98 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     clip: rect(0 0 0 0);
     white-space: nowrap;
   }
+  /* Skjemaet til venstre, oversikten til høyre, registeret i full bredde under
+     begge. Registeret er det bredeste på siden og det eneste som vokser, så
+     det er det som skal ha hele bredden; skjemaet trengte den aldri, og fikk
+     tolv felter presset ned i tjuefire rem så lenge de sto side om side. */
   .split {
     display: grid;
     gap: 1.5rem;
     align-items: start;
-    grid-template-columns: minmax(20rem, 24rem) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(16rem, 21rem);
+  }
+  .register {
+    grid-column: 1 / -1;
   }
   @media (max-width: 62rem) {
     .split {
       grid-template-columns: minmax(0, 1fr);
     }
-  }
-  .form-card {
-    position: sticky;
-    top: 5rem;
-  }
-  @media (max-width: 62rem) {
-    .form-card {
-      position: static;
+    .register {
+      grid-column: auto;
     }
+  }
+
+  /* --- Oversikten ---------------------------------------------------------- */
+
+  .figures {
+    margin: 1rem 0 0;
+    display: grid;
+    gap: 0.55rem;
+  }
+  .figure {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+  .figure dt {
+    font-size: 0.88rem;
+    color: var(--muted);
+  }
+  .figure dd {
+    margin: 0;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  /* Saldoen er den ene av tallene du faktisk kjenner igjen utenfra, så den
+     står øverst og i en annen størrelse enn resten. */
+  .figure-lead {
+    display: block;
+    padding-bottom: 0.6rem;
+    margin-bottom: 0.25rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .figure-lead dt {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
+  .figure-lead dd {
+    margin-top: 0.2rem;
+    font-size: 1.45rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  .side-flag {
+    margin: 1rem 0 0;
+    padding: 0.6rem 0.75rem;
+    background: var(--gold-soft);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--gold);
+    border-radius: var(--radius-small);
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+  .side-info {
+    margin-top: 1rem;
+    border-top: 1px solid var(--border);
+    padding-top: 0.85rem;
+    font-size: 0.86rem;
+    line-height: 1.55;
+  }
+  .side-info summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .side-info summary:hover {
+    color: var(--fg);
+  }
+  .side-info p {
+    margin: 0.7rem 0 0;
+    color: var(--muted);
   }
 
   /* --- Opplasting ---------------------------------------------------------- */
@@ -329,6 +489,37 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     line-height: 1.5;
   }
 
+  /* Samme form som varslene fra bilaget: en ramme rundt noe du bør lese før du
+     trykker, ikke en feilmelding. */
+  .editing-note {
+    margin: 0 0 1rem;
+    padding: 0.7rem 0.85rem;
+    background: var(--gold-soft);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--gold);
+    border-radius: var(--radius-small);
+    font-size: 0.86rem;
+    line-height: 1.5;
+  }
+
+  .cancel-edit {
+    margin: 0.75rem 0 0;
+    text-align: center;
+    font-size: 0.88rem;
+  }
+
+  /* Den andre veien ut av startskjermen. Sentrert og dempet, fordi den er den
+     mindre vanlige av de to og ikke skal konkurrere med opplastingen. */
+  .manual {
+    margin: 0;
+    text-align: center;
+    font-size: 0.88rem;
+  }
+
+  .fields {
+    margin-top: 1.25rem;
+  }
+
   /* --- Felt som er fylt ut for deg ------------------------------------------- */
 
   .tag {
@@ -393,9 +584,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
-  .row-actions {
-    white-space: nowrap;
-  }
+  /* Radene i registeret bygges i JavaScript, og et element laget med
+     createElement får aldri attributtet Astro avgrenser stiler med. Alt som
+     gjelder en rad står derfor i BaseLayout, sammen med resten av
+     `table.data`. */
 </style>
 
 <script>
@@ -403,10 +595,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     ApiError,
     documentUrl,
     getCatalogue,
+    getSummary,
     interpretDocument,
     listCashFlow,
-    listCompanies,
     listParties,
+    editCashFlow,
     recordCashFlow,
     reverseCashFlow,
     uploadDocument,
@@ -415,18 +608,23 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     type Catalogue,
     type Company,
     type Direction,
+    type FieldSource,
+    type AttachmentInfo,
     type InvoiceSuggestion,
     type Party,
+    type Summary,
   } from '../lib/api';
+  import { currentCompany, loadCompanies, mountCompanyPicker } from '../lib/company';
+  import {
+    foldCorrections,
+    foldNote,
+    hasDocument,
+    vouchersIn,
+    type RegisterRow,
+  } from '../lib/corrections';
   import { el, setStatus, show } from '../lib/dom';
   import { fileSize, isoDate, kroner, todayIso } from '../lib/format';
-  import {
-    can,
-    loadSession,
-    redirectToLogin,
-    rememberCompany,
-    rememberedCompany,
-  } from '../lib/session';
+  import { can, loadSession, redirectToLogin } from '../lib/session';
 
   const pageStatus = el<HTMLParagraphElement>('#page-status');
   const formStatus = el<HTMLParagraphElement>('#form-status');
@@ -438,6 +636,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   const partySelect = el<HTMLSelectElement>('#party-select');
   const typeNote = el<HTMLSpanElement>('#type-note');
   const form = el<HTMLFormElement>('#entry-form');
+  const formCard = el<HTMLDivElement>('#form-card');
+  const formTitle = el<HTMLHeadingElement>('#form-title');
+  const editingNote = el<HTMLParagraphElement>('#editing-note');
+  const cancelEdit = el<HTMLParagraphElement>('#cancel-edit');
   const submit = el<HTMLButtonElement>('#entry-submit');
   const fileInput = el<HTMLInputElement>('#file-input');
   const dropzone = el<HTMLDivElement>('#dropzone');
@@ -445,6 +647,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   const fileName = el<HTMLSpanElement>('#file-name');
   const reading = el<HTMLParagraphElement>('#doc-reading');
   const warningList = el<HTMLUListElement>('#doc-warnings');
+  const formFields = el<HTMLDivElement>('#form-fields');
+  const manualRow = el<HTMLParagraphElement>('#manual-row');
   const body = el<HTMLTableSectionElement>('#entries');
 
   let catalogue: Catalogue;
@@ -558,9 +762,39 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     warningList.hidden = true;
   }
 
+  /**
+   * What each kind of proposal is called next to the field it filled.
+   *
+   * Three different degrees of confidence, and the user is owed the
+   * difference. "Fra bilaget" means the words are printed on the page and we
+   * read them. "Foreslått av KI" means Løynd answered and the user decides
+   * whether it answered well. "Regnet om" means neither: the document gave a
+   * total in another currency and we multiplied it by a published Norges Bank
+   * rate, which is the one proposal here that can be checked against a table.
+   */
+  const SOURCE_LABEL: Record<FieldSource, string> = {
+    dokument: 'Fra bilaget',
+    ki: 'Foreslått av KI',
+    beregnet: 'Regnet om',
+  };
+
   /** Put a proposal into the form, and say which parts of it came from where. */
   function applySuggestion(suggestion: InvoiceSuggestion): void {
     clearMarks();
+
+    /**
+     * Mark one field with where its value came from.
+     *
+     * "Fra bilaget" means the words are printed on the page and we read them.
+     * "Foreslått av KI" means Løynd answered, and the user is the one who
+     * decides whether it answered well. Nothing is marked when nothing was
+     * proposed, so a field the user must fill in looks like an empty field.
+     */
+    const mark = (name: string): void => {
+      const source = suggestion.sources[name];
+      if (source === undefined) return;
+      markField(name, SOURCE_LABEL[source], source);
+    };
 
     const direction = form.querySelector<HTMLInputElement>(
       `input[name="direction"][value="${suggestion.direction}"]`,
@@ -574,34 +808,34 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     if (suggestion.type_code !== null) {
       typeSelect.value = suggestion.type_code;
       applyType();
-      markField(
-        'type_code',
-        suggestion.type_source === 'ki' ? 'Foreslått av KI' : 'Fra bilaget',
-        suggestion.type_source ?? undefined,
-      );
+      mark('type_code');
     }
     // After applyType, which sets the type's own default.
     if (suggestion.tax_code !== null) {
       taxSelect.value = suggestion.tax_code;
-      markField('tax_code', 'Fra bilaget');
+      mark('tax_code');
     }
     if (suggestion.occurred_on !== null) {
       el<HTMLInputElement>('#date-input').value = suggestion.occurred_on;
-      markField('occurred_on', 'Fra bilaget');
+      mark('occurred_on');
     }
+    // Null when the bilag is in a foreign currency: the ledger is in kroner, and
+    // the total on the document is not that number. It is in the warnings below
+    // instead, where it belongs — next to the sentence saying why the field is
+    // the one thing the user has to look up.
     if (suggestion.gross_amount !== null) {
       const amount = form.querySelector<HTMLInputElement>('input[name="gross_amount"]');
       if (amount !== null) amount.value = suggestion.gross_amount;
-      markField('gross_amount', 'Fra bilaget');
+      mark('gross_amount');
     }
     if (suggestion.description !== null) {
       const description = form.querySelector<HTMLInputElement>('input[name="description"]');
       if (description !== null) description.value = suggestion.description;
-      markField('description', 'Fra bilaget');
+      mark('description');
     }
     if (suggestion.party_id !== null) {
       partySelect.value = String(suggestion.party_id);
-      markField('party_id', 'Fra bilaget');
+      mark('party_id');
     } else if (suggestion.counterparty_name !== null) {
       // Named on the invoice but not in the register. Saying so is more use than
       // an empty field, since the fix is one page away.
@@ -611,12 +845,36 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       partyNote.hidden = false;
     }
 
-    for (const warning of suggestion.warnings) {
+    // Said out loud, because the alternative is a form that came back half
+    // empty and no way to tell whether that was the model's considered opinion
+    // or the model never having been asked. Only mentioned where it could have
+    // made a difference: a document the parser read in full needs no excuse.
+    const notes = [...suggestion.warnings];
+    if (!suggestion.ki_used && suggestion.type_code === null) {
+      notes.push(
+        'KI er ikke brukt på dette bilaget, så feltene er fylt ut av vår egen lesing av ' +
+          'PDF-en. Er KI slått av for selskapet, kan du slå det på igjen under KI.',
+      );
+    }
+    for (const warning of notes) {
       const item = document.createElement('li');
       item.textContent = warning;
       warningList.append(item);
     }
-    warningList.hidden = suggestion.warnings.length === 0;
+    warningList.hidden = notes.length === 0;
+  }
+
+  /**
+   * Show the entry fields, once and for good.
+   *
+   * One-way on purpose. Removing an uploaded file after the form has been
+   * filled in should not sweep away what the user has since typed into it, and
+   * a card that folds itself back up while someone is working in it is worse
+   * than one field too many.
+   */
+  function revealFields(): void {
+    formFields.hidden = false;
+    manualRow.hidden = true;
   }
 
   function showFile(file: File | null): void {
@@ -633,7 +891,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     setStatus(formStatus, '');
     try {
       applySuggestion(await interpretDocument(company.id, file));
+      revealFields();
     } catch (error: unknown) {
+      // The fields open even so. A reading that failed is precisely the case
+      // where the user has to fill them in, and leaving them shut would answer
+      // "we could not read it" with nowhere to go.
+      revealFields();
       // The upload itself is still fine, and only the reading failed, and the form
       // is filled in by hand exactly as it was before this feature existed.
       setStatus(
@@ -668,6 +931,25 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
   el<HTMLButtonElement>('#file-clear').addEventListener('click', clearFile);
 
+  el<HTMLButtonElement>('#cancel-edit-button').addEventListener('click', () => {
+    endEdit();
+    form.reset();
+    clearFile();
+    clearMarks();
+    el<HTMLInputElement>('#date-input').value = todayIso();
+    fillTypes();
+    fillParties();
+    setStatus(formStatus, '');
+  });
+
+  el<HTMLButtonElement>('#manual-entry').addEventListener('click', () => {
+    revealFields();
+    // Straight to the first thing there is to decide. Without this the fields
+    // appear below the fold on a laptop and the button looks like it did
+    // nothing at all.
+    typeSelect.focus();
+  });
+
   for (const event of ['dragenter', 'dragover'] as const) {
     dropzone.addEventListener(event, (dragEvent) => {
       dragEvent.preventDefault();
@@ -693,60 +975,257 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
   // --- Registeret -------------------------------------------------------------
 
-  function renderEntries(entries: CashFlowEntry[]): void {
-    body.replaceChildren();
-    for (const entry of entries) {
-      const row = document.createElement('tr');
-      const isReversed = entry.reversed_by_id !== null;
-      row.dataset.reversed = String(isReversed);
+  /** Kolonner i tabellen, som en detaljlinje må spenne over. */
+  const COLUMNS = 6;
 
-      const documents = document.createElement('td');
-      for (const attachment of entry.attachments) {
-        const link = document.createElement('a');
-        link.href = documentUrl(company.id, attachment.id);
-        link.className = 'badge';
-        link.textContent = `PDF ${fileSize(attachment.byte_size)}`;
-        link.title = attachment.filename;
-        documents.append(link, document.createTextNode(' '));
-      }
-      if (entry.attachments.length === 0 && mayWrite && !isReversed) {
-        documents.append(uploadControl(entry));
-      }
+  /** En etikett og en verdi i detaljlinjen. */
+  function pair(term: string, value: string): HTMLDivElement {
+    const wrap = document.createElement('div');
+    const dt = document.createElement('dt');
+    dt.textContent = term;
+    const dd = document.createElement('dd');
+    dd.textContent = value;
+    wrap.append(dt, dd);
+    return wrap;
+  }
 
-      const actions = document.createElement('td');
-      actions.className = 'row-actions';
-      if (mayWrite && !isReversed && !entry.is_reversal) {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'btn-link';
-        button.textContent = 'Reverser';
-        button.addEventListener('click', () => {
-          void undo(entry);
-        });
-        actions.append(button);
-      } else if (entry.is_reversal) {
-        actions.textContent = 'Motpostering';
-        actions.className = 'row-actions muted';
-      }
+  /**
+   * Feltene som mistet kolonnen sin, som en linje under føringen de gjelder.
+   *
+   * Motpart, type, konto, netto, mva og mva-kode er ting man slår opp om én
+   * føring. De var aldri noe man sammenlignet nedover en kolonne, og ni
+   * kolonner gjorde registeret uleselig for det ene tilfellet der noen lurte
+   * på hvilken mva-kode som ble brukt.
+   */
+  function detailRow(entry: CashFlowEntry): HTMLTableRowElement {
+    const row = document.createElement('tr');
+    row.className = 'detail-row';
+    row.hidden = true;
 
-      row.append(
-        cell(isoDate(entry.occurred_on)),
-        cell(entry.voucher_no),
-        cell(entry.description),
-        cell(entry.party_name ?? '-'),
-        cell(entry.type_label ?? '-'),
-        cell(kroner(entry.net_amount), 'num'),
-        cell(entry.vat_amount === '0.00' ? '-' : kroner(entry.vat_amount), 'num'),
-        cell(
-          kroner(entry.gross_amount),
-          `num ${entry.direction === 'inn' ? 'amount-in' : 'amount-out'}`,
-        ),
-        documents,
-        actions,
-      );
-      body.append(row);
+    const holder = document.createElement('td');
+    holder.colSpan = COLUMNS;
+
+    const list = document.createElement('dl');
+    list.className = 'detail';
+    list.append(
+      pair('Motpart', entry.party_name ?? 'ingen'),
+      pair('Type', entry.type_label ?? '-'),
+      pair('Konto', `${entry.account_number} ${entry.account_description}`),
+      pair('Netto', kroner(entry.net_amount)),
+      pair('Mva', entry.vat_amount === '0.00' ? 'ingen' : kroner(entry.vat_amount)),
+      pair('Mva-kode', entry.tax_code ?? '-'),
+      // 1900 er kontantkassen og 1920 bankkontoen.
+      pair('Betalt via', entry.payment_account === '1900' ? 'Kontant' : 'Bankkonto'),
+    );
+
+    holder.append(list);
+    row.append(holder);
+    return row;
+  }
+
+  /** Én føring: selve linjen, detaljlinjen under, og en måte å lukke begge på. */
+  interface RenderedEntry {
+    /** Linjen og detaljlinjen, i den rekkefølgen de skal settes inn. */
+    rows: HTMLTableRowElement[];
+    /** Datocellen, som en rettet føring bytter ut med en knapp. */
+    when: HTMLTableCellElement;
+    /** Beskrivelsescellen, som en rettet føring henger en merknad på. */
+    what: HTMLTableCellElement;
+    /** Vis eller skjul linjen som medlem av en sammenslått retting. */
+    setVisible(visible: boolean): void;
+  }
+
+  /**
+   * @param inGroup  Skjult under en sammenslått rad framfor å stå for seg selv.
+   * @param bilag    Bilagene raden skal vise. For en sammenslått rad er det
+   *                 gruppens, ikke bare den synlige føringens: arkivet er
+   *                 append-only, så en retting kan ikke flytte PDF-en over på
+   *                 den nye føringen, og den dokumenterer kjøpet uansett.
+   */
+  function renderEntry(
+    entry: CashFlowEntry,
+    inGroup: boolean,
+    bilag: AttachmentInfo[] = entry.attachments,
+  ): RenderedEntry {
+    const row = document.createElement('tr');
+    const isReversed = entry.reversed_by_id !== null;
+    row.dataset.reversed = String(isReversed);
+    if (inGroup) {
+      row.dataset.member = 'true';
+      row.hidden = true;
     }
-    show(el('#entries-empty'), entries.length === 0);
+
+    const detail = detailRow(entry);
+
+    const documents = document.createElement('td');
+    for (const attachment of bilag) {
+      const link = document.createElement('a');
+      link.href = documentUrl(company.id, attachment.id);
+      link.className = 'badge';
+      link.textContent = `PDF ${fileSize(attachment.byte_size)}`;
+      link.title = attachment.filename;
+      documents.append(link, document.createTextNode(' '));
+    }
+    if (bilag.length === 0 && mayWrite && !isReversed) {
+      documents.append(uploadControl(entry));
+    }
+
+    const actions = document.createElement('td');
+    actions.className = 'row-actions';
+
+    const info = document.createElement('button');
+    info.type = 'button';
+    info.className = 'btn-link';
+    info.textContent = 'Vis info';
+    info.setAttribute('aria-expanded', 'false');
+    const setDetail = (open: boolean): void => {
+      detail.hidden = !open;
+      info.textContent = open ? 'Skjul info' : 'Vis info';
+      info.setAttribute('aria-expanded', String(open));
+    };
+    info.addEventListener('click', () => {
+      setDetail(detail.hidden);
+    });
+    actions.append(info);
+
+    if (mayWrite && !isReversed && !entry.is_reversal) {
+      // "Rediger" first, because it is what someone who spotted a mistake is
+      // looking for. "Reverser" alone answered a question nobody asks: a
+      // wrong mva-kode is not a payment that should be undone, it is a
+      // payment that should be recorded correctly.
+      const fix = document.createElement('button');
+      fix.type = 'button';
+      fix.className = 'btn-link';
+      fix.textContent = 'Rediger';
+      fix.addEventListener('click', () => {
+        beginEdit(entry);
+      });
+
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn-link';
+      button.textContent = 'Reverser';
+      button.addEventListener('click', () => {
+        void undo(entry);
+      });
+      actions.append(fix, button);
+    }
+
+    const when = cell(isoDate(entry.occurred_on));
+    const what = cell(entry.description);
+    row.append(
+      when,
+      cell(entry.voucher_no),
+      what,
+      cell(
+        kroner(entry.gross_amount),
+        `num ${entry.direction === 'inn' ? 'amount-in' : 'amount-out'}`,
+      ),
+      documents,
+      actions,
+    );
+
+    return {
+      rows: [row, detail],
+      when,
+      what,
+      setVisible: (visible: boolean): void => {
+        row.hidden = !visible;
+        // En detaljlinje som ble stående åpen da gruppen ble lukket, ville
+        // dukke opp igjen alene neste gang gruppen åpnes.
+        if (!visible) setDetail(false);
+      },
+    };
+  }
+
+  /**
+   * En sammenslått rad: hendelsen som står, med bilagene den brukte opp under.
+   *
+   * Den synlige linjen er en ekte føring og ikke et sammendrag — den rettede
+   * ved en retting, den motposterte ved en ren reversering. Historikken er ett
+   * klikk unna og forsvinner ikke fra regnskapet; den slutter bare å ta plass i
+   * registeret på linje med betalinger som faktisk står ved lag.
+   */
+  function renderFolded(row: RegisterRow): HTMLTableRowElement[] {
+    const live = renderEntry(row.lead, false, vouchersIn(row).flatMap((e) => e.attachments));
+    const members = row.history.map((older) => renderEntry(older, true));
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'row-toggle';
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.textContent = isoDate(row.lead.occurred_on);
+    live.when.replaceChildren(toggle);
+
+    const note = foldNote(row);
+    if (note !== null) {
+      const line = document.createElement('span');
+      line.className = 'fold-note';
+      line.textContent = note;
+      live.what.append(line);
+    }
+
+    let open = false;
+    toggle.addEventListener('click', () => {
+      open = !open;
+      toggle.setAttribute('aria-expanded', String(open));
+      for (const member of members) member.setVisible(open);
+    });
+
+    return [...live.rows, ...members.flatMap((member) => member.rows)];
+  }
+
+  function renderEntries(rows: RegisterRow[]): void {
+    body.replaceChildren();
+    for (const row of rows) {
+      body.append(
+        ...(row.history.length === 0 ? renderEntry(row.lead, false).rows : renderFolded(row)),
+      );
+    }
+    show(el('#entries-empty'), rows.length === 0);
+  }
+
+  // --- Oversikten -------------------------------------------------------------
+
+  /** Tallene ved siden av skjemaet, og det ene av dem som ber om noe. */
+  function renderSummary(summary: Summary, rows: RegisterRow[]): void {
+    const count = summary.entry_count;
+    el('#side-year').textContent =
+      `${count} ${count === 1 ? 'føring' : 'føringer'} i ${summary.financial_year}`;
+
+    el('#fig-cash').textContent = kroner(summary.cash_position);
+    el('#fig-in').textContent = kroner(summary.total_in);
+    el('#fig-out').textContent = kroner(summary.total_out);
+
+    const net = el('#fig-net');
+    net.textContent = kroner(summary.net);
+    net.className = Number(summary.net) < 0 ? 'amount-out' : 'amount-in';
+
+    // Positivt betyr å betale. Et anslag fra registeret, ikke en mva-melding,
+    // og oversikten sier ikke noe annet enn det.
+    el('#fig-vat').textContent = kroner(summary.vat_position);
+    el('#fig-vat-note').textContent =
+      Number(summary.vat_position) >= 0 ? '(anslått å betale)' : '(anslått til gode)';
+
+    // Bokføringsloven § 10 krever at en føring er dokumentert. Ingenting går
+    // galt før noen spør, og derfor er dette det ene tallet her som er verdt å
+    // telle høyt.
+    //
+    // Telt over hendelser og ikke over bilag. En retting lager to nye bilag
+    // uten PDF på seg, og arkivet er append-only, så kvitteringen blir liggende
+    // på den føringen som ble motpostert. Telt per bilag ville hver retting
+    // meldt om manglende dokumentasjon for et kjøp som er dokumentert, og det
+    // ene tallet som skal bety noe ville blitt støy.
+    const missing = rows.filter(
+      (row) =>
+        !hasDocument(row) && !row.lead.is_reversal && row.lead.reversed_by_id === null,
+    ).length;
+    const flag = el('#missing-docs');
+    const what = missing === 1 ? 'Én føring mangler' : `${missing} føringer mangler`;
+    flag.textContent = mayWrite
+      ? `${what} bilag. Legg ved PDF-en i registeret under.`
+      : `${what} bilag.`;
+    flag.hidden = missing === 0;
   }
 
   /** A per-row "add a PDF" control, for a bilag that arrives after the entry. */
@@ -776,8 +1255,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
   async function undo(entry: CashFlowEntry): Promise<void> {
     const confirmed = window.confirm(
-      `Motposter bilag ${entry.voucher_no}? Den opprinnelige føringen blir stående, ` +
-        'og en motsatt føring legges til.',
+      `Betalingen på bilag ${entry.voucher_no} skjedde ikke, og skal ut av regnskapet?\n\n` +
+        'Den opprinnelige føringen blir stående og en motsatt føring legges ved siden av, ' +
+        'slik bokføringsloven krever. Skal betalingen bli stående, men med andre opplysninger, ' +
+        'bruk «Rediger» i stedet.',
     );
     if (!confirmed) return;
     try {
@@ -792,8 +1273,99 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     }
   }
 
+  /**
+   * The entry being edited, or null when the form is registering a new one.
+   *
+   * The form is one form in two modes rather than two forms. Every field, every
+   * proposal and every validation rule is identical between "register this
+   * payment" and "register this payment correctly this time"; only the button
+   * at the bottom and where it sends differ.
+   */
+  let editing: CashFlowEntry | null = null;
+
+  /**
+   * Open a posted entry for editing.
+   *
+   * Nothing happens to the books here. The old flow reversed on click, which
+   * meant opening the editor and changing your mind left a reversed entry
+   * behind — a destructive read. Now the reversal and the corrected posting
+   * happen together, on save, in one request (`editCashFlow`), so backing out
+   * costs nothing and a dropped connection cannot leave a reversal with no
+   * replacement.
+   */
+  function beginEdit(entry: CashFlowEntry): void {
+    editing = entry;
+    fillFromEntry(entry);
+    editingNote.textContent =
+      `Du redigerer bilag ${entry.voucher_no}. Når du lagrer, blir den opprinnelige ` +
+      'føringen motpostert og den rettede lagt inn, slik bokføringsloven krever. ' +
+      'Regnskapet viser da alle tre.';
+    editingNote.hidden = false;
+    submit.textContent = 'Lagre endringer';
+    cancelEdit.hidden = false;
+    formTitle.textContent = `Rediger bilag ${entry.voucher_no}`;
+    setStatus(formStatus, '');
+    formCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  /** Back to registering a new payment, leaving the edited entry as it was. */
+  function endEdit(): void {
+    editing = null;
+    editingNote.hidden = true;
+    submit.textContent = 'Registrer betaling';
+    cancelEdit.hidden = true;
+    formTitle.textContent = 'Registrer en betaling';
+  }
+
+  /** Put a posted entry back into the form, ready to be corrected and re-posted. */
+  function fillFromEntry(entry: CashFlowEntry): void {
+    clearMarks();
+    revealFields();
+    warningList.replaceChildren();
+    warningList.hidden = true;
+    // A new posting needs its own bilag. The old one keeps the PDF it had, and
+    // the archive has no delete path, so re-attaching is the user's choice
+    // rather than something done silently on their behalf.
+    clearFile();
+
+    const direction = form.querySelector<HTMLInputElement>(
+      `input[name="direction"][value="${entry.direction}"]`,
+    );
+    if (direction !== null) direction.checked = true;
+    // Both lists depend on the direction, so they are rebuilt before anything
+    // is selected in them.
+    fillTypes();
+    fillParties();
+
+    if (entry.type_code !== null) {
+      typeSelect.value = entry.type_code;
+      // Sets the type's own default mva-kode, which the line below overrides
+      // with what was actually posted.
+      applyType();
+    }
+    if (entry.tax_code !== null) taxSelect.value = entry.tax_code;
+    el<HTMLInputElement>('#date-input').value = entry.occurred_on;
+
+    const amount = form.querySelector<HTMLInputElement>('input[name="gross_amount"]');
+    if (amount !== null) amount.value = entry.gross_amount;
+    const description = form.querySelector<HTMLInputElement>('input[name="description"]');
+    if (description !== null) description.value = entry.description;
+    partySelect.value = entry.party_id === null ? '' : String(entry.party_id);
+
+    const method = form.querySelector<HTMLSelectElement>('select[name="payment_method"]');
+    // 1900 is the cash account and 1920 the bank one; anything else is a
+    // company with a kontoplan of its own, and bank is the safer assumption.
+    if (method !== null) method.value = entry.payment_account === '1900' ? 'kontant' : 'bank';
+  }
+
   async function refresh(): Promise<void> {
-    renderEntries(await listCashFlow(company.id, 200));
+    const [entries, summary] = await Promise.all([
+      listCashFlow(company.id, 200),
+      getSummary(company.id),
+    ]);
+    const rows = foldCorrections(entries);
+    renderEntries(rows);
+    renderSummary(summary, rows);
   }
 
   form.addEventListener('change', (event) => {
@@ -826,15 +1398,24 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
     submit.disabled = true;
     setStatus(formStatus, '');
-    void recordCashFlow(company.id, {
+    // Captured before the request, because the handler below ends edit mode.
+    const edited = editing;
+    const values = {
       type_code: String(data.get('type_code') ?? ''),
       occurred_on: String(data.get('occurred_on') ?? ''),
       gross_amount: String(data.get('gross_amount') ?? ''),
       description: String(data.get('description') ?? '').trim(),
       tax_code: String(data.get('tax_code') ?? ''),
-      payment_method: data.get('payment_method') === 'kontant' ? 'kontant' : 'bank',
+      payment_method: (data.get('payment_method') === 'kontant' ? 'kontant' : 'bank') as
+        | 'bank'
+        | 'kontant',
       party_id: data.get('party_id') ? Number(data.get('party_id')) : null,
-    })
+    };
+    const saving =
+      edited === null
+        ? recordCashFlow(company.id, values)
+        : editCashFlow(company.id, edited.id, values);
+    void saving
       .then(async (entry) => {
         // The entry is posted whether or not the document sticks; a failed
         // upload must therefore not read as a failed registration.
@@ -850,7 +1431,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             );
           }
         }
-        setStatus(formStatus, `Bilag ${entry.voucher_no} er ført.`, 'ok');
+        setStatus(
+          formStatus,
+          edited === null
+            ? `Bilag ${entry.voucher_no} er ført.`
+            : `Bilag ${edited.voucher_no} er rettet. Motposteringen og den rettede føringen ` +
+              `(${entry.voucher_no}) står i registeret.`,
+          'ok',
+        );
+        endEdit();
         form.reset();
         clearFile();
         el<HTMLInputElement>('#date-input').value = todayIso();
@@ -861,7 +1450,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       .catch((error: unknown) => {
         setStatus(
           formStatus,
-          error instanceof ApiError ? error.message : 'Vi fikk ikke ført betalingen.',
+          error instanceof ApiError
+            ? error.message
+            : edited === null
+              ? 'Vi fikk ikke ført betalingen.'
+              : 'Vi fikk ikke lagret endringen. Den opprinnelige føringen står som før.',
         );
       })
       .finally(() => {
@@ -875,7 +1468,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       return;
     }
     try {
-      const [companies, loaded] = await Promise.all([listCompanies(), getCatalogue()]);
+      const [companies, loaded] = await Promise.all([loadCompanies(), getCatalogue()]);
       catalogue = loaded;
 
       if (companies.length === 0) {
@@ -884,23 +1477,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         return;
       }
 
-      const remembered = rememberedCompany();
-      const current = companies.find((c) => c.id === remembered) ?? companies[0];
+      const current = currentCompany(companies);
       if (current === undefined) return;
       company = current;
-      rememberCompany(company.id);
-
-      picker.replaceChildren();
-      for (const item of companies) {
-        const node = option(String(item.id), item.name);
-        node.selected = item.id === company.id;
-        picker.append(node);
-      }
-      picker.hidden = companies.length < 2;
-      picker.addEventListener('change', () => {
-        rememberCompany(Number(picker.value));
-        window.location.reload();
-      });
+      mountCompanyPicker(picker, companies, company);
 
       el('#company-name').textContent = company.name;
       mayWrite = can(session, company.organization_id, 'ledger:write');

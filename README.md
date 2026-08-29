@@ -29,7 +29,7 @@ what it does.
 
 | Feature | Notes | Status |
 | --- | --- | --- |
-| Accounts and organizations | Email/password or Google sign-in; colleagues invited into an organization with roles; a subscription will attach to the organization, never to a person | Working |
+| Accounts and organizations | Email/password or Google sign-in; colleagues invited into an organization with roles; one account keeps books for as many companies as it likes, switched from any page, so a regnskapsfører holds one company per client; a subscription will attach to the organization, never to a person | Working |
 | Cash-flow register | Money in and out with a category that decides account and VAT code, gross-to-net split, immediate posting, corrections by reversal | Working |
 | Fakturering | Salgsdokument checked against bokføringsforskriften § 5-1 before it is issued, with each finding naming its paragraph; gapless machine numbering (a draft has no number, so discarding one leaves no hole); posted and archived on issue; corrected only by kreditnota | Working |
 | E-faktura (EHF / Peppol BIS Billing 3.0) | Generated and frozen at issue, ahead of the 2027-01-01 requirement in lov 19. juni 2026 nr. 39. **Transmission is not built** — that needs a Peppol access point; see [docs/integrations/efaktura.md](docs/integrations/efaktura.md) | Partly |
@@ -43,7 +43,7 @@ what it does.
 | SAF-T Financial export | Required by law (bokføringsforskriften) for electronic bookkeeping | Planned |
 | Skattemelding + næringsspesifikasjon | Validate and submit via Skatteetaten's sluttbrukersystem APIs | Planned |
 | Årsregnskap to Regnskapsregisteret | Machine filing via Brønnøysundregistrene's Altinn 3 apps (system fills, user signs with ID-porten) | Planned |
-| Maskinporten + ID-porten auth | The JWT grant, the ID-porten authorization-code flow, the Altinn token exchange and the Altinn 3 instance lifecycle are implemented and tested against stubs. Maskinporten covers retrieval APIs; **submission legally requires an ID-porten login** (Skatteetaten policy, 2026), which is why `submit` takes a person's token as a required argument. Unused until a client is registered with Digdir — see [docs/integrations/maskinporten.md](docs/integrations/maskinporten.md) | Working, not provisioned |
+| Maskinporten + ID-porten auth | The JWT grant, the ID-porten authorization-code flow, the Altinn token exchange and the Altinn 3 instance lifecycle are implemented and tested against stubs. Maskinporten covers retrieval APIs; **submission legally requires an ID-porten login** (Skatteetaten policy, 2026), which is why `submit` takes a person's token as a required argument. The first thing that login buys before any submission: after logging in, the company-setup form lists the companies Altinn says you may report for, so a regnskapsfører picks clients from a list instead of typing an organisasjonsnummer per client. Unused until a client is registered with Digdir — see [docs/integrations/maskinporten.md](docs/integrations/maskinporten.md) | Working, not provisioned |
 
 ## Tech stack
 

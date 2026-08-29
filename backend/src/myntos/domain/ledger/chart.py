@@ -87,6 +87,22 @@ class SeedTaxCode:
     description: str
     standard_tax_code: str
     rate: Decimal
+    # True for innførsel and for services bought abroad, where the VAT is not
+    # *in* the amount on the invoice but computed on top of it.
+    #
+    # The arithmetic is genuinely different, which is why this is a flag and not
+    # a rate. An ordinary 25 % purchase of 27 108,49 kroner is 21 686,79 of cost
+    # and 5 421,70 of VAT carved out of the total the supplier charged. An
+    # import of the same value is 27 108,49 of cost — the foreign seller charged
+    # no Norwegian VAT — plus 6 777,12 the buyer both owes and (when deductible)
+    # reclaims, posted to 2700 and 2710 so they cancel. Treating the second as
+    # the first understates the cost by a fifth and invents a deduction nobody
+    # was charged.
+    reverse_charge: bool = False
+    # Whether the buyer may reclaim what they just charged themselves. False for
+    # imports serving something outside the VAT area, where the amount is owed
+    # and not recovered, so only the 2700 side is posted.
+    deductible: bool = True
 
     @property
     def is_reportable(self) -> bool:
@@ -97,6 +113,11 @@ class SeedTaxCode:
 # NS 4102-style numbering, trimmed to what the cash-flow register uses.
 STANDARD_ACCOUNTS: tuple[SeedAccount, ...] = (
     # --- Balance sheet ---
+    # Anskaffelser that are not costs. Over the beløpsgrense in skatteloven
+    # § 14-40 a purchase with three years' life or more is an asset that is
+    # written down over time, not an expense in the year it was bought, and
+    # until this account existed the register had nowhere to put one.
+    SeedAccount("1250", "Inventar og utstyr", AccountType.EIENDEL),
     SeedAccount("1500", "Kundefordringer", AccountType.EIENDEL),
     SeedAccount("1900", "Kontanter", AccountType.EIENDEL),
     SeedAccount("1920", "Bankinnskudd", AccountType.EIENDEL),
@@ -180,6 +201,54 @@ STANDARD_TAX_CODES: tuple[SeedTaxCode, ...] = (
     SeedTaxCode("5", "Avgiftsfri omsetning (0 %)", "5", Decimal("0.000000")),
     SeedTaxCode("6", "Omsetning utenfor merverdiavgiftsloven", "6", Decimal("0.000000")),
     SeedTaxCode("52", "Utførsel av varer og tjenester (0 %)", "52", Decimal("0.000000")),
+    # --- Innførsel og kjøp fra utlandet ---
+    #
+    # A Norwegian business importing goods accounts for the VAT itself rather
+    # than paying it at the border (merverdiavgiftsloven § 11-1 second
+    # paragraph), and the same reverse charge applies to services bought from
+    # abroad. Both sides go in the MVA-melding, so a deductible import nets to
+    # zero and is still reported twice.
+    #
+    # Without these the only honest code for an imported bilag was 0, which
+    # keeps the books truthful about the invoice and silently drops the import
+    # from the VAT return entirely.
+    SeedTaxCode(
+        "81",
+        "Innførsel av varer, høy sats (25 %), med fradragsrett",
+        "81",
+        Decimal("0.250000"),
+        reverse_charge=True,
+    ),
+    SeedTaxCode(
+        "82",
+        "Innførsel av varer, høy sats (25 %), uten fradragsrett",
+        "82",
+        Decimal("0.250000"),
+        reverse_charge=True,
+        deductible=False,
+    ),
+    SeedTaxCode(
+        "83",
+        "Innførsel av varer, middels sats (15 %), med fradragsrett",
+        "83",
+        Decimal("0.150000"),
+        reverse_charge=True,
+    ),
+    SeedTaxCode(
+        "86",
+        "Tjenester kjøpt fra utlandet, høy sats (25 %), med fradragsrett",
+        "86",
+        Decimal("0.250000"),
+        reverse_charge=True,
+    ),
+    SeedTaxCode(
+        "87",
+        "Tjenester kjøpt fra utlandet, høy sats (25 %), uten fradragsrett",
+        "87",
+        Decimal("0.250000"),
+        reverse_charge=True,
+        deductible=False,
+    ),
 )
 
 TAX_CODES_BY_CODE: dict[str, SeedTaxCode] = {t.code: t for t in STANDARD_TAX_CODES}

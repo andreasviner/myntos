@@ -19,9 +19,11 @@ Two details are deliberate:
 """
 
 from collections.abc import AsyncIterator, Iterator
+from datetime import date
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
@@ -35,6 +37,7 @@ from myntos.domain.bilag import models as bilag_models  # noqa: F401  (registers
 from myntos.domain.faktura import models as faktura_models  # noqa: F401  (registers tables)
 from myntos.domain.identity import models as identity_models  # noqa: F401  (registers tables)
 from myntos.domain.ledger import models as ledger_models  # noqa: F401  (registers tables)
+from myntos.integrations import brreg, norgesbank
 from myntos.main import create_app
 from myntos.storage.local import LocalDocumentStorage
 
@@ -93,6 +96,54 @@ def test_settings() -> Iterator[None]:
     yield
     patcher.undo()
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def no_exchange_rates() -> Iterator[None]:
+    """No calls to Norges Bank, for the same reason there are no calls to Løynd.
+
+    The rate lookup is best-effort and silent about failing, so a suite that
+    reached the network would pass either way while quietly depending on a
+    public API being up and on today's midkurs. Refusing by default makes the
+    absence of a rate the tested default; the tests that want a conversion
+    supply the rate themselves.
+    """
+    patcher = pytest.MonkeyPatch()
+
+    async def refuse(currency_code: str, *, on: date) -> norgesbank.Rate:
+        raise norgesbank.RateUnavailableError(f"no network in tests ({currency_code} on {on})")
+
+    patcher.setattr(norgesbank, "rate_for", refuse)
+    yield
+    patcher.undo()
+
+
+@pytest.fixture(autouse=True)
+def no_register_lookups(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """No calls to Brønnøysundregistrene, for the reason above.
+
+    Creating a company now reads the register to fill in the næringskode and
+    contact details, and confirming one reads it again. Both are best effort and
+    swallow a failure, so a suite that reached the network would pass either way
+    while quietly depending on Brønnøysund being up — and would spend a real
+    round trip in every test that sets up a set of books.
+
+    Refusing by default makes "the register said nothing" the tested default.
+    The tests that want an answer install their own transport
+    (``brreg_answers`` in test_enhetsregisteret_api.py), which replaces the same
+    seam and therefore overrides this.
+    """
+    patcher = pytest.MonkeyPatch()
+
+    def refuse() -> httpx.AsyncClient:
+        def unreachable(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("no network in tests", request=request)
+
+        return httpx.AsyncClient(transport=httpx.MockTransport(unreachable))
+
+    patcher.setattr(brreg, "_client", refuse)
+    yield
+    patcher.undo()
 
 
 @pytest.fixture

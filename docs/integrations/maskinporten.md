@@ -136,6 +136,53 @@ Two things this fails on, both verified 2026-08-24:
   Only the *person* plane is affected: the Maskinporten exchange works without
   any of this, because those tokens carry `altinn:instances.*`.
 
+## Which companies a person may report for: `altinn:accessmanagement/authorizedparties`
+
+Altinn already holds the answer the setup form would otherwise ask a
+regnskapsfører to type once per client. One call, with an **exchanged Altinn
+token**:
+
+```
+GET {altinn_platform}/accessmanagement/api/v1/authorizedparties?includeAltinn2=true
+Authorization: Bearer <Altinn token>
+```
+
+It answers with the parties the token's holder may act for — the same list
+Altinn's own "Velg aktør" picker is built from — as a JSON array, main units
+carrying their subunits.
+
+Three things decide whether it works:
+
+- **The scope is `altinn:accessmanagement/authorizedparties`**, registered on
+  the **ID-porten** client in Samarbeidsportalen and requested in
+  `IDPORTEN_SCOPES`. Without it: **403**, naming nothing. The
+  `…/authorizedparties.resourceowner` variant is a different scope for service
+  owners looking up somebody else's list, and is not what an end-user system
+  asks for.
+- **It is a person's list.** The endpoint reads `userId` off the Altinn token,
+  and a Maskinporten-derived token has none — that is a **401**, and it reads
+  exactly like a bad token. So the ID-porten plane is the only one that answers
+  here, which is also why the scope belongs on that client and not on the
+  Maskinporten one.
+- **`includeAltinn2=true`.** Left out, roles that still live in Altinn 2 are
+  omitted and the list is quietly short — no error, just missing clients.
+
+Two fields in the answer are easy to skip and both matter. `isDeleted` marks a
+party that no longer exists, and `onlyHierarchyElementWithNoAccess` marks one
+included *solely* to hold its subunits: the person has no rights on it at all.
+Offering either as something to file for is offering a 403 dressed up as a
+choice, so `myntos.api.v1.skatt` filters both, along with every party that has
+no organisasjonsnummer (those are persons, identified by fødselsnummer, which
+never leaves the server).
+
+Verify it against a live environment with the diagnostic, which reads the list
+as a synthetic person and reports how many companies came back:
+
+```bash
+cd backend
+uv run python -m myntos.auth.digdir_check --person <synthetic fnr>
+```
+
 ## Representing a taxpayer: `digdir:skattemelding`
 
 **Verified working 2026-08-24**, and the single most useful thing in this
@@ -175,6 +222,49 @@ organisation anybody holds Altinn rights for, so that path rests on
 > survive; what a role holder automatically gets will not. Re-verify before
 > then.
 
+## Which scope is where (probed 2026-08-28)
+
+Three states, and a call that fails looks the same in all three:
+
+1. **Granted** to the organisation, by the API provider's service desk
+2. **Registered on a client**, by us in Samarbeidsportalen - *per client*, and
+   this is the step that keeps getting missed
+3. **Requested** in `MASKINPORTEN_SCOPES` / `IDPORTEN_SCOPES`
+
+A scope must be all three. Requesting one that is not granted fails the **whole**
+token request, so step 3 waits for step 1.
+
+Also: **test and production are separate**. Adding a scope to a production client
+does nothing for `f8293b48`, which is a test client, and every verification in
+this repository runs against test.
+
+| Scope | Maskinporten `f8293b48` | ID-porten `5aa404aa` |
+| --- | --- | --- |
+| `altinn:instances.read` / `.write` | usable | n/a (comes via the exchange) |
+| `altinn:enduser` | n/a | usable |
+| `digdir:skattemelding` | usable | usable |
+| `skatteetaten:formueinntekt/skattemelding` (+ `/eiendom`) | usable | usable |
+| `skatteetaten:mvameldingvalidering` | not registered | usable |
+| `altinn:accessmanagement/authorizedparties` | granted, **not on this client** | usable |
+| `altinn:delegationrequests.read` / `.write` | usable | not registered |
+| `altinn:clientdelegations.read` / `.write` | usable | not registered |
+| `altinn:authentication/systemregister.write` | usable | not registered |
+| `altinn:authentication/systemuser.request.read` / `.write` | usable | not registered |
+| `altinn:correspondence.read` | granted, not on client | not registered |
+| `altinn:events.subscribe` | granted, not on client | not registered |
+| `digdir:dialogporten` | granted, not on client | not registered |
+| `skatteetaten:mvameldinginnsending` | **retired** - see mva.md | **retired** |
+
+Granted for org `938193045` in **both test and production** (Altinn Servicedesk,
+2026-08-28): the twelve Altinn/Digdir scopes above other than
+`authorizedparties`, which was already held.
+
+To re-check any of this rather than trusting the table, ask Maskinporten for a
+token with one scope and read the refusal: `invalid_scope ... invalid scopes for
+client` means not registered on that client. The same wording is used for a scope
+that does not exist, so it cannot tell you whether a name is real - only the
+portal's picker can.
+
 ## Applying for a scope Skatteetaten has not granted
 
 Adding a scope in Samarbeidsportalen only *declares* it. The portal then shows
@@ -205,6 +295,124 @@ handled manually, so assume weeks rather than days.
 Sources: skatteetaten.no "Her kan du soke om tilgang til tjenester for
 innrapportering" and "Fa tilgang til data".
 
+## Systembruker: acting without a person present
+
+The only thing the person-present chain cannot do is retrieval for a named
+taxpayer with no human in the loop: the machine plane answers 400
+`SME-EKSTERN-005` because a client-credentials token has no logged-in user whose
+rights can be checked. Systembruker fixes that by giving the token a subject.
+
+It also outlives a deadline the proven route does not. Reading a client's
+skattemelding works today because daglig leder is an Altinn **role**, and roles
+stop counting in access checks on **2026-12-01**.
+
+**Registered in TT02 on 2026-08-28** (`myntos.integrations.altinn.systemregister`):
+
+| | |
+| --- | --- |
+| System id | `938193045_myntos` |
+| Altinn's own handle | `426f7e05-23e1-4fd3-b256-e929063b0a30` |
+| Declared rights | `app_skd_formueinntekt-skattemelding-v2`, `app_skd_mva-melding-innsending-v1` |
+| Maskinporten client | `f8293b48-…` (test) |
+| `isVisible` | **true** (findable in Altinn's catalogue) |
+
+Four things learned doing it:
+
+- **The id is `{vendor orgnr}_{name}` and is permanent in practice.** Once a
+  customer has approved a system user against it, changing it means every
+  customer approving again.
+- **`rights` is a ceiling, not a grant.** It bounds what the system may ever
+  request; the customer's approval is what grants it, per customer. So the list
+  is the two apps we actually submit to and nothing more.
+- **`allowedredirecturls` must be https.** The loopback URL ID-porten requires
+  is rejected here, so the deployed frontend is the only valid answer even in
+  test.
+- **The create call answers with a bare uuid string, not an object**, and the
+  registration is confirmed by reading the system back rather than by parsing
+  that.
+
+`isVisible` false keeps the system out of Altinn's catalogue while it is being
+built. Vendor-initiated system-user requests still work, because the vendor
+generates the confirmation URL itself, so turning it on is a decision about
+being *found* rather than about being *usable*.
+
+`isVisible` controls being *found*, not being *usable*: an invisible system can
+still have system users, because the vendor generates the confirmation URL
+itself. Updating the registration is `PUT {vendor}/{system id}` with the **whole
+document** - a partial body missing `clientId` would unhook the system from its
+Maskinporten client, and nothing would say so until the next token request.
+
+### The approval is the customer's, in Altinn, and cannot be ours
+
+Creating a system-user request returns a `confirmUrl` on Altinn's own access
+management UI:
+
+    POST {platform}/authentication/api/v1/systemuser/request/vendor
+    -> 201 {"id": "...", "status": "New",
+            "confirmUrl": "https://am.ui.tt02.altinn.no/accessmanagement/ui/
+                           systemuser/request?id=..."}
+
+Somebody at the customer with the tilgangsstyring or hovedadministrator access
+package opens that, logs in, and approves. **The vendor cannot approve on their
+behalf** - which is the entire point, since the approval is what authorizes us
+to act with nobody watching.
+
+Tried and confirmed (2026-08-28): the end user can `GET` the request with an
+exchanged ID-porten token (200), but `POST .../approve` answers **403**. The
+approve endpoints belong to the access-management API, which requires
+`altinn:accessmanagement/enduser:requests.read` / `.write` - scopes we do not
+hold. Adding them would let an automated test approve headlessly with TestID;
+they are not needed for the product, where a real customer clicks.
+
+### It works. Verified end to end 2026-08-28
+
+A customer approved (TestID as `08866995401`, daglig leder of `314067630`), and
+then, with **nobody logged in**:
+
+    200  GET api-test.sits.no/api/skattemelding/v2/utkast/2025/314067630
+
+The same call with a plain client-credentials token answers 400
+`SME-EKSTERN-005`. The Maskinporten-to-Altinn exchange also accepts a
+systembruker token, so the instance APIs are reachable on this plane too.
+
+The token's `authorization_details` is what makes the difference:
+
+    [{"type": "urn:altinn:systemuser",
+      "systemuser_org": {"authority": "iso6523-actorid-upis",
+                         "ID": "0192:314067630"},
+      "systemuser_id": ["ffa04a65-397d-4df9-ad64-4425ef0d4a45"],
+      "system_id": "938193045_myntos"}]
+
+`consumer` remains `0192:938193045` - us. The token says who we are *and* whose
+system user we are acting as, which is the subject Skatteetaten could not find
+before.
+
+**The trap, and it cost the first attempt: `externalRef` is part of the system
+user's identity.** Altinn documents it as needed "only when multiple system users
+point to the same system", which reads as optional. It is not: a request created
+with one produces a system user keyed by it, and a token request that omits it is
+answered
+
+    404  invalid_altinn_customer_configuration
+
+which names nothing. `myntos.integrations.altinn.systemuser` therefore requires
+it and returns it on the request object, so a caller never has to remember what
+it sent.
+
+### What remains for unattended submission
+
+Retrieval is done. Submission still requires a person by Skatteetaten's own
+policy, so systembruker does not change that half - see skatteetaten.md. What it
+changes is everything before the signature: fetching, validating, creating the
+instance and uploading can now run on a schedule.
+
+The grant side is **done**: `JwtGrantTokenProvider.get_access_token` takes
+`systemuser_org` and emits RFC 9396 `authorization_details` of type
+`urn:altinn:systemuser` inside the assertion. It refuses to combine that with
+`consumer_org`, since a grant is either a delegation or a system user, and the
+cache key includes the customer - a token carries its authority in its claims,
+so sharing one across customers would be acting with the wrong authority.
+
 ## Acting for clients (regnskapsfører)
 
 - **Today (classic):** customer delegates the API scope to the supplier in
@@ -232,9 +440,10 @@ No maintained Python library exists, so this is a thin module over `PyJWT`
 | ID-porten authorization-code flow (`private_key_jwt`) | `myntos.auth.idporten.client` |
 | Altinn token exchange, machine-token cache | `myntos.integrations.altinn.tokens` |
 | Altinn 3 instance lifecycle | `myntos.integrations.altinn.instances` |
+| The companies a person may report for | `myntos.integrations.altinn.authorized_parties` |
 | Skattemelding fetch/validate/submit | `myntos.integrations.skatteetaten.client` |
 | MVA validation and submission | `myntos.integrations.skatteetaten.mva` |
-| Tests (Digdir and Altinn stubbed) | `tests/test_digdir_auth.py`, `tests/test_altinn_submission.py` |
+| Tests (Digdir and Altinn stubbed) | `tests/test_digdir_auth.py`, `tests/test_altinn_submission.py`, `tests/test_altinn_authorized_parties.py` |
 
 Key handling: the private key is read from `MASKINPORTEN_JWK_PATH` (or an
 injected secret env var); never from the repo; never logged, and neither are

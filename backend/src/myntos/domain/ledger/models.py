@@ -47,11 +47,12 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from myntos.db.base import Base
-from myntos.domain.identity.models import Organization
+from myntos.domain.identity.models import EMAIL_LENGTH, Organization
 
 # SAF-T v1.40 widened the monetary datatype to 38 digits. Scale 2 is øre —
 # the MVA-melding reports øre and explicitly must not be rounded to kroner.
@@ -109,12 +110,30 @@ class Company(Base):
     may each keep a set of books for the same client, and a global constraint
     would make the first one to add that orgnr block the second — a tenancy leak
     disguised as a data-quality rule.
+
+    A *confirmed* claim is the exception. ``verified_at`` is stamped when
+    somebody proved through Altinn that they may act for the orgnr, and only one
+    such row may exist per orgnr across the whole installation — that is what
+    ``uq_company_verified_orgnr`` says. Unconfirmed rows stay unconstrained, so
+    the second accounting firm can still set up its own books; what it cannot do
+    is claim the same company as confirmed while the first claim stands.
     """
 
     __tablename__ = "company"
     __table_args__ = (
         CheckConstraint("length(orgnr) = 9", name="orgnr_is_nine_digits"),
         UniqueConstraint("organization_id", "orgnr", name="uq_company_organization_id"),
+        # Partial, so it binds confirmed claims and leaves the rest alone. The
+        # domain checks the same thing first and answers with a message people
+        # can act on; this is the backstop for two confirmations racing, where a
+        # check-then-write would let both through.
+        Index(
+            "uq_company_verified_orgnr",
+            "orgnr",
+            unique=True,
+            sqlite_where=text("verified_at IS NOT NULL"),
+            postgresql_where=text("verified_at IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -146,6 +165,81 @@ class Company(Base):
     # Where invoices are paid. Carried into the e-invoice as
     # PayeeFinancialAccount, and printed on the PDF.
     bank_account: Mapped[str | None] = mapped_column(String(34))
+
+    # Whether this company's documents may be shown to a model at all.
+    #
+    # Per company rather than per user, because it is a statement about a set of
+    # books and not about a preference: the person who decides whether these
+    # bilag may leave the building is the one responsible for them, and the
+    # answer has to hold whoever happens to be logged in. A regnskapsfører with
+    # twenty clients can say yes for nineteen and no for the one whose
+    # personvernerklæring says no.
+    #
+    # Defaults to True, which is what the register has always done, and the
+    # switch is what makes that a choice rather than a fact. Off means off:
+    # no classification, no field extraction, and no upload to Løynd's
+    # extractor either — the local PDF reader does the work and the proposal is
+    # whatever the parser can manage on its own.
+    # A Python-side default only, like every other boolean on this table: the
+    # migration adds a server default to backfill the existing rows and then
+    # drops it again, so one left declared here would be a phantom diff on
+    # every autogenerate.
+    ki_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # --- What Enhetsregisteret says ------------------------------------------
+    #
+    # Filled from the register rather than typed, and refreshed whenever the
+    # company is confirmed or the user asks — see
+    # :func:`myntos.domain.ledger.service.refresh_company_from_register`. The
+    # register is the authority for every one of them, so a copy here is a cache
+    # with a timestamp rather than a second opinion.
+    #
+    # Only the fields something in the system actually uses are stored. The rest
+    # of what the register holds — board, revisor, kapital, formål, historical
+    # names — is fetched live for display and never persisted: it changes
+    # without telling us, and some of it is other people's personal data.
+
+    # SN2007. The næringsspesifikasjon asks for it, which is why this one is
+    # stored rather than merely shown.
+    industry_code: Mapped[str | None] = mapped_column(String(16))
+    industry_description: Mapped[str | None] = mapped_column(String(255))
+    # Seller contact details a salgsdokument may carry beside the address.
+    website: Mapped[str | None] = mapped_column(String(255))
+    phone: Mapped[str | None] = mapped_column(String(64))
+    email: Mapped[str | None] = mapped_column(String(EMAIL_LENGTH))
+    # Set when this company is a subunit: the orgnr of the main unit it belongs
+    # to. Roles are registered on the main unit only, so it is also the key a
+    # role lookup follows.
+    parent_orgnr: Mapped[str | None] = mapped_column(String(9))
+    # When the four fields above, and the address and registration flags, were
+    # last read from the register. NULL for books created before this existed,
+    # and for one whose orgnr the register has never answered for.
+    register_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # --- Confirmed ownership -------------------------------------------------
+    #
+    # NULL means nobody has proved they may act for this orgnr yet. The books
+    # still work: bookkeeping is not gated on a government login, and a person
+    # setting up on a Sunday evening should not be stopped by BankID. What the
+    # confirmation settles is *whose* company this is, and it is the same
+    # evidence a submission will later rest on — Altinn's own answer to "which
+    # parties may this person report for".
+    #
+    # Stamped by myntos.domain.ledger.service.confirm_company_ownership and
+    # never by a form: a column a user could tick would confirm nothing.
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Who did the confirming. SET NULL rather than CASCADE: the person may leave
+    # the organization, and the company stays confirmed — it was confirmed.
+    verified_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("app_user.id", ondelete="SET NULL")
+    )
+    # Altinn's own key for the party, as it stood at confirmation. Kept because
+    # an instance is later created under it and an orgnr is not the same key.
+    altinn_party_id: Mapped[int | None] = mapped_column(Integer)
+
+    @property
+    def is_verified(self) -> bool:
+        return self.verified_at is not None
 
     organization: Mapped[Organization] = relationship()
     financial_years: Mapped[list[FinancialYear]] = relationship(
@@ -448,6 +542,11 @@ class Transaction(Base):
         # index to an existing table, while a unique constraint would force a
         # full table rebuild in the migration.
         Index("uq_gl_transaction_reverses", "reverses_transaction_pk", unique=True),
+        # Not unique: a replacement voucher can itself be corrected later, and
+        # each link in that chain points at the entry before it. The listing
+        # reads the register newest-first and then asks which of those vouchers
+        # correct something, so the lookup goes through this column.
+        Index("ix_gl_transaction_corrects", "corrects_transaction_pk"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -473,6 +572,22 @@ class Transaction(Base):
     # Set on a reversing voucher, pointing at the one it undoes.
     reverses_transaction_pk: Mapped[int | None] = mapped_column(
         ForeignKey("gl_transaction.id", ondelete="CASCADE")
+    )
+    # Set on the replacement voucher a correction posts, pointing at the entry
+    # it was written to replace.
+    #
+    # Correcting a posted entry produces three vouchers: the original, the
+    # reversal that cancels it, and this one. ``reverses_transaction_pk`` joins
+    # the first two and stops there, which left the third indistinguishable
+    # from an unrelated entry posted the same day — for the register, and for
+    # anyone auditing it. Without the link the only way to pair them is to
+    # guess from dates and amounts, and a guess that is usually right is worse
+    # here than no answer at all.
+    #
+    # SET NULL rather than CASCADE: this voucher is the one that is still true.
+    # Losing the entry it replaced must not take the replacement with it.
+    corrects_transaction_pk: Mapped[int | None] = mapped_column(
+        ForeignKey("gl_transaction.id", ondelete="SET NULL")
     )
 
     journal: Mapped[Journal] = relationship(back_populates="transactions")

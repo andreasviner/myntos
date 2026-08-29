@@ -418,6 +418,9 @@ async def catalogue(user: CurrentUser) -> FakturaCatalogueResponse:
         default_unit=DEFAULT_UNIT_CODE,
         default_payment_term_days=DEFAULT_PAYMENT_TERM_DAYS,
         e_invoice_mandatory_from=compliance.E_INVOICE_MANDATORY_FROM,
+        # A deployment-level fact only: this endpoint has no company, and the
+        # company's own KI switch is checked where it matters, in draft_lines
+        # below. The page consults both before showing the box.
         ai_available=loynd.is_configured(),
         ai_max_chars=drafting.MAX_REQUEST_CHARS,
     )
@@ -534,6 +537,14 @@ async def draft_faktura_lines(
     in writing an invoice, and a viewer has nothing to draft.
     """
     require_permission(context.membership.role, Permission.LEDGER_WRITE)
+    # The company's own switch first, then the deployment's key. Turning KI off
+    # for a set of books has to cover both places it is used, or it is a setting
+    # that means one thing on one page and something else on another.
+    if not context.company.ki_enabled:
+        return LineDraftResponse(
+            lines=[],
+            warnings=["KI er slått av for dette selskapet, så linjene må skrives for hånd."],
+        )
     if not loynd.is_configured():
         return LineDraftResponse(
             lines=[],

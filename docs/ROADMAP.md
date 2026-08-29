@@ -59,11 +59,26 @@ registration and access, which cannot be done from a repository.
       --year 2025`. Response saved as
       test_data/skattemelding-314067630-2025.xml. The auth work is done: every
       remaining 403 is a data or representation answer, not a credential one
-- [ ] Retrieval **without a person present**. The machine plane still answers 400
-      `SME-EKSTERN-005` for a named taxpayer even with both scopes, because a
-      machine token has no logged-in user whose rights can be checked. Needs
-      either an Altinn delegation from each client company, or the Altinn 3
-      systembruker model. Decide which before building the unattended paths
+- [x] Retrieval **without a person present**, via Altinn 3 systembruker.
+      **Verified end to end 2026-08-28**: a client company's skattemelding
+      fetched 200 on the machine plane, where the same call without a system
+      user answers 400 `SME-EKSTERN-005`. The exchange accepts a systembruker
+      token too, so the instance APIs are reachable this way as well.
+      - System registered as `938193045_myntos`
+        (`integrations/altinn/systemregister`), visible in Altinn's catalogue
+      - System-user request and approval polling
+        (`integrations/altinn/systemuser`)
+      - RFC 9396 `authorization_details` in the JWT grant, customer in the cache
+        key (`auth/maskinporten/client`)
+      - `externalRef` is part of the system user's identity, not a label: omit it
+        at token time and Maskinporten answers 404
+        `invalid_altinn_customer_configuration`. Required by the module for that
+        reason
+      - This also outlives the 2026-12-01 change, since it does not rest on
+        Altinn roles
+- [ ] Use it: put the fetch/validate/upload steps on a schedule now that they no
+      longer need somebody logged in. Submission still requires a person, by
+      Skatteetaten policy, so the human checkpoint stays exactly where it was
 - [ ] **2026-12-01: Altinn roles stop counting in access checks** (tilgangspakker
       replace them). The proven fetch works because daglig leder is a role, so
       re-verify the whole org path before that date

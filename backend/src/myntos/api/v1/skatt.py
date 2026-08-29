@@ -24,6 +24,14 @@ two:
 ``GET /skatt/status``
     Whether a usable government login exists, and who it belongs to. Never the
     token: nothing outside the server has any use for it.
+
+And one endpoint that spends the login rather than creating it:
+
+``GET /skatt/altinn/authorized-parties``
+    The companies the logged-in person may report for, straight from Altinn.
+    The first thing the government login is good for that is not a submission,
+    and the reason it is worth doing before anything can be filed: it turns
+    "type your clients' organisasjonsnumre" into a list to pick from.
 """
 
 from __future__ import annotations
@@ -42,12 +50,19 @@ from myntos.auth.idporten.client import (
     is_configured,
     new_pkce_pair,
 )
+from myntos.auth.idporten.vault import TokenVaultError, open_sealed, seal
 from myntos.auth.idporten.vault import is_configured as vault_is_configured
-from myntos.auth.idporten.vault import seal
 from myntos.auth.tokens import generate_token
 from myntos.core.clock import as_utc, utc_now
 from myntos.core.config import get_settings
 from myntos.domain.identity.models import GovernmentLoginAttempt, User
+from myntos.domain.ledger import service as ledger_service
+from myntos.integrations.altinn.authorized_parties import (
+    AuthorizedParty,
+    fetch_authorized_parties,
+    flatten,
+)
+from myntos.integrations.altinn.tokens import AltinnError, exchange_id_porten_token
 
 router = APIRouter(prefix="/skatt", tags=["skatt"])
 
@@ -143,6 +158,156 @@ async def government_login_status(user: CurrentUser, db: DbSession) -> Governmen
             else None
         ),
     )
+
+
+class AuthorizedPartyResponse(BaseModel):
+    """One company the logged-in person may report for.
+
+    Deliberately narrower than what Altinn returns. Three things are dropped on
+    the way through:
+
+    - **``personId``.** Altinn lists person parties too, and identifies them by
+      fødselsnummer. A picker of companies has no use for one, and a
+      fødselsnummer that reaches a browser is a fødselsnummer in a screenshot,
+      a bug report and a proxy log.
+    - **Parties with no organisasjonsnummer.** Myntos keeps books for entities
+      that have one. Everything else in the list is a person, and a person's
+      skattemelding is not a set of books.
+    - **Parties the person cannot actually act for** — deleted ones, and the
+      hierarchy placeholders Altinn includes so a tree can be drawn. Offering
+      those would be offering a 403 dressed up as a choice.
+
+    ``roles`` is passed on as Altinn's own codes (``DAGL``, ``REGN``,
+    ``LEDE``…). Untranslated on purpose: they are what Altinn shows the same
+    person in its own interface, and a helpful paraphrase here would be a second
+    vocabulary for one fact.
+    """
+
+    orgnr: str
+    name: str
+    # Altinn's own key for the party. The instance a filing eventually lands in
+    # is created under it, so it travels with the choice rather than being
+    # looked up again later.
+    party_id: int
+    # "AS", "ENK", "BEDR"… the same code Enhetsregisteret uses, when Altinn
+    # knows it. Shown next to the name because a main unit and its subunit
+    # frequently share one.
+    unit_type: str | None
+    # The main unit this is a subunit of, when it is one. A regnskapsfører
+    # engaged for one department of a group needs to see which.
+    parent_orgnr: str | None
+    roles: list[str]
+    # True when another organization has already confirmed ownership of this
+    # orgnr — the "selskapet har allerede et regnskap registrert" case. Said
+    # here, next to the choice, rather than left for the confirmation to refuse
+    # afterwards. Which organization holds the claim is never disclosed: the
+    # caller is not a member of it, and the way in is to ask them, not us.
+    claimed: bool = False
+
+
+def _authorized_party_response(
+    party: AuthorizedParty, *, parent_orgnr: str | None, claimed: bool
+) -> AuthorizedPartyResponse:
+    return AuthorizedPartyResponse(
+        orgnr=party.orgnr or "",
+        name=party.name,
+        party_id=party.party_id,
+        unit_type=party.unit_type,
+        parent_orgnr=parent_orgnr,
+        roles=list(party.authorized_roles),
+        claimed=claimed,
+    )
+
+
+def _reportable(
+    parties: list[AuthorizedParty], *, claimed: set[str]
+) -> list[AuthorizedPartyResponse]:
+    """The parties worth offering, flattened, each knowing its main unit.
+
+    The parent is tracked here rather than in the integration because it is a
+    presentation fact: Altinn's tree already says it by nesting, and this is the
+    one place that turns the tree into a list and therefore has to say it in
+    words instead.
+    """
+    offered: list[AuthorizedPartyResponse] = []
+    for main_unit in parties:
+        for party in flatten([main_unit]):
+            if not party.is_usable or not party.is_organization:
+                continue
+            parent = main_unit.orgnr if party is not main_unit else None
+            offered.append(
+                _authorized_party_response(
+                    party, parent_orgnr=parent, claimed=(party.orgnr or "") in claimed
+                )
+            )
+    return offered
+
+
+async def authorized_parties_for(db: DbSession, user: User) -> list[AuthorizedParty]:
+    """Altinn's answer to "which parties may this person act for", for ``user``.
+
+    The mechanics of spending a government login live here rather than being
+    repeated by every caller: the ID-porten token is unsealed, exchanged for an
+    Altinn token, and the list is fetched. ``used_at`` is left alone — reading
+    who you may act for is not acting, and a person who looked at the list
+    should not need a second BankID before confirming a company from it.
+
+    Raises :class:`HTTPException` rather than a domain error because every
+    failure here is about the *login*, which is an API-layer fact: unconfigured
+    deployment (503), no usable government login (409), Altinn refusing (502).
+    """
+    if not is_configured() or not vault_is_configured():
+        raise _unavailable()
+    attempt = await _active_attempt(db, user)
+    if attempt is None or attempt.sealed_token is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="logg inn med ID-porten for å hente selskapene fra Altinn",
+        )
+
+    try:
+        government_token = open_sealed(attempt.sealed_token)
+    except TokenVaultError:
+        # The key changed under a stored row. Treated as "log in again", which
+        # is what actually fixes it, rather than as a 500 nobody can act on.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="innloggingen i ID-porten må gjøres på nytt",
+        ) from None
+
+    try:
+        altinn_token = await exchange_id_porten_token(government_token)
+        return await fetch_authorized_parties(altinn_token.value)
+    except AltinnError as error:
+        # Altinn's own words, not ours: every failure here is a scope or a
+        # registration, and the message the integration writes names which.
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)) from error
+
+
+@router.get("/altinn/authorized-parties")
+async def list_authorized_parties(
+    user: CurrentUser, db: DbSession
+) -> list[AuthorizedPartyResponse]:
+    """The companies this person may report for, according to Altinn.
+
+    Requires the government login, and **does not spend it**: ``used_at`` stays
+    empty. Reading who you are allowed to act for is not acting, and a person
+    who looked at the list should not have to log in again before filing.
+
+    409 rather than 401 when there is no government login: the caller *is*
+    authenticated to Myntos, and a 401 would send the frontend to the sign-in
+    page it just came from. The status the frontend actually branches on is
+    ``GET /skatt/status``; this code is the answer to a race, not the normal
+    path.
+    """
+    parties = await authorized_parties_for(db, user)
+    offered = _reportable(parties, claimed=set())
+    claimed = await ledger_service.claimed_elsewhere(
+        db, [party.orgnr for party in offered], user_id=user.id
+    )
+    for party in offered:
+        party.claimed = party.orgnr in claimed
+    return offered
 
 
 @router.get("/idporten/start")

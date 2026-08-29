@@ -13,7 +13,7 @@
  * itself lives in an httpOnly cookie no script can touch.
  */
 
-import { ApiError, getSession, logout, type Session } from './api';
+import { ApiError, getSession, logout, type Company, type Session } from './api';
 
 const HINT_KEY = 'myntos.signed-in';
 const COMPANY_KEY = 'myntos.company';
@@ -77,9 +77,16 @@ export function applyChrome(session: Session | null): void {
   if (name !== null && session !== null) {
     name.textContent = session.user.full_name || session.user.email;
   }
-  const organization = document.querySelector<HTMLElement>('[data-session-organization]');
-  if (organization !== null && session !== null) {
-    organization.textContent = session.memberships[0]?.organization_name ?? '';
+  // The header is company-first: the business is what the books are about, and
+  // the person is who happens to be logged into them. The company is not known
+  // yet at this point — it takes a second request — so the organization name
+  // stands in meanwhile. It is the closest true answer (the account's own
+  // name), and setChromeCompany replaces it the moment the books are known,
+  // rather than leaving the slot blank for a beat.
+  if (session !== null) {
+    const organization = session.memberships[0]?.organization_name ?? '';
+    setChromeOrganization(organization);
+    setChromeCompany(null, organization);
   }
   document.documentElement.dataset.sessionReady = 'true';
   document.dispatchEvent(new CustomEvent<Session | null>(SESSION_EVENT, { detail: session }));
@@ -124,6 +131,42 @@ export function rememberedCompany(): number | null {
   if (raw === null || raw === undefined) return null;
   const parsed = Number(raw);
   return Number.isInteger(parsed) ? parsed : null;
+}
+
+/** Put an organization's name in the page eyebrow. */
+export function setChromeOrganization(name: string): void {
+  const node = document.querySelector<HTMLElement>('[data-session-organization]');
+  if (node !== null) node.textContent = name;
+}
+
+/**
+ * Put the company being worked on at the top of the header, and say whether
+ * anyone has proved it is theirs.
+ *
+ * The name is the loud half and the signed-in person is the quiet half beneath
+ * it, because every page is about a set of books rather than about an account:
+ * a regnskapsfører switching client has to see *which* client at a glance, and
+ * their own name never changes.
+ *
+ * The «ubekreftet» mark is a link rather than a label. An unconfirmed company
+ * is not broken — the books work, and nothing is hidden — it is a claim nobody
+ * has evidenced yet, and the one thing worth offering is the way to evidence
+ * it. `fallback` covers an account with no books yet, where the organization's
+ * own name is the only true thing to show.
+ */
+export function setChromeCompany(company: Company | null, fallback = ''): void {
+  const node = document.querySelector<HTMLElement>('[data-session-company]');
+  if (node !== null) node.textContent = company?.name ?? fallback;
+  const mark = document.querySelector<HTMLElement>('[data-session-unverified]');
+  // Hidden for an account with no books at all: there is nothing to confirm
+  // yet, and «ubekreftet» about nothing reads as a fault.
+  if (mark !== null) mark.hidden = company === null || company.verified;
+}
+
+/** The name of one of the caller's organizations, or an empty string. */
+export function organizationName(session: Session | null, organizationId: number): string {
+  const membership = session?.memberships.find((m) => m.organization_id === organizationId);
+  return membership?.organization_name ?? '';
 }
 
 /** True when the caller's role in this organization carries the permission. */

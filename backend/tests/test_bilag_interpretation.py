@@ -14,10 +14,14 @@ from decimal import Decimal
 import pytest
 
 from myntos.domain.bilag.interpretation import (
+    FieldSource,
     InvoiceSuggestion,
     PartyHint,
     amounts_in,
+    apply_conversion,
+    apply_type,
     dates_in,
+    note_capitalisation,
     parse_amount,
     read,
     suggest,
@@ -287,3 +291,244 @@ def test_a_credit_note_says_that_it_is_one() -> None:
     assert suggestion.description is not None
     assert suggestion.description.startswith("Kreditnota 88")
     assert any("kreditnota" in warning.lower() for warning in suggestion.warnings)
+
+
+# --- Documents that are not Norwegian invoices ------------------------------------
+
+# What a webshop receipt looks like once pypdf has flattened it: section headings
+# where an invoice has a sender, the date written month first, the total in
+# pounds, and not one of the words our labels look for.
+RECEIPT = """Order information
+Buyer andreali_7
+Seller daisyaus-0
+Placed on Aug 23, 2026
+Payment method Credit Card
+Shipping address
+Andreas Lindeman
+Magnus den Godes gate 8
+Trondheim 7030
+Norway
+Order total
+1 item GBP 2,137.00
+Shipping Free
+Order total GBP 2,137.00
+Items bought from daisyaus-0
+Order number: 10-15068-44333
+Quantity Item name Shipping service Item price
+1
+NEW Apple Mac Studio M3 Ultra 28-Core 96GB RAM 1TB SSD 60-Core GPU
+(800545236002)
+Economy Int'l Postage
+"""
+
+
+def test_a_date_written_month_first_is_still_a_date() -> None:
+    assert dates_in("Placed on Aug 23, 2026", today=TODAY) == [date(2026, 8, 23)]
+    assert dates_in("Order date September 3rd 2026", today=TODAY) == [date(2026, 9, 3)]
+
+
+def test_a_month_and_a_year_without_a_day_are_not_a_date() -> None:
+    """ "Mobilabonnement mars 2026" is a line on an invoice, not its date."""
+    assert dates_in("Mobilabonnement mars 2026        2   399,00", today=TODAY) == []
+
+
+def test_a_receipt_is_read_even_though_it_says_none_of_the_words() -> None:
+    found = read(RECEIPT, today=TODAY)
+
+    assert found.invoice_date == date(2026, 8, 23)
+    assert found.gross_amount == Decimal("2137.00")
+    # "Items bought from" names the seller where an invoice would print an
+    # organisasjonsnummer, and "Order information" is a heading, not a company.
+    assert found.seller_name == "daisyaus-0"
+    assert found.invoice_number == "10-15068-44333"
+    assert found.number_kind == "Ordre"
+    assert found.currency_code == "GBP"
+
+
+def test_a_receipt_is_described_as_the_order_it_is() -> None:
+    """The reference the auditor follows, then what the money was actually for."""
+    assert only(RECEIPT).description == (
+        "Ordre 10-15068-44333, NEW Apple Mac Studio M3 Ultra 28-Core 96GB RAM 1TB SSD 60-Core GPU"
+    )
+
+
+def test_a_total_in_a_foreign_currency_is_shown_but_never_proposed() -> None:
+    """2 137 in a kroner field is wrong by the exchange rate, and looks right."""
+    suggestion = only(RECEIPT)
+
+    assert suggestion.gross_amount is None
+    assert suggestion.foreign_amount == Decimal("2137.00")
+    assert "gross_amount" not in suggestion.filled
+    assert any("2\u00a0137,00 GBP" in warning for warning in suggestion.warnings)
+
+
+def test_foreign_vat_is_never_proposed_as_norwegian_input_vat() -> None:
+    """Whatever the seller charged in euro, no code here makes it deductible."""
+    text = (
+        "Acme Cloud Inc\nInvoice date 2026-05-04\nSoftware license\n"
+        "Subtotal EUR 100.00\nVAT 25 % EUR 25.00\nTotal due EUR 125.00\n"
+    )
+    suggestion = only(text)
+
+    assert suggestion.type_code == "datakostnad"
+    assert suggestion.tax_code is None
+    assert any("innførselsmva" in warning for warning in suggestion.warnings)
+
+
+def test_a_field_says_where_it_came_from() -> None:
+    suggestion = only(PURCHASE)
+
+    assert suggestion.sources["occurred_on"] is FieldSource.DOCUMENT
+    assert suggestion.type_source is FieldSource.DOCUMENT
+    assert suggestion.filled == list(suggestion.sources)
+
+
+# --- What was bought, the file's own title, and the kroner it cost ----------------
+
+
+def test_the_description_says_what_was_bought_rather_than_who_sold_it() -> None:
+    """The complaint that started this: "Ordre 10-15068-44333, daisyaus-0".
+
+    The seller's name has a field of its own a few centimetres away, so spending
+    the description on it says the same thing twice and leaves the one question
+    the description exists to answer unanswered. The item table says what was
+    bought, and no model is needed to read it.
+    """
+    proposal = suggest(RECEIPT, today=TODAY, own_orgnr=OWN_ORGNR, own_name=OWN_NAME)
+
+    assert proposal.description == (
+        "Ordre 10-15068-44333, NEW Apple Mac Studio M3 Ultra 28-Core 96GB RAM 1TB SSD 60-Core GPU"
+    )
+    # Read, not guessed: the line is printed under the item heading.
+    assert proposal.sources["description"] is FieldSource.DOCUMENT
+    # And the counterparty still has its own field.
+    assert proposal.counterparty_name == "daisyaus-0"
+
+
+def test_a_totals_row_under_a_heading_is_not_an_item() -> None:
+    """ "1 item GBP 2,137.00" holds the word "item" and is not a heading.
+
+    The check that tells them apart is that a heading names columns and holds no
+    figures. Without it the reader anchors on the summary line four rows above
+    the real table and proposes "Order total GBP 2,137.00" as the description,
+    which is worse than proposing nothing.
+    """
+    found = read(RECEIPT, today=TODAY)
+
+    assert found.item_text == "NEW Apple Mac Studio M3 Ultra 28-Core 96GB RAM 1TB SSD 60-Core GPU"
+
+
+def test_an_invoice_without_an_item_table_still_names_the_counterparty() -> None:
+    """No heading, no item text, and the description is what it always was."""
+    found = read(PURCHASE, today=TODAY)
+    proposal = suggest(PURCHASE, today=TODAY, own_orgnr=OWN_ORGNR, own_name=OWN_NAME)
+
+    assert found.item_text is None
+    assert proposal.description == "Faktura 104588, Telenor Norge AS"
+
+
+def test_the_file_title_names_the_seller_when_the_page_does_not() -> None:
+    """A webshop receipt often says who it is from only in its own title.
+
+    "Order details | eBay" is the single occurrence of the word eBay in that
+    document once the logo turns out to be an image, so the title is the whole
+    of what is knowable about the shop. The trailing furniture is trimmed and
+    the naming half is kept.
+    """
+    found = read("Kvittering\nTotalt 500,00 kr", today=TODAY, title="Order details | eBay")
+
+    assert found.document_title == "eBay"
+    assert found.seller_name == "eBay"
+
+
+def test_the_title_never_outranks_a_name_on_the_page() -> None:
+    """It is a fallback. A document that names its sender has already answered."""
+    found = read(PURCHASE, today=TODAY, title="Order details | eBay")
+
+    assert found.document_title == "eBay"
+    assert found.seller_name == "Telenor Norge AS"
+
+
+def test_a_foreign_total_becomes_kroner_once_a_rate_is_supplied() -> None:
+    """The field that used to be left empty, filled and shown its arithmetic.
+
+    The rate is the caller's to fetch (myntos.integrations.norgesbank); what is
+    tested here is what the domain does with it. The amount is marked COMPUTED
+    rather than DOCUMENT because the document does not say it, and the sentence
+    carries the rate at the four decimals Norges Bank quotes so that the
+    multiplication can actually be repeated.
+    """
+    proposal = suggest(RECEIPT, today=TODAY, own_orgnr=OWN_ORGNR, own_name=OWN_NAME)
+    assert proposal.gross_amount is None
+    assert proposal.foreign_amount == Decimal("2137.00")
+    assert any("står tomt med vilje" in warning for warning in proposal.warnings)
+
+    apply_conversion(
+        proposal,
+        kroner=Decimal("27108.49"),
+        rate=Decimal("12.6853"),
+        quoted_on=date(2026, 8, 21),
+    )
+
+    assert proposal.gross_amount == Decimal("27108.49")
+    assert proposal.sources["gross_amount"] is FieldSource.COMPUTED
+    assert proposal.exchange_rate == Decimal("12.6853")
+    assert proposal.rate_quoted_on == date(2026, 8, 21)
+    # The old sentence is gone rather than sitting under the filled-in field
+    # telling the user it was left empty on purpose.
+    assert not any("står tomt med vilje" in warning for warning in proposal.warnings)
+    assert any("12,6853" in warning and "21.08.2026" in warning for warning in proposal.warnings)
+
+
+def test_a_large_purchase_is_flagged_as_a_possible_driftsmiddel() -> None:
+    """Under the threshold in pounds, over it in kroner.
+
+    Which is exactly why the test is re-run after the conversion rather than
+    once at the end of `suggest`: 2 137 is a small number and 27 108 is not, and
+    only one of them is the number skatteloven § 14-40 is about.
+    """
+    proposal = suggest(RECEIPT, today=TODAY, own_orgnr=OWN_ORGNR, own_name=OWN_NAME)
+    assert not any("driftsmiddel" in warning for warning in proposal.warnings)
+
+    apply_conversion(
+        proposal,
+        kroner=Decimal("27108.49"),
+        rate=Decimal("12.6853"),
+        quoted_on=date(2026, 8, 21),
+    )
+
+    assert sum("driftsmiddel" in warning for warning in proposal.warnings) == 1
+
+
+def test_the_driftsmiddel_note_is_not_repeated_when_the_category_changes() -> None:
+    """It depends on the category, so it is redone; redone is not the same as added."""
+    proposal = suggest(RECEIPT, today=TODAY, own_orgnr=OWN_ORGNR, own_name=OWN_NAME)
+    apply_conversion(
+        proposal,
+        kroner=Decimal("27108.49"),
+        rate=Decimal("12.6853"),
+        quoted_on=date(2026, 8, 21),
+    )
+    found = read(RECEIPT, today=TODAY)
+
+    apply_type(proposal, reading=found, type_code="inventar", source=FieldSource.MODEL)
+    note_capitalisation(proposal)
+
+    assert sum("driftsmiddel" in warning for warning in proposal.warnings) == 1
+
+
+def test_a_category_that_is_never_a_driftsmiddel_gets_no_note() -> None:
+    """Goods for resale are large by nature and are not fixed assets."""
+    proposal = suggest(RECEIPT, today=TODAY, own_orgnr=OWN_ORGNR, own_name=OWN_NAME)
+    apply_conversion(
+        proposal,
+        kroner=Decimal("27108.49"),
+        rate=Decimal("12.6853"),
+        quoted_on=date(2026, 8, 21),
+    )
+    found = read(RECEIPT, today=TODAY)
+
+    apply_type(proposal, reading=found, type_code="varekjop", source=FieldSource.DOCUMENT)
+    note_capitalisation(proposal)
+
+    assert not any("driftsmiddel" in warning for warning in proposal.warnings)

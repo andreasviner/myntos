@@ -60,8 +60,16 @@ class CashFlowType:
 
     @property
     def is_income_statement(self) -> bool:
-        """False for owner deposits and withdrawals."""
-        return not self.account_number.startswith("2")
+        """False for anything that lands on the balance sheet.
+
+        Classes 1 and 2 in NS 4102 are the balance sheet and 3 upwards is the
+        income statement, so both prefixes belong here. It used to test only for
+        "2", which was correct while the two equity types were the only
+        non-P&L categories and became wrong the moment a purchase could be
+        capitalised to 1250: a driftsmiddel would have been counted as a cost in
+        the very figures capitalising it is meant to keep it out of.
+        """
+        return not self.account_number.startswith(("1", "2"))
 
 
 _TYPES: tuple[CashFlowType, ...] = (
@@ -197,6 +205,21 @@ _TYPES: tuple[CashFlowType, ...] = (
         note=(
             "Kjøp under beløpsgrensen, eller med kortere levetid enn tre år. "
             "Større og varige anskaffelser skal aktiveres og avskrives i stedet."
+        ),
+    ),
+    CashFlowType(
+        code="driftsmiddel",
+        label="Større anskaffelse (driftsmiddel)",
+        direction=CashFlowDirection.UT,
+        # A balance-sheet account, which is the whole point: the money left, but
+        # nothing was consumed. The value sits as an asset and reaches the
+        # income statement over the following years as avskrivning.
+        account_number="1250",
+        default_tax_code="1",
+        note=(
+            "Kjøp fra 15 000 kroner som skal vare i tre år eller mer: maskiner, utstyr, "
+            "inventar. Føres ikke som kostnad nå, men aktiveres og avskrives (skatteloven "
+            "§ 14-40). Avskrivningen selv føres ikke her."
         ),
     ),
     CashFlowType(

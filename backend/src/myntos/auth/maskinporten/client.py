@@ -75,6 +75,36 @@ _HTTP_TIMEOUT = httpx.Timeout(10.0)
 
 _GRANT_TYPE = "urn:ietf:params:oauth:grant-type:jwt-bearer"
 
+# RFC 9396 rich authorization requests, as Altinn defines them for systembruker.
+# A token carrying this has a *subject* - the customer's system user - which is
+# what an ordinary client-credentials token lacks and what Skatteetaten's
+# SME-EKSTERN-005 is complaining about.
+_SYSTEMUSER_TYPE = "urn:altinn:systemuser"
+_ISO6523_ORG = "iso6523-actorid-upis"
+_ORG_PREFIX = "0192:"
+
+
+def systemuser_authorization_details(
+    systemuser_org: str, *, external_ref: str | None = None
+) -> list[dict[str, Any]]:
+    """The ``authorization_details`` for acting as a customer's system user.
+
+    ``systemuser_org`` is the *customer's* orgnr, not ours: this claim says whose
+    system user we are, and getting it wrong means acting for the wrong company.
+    ``external_ref`` is only needed when one customer has several system users
+    against the same system.
+    """
+    detail: dict[str, Any] = {
+        "type": _SYSTEMUSER_TYPE,
+        "systemuser_org": {
+            "authority": _ISO6523_ORG,
+            "ID": f"{_ORG_PREFIX}{systemuser_org}",
+        },
+    }
+    if external_ref is not None:
+        detail["externalRef"] = external_ref
+    return [detail]
+
 
 def _client() -> httpx.AsyncClient:
     """The HTTP client one request runs on.
@@ -97,7 +127,12 @@ class TokenProvider(Protocol):
     """Anything that can produce a Maskinporten access token."""
 
     async def get_access_token(
-        self, scopes: Sequence[str], *, consumer_org: str | None = None
+        self,
+        scopes: Sequence[str],
+        *,
+        consumer_org: str | None = None,
+        systemuser_org: str | None = None,
+        external_ref: str | None = None,
     ) -> str:
         """Return a valid access token covering ``scopes``."""
         ...
@@ -107,9 +142,14 @@ class NotConfiguredTokenProvider:
     """Placeholder that fails loudly until Maskinporten is wired up."""
 
     async def get_access_token(
-        self, scopes: Sequence[str], *, consumer_org: str | None = None
+        self,
+        scopes: Sequence[str],
+        *,
+        consumer_org: str | None = None,
+        systemuser_org: str | None = None,
+        external_ref: str | None = None,
     ) -> str:
-        del scopes, consumer_org
+        del scopes, consumer_org, systemuser_org, external_ref
         raise MaskinportenNotConfiguredError(
             "Maskinporten is not configured. Set MASKINPORTEN_CLIENT_ID and "
             "MASKINPORTEN_JWK_PATH (plus MASKINPORTEN_KID if the key is a PEM) "
@@ -150,28 +190,49 @@ class JwtGrantTokenProvider:
         self._default_consumer_org = default_consumer_org
         self._metadata: dict[str, Any] | None = None
         self._metadata_fetched_at = utc_now() - _METADATA_TTL
-        self._tokens: dict[tuple[str, str | None], _CachedToken] = {}
+        self._tokens: dict[tuple[str, str | None, str | None, str | None], _CachedToken] = {}
         # Two concurrent requests needing the same scopes should produce one
         # token request, not two — grants are single-use and Maskinporten
         # rate-limits, so the second would be waste at best.
         self._lock = asyncio.Lock()
 
     async def get_access_token(
-        self, scopes: Sequence[str], *, consumer_org: str | None = None
+        self,
+        scopes: Sequence[str],
+        *,
+        consumer_org: str | None = None,
+        systemuser_org: str | None = None,
+        external_ref: str | None = None,
     ) -> str:
         """A token covering ``scopes``, from the cache when one is still good.
 
         ``consumer_org`` is the orgnr of the company whose delegation is being
-        used (the regnskapsfører case). It is part of the cache key, never a
-        detail applied after the fact: the token that comes back carries the
-        delegation in its claims, and reusing it for another company would be
-        acting with the wrong authority.
+        used (the classic regnskapsfører case). ``systemuser_org`` is the orgnr
+        of a company that has approved a **system user** for this system, which
+        is the newer mechanism for the same goal and the only one that works
+        with nobody logged in.
+
+        Both are part of the cache key, never details applied after the fact:
+        the token that comes back carries the authority in its claims, and
+        handing it to a caller acting for another company would be acting with
+        the wrong authority. They are also mutually exclusive - a grant cannot
+        both borrow a delegation and be a system user - and asking for both is
+        an error rather than a silent preference.
         """
         if not scopes:
             raise MaskinportenError("a Maskinporten token needs at least one scope")
+        if consumer_org is not None and systemuser_org is not None:
+            raise MaskinportenError(
+                "a grant is either a delegation (consumer_org) or a system user "
+                "(systemuser_org), never both"
+            )
         scope = " ".join(sorted(scopes))
         organization = consumer_org or self._default_consumer_org
-        key = (scope, organization)
+        if systemuser_org is not None:
+            # A systembruker grant carries its own authority, so the configured
+            # default delegation must not be smuggled in alongside it.
+            organization = None
+        key = (scope, organization, systemuser_org, external_ref)
 
         cached = self._tokens.get(key)
         now = utc_now()
@@ -183,14 +244,24 @@ class JwtGrantTokenProvider:
             cached = self._tokens.get(key)
             if cached is not None and cached.is_usable(utc_now()):
                 return cached.access_token
-            token = await self._request_token(scope, organization)
+            token = await self._request_token(scope, organization, systemuser_org, external_ref)
             self._tokens[key] = token
             return token.access_token
 
-    async def _request_token(self, scope: str, consumer_org: str | None) -> _CachedToken:
+    async def _request_token(
+        self,
+        scope: str,
+        consumer_org: str | None,
+        systemuser_org: str | None = None,
+        external_ref: str | None = None,
+    ) -> _CachedToken:
         metadata = await self._get_metadata()
         assertion = self._build_assertion(
-            issuer=str(metadata["issuer"]), scope=scope, consumer_org=consumer_org
+            issuer=str(metadata["issuer"]),
+            scope=scope,
+            consumer_org=consumer_org,
+            systemuser_org=systemuser_org,
+            external_ref=external_ref,
         )
         async with _client() as http:
             try:
@@ -234,7 +305,15 @@ class JwtGrantTokenProvider:
             usable_until=utc_now() + max(lifetime - _EXPIRY_MARGIN, timedelta(0)),
         )
 
-    def _build_assertion(self, *, issuer: str, scope: str, consumer_org: str | None) -> str:
+    def _build_assertion(
+        self,
+        *,
+        issuer: str,
+        scope: str,
+        consumer_org: str | None,
+        systemuser_org: str | None = None,
+        external_ref: str | None = None,
+    ) -> str:
         """The single-use JWT grant.
 
         Built fresh every time, deliberately: the ``jti`` may not be reused and
@@ -254,6 +333,13 @@ class JwtGrantTokenProvider:
         }
         if consumer_org is not None:
             claims["consumer_org"] = consumer_org
+        if systemuser_org is not None:
+            # Inside the assertion, not a form parameter on the token request.
+            # Maskinporten answers invalid_grant either way, so the difference
+            # is invisible from the error.
+            claims["authorization_details"] = systemuser_authorization_details(
+                systemuser_org, external_ref=external_ref
+            )
         return jwt.encode(
             claims,
             self._signing_key.key,

@@ -93,6 +93,16 @@ const FORWARDED_ENV = [
   "R2_BUCKET",
   "R2_JURISDICTION",
   "R2_ENDPOINT_URL",
+  // Løynd. Missing from this list until now, which is why the deployed API
+  // behaved as though no key existed: myntos.integrations.loynd reads
+  // LOYND_KEY out of the process environment, the key was set in the repo's
+  // .env, and .env is a local file that never reaches the container. Every
+  // uploaded bilag therefore took the no-model path in production while
+  // working perfectly on a developer's machine, and said nothing about it,
+  // because an unavailable model is deliberately not an error for the user.
+  "LOYND_KEY",
+  "LOYND_BASE_URL",
+  "LOYND_MODEL",
 ];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

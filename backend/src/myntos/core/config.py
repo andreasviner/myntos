@@ -162,6 +162,22 @@ class Settings(BaseSettings):
     # Prod: https://skd.apps.altinn.no/skd/mva-melding-innsending-v1
     altinn_mva_app_url: str | None = None
 
+    # --- Altinn systembruker (system vendor registration) ---
+    # Our own organisasjonsnummer, as the *vendor* of this system. Not the same
+    # as maskinporten_consumer_org, which is a customer we act for: this is who
+    # offers the system. It forms the system id, so it cannot be derived from a
+    # token at registration time.
+    altinn_vendor_orgnr: str = ""
+    # The vendor-chosen half of the system id, which Altinn requires to be
+    # "{vendor orgnr}_{name}". Permanent in practice: once a customer has
+    # approved a system user against an id, changing it means every customer
+    # approving again.
+    altinn_system_name: str = "myntos"
+    # Where a customer's browser may return after approving a system user.
+    # Altinn requires https, so a loopback development URL is not valid here
+    # even in test.
+    altinn_system_redirect_url: str = "https://myntos.no/skatt/systembruker/godkjent"
+
     # --- Skatteetaten ---
     # Three separate hosts, because Skatteetaten splits them by auth plane and
     # the test names do not follow one pattern (docs/integrations/).

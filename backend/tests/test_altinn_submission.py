@@ -166,13 +166,27 @@ def altinn(monkeypatch: pytest.MonkeyPatch) -> Iterator[StubAltinn]:
 
 
 class StubTokenProvider:
-    """A Maskinporten provider that hands out a token and counts requests."""
+    """A Maskinporten provider that hands out a token and counts requests.
+
+    Mirrors the whole ``TokenProvider`` signature, systembruker arguments
+    included: a stub narrower than the Protocol stops being a substitute for it,
+    and mypy is what says so.
+    """
 
     def __init__(self) -> None:
         self.requests: list[tuple[tuple[str, ...], str | None]] = []
+        self.systemuser_requests: list[tuple[str | None, str | None]] = []
 
-    async def get_access_token(self, scopes: Any, *, consumer_org: str | None = None) -> str:
+    async def get_access_token(
+        self,
+        scopes: Any,
+        *,
+        consumer_org: str | None = None,
+        systemuser_org: str | None = None,
+        external_ref: str | None = None,
+    ) -> str:
         self.requests.append((tuple(scopes), consumer_org))
+        self.systemuser_requests.append((systemuser_org, external_ref))
         return "machine-token"
 
 

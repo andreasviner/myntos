@@ -2,383 +2,254 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 
 /**
- * Hva KI gjør i Myntos, hva den ikke gjør, og hvem som kjører den.
+ * Hvem som kjører KI-en i Myntos, og bryteren som slår den av.
  *
- * Siden finnes fordi et regnskapsprogram som sender bilag til en språkmodell
- * skylder brukeren tre svar: hvor det skjer, hva modellen får se, og hvem som
- * kjører den. Det tredje svaret er Løynd, og siden sier det høyt: leverandøren
- * er halve begrunnelsen for at et bilag i det hele tatt får forlate programmet,
- * ikke en fotnote nederst.
+ * Siden var lang. Den forklarte hvert felt, siterte hver ledetekst og hadde en
+ * tabell over hva som kom fra parseren og hva som kom fra modellen. Alt sammen
+ * var sant, og nesten ingen leste det, fordi det ikke er tre spørsmål en bruker
+ * stiller om KI. Det er ett: hvor blir bilaget mitt av?
  *
- * Alt som står her skal kunne ettergås i koden. De to spørsmålene ligger i
- * backend/src/myntos/domain/bilag/classification.py og
- * domain/faktura/drafting.py, klienten i integrations/loynd.py, modellnavnet er
- * LOYND_MODEL i core/config.py, og grensene på 2000 og 800 tegn er
- * MAX_DOCUMENT_CHARS og MAX_REQUEST_CHARS. Endrer vi det ene, må vi endre det
- * andre.
+ * Så siden svarer på det, én gang, og gir to knapper: les mer hos Løynd, eller
+ * slå det av. Detaljene ligger fortsatt i personvernerklæringen, som er stedet
+ * de hører hjemme fordi det er den som er bindende.
  *
- * De to <pre>-blokkene er sitater fra de faktiske ledetekstene. Endres et
- * mva-navn i catalogue.py eller en kategori i cashflow.py, må sitatet her
- * endres med.
+ * Bryteren er ekte. `ki_enabled` står på selskapet, ikke på brukeren, og av
+ * betyr at ingen dokumenter lastes opp til Løynd i det hele tatt — verken til
+ * modellen eller til tekstuthentingen. Se
+ * backend/src/myntos/domain/ledger/models.py.
  */
-const oppdatert = '23. august 2026';
 ---
 
 <BaseLayout
-  title="KI i Myntos: to spørsmål, kjørt av Løynd i Norge"
-  description="Myntos bruker KI to steder: å foreslå hvilken kategori et opplastet bilag hører til, og å sette opp fakturalinjer fra din egen beskrivelse. Modellen er loynd-lite fra Løynd, kjørt på servere i Norge uten lagring, og forslaget bokføres aldri av seg selv."
+  title="KI i Myntos: kjørt av Løynd, i Norge"
+  description="All kunstig intelligens i Myntos kjøres av Løynd på norske servere. Ingenting lagres, ingenting trener en modell, og du kan slå det helt av."
 >
   <p class="pill">Kunstig intelligens</p>
-  <h1>KI i Myntos, kjørt av Løynd</h1>
-  <p class="lead">
-    Vi bruker kunstig intelligens to steder, til to spørsmål: hvilken kategori hører betalingen
-    til, og hvordan ser salget du nettopp beskrev ut som fakturalinjer? Begge svarene kommer fra
-    <a href="https://loynd.no" rel="noopener">Løynd</a>, en norsk KI-tjeneste som kjører på norske
-    servere. Alt som står svart på hvitt, altså datoer, beløp og mva, leser vi bokstavelig, og
-    ingenting bokføres uten at du har sett det først.
-  </p>
-  <p class="meta-line">Sist oppdatert {oppdatert}.</p>
 
-  <section class="card loynd-ad">
-    <p class="eyebrow">Modellen bak forslagene</p>
-    <h2 class="ad-title">Løynd: norsk KI, på norsk maskinvare</h2>
-    <p class="ad-lead">
-      Myntos spør ikke en modell i utlandet om hva bilaget ditt gjelder. Vi spør Løynd,
-      KI-tjenesten fra Lindeman Technologies, det samme selskapet som lager Myntos.
-      Inferensserverne står på norsk jord, det som sendes inn blir ikke lagret, og det trener ingen
-      modell. Det er hele grunnen til at et bilag i det hele tatt får forlate programmet.
+  <section class="card headline">
+    <span class="loynd-mark" role="img" aria-label="Løynd"></span>
+    <h1>All KI i Myntos kjøres av Løynd</h1>
+    <p class="lead">
+      Løynd er en norsk KI-tjeneste fra samme selskap som lager Myntos. Serverne står i Norge,
+      bilagene dine blir ikke lagret, og de trener ingen modell. Det er hele grunnen til at et
+      bilag i det hele tatt får forlate programmet.
     </p>
-    <ul class="ad-points">
-      <li><strong>Servere i Norge.</strong> Ingen overføring ut av EØS som må forklares bort.</li>
-      <li><strong>Ingen lagring.</strong> Bilaget blir ikke liggende hos modellen etter svaret.</li>
-      <li>
-        <strong>Ingen trening.</strong> Regnskapet ditt gjør ingen modell smartere, heller ikke vår.
-      </li>
-      <li><strong>Ett ledd færre.</strong> Samme selskap driver modellen og regnskapsprogrammet.</li>
-      <li>
-        <strong>Liten og rask.</strong> <code>loynd-lite</code> fyller ut skjemafelter, og svarer
-        mens du ser på.
-      </li>
-      <li>
-        <strong>Åpent API.</strong> OpenAI-formet, så du kan bygge på Løynd i egne prosjekter også.
-      </li>
-    </ul>
-    <p class="ad-actions">
-      <a class="btn btn-primary" href="https://loynd.no" rel="noopener">Se hva Løynd er</a>
-      <a class="btn btn-ghost" href="https://loynd.no" rel="noopener">Hent en API-nøkkel</a>
-    </p>
-  </section>
-
-  <section class="card summary">
-    <h2 class="summary-title">Kort oppsummert</h2>
     <ul class="ticks">
+      <li>Beløp leser vi alltid selv, rett fra teksten. Modellen skriver aldri et tall i regnskapet.</li>
+      <li>Ingenting bokføres automatisk. Du ser og bekrefter hvert forslag.</li>
       <li>KI brukes bare når du selv laster opp et bilag eller ber om et fakturaforslag.</li>
-      <li>Modellen er <a href="https://loynd.no" rel="noopener">Løynd</a>, kjørt på servere i Norge.</li>
-      <li>Modellen velger fra faste lister, altså kategorier og mva-satser. Den finner ikke på nye.</li>
-      <li>Beløp og datoer på et bilag kommer aldri fra modellen. De leses fra teksten i PDF-en.</li>
-      <li>På en faktura er tallene dine egne: modellen stiller dem opp, den regner dem ikke ut.</li>
-      <li>Bilagene dine lagres ikke hos Løynd, og de trener ingen modell.</li>
-      <li>Ingenting føres automatisk. Du bekrefter hver eneste føring.</li>
     </ul>
+    <p class="actions">
+      <a class="btn btn-primary" href="https://loynd.no" rel="noopener">Mer om Løynd</a>
+      <a class="btn btn-ghost" href="/personvern/">Personvern</a>
+    </p>
   </section>
 
-  <h2>Hvor vi bruker det</h2>
-  <p>
-    To steder, og begge er noe du starter selv.
-  </p>
+  <section class="card switch" data-auth-only="inn">
+    <h2>Slå av KI</h2>
+    <p>
+      KI er på. Slår du det av, gjelder det hele programmet for dette selskapet: ingen dokumenter
+      sendes til Løynd, og skjemaene fylles ut av programmets egen lesing av PDF-en.
+    </p>
+    <label class="picker" hidden>
+      <span>Selskap</span>
+      <select id="company-picker"></select>
+    </label>
+    {/*
+      Avkrysset betyr av, ikke på.
 
-  <h3>1. Når du laster opp et bilag</h3>
-  <p>
-    På <a href="/kontantstrom/">Kontantstrøm</a> leser vi tekstlaget i PDF-en og fyller ut skjemaet
-    for deg. Fordelingen mellom hva som er lest og hva Løynd har foreslått er ikke tilfeldig:
-  </p>
+      Boksen het «Bruk KI for dette selskapet», og da er den normale
+      tilstanden en avkrysset boks. En avkrysset boks leses som noe du har
+      slått på, og de fleste har ikke slått på noe: KI er på fordi det er
+      standarden. Verre er det at feilretningen blir farlig. Kommer feltet
+      tomt tilbake, blir en «bruk»-boks stående umerket, og siden påstår at
+      KI er av mens den er på.
 
-  <div class="table-scroll">
-    <table class="data">
-      <thead>
-        <tr>
-          <th>Felt</th>
-          <th>Hvor forslaget kommer fra</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>Dato, beløp, mva, fakturanummer, organisasjonsnummer</td>
-          <td>Lest ordrett fra teksten i bilaget. Ingen modell involvert.</td>
-        </tr>
-        <tr>
-          <td>Kunde eller leverandør</td>
-          <td>Slått opp mot dine egne registrerte parter, på organisasjonsnummer eller navn.</td>
-        </tr>
-        <tr>
-          <td>Kategori, altså «hva gjaldt det?»</td>
-          <td><strong>Løynd.</strong> Dette er det eneste feltet modellen svarer på.</td>
-        </tr>
-        <tr>
-          <td>Mva-kode</td>
-          <td>
-            Følger av kategorien og av satsen som faktisk står på fakturaen. Gir kategorien ikke
-            fradragsrett, blir det ikke fradrag selv om selgeren har fakturert mva.
-          </td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
+      Snudd er begge deler riktige. Umerket er standardtilstanden, og det er
+      det den umerkede boksen viser. Handlingen har navnet sitt: du krysser av
+      for å slå noe av.
+    */}
+    <label class="check">
+      <input type="checkbox" id="ki-toggle" />
+      <span>Slå av KI-funksjoner for dette selskapet</span>
+    </label>
+    <p class="status" id="ki-status" role="status" hidden></p>
+  </section>
 
-  <p>
-    Grunnen til delingen er enkel: dato og beløp <em>står</em> på bilaget, og der er en maskin som
-    leser bokstavelig alltid tryggere enn en som gjetter godt. En språkmodell som regner feil,
-    regner feil på en måte som ser riktig ut. Kategorien står derimot ingen steder på fakturaen.
-    Den er en vurdering, og det er den vurderingen vi ber Løynd om hjelp til.
-  </p>
-
-  <h3>2. Når du skriver en faktura</h3>
-  <p>
-    På <a href="/faktura/">Faktura</a> kan du beskrive salget med egne ord, for eksempel «10 timer
-    rådgivning i mars til 1 500 kroner timen, og to kursmapper à 450», og få det satt opp som
-    linjer. Modellen stiller om setningen din til kolonner: hva, hvor mange, hvilken enhet, hvilken
-    pris, hvilken mva-sats.
-  </p>
-  <p>
-    Den <em>regner ikke</em>. Tallene er dine egne, hentet fra din egen setning; linjesummen, mva-en
-    og totalen regnes ut av Myntos etterpå, på nøyaktig samme måte som for en linje du taster inn
-    selv. Foreslåtte linjer er merket <em>Foreslått av KI</em> i skjemaet, og de blir ikke til noen
-    faktura før du har lest dem, lagret utkastet og trykket «Utsted», som fortsatt kontrollerer
-    dokumentet mot bokføringsforskriften § 5-1.
-  </p>
-  <p class="note">
-    Er selskapet ditt ikke registrert i Merverdiavgiftsregisteret, står ikke de avgiftspliktige
-    satsene på listen modellen får. Da kan den ikke foreslå mva i det hele tatt.
-  </p>
-
-  <h2>Hvordan spørsmålene stilles</h2>
-  <p>
-    <strong>Kategorien.</strong> Løynd får teksten fra bilaget og en nummerert liste over
-    kategoriene som finnes i kontantstrømregisteret. Så svarer modellen med ett tall.
-  </p>
-  <pre class="sample"><code>1. Salg med 25 % mva (penger inn)
-2. Salg med 15 % mva (penger inn)
-…
-14. Strøm og oppvarming (penger ut)
-…
-26. Uttak til eier (penger ut)
-
-Svar med kun tallet til kategorien som passer best.</code></pre>
-  <p>
-    Det er hele grensesnittet. Modellen kan ikke finne på en konto som ikke finnes, ikke skrive et
-    beløp, ikke endre en dato og ikke foreslå noe utenfor listen. Svarer den noe annet enn et tall i
-    listen, kastes svaret, og du får vår egen lesning i stedet. Er svaret innenfor listen, står det
-    <em>Foreslått av KI</em> ved siden av feltet, slik at du vet hvilket forslag som er en gjetning
-    og hvilke som er avlest.
-  </p>
-  <p>
-    <strong>Fakturalinjene.</strong> Modellen får beskrivelsen du skrev og et fast format å svare i,
-    med mva-satsene nummerert på samme måte.
-  </p>
-  <pre class="sample"><code>beskrivelse | antall | enhet | pris per enhet | mva
-
-1. 25 % (alminnelig sats)
-2. 15 % (næringsmidler)
-…
-7. Ikke mva-registrert
-
-Svar med kun linjene.</code></pre>
-  <p>
-    En rad som ikke har akkurat fem felter, kastes. Vi gjetter ikke på hvilket felt som mangler, for
-    da kan en pris havne i antallskolonnen. Er mva-tallet utenfor listen, faller linjen tilbake til
-    den vanlige satsen, og det står i skjemaet at du må kontrollere den. Prisene tolkes som priser
-    uten mva; nevner beskrivelsen din «inkl. mva», sier vi fra om det.
-  </p>
-  <p>
-    Fordi begge oppgavene er utfylling og ikke forfatterskap, holder det med en liten modell. Derfor
-    bruker vi <code>loynd-lite</code>, den lille modellen hos Løynd: den er raskere og billigere, og
-    det finnes ingen grunn til å sende bilaget ditt gjennom noe større.
-  </p>
-
-  <h2>Hvorfor Løynd</h2>
-  <p>
-    <a href="https://loynd.no" rel="noopener">Løynd</a> er en norsk KI-tjeneste fra Lindeman
-    Technologies, samme selskap som lager Myntos. Inferensserverne står på norsk jord, og tjenesten
-    lagrer ikke det som sendes inn. Det er tre grunner til at det er akkurat den:
-  </p>
-  <ul>
-    <li>
-      <strong>Et bilag er ikke en tekstsnutt.</strong> Det er et forretningsdokument med navn,
-      adresser og beløp, og ofte personopplysninger om en motpart som aldri har hørt om oss. Sender
-      vi det til en modell utenfor EØS, er det en overføring som må ha et rettslig grunnlag og en
-      forklaring i personvernerklæringen. Norsk maskinvare gjør forklaringen kort.
-    </li>
-    <li>
-      <strong>Ett ledd færre.</strong> Løynd drives av samme selskap som Myntos, så bilaget går ikke
-      innom en tredjepart vi bare har lest vilkårene til.
-    </li>
-    <li>
-      <strong>Ingen lagring, ingen trening.</strong> Regnskapet ditt trener ingen modell, verken vår
-      eller noen andres. Se <a href="/personvern/">personvernerklæringen</a>.
-    </li>
-  </ul>
-  <p class="ad-tail">
-    Løynd er ikke bare for regnskap. Tjenesten er et vanlig, OpenAI-formet API du kan bygge på selv,
-    med samme løfte om norske servere og ingen lagring.
-    <a href="https://loynd.no" rel="noopener">Les mer på loynd.no</a>.
-  </p>
-
-  <h2>Hva modellen får se</h2>
-  <p>
-    Ved opplasting: bare teksten fra bilaget, og bare de første 2000 tegnene av den. Toppen av en
-    faktura har avsender, varelinjer og totalsum, og resten er betalingsinstrukser og liten skrift.
-    Ved et fakturaforslag: bare de inntil 800 tegnene du selv skrev i boksen. Ikke noe annet følger
-    med, i noen av tilfellene:
-  </p>
-  <ul>
-    <li>Ikke hovedboken, ikke tidligere føringer, ikke saldoer.</li>
-    <li>Ikke kunde- og leverandørregisteret ditt, og ikke hvem fakturaen skal til.</li>
-    <li>Ikke navnet ditt, e-postadressen din eller noe om kontoen din.</li>
-    <li>Ikke selskapets navn eller organisasjonsnummer.</li>
-    <li>Ikke selve PDF-filen, bare tekstlaget vi har hentet ut av den.</li>
-  </ul>
-  <p class="note">
-    Er bilaget skannet eller fotografert, finnes det ikke noe tekstlag. Da sendes ingenting noe
-    sted, og du fyller ut skjemaet selv. Myntos driver ikke tekstgjenkjenning på bilder.
-  </p>
-
-  <h2>Hva vi ikke bruker KI til</h2>
-  <ul>
-    <li><strong>Ingen automatisk bokføring.</strong> Et forslag er et utfylt skjema. Føringen skjer når du trykker på knappen.</li>
-    <li><strong>Ingen utstedte fakturaer.</strong> Modellen fyller ut et utkast. Nummeret, bokføringen og e-fakturaen kommer først når du utsteder, og først etter kontrollen mot § 5-1.</li>
-    <li><strong>Ingen skatteråd.</strong> Modellen svarer med et tall fra en liste; den vurderer ikke fradragsrett, og den kjenner ikke virksomheten din.</li>
-    <li><strong>Ingen skattemelding og ingen mva-melding.</strong> Det som sendes til Skatteetaten, bygger utelukkende på det som står i hovedboken.</li>
-    <li><strong>Ingen chat.</strong> Det finnes ingen assistent her som kan be om, lese eller endre tallene dine.</li>
-    <li><strong>Ingen profilering av deg.</strong></li>
-  </ul>
-
-  <h2>Å slå det på, og å slå det av</h2>
-  <p>
-    Kjører du Myntos selv, er begge forslagene avhengige av at du setter en Løynd-nøkkel i
-    miljøvariabelen <code>LOYND_KEY</code>. Nøkkelen får du på
-    <a href="https://loynd.no" rel="noopener">loynd.no</a>. Uten nøkkel spør vi ingen om
-    noe: bilaget leses fortsatt for dato, beløp og mva, kategorien velger du selv, og fakturaskjemaet
-    viser ikke beskrivelsesboksen i det hele tatt. Funksjonen er altså noe man slår på, ikke noe man
-    må slå av.
-  </p>
-  <p class="note">
-    Myntos er i tidlig utvikling. Et KI-forslag er et forslag, og ansvaret for det som bokføres,
-    ligger hos den som fører regnskapet. Se <a href="/ansvar/">ansvar og vilkår</a>.
-  </p>
+  <section class="card signed-out" data-auth-only="ut">
+    <p>
+      <a href="/logg-inn/">Logg inn</a> for å slå KI av eller på for et selskap.
+    </p>
+  </section>
 </BaseLayout>
 
 <style>
-  .meta-line {
-    color: var(--faint);
-    font-size: 0.88rem;
-    margin: 0.4rem 0 2rem;
+  .headline {
+    text-align: center;
   }
-  /*
-    Løynd-kortet er sidens reklameplass. Hvem som kjører modellen er halve svaret
-    på om det er greit å sende et bilag ut av programmet i det hele tatt, så det
-    står øverst og ser ut som noe man skal klikke på, ikke som en fotnote.
-  */
-  .loynd-ad {
-    border-color: var(--accent-line);
-    background: linear-gradient(150deg, var(--accent-soft), var(--surface) 70%);
-    box-shadow: var(--shadow);
+
+  /* Løynd ships one mark per background: dark ink for a light page, a pale
+     one for a dark page. Our theme is an attribute the visitor sets, not the
+     OS setting, so the swap is a CSS rule here rather than a media query
+     inside the file. A background image is what lets CSS pick; the element
+     carries the name for a screen reader instead of an alt text. */
+  .loynd-mark {
+    width: 96px;
+    height: 96px;
+    margin: 0 auto 1rem;
+    display: block;
+    background: url('/loynd-logo-on-light.svg') center / contain no-repeat;
   }
-  .ad-title {
-    margin: 0.35rem 0 0;
-    font-size: 1.45rem;
+
+  :global(:root[data-theme='dark']) .loynd-mark {
+    background-image: url('/loynd-logo-on-dark.svg');
   }
-  .ad-lead {
-    margin-top: 0.7rem;
+
+  .headline h1 {
+    margin-top: 0;
   }
-  .ad-points {
-    list-style: none;
-    padding: 0;
-    margin: 1.1rem 0 0;
-    display: grid;
-    gap: 0.55rem;
+
+  .headline .lead {
+    max-width: 46ch;
+    margin-inline: auto;
   }
-  .ad-points li {
-    position: relative;
-    padding-left: 1.5rem;
-    font-size: 0.95rem;
-  }
-  .ad-points li::before {
-    content: '';
-    position: absolute;
-    left: 0.1rem;
-    top: 0.55em;
-    width: 0.45rem;
-    height: 0.45rem;
-    border-radius: 50%;
-    background: var(--accent);
-  }
-  .ad-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.6rem;
-    margin: 1.4rem 0 0;
-  }
-  .ad-tail {
-    border-left: 3px solid var(--accent-line);
-    padding-left: 0.9rem;
-    color: var(--muted);
-  }
-  .summary {
-    border-color: var(--accent-line);
-    background: linear-gradient(160deg, var(--accent-soft), var(--surface) 65%);
-    margin-bottom: 1rem;
-  }
-  .summary-title {
-    margin: 0;
-    font-size: 1.15rem;
-  }
+
+  /* Left-aligned inside a centred card: a list of statements is read line by
+     line, and centring the lines takes the ragged edge the eye returns to. */
   .ticks {
     list-style: none;
     padding: 0;
-    margin: 1rem 0 0;
+    margin: 1.5rem auto;
+    max-width: 52ch;
+    text-align: left;
     display: grid;
-    gap: 0.5rem;
+    gap: 0.6rem;
   }
+
   .ticks li {
+    padding-left: 1.6rem;
     position: relative;
-    padding-left: 1.5rem;
-    font-size: 0.95rem;
   }
+
   .ticks li::before {
-    content: '';
+    content: '✓';
     position: absolute;
     left: 0;
-    top: 0.5em;
-    width: 0.66rem;
-    height: 0.36rem;
-    border-left: 2px solid var(--accent);
-    border-bottom: 2px solid var(--accent);
-    transform: rotate(-45deg);
-  }
-  .sample {
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--accent-line);
-    border-radius: var(--radius-small);
-    padding: 1rem 1.1rem;
-    overflow-x: auto;
-    font-size: 0.88rem;
-    line-height: 1.55;
-  }
-  .sample code {
-    font-family: var(--font-numeric);
-    white-space: pre;
-  }
-  code {
-    font-family: var(--font-numeric);
-    font-size: 0.9em;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    padding: 0.05rem 0.3rem;
-  }
-  table.data td:first-child {
+    color: var(--accent);
     font-weight: 600;
-    color: var(--fg-strong);
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    justify-content: center;
+    margin-bottom: 0;
+  }
+
+  /* Same shape as the tick rows on /faktura and /organisasjon. Astro scopes
+     styles per page, so the rule is repeated rather than shared. */
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin: 0.8rem 0 0;
+    font-size: 0.95rem;
+  }
+
+  .switch .picker {
+    display: block;
+    margin-bottom: 1rem;
+  }
+
+  .switch .picker span {
+    display: block;
+    font-size: 0.9rem;
+    margin-bottom: 0.35rem;
+  }
+
+  .signed-out {
+    text-align: center;
   }
 </style>
+
+<script>
+  import { ApiError, updateCompany, type Company } from '../lib/api';
+  import { currentCompany, loadCompanies, mountCompanyPicker } from '../lib/company';
+  import { el, setStatus } from '../lib/dom';
+  import { loadSession } from '../lib/session';
+
+  async function mount(): Promise<void> {
+    const session = await loadSession();
+    if (session === null) return;
+
+    const companies = await loadCompanies();
+    let company = currentCompany(companies);
+    if (company === undefined) return;
+
+    const toggle = el<HTMLInputElement>('#ki-toggle');
+    const status = el<HTMLParagraphElement>('#ki-status');
+    const picker = el<HTMLSelectElement>('#company-picker');
+
+    /**
+     * Whether KI is on for a company.
+     *
+     * `!== false` rather than a plain read: an older backend, or one mid-way
+     * through a rollout, answers without the field at all, and `undefined`
+     * would then read as off. On is the default and the truthful answer while
+     * the field is unknown, so it is the one an absent value falls back to.
+     */
+    const isOn = (shown: Company): boolean => shown.ki_enabled !== false;
+
+    function render(shown: Company): void {
+      // Checked means off. See the note on the checkbox.
+      toggle.checked = !isOn(shown);
+      setStatus(
+        status,
+        isOn(shown)
+          ? ''
+          : 'KI er av. Bilag sendes ikke til Løynd, og skjemaene fylles ut av vår egen lesing.',
+        'ok',
+      );
+    }
+
+    mountCompanyPicker(picker, companies, company, (chosen) => {
+      company = chosen;
+      render(chosen);
+    });
+    // The picker hides itself when there is only one company; the label around
+    // it has to go with it, or the page shows the word "Selskap" over nothing.
+    el<HTMLLabelElement>('.switch .picker').hidden = picker.hidden;
+    render(company);
+
+    toggle.addEventListener('change', async () => {
+      if (company === undefined) return;
+      // The box says "slå av", so a tick is a request to disable.
+      const wanted = !toggle.checked;
+      toggle.disabled = true;
+      try {
+        const saved = await updateCompany(company.id, { ki_enabled: wanted });
+        company = saved;
+        // Replace it in the list too, so switching away and back does not show
+        // the value this page just changed.
+        const index = companies.findIndex((entry) => entry.id === saved.id);
+        if (index !== -1) companies[index] = saved;
+        render(saved);
+      } catch (error) {
+        // Put the switch back where it was. A control that keeps a position the
+        // server rejected is a control that lies about the state of the books.
+        toggle.checked = wanted;
+        setStatus(
+          status,
+          error instanceof ApiError && error.status === 403
+            ? 'Du må være administrator i organisasjonen for å endre dette.'
+            : 'Fikk ikke lagret. Prøv igjen.',
+        );
+      } finally {
+        toggle.disabled = false;
+      }
+    });
+  }
+
+  void mount();
+</script>

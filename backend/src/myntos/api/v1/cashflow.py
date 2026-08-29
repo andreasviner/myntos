@@ -16,12 +16,16 @@ faktura and proposes the three supplied values, so the ordinary case becomes
 proposes only what the document states and stores nothing — see
 :mod:`myntos.domain.bilag.interpretation`.
 
-Entries are posted immediately and are therefore immutable. A mistake is undone
-with :func:`reverse`, which is what bokføringsloven expects and what leaves an
-auditor able to see both the error and the correction.
+Entries are posted immediately and are therefore immutable, which is what
+bokføringsloven expects and what leaves an auditor able to see both an error and
+its correction. Two endpoints act on that: :func:`reverse` for a payment that
+should not have been recorded at all, and :func:`edit_entry` for one whose
+details were wrong, which reverses and re-posts in a single transaction so the
+user gets an edit and the ledger keeps its history.
 """
 
 import asyncio
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from typing import Annotated
@@ -31,18 +35,23 @@ from pydantic import BaseModel, Field
 
 from myntos.api.deps import CurrentCompany, CurrentUser, DbSession, Storage
 from myntos.core.clock import utc_now
-from myntos.domain.bilag import classification, interpretation
+from myntos.domain.bilag import classification, extraction, interpretation
 from myntos.domain.bilag import service as bilag_service
 from myntos.domain.bilag.models import MAX_ATTACHMENT_BYTES, Attachment
 from myntos.domain.bilag.text import extract_text
 from myntos.domain.identity.access import Permission, require_permission
 from myntos.domain.ledger import parties as party_service
 from myntos.domain.ledger import service as ledger_service
-from myntos.domain.ledger.cashflow import CASH_FLOW_TYPES, CashFlowDirection, types_for
+from myntos.domain.ledger.cashflow import (
+    CASH_FLOW_TYPES,
+    CashFlowDirection,
+    CashFlowType,
+    types_for,
+)
 from myntos.domain.ledger.chart import STANDARD_TAX_CODES
 from myntos.domain.ledger.models import PartyType
 from myntos.domain.ledger.service import CashFlowView, PaymentMethod
-from myntos.integrations import loynd
+from myntos.integrations import loynd, norgesbank
 
 router = APIRouter(tags=["kontantstrøm"])
 
@@ -99,6 +108,10 @@ class CashFlowResponse(BaseModel):
     # Set when this entry has been reversed; the UI greys it out rather than
     # hiding it, because the reversed entry is still part of the record.
     reversed_by_id: int | None
+    # Set on the voucher a correction posted, naming the entry it replaced. The
+    # register folds that entry and its reversal into one line underneath this
+    # one, so an edit reads as one event instead of three payments.
+    corrects_id: int | None
     attachments: list[AttachmentResponse]
 
 
@@ -139,8 +152,9 @@ class SuggestionResponse(BaseModel):
     type_label: str | None
     # "dokument" when the words in the file gave it away, "ki" when Løynd chose
     # it from the catalogue. The interface says which, because the two do not
-    # deserve the same amount of trust.
-    type_source: interpretation.TypeSource | None
+    # deserve the same amount of trust. Kept next to `sources`, which says the
+    # same thing for every other field.
+    type_source: interpretation.FieldSource | None
     tax_code: str | None
     occurred_on: date | None
     gross_amount: Decimal | None
@@ -152,8 +166,26 @@ class SuggestionResponse(BaseModel):
     counterparty_orgnr: str | None
     invoice_number: str | None
     currency_code: str | None
+    # The total as printed, when the document is not in kroner. `gross_amount` is
+    # left empty in that case: the ledger is in kroner, and only the bank knows
+    # what the account was actually charged.
+    foreign_amount: Decimal | None
+    # Norges Bank's rate for `currency_code` and the day it is quoted for, set
+    # when `gross_amount` was worked out from `foreign_amount` rather than read.
+    # Both are shown so the user can redo the multiplication.
+    exchange_rate: Decimal | None
+    rate_quoted_on: date | None
     filled: list[str]
+    # Field name to "dokument", "ki" or "beregnet", for every field in `filled`.
+    # The form marks each one with where it came from.
+    sources: dict[str, interpretation.FieldSource]
     warnings: list[str]
+    # Whether a model was actually consulted for this document. False covers
+    # three different situations that used to be indistinguishable from the
+    # outside: the company has turned KI off, the deployment has no key, and
+    # Løynd could not be reached. The user is entitled to know that the empty
+    # category field is not the model's considered opinion.
+    ki_used: bool
 
 
 class CreateCashFlowRequest(BaseModel):
@@ -169,6 +201,122 @@ class CreateCashFlowRequest(BaseModel):
     # Optional: plenty of payments have no counterparty worth registering, and
     # demanding one makes people invent placeholder suppliers.
     party_id: int | None = None
+
+
+async def _ask_for_category(
+    document_text: str, *, allowed: CashFlowDirection | None, title: str | None
+) -> CashFlowType | None:
+    """Which category Løynd puts the document in, or nothing if it did not say.
+
+    An unavailable model is not an error for the user: the reading we did
+    ourselves stands on its own, and a register that stops working because a
+    model is down would be a worse trade than never asking.
+    """
+    try:
+        return await classification.classify(
+            document_text, ask=loynd.complete, allowed=allowed, title=title
+        )
+    except loynd.LoyndError:
+        return None
+
+
+async def _ask_for_fields(
+    document_text: str, *, today: date, title: str | None
+) -> extraction.Extraction:
+    """What Løynd reads in the places our own parser came up empty."""
+    try:
+        return await extraction.extract(document_text, ask=loynd.complete, today=today, title=title)
+    except loynd.LoyndError:
+        return extraction.Extraction()
+
+
+@dataclass(frozen=True)
+class _Document:
+    """An uploaded file as text, however we managed to get the text."""
+
+    text: str
+    title: str | None = None
+    encrypted: bool = False
+    unreadable: bool = False
+
+
+async def _read_document(content: bytes, *, filename: str, use_loynd: bool) -> _Document:
+    """The text of an uploaded PDF, from Løynd when possible and locally when not.
+
+    **Løynd first, on purpose.** Handing the file over rather than a string we
+    extracted ourselves is what makes this pipeline improvable without touching
+    Myntos again: the extractor on the other side can learn new formats, or
+    learn to look at a page instead of reading its text layer, and the only
+    change here is that better text starts coming back. Extracting locally and
+    sending the result throws the document away before the request is made, and
+    no upgrade on the far side can undo that.
+
+    **pypdf second, and it is a real fallback.** A deployment with no key, a
+    company that has turned KI off, and a Løynd that is down all land here, and
+    all of them get the register they had before: the local text layer, read the
+    way it has always been read.
+
+    Neither side runs OCR, so a scanned receipt comes back empty either way.
+    That is said plainly to the user rather than dressed up as a failure.
+    """
+    if use_loynd:
+        try:
+            document = await loynd.extract_file(content=content, filename=filename)
+        except loynd.LoyndError:
+            pass
+        else:
+            if not document.empty:
+                return _Document(
+                    text=document.text, title=document.title or _from_filename(filename)
+                )
+            # An empty answer is a real answer about a scanned document, but it
+            # is also what a extractor that dislikes this particular file
+            # returns, so pypdf still gets its turn before we conclude anything.
+
+    local = await asyncio.to_thread(extract_text, content)
+    return _Document(
+        text=local.text,
+        title=local.title or _from_filename(filename),
+        encrypted=local.encrypted,
+        unreadable=local.unreadable,
+    )
+
+
+def _from_filename(filename: str) -> str | None:
+    """The filename as a title, when the file itself offers none.
+
+    Browsers name a downloaded receipt after the page it came from, so
+    "Order details _ eBay.pdf" is not decoration: on that document it is the
+    only occurrence of the word "eBay" anywhere, metadata included, once the
+    logo at the top turns out to be an image. It is treated exactly like a PDF
+    title, which is to say as a hint about who this is from and never as a
+    source of an amount or a date.
+    """
+    stem = bilag_service.sanitise_filename(filename).rsplit(".", maxsplit=1)[0]
+    cleaned = " ".join(stem.replace("_", " ").split())
+    return cleaned if len(cleaned) >= 3 else None
+
+
+async def _to_kroner(suggestion: interpretation.InvoiceSuggestion, *, on: date) -> None:
+    """Fill the kroner amount from Norges Bank, when the bilag is not in kroner.
+
+    Best-effort by design. A rate that does not arrive leaves the suggestion
+    exactly as it was, which is the behaviour every foreign bilag had until now:
+    an empty amount field and a sentence telling the user to look it up.
+    """
+    currency = suggestion.currency_code
+    if currency is None or suggestion.foreign_amount is None or suggestion.gross_amount is not None:
+        return
+    try:
+        rate = await norgesbank.rate_for(currency, on=on)
+    except norgesbank.RateUnavailableError:
+        return
+    interpretation.apply_conversion(
+        suggestion,
+        kroner=rate.to_kroner(suggestion.foreign_amount),
+        rate=rate.kroner_per_unit,
+        quoted_on=rate.quoted_on,
+    )
 
 
 def _label_for(type_code: str | None) -> str | None:
@@ -207,6 +355,7 @@ def _cash_flow_response(
         description=view.description,
         is_reversal=view.is_reversal,
         reversed_by_id=view.reversed_by_id,
+        corrects_id=view.corrects_id,
         attachments=[_attachment_response(a) for a in attachments or []],
     )
 
@@ -267,54 +416,102 @@ async def suggest_from_document(
     # attached is refused here rather than after the user has confirmed a form.
     bilag_service.validate_pdf(content)
 
-    # Both the parsing and the heuristics are CPU-bound and operate on bytes
-    # from outside; off the event loop they cannot stall other requests.
-    extracted = await asyncio.to_thread(extract_text, content)
-    parties = await party_service.list_parties(db, company=context.company)
-    reading = await asyncio.to_thread(interpretation.read, extracted.text, today=utc_now().date())
-    suggestion = await asyncio.to_thread(
-        interpretation.suggest,
-        extracted.text,
-        today=utc_now().date(),
-        own_orgnr=context.company.orgnr,
-        own_name=context.company.name,
-        reading=reading,
-        parties=[
-            interpretation.PartyHint(
-                id=party.id,
-                name=party.name,
-                orgnr=party.orgnr,
-                is_customer=party.party_type is PartyType.KUNDE,
-            )
-            for party in parties
-        ],
-    )
+    # Whether a model may see this document at all, decided once and honoured by
+    # everything below. A company that has switched KI off gets the parser and
+    # nothing else, including no upload to Løynd's extractor: "off" has to mean
+    # the document does not leave the building, or it means nothing.
+    use_loynd = context.company.ki_enabled and loynd.is_configured()
 
-    # Then the category, which is the one thing the document does not state and
-    # the one thing a model is better at than a keyword list. Restricted to the
-    # direction when a registered party settled that question, so a recognised
-    # customer cannot come back as an expense.
-    #
-    # No key or no answer is not an error for the user: the reading above already
-    # stands on its own, and a register that stops working because a model is
-    # down would be a worse trade than never asking.
-    chosen = None
-    if loynd.is_configured():
-        try:
-            chosen = await classification.classify(
+    extracted = await _read_document(content, filename=file.filename or "", use_loynd=use_loynd)
+    parties = await party_service.list_parties(db, company=context.company)
+    today = utc_now().date()
+    hints = [
+        interpretation.PartyHint(
+            id=party.id,
+            name=party.name,
+            orgnr=party.orgnr,
+            is_customer=party.party_type is PartyType.KUNDE,
+        )
+        for party in parties
+    ]
+
+    def propose(
+        found: interpretation.InvoiceReading, model_fields: frozenset[str] = frozenset()
+    ) -> interpretation.InvoiceSuggestion:
+        return interpretation.suggest(
+            extracted.text,
+            today=today,
+            own_orgnr=context.company.orgnr,
+            own_name=context.company.name,
+            reading=found,
+            parties=hints,
+            model_fields=model_fields,
+        )
+
+    # The heuristics are CPU-bound and operate on text from outside; off the
+    # event loop they cannot stall other requests.
+    reading = await asyncio.to_thread(
+        interpretation.read, extracted.text, today=today, title=extracted.title
+    )
+    suggestion = await asyncio.to_thread(propose, reading)
+
+    # Then the two questions for the model, asked at the same time because the
+    # user is watching a spinner: which category this belongs to, and what the
+    # document says where our own reading came up empty. The category menu is
+    # restricted to the direction when a registered party settled that question,
+    # so a recognised customer cannot come back as an expense.
+    if use_loynd:
+        chosen, model_reading = await asyncio.gather(
+            _ask_for_category(
                 extracted.text,
-                ask=loynd.complete,
-                allowed=suggestion.direction if suggestion.party_id is not None else None,
-            )
-        except loynd.LoyndError:
-            chosen = None
+                # Always narrowed, not only when a registered party settled it.
+                #
+                # The direction is a *reading*: interpretation.suggest decides
+                # it from whether the document names us as its sender, and
+                # everything else is a purchase. The category is the question.
+                # Handing the model the full catalogue lets a category answer
+                # silently redecide the direction, because apply_type takes the
+                # direction from whichever category comes back — and that is not
+                # a small error. Løynd files this eBay receipt under "Salg til
+                # utlandet" given all 26 choices, which would book a Mac Studio
+                # the company bought as export revenue it earned.
+                #
+                # If the reading is wrong, the user flips the radio and picks
+                # again, which is a visible correction. A direction quietly
+                # reversed by a category is not.
+                allowed=suggestion.direction,
+                title=extracted.title,
+            ),
+            _ask_for_fields(extracted.text, today=today, title=extracted.title),
+        )
+    else:
+        chosen, model_reading = None, extraction.Extraction()
+
+    # What the model read changes what the document is taken to say, so the
+    # proposal is built again from the merged reading rather than patched in
+    # place: a currency it found decides whether the amount may be proposed at
+    # all and whether a VAT code follows, and working that out in a second place
+    # is how the two places come to disagree.
+    merged, model_fields = extraction.merge(reading, model_reading)
+    if model_fields:
+        reading = merged
+        suggestion = await asyncio.to_thread(propose, reading, model_fields)
     if chosen is not None:
         interpretation.apply_type(
             suggestion,
             reading=reading,
             type_code=chosen.code,
-            source=interpretation.TypeSource.MODEL,
+            source=interpretation.FieldSource.MODEL,
         )
+    extraction.apply_description(suggestion, model_reading, item_text=reading.item_text)
+
+    # Last, because it needs the final currency: a code the model supplied is
+    # what turns a total that looked like kroner into 2 137,00 GBP, and there is
+    # nothing to convert until that is settled. The driftsmiddel threshold is
+    # then re-tested against whichever amount and category came out of all of
+    # the above, since both halves of that test have had a chance to move.
+    await _to_kroner(suggestion, on=suggestion.occurred_on or today)
+    interpretation.note_capitalisation(suggestion)
 
     warnings = list(suggestion.warnings)
     if extracted.encrypted:
@@ -337,8 +534,13 @@ async def suggest_from_document(
         counterparty_orgnr=suggestion.counterparty_orgnr,
         invoice_number=suggestion.invoice_number,
         currency_code=suggestion.currency_code,
+        foreign_amount=suggestion.foreign_amount,
+        exchange_rate=suggestion.exchange_rate,
+        rate_quoted_on=suggestion.rate_quoted_on,
         filled=suggestion.filled,
+        sources=suggestion.sources,
         warnings=warnings,
+        ki_used=use_loynd,
     )
 
 
@@ -384,6 +586,63 @@ async def record_entry(
     view = ledger_service.describe(transaction)
     # describe() only returns None for a voucher with no payment line, which
     # the function above cannot produce.
+    assert view is not None  # noqa: S101
+    return _cash_flow_response(view)
+
+
+@router.put(
+    "/companies/{company_id}/cashflow/{voucher_id}",
+    status_code=status.HTTP_201_CREATED,
+)
+async def edit_entry(
+    voucher_id: int,
+    payload: CreateCashFlowRequest,
+    context: CurrentCompany,
+    db: DbSession,
+) -> CashFlowResponse:
+    """Change a registered payment.
+
+    A posted voucher cannot be altered, so this does the only thing that can
+    stand in for it: reverses the original and posts the corrected version,
+    both inside the request's single transaction. Either all three vouchers
+    exist afterwards or none of the new ones do. That atomicity is the reason
+    this is an endpoint rather than two calls from the browser, where a dropped
+    connection between them would leave a reversed entry and no replacement,
+    which is a worse state than the mistake being corrected.
+
+    **Why not simply update the rows.** "25 % mva" is not a value stored on the
+    entry; it decides how many lines the entry has. At 27 108,49 kroner the
+    deductible version debits 6500 with 21 686,79 and 2710 with 5 421,70, and
+    the non-deductible one debits 6500 with the whole sum and does not touch
+    2710 at all. Account 2710 is what the MVA-melding aggregates, so that line
+    is a claim to Skatteetaten. Editing it away in place would erase a claim
+    that may already have been reported, leaving the books disagreeing with the
+    filing and nothing in the record to say why. The reversal is what keeps the
+    two reconcilable.
+
+    What the user sees is still an edit: they open the entry, change what was
+    wrong and save. What the ledger keeps is the original, its reversal and the
+    corrected entry, which is what bokføringsloven asks for and what lets an
+    auditor follow a number in a report back to a document.
+    """
+    require_permission(context.membership.role, Permission.LEDGER_WRITE)
+    await ledger_service.reverse_cash_flow(db, company=context.company, voucher_pk=voucher_id)
+    transaction = await ledger_service.record_cash_flow(
+        db,
+        company=context.company,
+        type_code=payload.type_code,
+        occurred_on=payload.occurred_on,
+        gross_amount=payload.gross_amount,
+        description=payload.description,
+        tax_code=payload.tax_code,
+        payment_method=payload.payment_method,
+        party_pk=payload.party_id,
+        # What makes the three vouchers readable as one correction rather than
+        # as three unrelated payments. Set here and nowhere else: an ordinary
+        # entry replaces nothing.
+        corrects_pk=voucher_id,
+    )
+    view = ledger_service.describe(transaction)
     assert view is not None  # noqa: S101
     return _cash_flow_response(view)
 

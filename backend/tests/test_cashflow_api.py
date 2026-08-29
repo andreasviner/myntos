@@ -7,6 +7,7 @@ round trip as a balanced, immutable, correctly-scoped voucher.
 """
 
 from datetime import date
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -14,7 +15,8 @@ from fastapi.testclient import TestClient
 
 from myntos.core.clock import utc_now
 from myntos.domain.bilag import classification
-from myntos.integrations import loynd
+from myntos.domain.ledger.cashflow import CashFlowDirection
+from myntos.integrations import loynd, norgesbank
 from tests.conftest import register, write
 
 ORGNR = "910000004"
@@ -148,6 +150,25 @@ def test_another_organizations_company_is_not_found(client: TestClient) -> None:
     register(client, "fremmed@example.no", full_name="Fremmed Person")
     assert client.get(f"/api/v1/companies/{company['id']}").status_code == 404
     assert client.get(f"/api/v1/companies/{company['id']}/cashflow").status_code == 404
+
+
+def test_one_account_lists_every_company_it_keeps_books_for(client: TestClient) -> None:
+    """The regnskapsfører case, and what the company picker in the UI is drawn from."""
+    session = register(client, "kari@example.no", organization_name="Fjord Regnskap AS")
+    organization_id = session["memberships"][0]["organization_id"]
+    first = create_company(client, organization_id, orgnr=ORGNR, name="Klient En AS")
+    second = create_company(client, organization_id, orgnr=OTHER_ORGNR, name="Klient To AS")
+
+    listed = client.get("/api/v1/companies").json()
+    assert {company["orgnr"] for company in listed} == {ORGNR, OTHER_ORGNR}
+    # Both reachable on their own, and each with its own set of books: an entry
+    # booked in one must not turn up in the other.
+    for company in (first, second):
+        assert client.get(f"/api/v1/companies/{company['id']}").status_code == 200
+
+    record(client, first["id"], type_code="salg_hoy_sats", gross_amount="1250.00")
+    assert client.get(f"/api/v1/companies/{first['id']}/cashflow").json() != []
+    assert client.get(f"/api/v1/companies/{second['id']}/cashflow").json() == []
 
 
 def test_listing_companies_only_shows_your_own(client: TestClient) -> None:
@@ -649,7 +670,10 @@ def test_the_model_picks_the_category_and_the_answer_says_so(
     the category in the response can only have come from it — along with the
     account that follows from it and the label saying where it came from.
     """
-    menu = classification.build_menu()
+    # The menu the endpoint builds, not the whole catalogue: a purchase is
+    # offered only the expense half, so the numbers differ and a stub that
+    # answered by position on the full list would name a different category.
+    menu = classification.build_menu(CashFlowDirection.UT)
     rekvisita = next(item for item in menu if item.type_code == "kontorrekvisita")
 
     async def fake_complete(*, system: str, prompt: str, max_tokens: int = 16) -> str:
@@ -683,6 +707,106 @@ def test_a_document_the_model_cannot_place_falls_back_to_our_own_reading(
 
     assert suggestion["type_code"] == "telefon_internett"
     assert suggestion["type_source"] == "dokument"
+
+
+# What a receipt from a foreign webshop looks like once pypdf is done with it.
+# Not one of the words our own labels look for, a date written month first, and a
+# total in pounds — see tests/test_bilag_extraction.py for the reading itself.
+RECEIPT_LINES = [
+    "Order information",
+    "Buyer andreali_7",
+    "Seller daisyaus-0",
+    f"Placed on Aug 23, {THIS_YEAR}",
+    "Payment method Credit Card",
+    "Order total",
+    "1 item GBP 2,137.00",
+    "Order total GBP 2,137.00",
+    "Items bought from daisyaus-0",
+    "Order number: 10-15068-44333",
+    "NEW Apple Mac Studio M3 Ultra 28-Core 96GB RAM 1TB SSD 60-Core GPU",
+]
+
+
+# The model's two answers, as it would give them for the receipt above.
+RECEIPT_ANSWER = f"""DATO: Aug 23, {THIS_YEAR}
+VALUTA: GBP
+MOTPART: daisyaus-0
+BESKRIVELSE: Apple Mac Studio til kontoret"""
+
+# The same four lines, every one of them about a document other than this one.
+INVENTED_ANSWER = f"""DATO: 01.01.{THIS_YEAR}
+VALUTA: USD
+MOTPART: eBay Inc
+BESKRIVELSE: UKJENT"""
+
+
+def answering(category: str, fields: str) -> Any:
+    """A Løynd that answers both questions, told apart by what was asked."""
+
+    async def complete(*, system: str, prompt: str, max_tokens: int = 16) -> str:
+        del system, max_tokens
+        return fields if "BESKRIVELSE" in prompt else category
+
+    return complete
+
+
+def test_a_receipt_with_none_of_our_words_still_fills_the_form(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The case the reading alone could not carry: no labels, no kroner, no orgnr.
+
+    The date and the seller are on the page, so the parser gets them once it
+    knows the shapes. What it cannot get is what the payment was for, and that is
+    both of Løynd's answers here: the category, and the sentence that goes in the
+    ledger next to the order number.
+    """
+    menu = classification.build_menu(CashFlowDirection.UT)
+    inventar = next(item for item in menu if item.type_code == "inventar")
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        loynd,
+        "complete",
+        answering(str(inventar.number), RECEIPT_ANSWER),
+    )
+
+    company = signed_in_company(client)
+    suggestion = interpret(client, company["id"], text_pdf(RECEIPT_LINES)).json()
+
+    assert suggestion["occurred_on"] == date(THIS_YEAR, 8, 23).isoformat()
+    assert suggestion["counterparty_name"] == "daisyaus-0"
+    assert suggestion["type_code"] == "inventar"
+    assert suggestion["description"] == "Ordre 10-15068-44333, Apple Mac Studio til kontoret"
+    assert suggestion["sources"]["description"] == "ki"
+    assert suggestion["sources"]["occurred_on"] == "dokument"
+    # In pounds, so the kroner field stays empty and the total is shown instead.
+    assert suggestion["currency_code"] == "GBP"
+    assert suggestion["foreign_amount"] == "2137.00"
+    assert suggestion["gross_amount"] is None
+    assert suggestion["tax_code"] is None
+    # The separator is a non-breaking space; the part worth asserting on is that
+    # the sentence names the total in the currency the document actually used.
+    assert any("137,00 GBP" in warning for warning in suggestion["warnings"])
+
+
+def test_a_model_answer_the_document_does_not_support_changes_nothing(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Invented is not the same as unavailable, but it ends the same way."""
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        loynd,
+        "complete",
+        answering("0", INVENTED_ANSWER),
+    )
+
+    company = signed_in_company(client)
+    suggestion = interpret(client, company["id"], text_pdf(RECEIPT_LINES)).json()
+
+    assert suggestion["occurred_on"] == date(THIS_YEAR, 8, 23).isoformat()
+    assert suggestion["currency_code"] == "GBP"
+    assert suggestion["counterparty_name"] == "daisyaus-0"
+    assert suggestion["description"] == "Ordre 10-15068-44333, daisyaus-0"
+    assert suggestion["sources"]["description"] == "dokument"
 
 
 # --- Permissions ----------------------------------------------------------------
@@ -748,3 +872,507 @@ def test_the_catalogue_lists_types_with_their_notes(client: TestClient) -> None:
     assert {entry["direction"] for entry in catalogue["types"]} == {"inn", "ut"}
     assert all(entry["note"] for entry in catalogue["types"])
     assert any(code["code"] == "3" for code in catalogue["tax_codes"])
+
+
+# --- Kroner, the file's own name, and the switch that turns the model off ---------
+
+
+def quoting(rate: str, quoted_on: date) -> Any:
+    """A Norges Bank that answers with one fixed rate.
+
+    ``quoted_on`` is the day the rate is *published* for, which is not the day
+    asked about: the receipt is dated a Sunday and the last quote before it is
+    the Friday's. The real lookup does the same walk backwards, and the stub
+    ignores its ``on`` argument for exactly that reason.
+    """
+
+    async def rate_for(currency_code: str, *, on: date) -> norgesbank.Rate:
+        del on
+        return norgesbank.Rate(
+            currency_code=currency_code,
+            quoted_on=quoted_on,
+            kroner_per_unit=Decimal(rate),
+        )
+
+    return rate_for
+
+
+def test_a_receipt_in_pounds_comes_back_in_kroner(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The field that used to be left empty, with the arithmetic next to it.
+
+    Marked "beregnet" rather than "dokument": the document says 2 137,00 GBP and
+    says nothing at all about kroner. The user still has to check it against the
+    statement, because the card issuer's spread is not on the invoice, but they
+    start from a number that is within a percent instead of from nothing.
+    """
+    monkeypatch.setattr(norgesbank, "rate_for", quoting("12.6853", date(THIS_YEAR, 8, 21)))
+
+    company = signed_in_company(client)
+    suggestion = interpret(client, company["id"], text_pdf(RECEIPT_LINES)).json()
+
+    assert suggestion["currency_code"] == "GBP"
+    assert suggestion["foreign_amount"] == "2137.00"
+    assert suggestion["gross_amount"] == "27108.49"
+    assert suggestion["sources"]["gross_amount"] == "beregnet"
+    assert suggestion["exchange_rate"] == "12.6853"
+    assert suggestion["rate_quoted_on"] == date(THIS_YEAR, 8, 21).isoformat()
+    assert any("12,6853" in warning for warning in suggestion["warnings"])
+    # Over the threshold once it is kroner, and not before.
+    assert any("driftsmiddel" in warning for warning in suggestion["warnings"])
+
+
+def test_a_rate_that_does_not_arrive_leaves_the_amount_to_the_user(
+    client: TestClient,
+) -> None:
+    """Best-effort. Norges Bank being down is not an error for the user.
+
+    The autouse fixture refuses every lookup, so this is the unconfigured and
+    unreachable case at once, and the answer is the one the register gave before
+    conversion existed: an empty field and a sentence saying why.
+    """
+    company = signed_in_company(client)
+    suggestion = interpret(client, company["id"], text_pdf(RECEIPT_LINES)).json()
+
+    assert suggestion["gross_amount"] is None
+    assert suggestion["exchange_rate"] is None
+    assert any("står tomt med vilje" in warning for warning in suggestion["warnings"])
+
+
+def test_the_filename_names_the_shop_when_the_page_does_not(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A browser names a downloaded receipt after the page it came from.
+
+    On this document that is the only occurrence of the word eBay anywhere the
+    text layer can reach, so it is put in front of the model with the excerpt.
+    Asserted on the prompt rather than on the answer, because what is being
+    tested is that the model was not asked with the shop's name withheld.
+
+    The model gets the title whole. The trimming that turns "Order details eBay"
+    into "eBay" is for the seller field, where a name is wanted and "Order
+    details" is furniture; here the furniture is a fact about the document and
+    worth knowing.
+    """
+    seen: list[str] = []
+
+    async def complete(*, system: str, prompt: str, max_tokens: int = 16) -> str:
+        del system, max_tokens
+        seen.append(prompt)
+        return "UKJENT"
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "complete", complete)
+
+    company = signed_in_company(client)
+    interpret(client, company["id"], text_pdf(RECEIPT_LINES), name="Order details _ eBay.pdf")
+
+    assert seen
+    assert all("Dokumentets tittel: Order details eBay" in prompt for prompt in seen)
+
+
+def test_a_company_with_ki_off_is_never_asked_and_says_so(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Off means the document does not leave the building, not a hidden button.
+
+    Neither of the two questions is asked and no file is uploaded to Løynd's
+    extractor either — a switch that still sent the bilag and merely ignored the
+    answer would be worse than no switch, because it would be a promise that is
+    not kept.
+    """
+
+    async def refuse(**_: Any) -> str:
+        raise AssertionError("the model was asked despite KI being off")
+
+    async def refuse_upload(**_: Any) -> Any:
+        raise AssertionError("the document was uploaded despite KI being off")
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "complete", refuse)
+    monkeypatch.setattr(loynd, "extract_file", refuse_upload)
+
+    company = signed_in_company(client)
+    write(client, "PATCH", f"/api/v1/companies/{company['id']}", json={"ki_enabled": False})
+
+    suggestion = interpret(client, company["id"], text_pdf(RECEIPT_LINES)).json()
+
+    assert suggestion["ki_used"] is False
+    # The parser still did its work; only the two questions went unasked.
+    assert suggestion["occurred_on"] == date(THIS_YEAR, 8, 23).isoformat()
+    assert suggestion["type_code"] is None
+
+
+def test_the_switch_is_on_by_default_and_survives_a_round_trip(client: TestClient) -> None:
+    company = signed_in_company(client)
+    assert company["ki_enabled"] is True
+
+    off = write(
+        client, "PATCH", f"/api/v1/companies/{company['id']}", json={"ki_enabled": False}
+    ).json()
+    assert off["ki_enabled"] is False
+
+    # An unrelated edit leaves it alone, which is the whole contract of PATCH
+    # here: a field nobody mentioned is a field nobody changed.
+    renamed = write(
+        client, "PATCH", f"/api/v1/companies/{company['id']}", json={"name": "Nytt navn AS"}
+    ).json()
+    assert renamed["ki_enabled"] is False
+
+
+def test_a_purchase_is_never_offered_a_sales_category(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The menu matches the direction the parser read, so it cannot reverse it.
+
+    Given all 26 categories, Løynd files this eBay receipt under "Salg til
+    utlandet": a Mac Studio the company bought, booked as export revenue it
+    earned. `apply_type` takes the direction from whichever category comes back,
+    so the wrong answer does not merely mislabel the entry, it turns money out
+    into money in and lands it in næringsspesifikasjonen as income.
+
+    The direction is a reading and the category is the question, so the menu is
+    narrowed to what the reading concluded. A reading that is wrong is corrected
+    by the user flipping a radio button, which is visible; a direction reversed
+    by a category is not.
+    """
+    seen: list[str] = []
+
+    async def complete(*, system: str, prompt: str, max_tokens: int = 16) -> str:
+        del system, max_tokens
+        seen.append(prompt)
+        return "UKJENT"
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "complete", complete)
+
+    company = signed_in_company(client)
+    suggestion = interpret(client, company["id"], text_pdf(RECEIPT_LINES)).json()
+
+    assert suggestion["direction"] == "ut"
+    menu_prompt = next(prompt for prompt in seen if "Svar med kun tallet" in prompt)
+    assert "Salg til utlandet" not in menu_prompt
+    assert "Verktøy og inventar" in menu_prompt
+    # And the direction is stated once rather than repeated on every line, which
+    # is what moved loynd-lite off "Uttak til eier" for this document.
+    assert "Dette er et kjøp selskapet har gjort" in menu_prompt
+    assert "(penger ut)" not in menu_prompt
+
+
+# --- Editing a posted entry ------------------------------------------------------
+
+
+def test_editing_an_entry_reverses_it_and_posts_the_correction(client: TestClient) -> None:
+    """What the user sees as an edit, and what the ledger keeps.
+
+    The case this exists for: a purchase booked with 25 % inngående mva that
+    carried none, because it came from a foreign seller in a foreign currency.
+    That is not a payment to undo, it is a payment to record correctly, and
+    "25 %" is not a field to overwrite: it decides whether the entry has a line
+    on 2710 at all, and 2710 is what the MVA-melding aggregates.
+    """
+    company = signed_in_company(client)
+    original = record(
+        client,
+        company["id"],
+        type_code="inventar",
+        gross_amount="27108.49",
+        description="Ordre 10-15068-44333, Apple Mac Studio",
+    ).json()
+    assert original["vat_amount"] == "5421.70"
+    assert original["net_amount"] == "21686.79"
+
+    corrected = write(
+        client,
+        "PUT",
+        f"/api/v1/companies/{company['id']}/cashflow/{original['id']}",
+        json={
+            "type_code": "inventar",
+            "occurred_on": original["occurred_on"],
+            "gross_amount": "27108.49",
+            "description": "Ordre 10-15068-44333, Apple Mac Studio",
+            # "0: Ingen merverdiavgiftsbehandling". Not None, which means
+            # "use the type default" and would put the 25 % straight back.
+            "tax_code": "0",
+            "payment_method": "bank",
+            "party_id": None,
+        },
+    )
+    assert corrected.status_code == 201, corrected.text
+    fixed = corrected.json()
+    assert fixed["vat_amount"] == "0.00"
+    assert fixed["net_amount"] == "27108.49"
+
+    entries = client.get(f"/api/v1/companies/{company['id']}/cashflow").json()
+    by_voucher = {entry["voucher_no"]: entry for entry in entries}
+    # All three, which is the point: the original, the proof it was undone, and
+    # the right one. An auditor can follow the correction rather than find a
+    # number that quietly changed.
+    assert len(by_voucher) == 3
+    assert by_voucher[original["voucher_no"]]["reversed_by_id"] is not None
+    assert sum(entry["is_reversal"] for entry in entries) == 1
+    # And the third link, which is what lets the three be read back as one
+    # correction. Without it the replacement is indistinguishable from an
+    # unrelated payment posted the same day, and the register can only pair
+    # them by guessing from dates and amounts.
+    assert fixed["corrects_id"] == original["id"]
+    assert by_voucher[original["voucher_no"]]["corrects_id"] is None
+    assert [e["corrects_id"] for e in entries if e["is_reversal"]] == [None]
+    # The VAT the books claim is now zero: the reversal cancels the 5 421,70 the
+    # first posting put on 2710, and the correction adds none back.
+    summary = client.get(f"/api/v1/companies/{company['id']}/cashflow/summary").json()
+    assert summary["input_vat"] == "0.00"
+
+
+def test_an_entry_cannot_be_edited_twice(client: TestClient) -> None:
+    """The second attempt finds an entry that is already reversed.
+
+    Worth pinning because the form offers "Rediger" per row and a stale page is
+    one back-button away from sending the same edit again. The guard is the
+    unique index on the reversal link, not the interface.
+    """
+    company = signed_in_company(client)
+    original = record(client, company["id"], type_code="varekjop", gross_amount="500.00").json()
+    payload = {
+        "type_code": "varekjop",
+        "occurred_on": original["occurred_on"],
+        "gross_amount": "600.00",
+        "description": "Rettet",
+        "tax_code": None,
+        "payment_method": "bank",
+        "party_id": None,
+    }
+    path = f"/api/v1/companies/{company['id']}/cashflow/{original['id']}"
+    assert write(client, "PUT", path, json=payload).status_code == 201
+    assert write(client, "PUT", path, json=payload).status_code == 409
+
+
+def test_correcting_a_correction_chains_back_to_the_first_entry(client: TestClient) -> None:
+    """Rettings can be rettet, and the trail has to survive it.
+
+    The entry that is already reversed cannot be edited again, but the
+    replacement can — it is an ordinary posted voucher. Each correction points
+    at the one before it, so the register can walk the chain back and show five
+    vouchers as one line rather than as three separate payments plus a pair.
+
+    No unique index on the correction link, unlike the reversal one, and this is
+    why: the same chain would violate it at the second step if there were.
+    """
+    company = signed_in_company(client)
+    first = record(client, company["id"], type_code="varekjop", gross_amount="500.00").json()
+
+    def correct(voucher_id: int, amount: str) -> dict[str, Any]:
+        response = write(
+            client,
+            "PUT",
+            f"/api/v1/companies/{company['id']}/cashflow/{voucher_id}",
+            json={
+                "type_code": "varekjop",
+                "occurred_on": first["occurred_on"],
+                "gross_amount": amount,
+                "description": f"Rettet til {amount}",
+                "tax_code": None,
+                "payment_method": "bank",
+                "party_id": None,
+            },
+        )
+        assert response.status_code == 201, response.text
+        return dict(response.json())
+
+    second = correct(int(first["id"]), "600.00")
+    third = correct(int(second["id"]), "700.00")
+
+    assert second["corrects_id"] == first["id"]
+    assert third["corrects_id"] == second["id"]
+
+    entries = client.get(f"/api/v1/companies/{company['id']}/cashflow").json()
+    # Five vouchers: three postings and the two reversals between them.
+    assert len(entries) == 5
+    assert sum(entry["is_reversal"] for entry in entries) == 2
+    # Only the last one is still standing, and it is the only one the register
+    # shows without being asked.
+    live = [
+        entry for entry in entries if not entry["is_reversal"] and entry["reversed_by_id"] is None
+    ]
+    assert [entry["id"] for entry in live] == [third["id"]]
+
+
+def test_a_correction_is_not_counted_three_times_in_the_years_figures(
+    client: TestClient,
+) -> None:
+    """The overview after an edit, which is where this went wrong in the wild.
+
+    Reproduces the reported case exactly: a 27 108,49 kroner import booked with
+    25 % inngående mva it never carried, corrected to innførsel uten
+    fradragsrett, plus one small unrelated purchase.
+
+    Before the fix the front page read *inn i år 27 108,49* for a company that
+    had been paid nothing all year. Reversing a purchase debits the bank, so
+    the reversal looked exactly like income, and the same purchase appeared in
+    *ut i år* twice. Only the net was right, because the pair does genuinely
+    cancel — which is precisely what makes the error easy to miss.
+    """
+    company = signed_in_company(client)
+    original = record(
+        client,
+        company["id"],
+        type_code="inventar",
+        gross_amount="27108.49",
+        description="Apple Mac Studio",
+    ).json()
+    record(client, company["id"], type_code="varekjop", gross_amount="48.86").json()
+
+    corrected = write(
+        client,
+        "PUT",
+        f"/api/v1/companies/{company['id']}/cashflow/{original['id']}",
+        json={
+            "type_code": "driftsmiddel",
+            "occurred_on": original["occurred_on"],
+            "gross_amount": "27108.49",
+            "description": "Apple Mac Studio",
+            "tax_code": "82",
+            "payment_method": "bank",
+            "party_id": None,
+        },
+    )
+    assert corrected.status_code == 201, corrected.text
+
+    # Four vouchers in the ledger; two payments actually happened.
+    assert len(client.get(f"/api/v1/companies/{company['id']}/cashflow").json()) == 4
+
+    summary = client.get(f"/api/v1/companies/{company['id']}/cashflow/summary").json()
+    assert summary["total_in"] == "0.00"
+    assert summary["total_out"] == "27157.35"
+    assert summary["net"] == "-27157.35"
+    assert summary["entry_count"] == 2
+    assert summary["cash_position"] == "-27157.35"
+    # The purchase is one line under one type, not two lines that disagree.
+    assert [(t["type_code"], t["total"]) for t in summary["by_type"]] == [
+        ("driftsmiddel", "27108.49"),
+        ("varekjop", "48.86"),
+    ]
+    # 6 777,12 owed on the import with no deduction against it, less the 9,77
+    # inngående mva on the small purchase. The reversal cancelled the 5 421,70
+    # the first posting had wrongly claimed on 2710.
+    assert summary["output_vat"] == "6777.12"
+    assert summary["input_vat"] == "9.77"
+    assert summary["vat_position"] == "6767.35"
+
+
+def test_a_failed_correction_leaves_the_original_alone(client: TestClient) -> None:
+    """The reason the reversal and the replacement are one request.
+
+    Two calls from the browser can be interrupted between them, and the state
+    that leaves behind — reversed, with no replacement — is worse than the
+    mistake being corrected. Here the replacement is rejected, and the original
+    has to come back untouched rather than reversed.
+    """
+    company = signed_in_company(client)
+    original = record(client, company["id"], type_code="varekjop", gross_amount="500.00").json()
+
+    refused = write(
+        client,
+        "PUT",
+        f"/api/v1/companies/{company['id']}/cashflow/{original['id']}",
+        json={
+            "type_code": "finnes_ikke",
+            "occurred_on": original["occurred_on"],
+            "gross_amount": "600.00",
+            "description": "Rettet",
+            "tax_code": None,
+            "payment_method": "bank",
+            "party_id": None,
+        },
+    )
+    assert refused.status_code >= 400
+
+    entries = client.get(f"/api/v1/companies/{company['id']}/cashflow").json()
+    assert len(entries) == 1
+    assert entries[0]["reversed_by_id"] is None
+
+
+# --- Innførselsmva and capitalised purchases -------------------------------------
+
+
+def test_an_import_computes_vat_on_top_and_posts_both_sides(client: TestClient) -> None:
+    """The eBay Mac Studio, booked the way merverdiavgiftsloven wants it.
+
+    A foreign seller charged no Norwegian VAT, so nothing is carved out of the
+    27 108,49: the whole sum is the cost of the machine. The import VAT is
+    computed on top, and it goes on *both* sides — owed on 2700, reclaimed on
+    2710 — because the MVA-melding reports it twice and a single net-zero line
+    would report it nowhere.
+    """
+    company = signed_in_company(client)
+    entry = record(
+        client,
+        company["id"],
+        type_code="driftsmiddel",
+        gross_amount="27108.49",
+        tax_code="81",
+        description="Ordre 10-15068-44333, Apple Mac Studio",
+    ).json()
+
+    # Not 21 686,79: the cost is the whole amount that left the account.
+    assert entry["net_amount"] == "27108.49"
+    assert entry["gross_amount"] == "27108.49"
+    assert entry["vat_amount"] == "6777.12"
+    # A balance-sheet account, because nothing was consumed.
+    assert entry["account_number"] == "1250"
+
+    summary = client.get(f"/api/v1/companies/{company['id']}/cashflow/summary").json()
+    # Both sides reported, and they cancel: the import costs the business
+    # nothing in VAT but is still on the return twice.
+    assert summary["input_vat"] == "6777.12"
+    assert summary["output_vat"] == "6777.12"
+    assert summary["vat_position"] == "0.00"
+
+
+def test_an_ordinary_purchase_still_carves_the_vat_out(client: TestClient) -> None:
+    """The contrast that makes the case above worth a flag rather than a rate."""
+    company = signed_in_company(client)
+    entry = record(
+        client,
+        company["id"],
+        type_code="kontorrekvisita",
+        gross_amount="27108.49",
+        tax_code="1",
+    ).json()
+
+    assert entry["net_amount"] == "21686.79"
+    assert entry["vat_amount"] == "5421.70"
+
+
+def test_a_non_deductible_import_is_a_real_cost(client: TestClient) -> None:
+    """Code 82: owed and not reclaimed, so it lands on the purchase's account."""
+    company = signed_in_company(client)
+    entry = record(
+        client,
+        company["id"],
+        type_code="driftsmiddel",
+        gross_amount="10000.00",
+        tax_code="82",
+    ).json()
+
+    summary = client.get(f"/api/v1/companies/{company['id']}/cashflow/summary").json()
+    assert entry["vat_amount"] == "2500.00"
+    assert summary["output_vat"] == "2500.00"
+    # Nothing to reclaim, so it is owed rather than a wash.
+    assert summary["input_vat"] == "0.00"
+    assert summary["vat_position"] == "2500.00"
+
+
+def test_the_catalogue_offers_the_import_codes_and_the_asset_category(
+    client: TestClient,
+) -> None:
+    """The options exist on the website, not only in the posting engine."""
+    signed_in_company(client)
+    catalogue = client.get("/api/v1/cashflow/types").json()
+
+    codes = {code["code"] for code in catalogue["tax_codes"]}
+    assert {"81", "82", "83", "86", "87"} <= codes
+    types = {entry["code"]: entry for entry in catalogue["types"]}
+    assert types["driftsmiddel"]["account_number"] == "1250"
+    assert types["driftsmiddel"]["direction"] == "ut"

@@ -22,11 +22,12 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import ColumnElement, Select, and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
+from myntos.core.clock import utc_now
 from myntos.domain.identity.models import Organization, OrganizationMembership
 from myntos.domain.ledger import cashflow, parties, posting
 from myntos.domain.ledger.bankkonto import validate_bank_account
@@ -41,13 +42,16 @@ from myntos.domain.ledger.chart import (
     OUTPUT_VAT_ACCOUNT,
     STANDARD_ACCOUNTS,
     STANDARD_TAX_CODES,
+    TAX_CODES_BY_CODE,
 )
 from myntos.domain.ledger.errors import (
     AlreadyReversedError,
     ClosedFinancialYearError,
+    CompanyAlreadyClaimedError,
     CompanyNotFoundError,
     DuplicateCompanyError,
     InvalidAmountError,
+    NotAuthorizedForPartyError,
     PeriodOutsideBooksError,
     UnknownTaxCodeError,
     VoucherNotFoundError,
@@ -64,6 +68,7 @@ from myntos.domain.ledger.models import (
     TransactionLine,
 )
 from myntos.domain.ledger.orgnr import validate_orgnr
+from myntos.integrations.brreg import RegisteredUnit
 
 # The two accounts a payment can move through, and the two VAT accounts it can
 # touch. Used to read a voucher back as a cash-flow entry.
@@ -201,6 +206,7 @@ async def update_company_profile(
     in_foretaksregisteret: bool | None = None,
     organisation_form: str | None = None,
     bank_account: str | None = None,
+    ki_enabled: bool | None = None,
 ) -> Company:
     """Correct the company's own details.
 
@@ -226,6 +232,8 @@ async def update_company_profile(
         company.vat_registered = vat_registered
     if in_foretaksregisteret is not None:
         company.in_foretaksregisteret = in_foretaksregisteret
+    if ki_enabled is not None:
+        company.ki_enabled = ki_enabled
     if organisation_form is not None:
         company.organisation_form = organisation_form or None
     if bank_account is not None:
@@ -235,6 +243,184 @@ async def update_company_profile(
         # be corrected once issued.
         company.bank_account = validate_bank_account(bank_account) if bank_account else None
     await db.flush()
+    return company
+
+
+# --- What the register says ------------------------------------------------------
+
+
+# The fields Enhetsregisteret is the authority for, and which therefore get
+# overwritten by a refresh rather than merged with what is stored. Two of them
+# decide what a salgsdokument may claim (§ 5-1-2 and merverdiavgiftsloven), and
+# a stale copy of those is worse than no copy: it is a wrong claim, repeated on
+# every invoice, that nobody would think to check.
+#
+# Deliberately **not** in this set:
+#
+# - ``bank_account``, which the register does not hold at all.
+# - ``ki_enabled`` and the confirmation columns, which are ours.
+# - ``name``, which is the one field a person may reasonably keep their own
+#   version of — a sole trader whose registered name is "OLA NORDMANN" in block
+#   capitals should not have it shouted back at them on every invoice. It is
+#   taken over only when it is still what we last wrote, the same rule
+#   ``adopt_name_if_placeholder`` follows for organizations.
+# Company attribute → the attribute on RegisteredUnit it is copied from. Two of
+# them are spelled differently on each side, and a plain list of names would
+# have silently skipped exactly those two — the VAT and Foretaksregisteret
+# markings, which are the pair that decides what an invoice may claim.
+REGISTER_FIELDS: dict[str, str] = {
+    "address_line": "address_line",
+    "postal_code": "postal_code",
+    "city": "city",
+    "organisation_form": "organisation_form",
+    "vat_registered": "registered_in_vat_register",
+    "in_foretaksregisteret": "registered_in_foretaksregisteret",
+    "industry_code": "industry_code",
+    "industry_description": "industry_description",
+    "website": "website",
+    "phone": "phone",
+    "email": "email",
+    "parent_orgnr": "parent_orgnr",
+}
+
+
+async def refresh_company_from_register(
+    db: AsyncSession, *, company: Company, unit: RegisteredUnit
+) -> list[str]:
+    """Copy what Enhetsregisteret says onto ``company``, and report what moved.
+
+    ``unit`` is passed in rather than fetched here for the reason every other
+    integration result is: the domain owns the rule about what may be written,
+    the API layer owns the network call and the failure modes that come with it.
+
+    The list of changed field names is the point of the return value. A refresh
+    that silently rewrote the VAT flag would be a change to what every future
+    invoice claims, made without anybody being told; the caller shows the list.
+
+    The **name is never overwritten**, which is why it is not in the set above.
+    Two things are indistinguishable from here — a name somebody edited on
+    purpose and a name that has simply gone stale — and one of those is a
+    deliberate choice a refresh has no business undoing. A sole trader whose
+    registered name is "OLA NORDMANN" in block capitals is the ordinary case,
+    and having it shouted back onto every invoice by a background refresh is not
+    a service. The register's name is shown next to the stored one instead, and
+    adopting it is a click.
+    """
+    changed: list[str] = []
+    for field, source in REGISTER_FIELDS.items():
+        fresh = getattr(unit, source)
+        # A register that has stopped holding a value does not clear ours. It
+        # answers with nulls for fields it simply never had, and treating that
+        # as "delete the address" would lose data on a lookup.
+        if fresh is None or fresh == getattr(company, field):
+            continue
+        setattr(company, field, fresh)
+        changed.append(field)
+
+    company.register_synced_at = utc_now()
+    await db.flush()
+    return changed
+
+
+# --- Confirmed ownership ---------------------------------------------------------
+#
+# Anyone can type nine digits into a form, so a freshly created set of books says
+# nothing about who the company belongs to. The confirmation below is what turns
+# it into a claim: the person logs in with ID-porten, Altinn is asked which
+# parties they may act for, and only an orgnr on that list may be confirmed.
+#
+# One confirmed claim exists per orgnr across the installation. That is the rule
+# the message in CompanyAlreadyClaimedError describes, and it is deliberately
+# narrower than "one set of books per orgnr" — an accountant may still keep
+# unconfirmed books for a client whose own confirmation sits elsewhere.
+
+
+async def claimed_elsewhere(db: AsyncSession, orgnrs: Sequence[str], *, user_id: int) -> set[str]:
+    """Which of ``orgnrs`` are confirmed by an organization ``user_id`` is not in.
+
+    Used to mark the Altinn list before the person picks from it, so the
+    conflict is visible where the choice is made rather than after a save that
+    fails. A claim held by one of the caller's *own* organizations is not
+    "elsewhere" and is left out: those books are already theirs.
+
+    It answers only for orgnrs the caller has already proved rights for in
+    Altinn, so it discloses nothing they could not learn by confirming and
+    reading the refusal. The organization holding the claim is never named.
+    """
+    if not orgnrs:
+        return set()
+    mine = (
+        select(OrganizationMembership.organization_id)
+        .where(OrganizationMembership.user_id == user_id)
+        .scalar_subquery()
+    )
+    rows = await db.scalars(
+        select(Company.orgnr).where(
+            Company.orgnr.in_(list(orgnrs)),
+            Company.verified_at.is_not(None),
+            Company.organization_id.not_in(mine),
+        )
+    )
+    return set(rows)
+
+
+async def confirm_company_ownership(
+    db: AsyncSession,
+    *,
+    company: Company,
+    user_id: int,
+    authorized_parties: dict[str, int],
+) -> Company:
+    """Record that somebody proved through Altinn that these books are theirs.
+
+    ``authorized_parties`` maps orgnr to Altinn's party id, straight from the
+    person's own authorized-parties list. Passed in rather than fetched here
+    because the fetch needs a government token, which is an API-layer concern —
+    the rule this function owns is what may be done with the answer.
+
+    Re-confirming a company that is already confirmed is allowed and is a no-op
+    on the timestamp: the claim was already established, and a second BankID
+    should not look like a failure.
+    """
+    party_id = authorized_parties.get(company.orgnr)
+    if party_id is None:
+        raise NotAuthorizedForPartyError(
+            "Altinn viser ikke at du kan opptre for dette selskapet. "
+            "Rettighetene tildeles i Altinn av den som er registrert for selskapet."
+        )
+    if company.is_verified:
+        # Still worth refreshing: the party id is Altinn's key and can be
+        # reissued when a unit is restructured.
+        company.altinn_party_id = party_id
+        await db.flush()
+        return company
+
+    holder = await db.scalar(
+        select(Company.id).where(
+            Company.orgnr == company.orgnr,
+            Company.verified_at.is_not(None),
+            Company.id != company.id,
+        )
+    )
+    if holder is not None:
+        raise CompanyAlreadyClaimedError(
+            "Selskapet har allerede et regnskap registrert. "
+            "Be en administrator der om tilgang, eller opprett et nytt."
+        )
+
+    company.verified_at = utc_now()
+    company.verified_by_user_id = user_id
+    company.altinn_party_id = party_id
+    try:
+        await db.flush()
+    except IntegrityError as error:
+        # Two confirmations of the same orgnr landing at once. The partial
+        # unique index is what makes the loser lose; this turns it into the
+        # same answer the check above would have given.
+        raise CompanyAlreadyClaimedError(
+            "Selskapet har allerede et regnskap registrert. "
+            "Be en administrator der om tilgang, eller opprett et nytt."
+        ) from error
     return company
 
 
@@ -420,6 +606,7 @@ async def record_cash_flow(
     tax_code: str | None = None,
     payment_method: PaymentMethod = PaymentMethod.BANK,
     party_pk: int | None = None,
+    corrects_pk: int | None = None,
 ) -> Transaction:
     """Record one payment in or out as a posted voucher.
 
@@ -437,6 +624,12 @@ async def record_cash_flow(
     The entry is posted immediately rather than left as a draft. The money has
     moved; there is nothing provisional about it. That makes it immutable, so
     :func:`reverse_cash_flow` is how a mistake is undone.
+
+    ``corrects_pk`` names the entry this one was written to replace, and is set
+    only by the correction flow: reverse the original, post this in its place,
+    and record which is which. Without it the replacement is indistinguishable
+    from an unrelated payment made the same day, and the three vouchers a
+    correction leaves behind cannot be read back as one event.
     """
     entry_type = cashflow.get_type(type_code)
     gross = _check_gross(gross_amount)
@@ -454,11 +647,22 @@ async def record_cash_flow(
     code = tax_code if tax_code is not None else entry_type.default_tax_code
     tax = await _resolve_tax_code(db, company, code)
     rate = posting.rate_on(tax, occurred_on)
-    net, vat = posting.split_gross(gross, rate)
-    if net == ZERO:
-        # Only reachable with an absurd rate, but a zero-amount line does not
-        # post at all — booking the whole amount as basis is the safe reading.
-        net, vat = gross, ZERO
+    seed = TAX_CODES_BY_CODE.get(code)
+    reverse_charge = seed is not None and seed.reverse_charge
+    if reverse_charge:
+        # Innførsel and services bought abroad: the foreign seller charged no
+        # Norwegian VAT, so nothing is carved out of what was paid. The whole
+        # amount is the cost, and the VAT is computed on top of it as an amount
+        # the buyer owes and, when deductible, reclaims in the same breath.
+        net = gross
+        vat = (gross * rate).quantize(Decimal("0.01"))
+    else:
+        net, vat = posting.split_gross(gross, rate)
+        if net == ZERO:
+            # Only reachable with an absurd rate, but a zero-amount line does
+            # not post at all — booking the whole amount as basis is the safe
+            # reading.
+            net, vat = gross, ZERO
 
     is_incoming = entry_type.direction is CashFlowDirection.INN
     payment_line = TransactionLine(
@@ -483,7 +687,45 @@ async def record_cash_flow(
     posting.set_tax_information(basis_line, tax_code=tax, rate=rate, basis=net, amount=vat)
     lines = [payment_line, basis_line]
 
-    if vat > ZERO:
+    if vat > ZERO and reverse_charge:
+        # Both sides, because the buyer is both parties to this VAT. 2700 is
+        # what is owed on the import; 2710 is the deduction, present only when
+        # the purchase carries the right to one. Deductible, they cancel and the
+        # entry costs nothing extra — but both still have to be posted, because
+        # the MVA-melding reports the amount twice and a single net-zero line
+        # would report it nowhere.
+        lines.append(
+            TransactionLine(
+                record_id="3",
+                account=accounts[OUTPUT_VAT_ACCOUNT],
+                description=f"Beregnet mva ved innførsel, kode {code}",
+                debit=ZERO,
+                credit=vat,
+            )
+        )
+        if seed is not None and seed.deductible:
+            lines.append(
+                TransactionLine(
+                    record_id="4",
+                    account=accounts[INPUT_VAT_ACCOUNT],
+                    description=f"Fradrag innførselsmva, kode {code}",
+                    debit=vat,
+                    credit=ZERO,
+                )
+            )
+        else:
+            # Not deductible, so the amount is a real cost rather than a wash.
+            # It belongs on the same account as the purchase it arose from.
+            lines.append(
+                TransactionLine(
+                    record_id="4",
+                    account=accounts[entry_type.account_number],
+                    description=f"Ikke fradragsberettiget innførselsmva, kode {code}",
+                    debit=vat,
+                    credit=ZERO,
+                )
+            )
+    elif vat > ZERO:
         vat_account = OUTPUT_VAT_ACCOUNT if is_incoming else INPUT_VAT_ACCOUNT
         lines.append(
             TransactionLine(
@@ -507,6 +749,7 @@ async def record_cash_flow(
         # voucher be read back as the category the user chose, without a
         # parallel table that could disagree with the postings.
         voucher_type=entry_type.code,
+        corrects_transaction_pk=corrects_pk,
     )
     transaction.lines = lines
     posting.post(transaction)
@@ -592,6 +835,9 @@ class CashFlowView:
     description: str
     is_reversal: bool
     reversed_by_id: int | None
+    # The entry this one replaced, when it was posted as a correction. Lets the
+    # register show a correction as one line instead of three.
+    corrects_id: int | None
 
 
 def describe(transaction: Transaction, *, reversed_by_id: int | None = None) -> CashFlowView | None:
@@ -624,6 +870,13 @@ def describe(transaction: Transaction, *, reversed_by_id: int | None = None) -> 
     credit = payment.credit or ZERO
     gross = debit if debit > ZERO else credit
     net = (basis.debit or ZERO) if (basis.debit or ZERO) > ZERO else (basis.credit or ZERO)
+    # Read from the line rather than derived as gross - net, because the two
+    # disagree for an import: the VAT there is computed on top of what was paid
+    # instead of carved out of it, so gross equals net and the subtraction says
+    # zero for an amount that is really 6 777,12. The line carries the figure
+    # the posting actually used, which is true for both shapes.
+    stated = (basis.debit_tax_amount or ZERO) + (basis.credit_tax_amount or ZERO)
+    vat = stated if stated > ZERO else gross - net
 
     return CashFlowView(
         id=transaction.id,
@@ -633,7 +886,7 @@ def describe(transaction: Transaction, *, reversed_by_id: int | None = None) -> 
         type_code=transaction.voucher_type,
         gross_amount=gross,
         net_amount=net,
-        vat_amount=gross - net,
+        vat_amount=vat,
         account_number=basis.account.account_number,
         account_description=basis.account.description,
         tax_code=basis.tax_code.code if basis.tax_code is not None else None,
@@ -643,6 +896,9 @@ def describe(transaction: Transaction, *, reversed_by_id: int | None = None) -> 
         description=transaction.description,
         is_reversal=transaction.reverses_transaction_pk is not None,
         reversed_by_id=reversed_by_id,
+        # A plain column on the voucher, so no second query: the correction
+        # knows what it replaced, and the register reads it straight off.
+        corrects_id=transaction.corrects_transaction_pk,
     )
 
 
@@ -709,6 +965,33 @@ class CashFlowSummary:
     by_type: list[TypeTotal]
 
 
+def _still_stands() -> ColumnElement[bool]:
+    """True for a voucher that has not been cancelled out.
+
+    A correction leaves three vouchers where one payment happened: the
+    original, the reversal that undoes it, and the replacement. All three are
+    in the ledger permanently, which is the law working as intended, but a
+    year's *figures* must not count the payment three times.
+
+    Left in, they are worse than merely inflated. Reversing a purchase debits
+    the bank account, so the reversal of a 27 108,49 kroner purchase lands in
+    "inn i år" as if the company had been paid that much, and the same purchase
+    lands in "ut i år" twice. The net stays right, because the pair genuinely
+    cancels; every figure either side of it is wrong.
+
+    The VAT and cash figures do not need this — the pair mirrors line for line,
+    so it nets to zero there on its own — but they use it anyway, so that one
+    rule covers the whole summary instead of three that agree by coincidence.
+    """
+    reversal = aliased(Transaction, name="cancelling_voucher")
+    return and_(
+        # Not a reversal itself.
+        Transaction.reverses_transaction_pk.is_(None),
+        # And nothing reverses it.
+        ~select(reversal.id).where(reversal.reverses_transaction_pk == Transaction.id).exists(),
+    )
+
+
 def _movement_query(
     company_id: int, account_numbers: frozenset[str]
 ) -> Select[tuple[str | None, Decimal, Decimal, int]]:
@@ -729,7 +1012,11 @@ def _movement_query(
         .join(Transaction, Transaction.id == TransactionLine.transaction_pk)
         .join(Journal, Journal.id == Transaction.journal_id)
         .join(Account, Account.id == TransactionLine.account_id)
-        .where(Journal.company_id == company_id, Account.account_number.in_(account_numbers))
+        .where(
+            Journal.company_id == company_id,
+            Account.account_number.in_(account_numbers),
+            _still_stands(),
+        )
         .group_by(Transaction.voucher_type)
     )
 
@@ -758,8 +1045,9 @@ async def summarise(db: AsyncSession, *, company: Company, financial_year: int) 
         total_in += incoming
         total_out += outgoing
         entry_count += count
-        # A reversal makes the same type appear on both sides; report the net
-        # movement on the side it actually falls, so the totals still add up.
+        # Cancelled vouchers are already filtered out, so a type falls on the
+        # side its direction implies. Netting anyway rather than trusting that:
+        # the figure shown is the movement, whichever way it turns out to run.
         movement = incoming - outgoing
         by_type.append(
             TypeTotal(
@@ -784,6 +1072,7 @@ async def summarise(db: AsyncSession, *, company: Company, financial_year: int) 
                 Journal.company_id == company.id,
                 Transaction.financial_year == financial_year,
                 Account.account_number.in_(VAT_ACCOUNTS),
+                _still_stands(),
             )
             .group_by(Account.account_number)
         )
@@ -807,6 +1096,7 @@ async def summarise(db: AsyncSession, *, company: Company, financial_year: int) 
             .where(
                 Journal.company_id == company.id,
                 Account.account_number.in_(PAYMENT_ACCOUNTS),
+                _still_stands(),
             )
         )
     )

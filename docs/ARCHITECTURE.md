@@ -49,7 +49,10 @@ Organization ─┬─ OrganizationMembership ── User ─┬─ password has
 - **`Company`** is a bookkeeping-obligated entity with an orgnr. A regnskapsfører
   is one organization with many companies; a single AS is one organization with
   one. `orgnr` is unique *per organization*, not globally, so two accounting
-  firms can each keep a set of books for the same client.
+  firms can each keep a set of books for the same client. A **confirmed** claim
+  on an orgnr is the one thing that is globally unique — see below. Everything
+  the row says about the entity itself comes from Enhetsregisteret rather than
+  from a form.
 - **`OrganizationMembership`** carries the role. Roles are `owner`, `admin`,
   `member`, `viewer`, and the role → permission table lives in exactly one place
   (`domain/identity/access.py`) — no endpoint compares roles itself. Two rules
@@ -59,6 +62,96 @@ Organization ─┬─ OrganizationMembership ── User ─┬─ password has
 - Colleagues join through an **invitation** addressed to an email address. Only
   the token's hash is stored, it is single-use, and the accepting account's
   address must match the invited one — a forwarded link is not a ticket in.
+
+### Confirmed ownership
+
+Creating a company proves nothing: anyone can type nine digits into a form. So a
+set of books starts **unconfirmed**, and `POST /api/v1/companies/{id}/bekreft`
+is what turns it into a claim — the caller's ID-porten login is spent on
+Altinn's own list of parties they may act for
+(`integrations/altinn/authorized_parties.py`), and only an orgnr on that list
+may be confirmed. It is the same evidence a submission later rests on, which is
+the point: the confirmation is not a second, weaker check of our own invention.
+
+Three columns record it (`verified_at`, `verified_by_user_id`,
+`altinn_party_id`) and one index enforces it:
+
+```sql
+CREATE UNIQUE INDEX uq_company_verified_orgnr ON company (orgnr)
+  WHERE verified_at IS NOT NULL
+```
+
+**One confirmed claim per orgnr across the installation, and unconfirmed rows
+left alone.** Both halves are load-bearing and they pull in opposite directions.
+Without the exclusivity, "this company already has a regnskap registered" could
+never be said, and two organizations would each believe they were the ones
+filing. Without the permissiveness, a regnskapsfører could not keep books for a
+client whose own confirmation sits elsewhere — which is most clients. The domain
+checks the rule first and answers with prose (`CompanyAlreadyClaimedError` →
+409 `company_already_claimed`); the index is what makes two confirmations
+racing produce one winner rather than two.
+
+The refusal names the two ways forward — ask an administrator there for access,
+or keep unconfirmed books of your own — and deliberately does **not** name the
+organization holding the claim, which the caller is not a member of. For the
+same reason `GET /skatt/altinn/authorized-parties` marks each party `claimed`
+rather than saying by whom: it answers only for orgnrs Altinn has already said
+the caller may act for, so the flag discloses nothing they could not learn by
+trying, and it puts the conflict where the choice is made instead of after a
+save that fails.
+
+Nothing is gated on it. An unconfirmed company books, invoices and reports
+exactly like a confirmed one — bookkeeping does not wait for BankID on a Sunday
+evening. What the confirmation settles is *whose* company it is. Until it is
+settled, the header carries a small red dot beside the company name and
+`/organisasjon/` opens with a yellow banner and a **Bekreft nå** button. The dot
+says only "look here"; the banner says the rest, at full size, where the button
+that fixes it is.
+
+### What comes from Enhetsregisteret
+
+The register is asked for everything it has, not for a name and an address.
+Every field left out is a field somebody types instead, and typing is where a
+set of books ends up describing a subtly different entity.
+
+`GET /api/v1/enhetsregisteret/{orgnr}` returns the whole entry — organisasjonsform,
+business and postal addresses with kommune, næringskoder, contact details,
+stiftelses- and registreringsdatoer, employee count, sector code, share capital,
+vedtektsfestet formål, former names, konkurs/avvikling markings, and, for a
+subunit, the `overordnetEnhet` it belongs to.
+`GET /api/v1/enhetsregisteret/{orgnr}/roller` returns who holds a registered
+role: styre with its leder, medlemmer and varamedlemmer, daglig leder, innehaver,
+revisor, regnskapsfører, forretningsfører, bostyrer, kontaktperson. Roles live on
+the main unit only — `/underenheter/{orgnr}/roller` is a 404 — so a subunit's are
+read from its parent.
+
+Two things are dropped on the way through, both deliberately. The register pairs
+every person with a **birth date**; it never reaches a browser, for the reason
+fødselsnummer never reaches one from the Altinn party list. And a role the
+register has ended is filtered out rather than shown greyed: the list answers
+"who may act for this company today", and a former daglig leder in it is a wrong
+answer, not a historical note.
+
+A small subset is **stored** on the company — `industry_code`,
+`industry_description`, `website`, `phone`, `email`, `parent_orgnr`, alongside
+the address and registration flags that were already there — because something
+in the system uses each of them: the næringskode for a næringsspesifikasjon, the
+contact details for a salgsdokument. `register_synced_at` is what makes that a
+cache rather than a second opinion. The rest is fetched live for display and
+never persisted: it changes without telling us, and some of it is other people's
+personal data.
+
+`POST /api/v1/companies/{id}/hent` re-reads it and **answers with the list of
+fields that moved**. A refresh that silently rewrote the VAT flag would change
+what every future invoice claims without anyone being told. Two rules keep it
+honest: a null from the register means "we never had this", not "delete what you
+stored"; and the **name is never overwritten**, because a name somebody edited
+on purpose and one that has gone stale are indistinguishable from the server —
+the register's name is shown beside the stored one instead.
+
+The refresh also runs by itself when a company is created and when one is
+confirmed, both best-effort. Brønnøysund being slow must not turn a completed
+signup into an error page.
 
 ### Where the organization's name comes from
 
@@ -254,6 +347,24 @@ before their dashboard, an inline script in `<head>` reads a **hint** from
 `localStorage` before first paint. The hint is not a credential and grants
 nothing — `/auth/me` answers a moment later and overrules it either way.
 
+The header is **company-first**: the company's name is the loud half and the
+signed-in person is the quiet line beneath it, because every page in the
+application is about a set of books rather than about an account — a
+regnskapsfører switching client has to see *which* client at a glance, while
+their own name never changes. The whole name is the link to `/organisasjon/`,
+because that is where a company is switched, corrected and confirmed, and it is
+what somebody points at when they think "this company". A **red dot** beside it
+means nobody has confirmed the ownership yet; the sentence explaining that lives
+in the banner the dot leads to, rather than being read again on every page.
+`lib/company.ts` holds the one `/companies` request the header and the page
+below it share.
+
+The signed-in nav is deliberately three links — Oversikt, Faktura, KI — plus a
+cog. It is not a table of contents: `/kontantstrom/` is reached from the
+overview, beside the numbers that send you there, and `/parter/` from the
+invoice and the cashflow entry, where a customer is actually needed. A link
+present everywhere is no easier to find than one present where you are.
+
 | Page | Purpose |
 | --- | --- |
 | `/` | Marketing when signed out; overview, totals and recent entries when signed in |
@@ -261,7 +372,7 @@ nothing — `/auth/me` answers a moment later and overrules it either way.
 | `/faktura/` | Salgsdokument: line editor, a review step that shows the § 5-1 findings before anything is issued, kreditnota, PDF and EHF download |
 | `/logg-inn/`, `/registrer/` | Password and Google sign-in; the Google button hides itself when the deployment has no Google client |
 | `/invitasjon/` | Accepts an invitation token, sending the recipient to sign in first if needed |
-| `/organisasjon/` | Name, members, roles and invitations for the organization — and **Selskapet**, the only place the company's own details are edited: kontonummer, VAT registration, Foretaksregisteret, address |
+| `/organisasjon/` | Name, members, roles and invitations for the organization — and **Selskapet**, the only place the company's own details are edited: kontonummer, VAT registration, Foretaksregisteret, address, the Altinn confirmation of who the company belongs to, and everything Enhetsregisteret holds about it including the board and the revisor |
 
 `/faktura/` is three cards and one of them at a time — the form, the review,
 and what came out. Issuing is irreversible, so the step between the form and a
@@ -351,20 +462,41 @@ determine itself. What the second one means in practice is below.
 
 ### Where a model is allowed to answer
 
-Uploading a bilag fills the entry form in. Almost all of that is deterministic:
-`domain/bilag/text.py` pulls the PDF's text layer out with pypdf, and
-`domain/bilag/interpretation.py` reads the date, the total, the VAT, the
-organisasjonsnummer and the counterparty **off the page**. Those are printed
-facts, and a language model that got one of them subtly wrong would be both
-invisible and expensive.
+Uploading a bilag fills the entry form in. Almost all of that is deterministic.
+The PDF goes to Løynd's extraction route (`POST /v1/files/extract`) for its
+text, with `domain/bilag/text.py` and pypdf as the local fallback for a
+deployment with no key or a company that has switched KI off. **The file is
+handed over rather than a string we extracted from it**, and that is a deliberate
+seam: the day the extractor learns a format, or learns to look at a page instead
+of reading its text layer, better text starts arriving and nothing in Myntos
+changes. A pipeline that extracts locally and posts the result has thrown the
+pixels away before the request is made, and no improvement on the far side can
+undo that.
 
-So exactly one question is put to a model there: *which category is this?* — the
-one thing an invoice never states, and the thing that decides the account and
-through it the næringsspesifikasjon post. `domain/bilag/classification.py`
-renders the cash-flow catalogue as a **numbered menu** and accepts one number
-back; anything else is discarded and the keyword reading stands. The menu is
-narrowed to one direction when a registered party has already settled that
-question.
+Whatever the text came from, `domain/bilag/interpretation.py` reads the date,
+the total, the VAT, the organisasjonsnummer, the item line and the counterparty
+**off the page**. Those are printed facts, and a language model that got one of
+them subtly wrong would be both invisible and expensive.
+
+Two questions are put to a model there, and they are the two the page does not
+answer. The first is *which category is this?* — the thing an invoice never
+states, and the thing that decides the account and through it the
+næringsspesifikasjon post. `domain/bilag/classification.py` renders the
+cash-flow catalogue as a **numbered menu** and accepts one number back; anything
+else is discarded and the keyword reading stands. The menu is narrowed to one
+direction when a registered party has already settled that question. The second
+is `domain/bilag/extraction.py`, for the documents that print none of the words
+the parser looks for: the date, currency and seller must be **quoted verbatim**
+and are thrown out when the quote is not in what the model was shown, and only
+the one-sentence description is composed.
+
+A third thing an invoice in a foreign currency does not state is what it cost in
+kroner, and that one goes nowhere near a model. An exchange rate is a published
+number, so `integrations/norgesbank.py` looks it up, `apply_conversion` does the
+multiplication, and the field is marked `beregnet` with the rate and its quote
+date shown next to it. That is the general rule in its sharpest form: a model is
+for the questions that are genuinely judgements, and arithmetic on a public
+figure is not one.
 
 The second use is `domain/faktura/drafting.py`, behind
 `POST /companies/{id}/faktura/linjeforslag`: a sentence describing a sale becomes
@@ -388,9 +520,15 @@ Four properties follow, and they are the reason for the shape:
 - **Layering holds.** `classify()` and `draft_lines()` each take an `ask`
   callable, so the domain still imports nothing from `integrations`; the endpoint
   passes `integrations/loynd.py` and catches its errors.
-- **Optional by construction.** No `LOYND_KEY`, no request — the entry form is
-  filled in as far as the text allows, and the invoice form leaves the box out
-  entirely (`FakturaCatalogueResponse.ai_available`).
+- **Optional by construction, and switchable by the user.** No `LOYND_KEY`, no
+  request — the entry form is filled in as far as the text allows, and the
+  invoice form leaves the box out entirely
+  (`FakturaCatalogueResponse.ai_available`). On top of that, `Company.ki_enabled`
+  lets a set of books opt out on /ki, and *off means off*: no classification, no
+  extraction, and no upload to the extraction route either. A switch that still
+  sent the document and discarded the answer would be a promise that is not kept.
+  `SuggestionResponse.ki_used` says which happened, so a half-empty form is never
+  mistaken for the model's considered opinion.
 - **Attributable.** The bilag suggestion carries `type_source` (`dokument` /
   `ki`); a proposed invoice line is badged *Foreslått av KI* in the form. A
   reading and a guess must not look alike to the person who signs for it.

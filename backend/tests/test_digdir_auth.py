@@ -226,6 +226,101 @@ def _provider(signing_key: SigningKey) -> JwtGrantTokenProvider:
     )
 
 
+async def test_a_systembruker_grant_carries_authorization_details(
+    maskinporten_stub: StubMaskinporten, signing_key: SigningKey, rsa_key: rsa.RSAPrivateKey
+) -> None:
+    """RFC 9396, inside the assertion rather than on the token request.
+
+    This is the claim that gives the token a subject - the customer's system
+    user - which is what an ordinary client-credentials token lacks and what
+    Skatteetaten answers SME-EKSTERN-005 about. Maskinporten says invalid_grant
+    whether it is in the wrong place or absent, so the position is asserted.
+    """
+    token = await _provider(signing_key).get_access_token(
+        ["altinn:instances.read"], systemuser_org="314067630"
+    )
+    assert token == "machine-token-1"
+
+    claims = jwt.decode(
+        maskinporten_stub.assertions[0],
+        rsa_key.public_key(),
+        algorithms=["RS256"],
+        audience=ISSUER,
+    )
+    assert claims["authorization_details"] == [
+        {
+            "type": "urn:altinn:systemuser",
+            "systemuser_org": {
+                "authority": "iso6523-actorid-upis",
+                # The prefix is required; Altinn rejects a bare orgnr.
+                "ID": "0192:314067630",
+            },
+        }
+    ]
+    # Not a delegation. The two mechanisms answer the same need and must not be
+    # confused in one grant.
+    assert "consumer_org" not in claims
+
+
+async def test_an_external_ref_is_sent_only_when_given(
+    maskinporten_stub: StubMaskinporten, signing_key: SigningKey, rsa_key: rsa.RSAPrivateKey
+) -> None:
+    """Needed only when one customer has several system users on this system.
+
+    Sent unconditionally it would be a value Altinn matches against and we
+    invented, so its absence is part of the contract.
+    """
+    provider = _provider(signing_key)
+    await provider.get_access_token(
+        ["altinn:instances.read"], systemuser_org="314067630", external_ref="myntos-1"
+    )
+    claims = jwt.decode(
+        maskinporten_stub.assertions[0],
+        rsa_key.public_key(),
+        algorithms=["RS256"],
+        audience=ISSUER,
+    )
+    assert claims["authorization_details"][0]["externalRef"] == "myntos-1"
+
+
+async def test_a_delegation_and_a_system_user_cannot_be_combined(
+    maskinporten_stub: StubMaskinporten, signing_key: SigningKey
+) -> None:
+    """Two ways to act for a customer, and a grant is one or the other.
+
+    Refused locally rather than sent: Maskinporten would answer invalid_grant,
+    which says nothing about which of the two the caller actually meant.
+    """
+    with pytest.raises(MaskinportenError, match="never both"):
+        await _provider(signing_key).get_access_token(
+            ["altinn:instances.read"],
+            consumer_org="938193045",
+            systemuser_org="314067630",
+        )
+    assert maskinporten_stub.assertions == []
+
+
+async def test_tokens_for_two_customers_are_not_shared(
+    maskinporten_stub: StubMaskinporten, signing_key: SigningKey
+) -> None:
+    """The cache key includes the system user's organisation.
+
+    A token carries its authority in its claims, so handing one company's token
+    to a caller acting for another is acting with the wrong authority - the
+    single worst bug this cache could have.
+    """
+    provider = _provider(signing_key)
+    first = await provider.get_access_token(["altinn:instances.read"], systemuser_org="314067630")
+    second = await provider.get_access_token(["altinn:instances.read"], systemuser_org="311124226")
+    assert first != second
+    assert len(maskinporten_stub.assertions) == 2
+
+    # And the same customer twice is still one request.
+    again = await provider.get_access_token(["altinn:instances.read"], systemuser_org="314067630")
+    assert again == first
+    assert len(maskinporten_stub.assertions) == 2
+
+
 async def test_the_grant_is_built_the_way_maskinporten_requires(
     maskinporten_stub: StubMaskinporten, signing_key: SigningKey, rsa_key: rsa.RSAPrivateKey
 ) -> None:

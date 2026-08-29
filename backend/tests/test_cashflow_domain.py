@@ -64,7 +64,13 @@ def test_income_types_book_to_income_or_equity_accounts() -> None:
         assert account.account_type.value in {"inntekt", "egenkapital"}, entry.code
     for entry in types_for(CashFlowDirection.UT):
         account = ACCOUNTS_BY_NUMBER[entry.account_number]
-        assert account.account_type.value in {"kostnad", "egenkapital"}, entry.code
+        # "eiendel" belongs here too, and only for money out: buying a
+        # driftsmiddel is cash leaving for something that is not consumed, so
+        # the value lands on the balance sheet and reaches the income statement
+        # later as avskrivning. The reverse has no meaning — money coming in
+        # cannot land on an asset account through this register — which is why
+        # the two directions still allow different sets.
+        assert account.account_type.value in {"kostnad", "egenkapital", "eiendel"}, entry.code
 
 
 def test_every_type_carries_a_note() -> None:

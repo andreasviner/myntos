@@ -9,6 +9,9 @@ token first. Two modules, matching the two halves of that:
   (ID-porten) token may submit an MVA-melding or a skattemelding.
 - :mod:`.instances` — the app instance API: create, upload, ``process/next``
   twice, read the receipt.
+- :mod:`.authorized_parties` — the list of parties a logged-in person may act
+  for. Not part of a submission, but the answer to the question the setup form
+  would otherwise ask a regnskapsfører to type forty times.
 
 Delegation — acting on behalf of clients, the regnskapsfører scenario — rides on
 the ``consumer_org`` claim in the Maskinporten grant, which is why it appears
@@ -16,6 +19,14 @@ here as an argument rather than as configuration. The Altinn 3 systembruker
 model that replaces it lands in the skattemelding milestone (docs/ROADMAP.md).
 """
 
+from myntos.integrations.altinn.authorized_parties import (
+    SCOPE as AUTHORIZED_PARTIES_SCOPE,
+)
+from myntos.integrations.altinn.authorized_parties import (
+    AuthorizedParty,
+    fetch_authorized_parties,
+    flatten,
+)
 from myntos.integrations.altinn.instances import (
     MAX_ATTACHMENT_BYTES,
     MAX_ATTACHMENTS,
@@ -38,6 +49,7 @@ from myntos.integrations.altinn.tokens import (
 )
 
 __all__ = [
+    "AUTHORIZED_PARTIES_SCOPE",
     "INSTANCE_SCOPES",
     "MAX_ATTACHMENTS",
     "MAX_ATTACHMENT_BYTES",
@@ -46,12 +58,15 @@ __all__ = [
     "AltinnInstanceError",
     "AltinnToken",
     "AppInstanceClient",
+    "AuthorizedParty",
     "DataElement",
     "Instance",
     "InstanceRef",
     "MachineTokenSource",
     "exchange_id_porten_token",
     "exchange_token",
+    "fetch_authorized_parties",
+    "flatten",
     "machine_tokens",
     "reset_machine_tokens",
 ]

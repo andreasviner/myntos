@@ -61,6 +61,7 @@ from myntos.domain.ledger.errors import (
     AlreadyReversedError,
     ChartIncompleteError,
     ClosedFinancialYearError,
+    CompanyAlreadyClaimedError,
     CompanyNotFoundError,
     DuplicateCompanyError,
     DuplicatePartyError,
@@ -68,6 +69,7 @@ from myntos.domain.ledger.errors import (
     InvalidBankAccountError,
     InvalidOrgnrError,
     LedgerError,
+    NotAuthorizedForPartyError,
     PartyNotFoundError,
     PeriodOutsideBooksError,
     UnknownCashFlowTypeError,
@@ -110,6 +112,14 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     PartyNotFoundError: status.HTTP_404_NOT_FOUND,
     DuplicateCompanyError: status.HTTP_409_CONFLICT,
     DuplicatePartyError: status.HTTP_409_CONFLICT,
+    # 409: the request was well-formed and the caller may well be entitled to
+    # these books — another organization simply confirmed the same orgnr first.
+    # The frontend branches on the code to offer the way out, so this one must
+    # stay distinguishable from DuplicateCompanyError.
+    CompanyAlreadyClaimedError: status.HTTP_409_CONFLICT,
+    # 403, not 404: the company is one the caller can see, and what is missing
+    # is the right to act for it in Altinn.
+    NotAuthorizedForPartyError: status.HTTP_403_FORBIDDEN,
     # 500: the company's kontoplan is missing an account we seed, which is our
     # problem to fix and not something the user can act on.
     ChartIncompleteError: status.HTTP_500_INTERNAL_SERVER_ERROR,

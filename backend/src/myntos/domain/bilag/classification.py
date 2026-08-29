@@ -95,27 +95,80 @@ def build_menu(allowed: CashFlowDirection | None = None) -> tuple[MenuItem, ...]
 
 
 def render_menu(menu: tuple[MenuItem, ...]) -> str:
+    """The numbered choices.
+
+    The direction is printed per line only when the menu actually holds both.
+    On a menu narrowed to one direction it is the same three words eighteen
+    times, and repetition that carries no information is not free: measured
+    against loynd-lite, dropping it and stating the direction once in the
+    question moved an eBay receipt for a Mac Studio from "Uttak til eier" to
+    "Varekjøp", which is the difference between a nonsense answer and a
+    defensible one.
+    """
+    directions = {item.direction for item in menu}
+    if len(directions) < 2:
+        return "\n".join(f"{item.number}. {item.label}" for item in menu)
     return "\n".join(
         f"{item.number}. {item.label} ({_DIRECTION_LABEL[item.direction]})" for item in menu
     )
 
 
-def build_prompt(document_text: str, menu: tuple[MenuItem, ...]) -> str:
+def excerpt(document_text: str, *, title: str | None = None) -> str:
+    """The part of a document a model is shown, blank lines dropped.
+
+    Shared with :mod:`myntos.domain.bilag.extraction`, so that both questions
+    are asked about exactly the same text and the limit stated on the /ki page
+    stays one number rather than two that have to be kept in step.
+
+    ``title`` is the file's own PDF title, put on a labelled line above the
+    body. It earns its place because of what it often is: an eBay order
+    confirmation says "eBay" in its title and nowhere in its text, an Amazon one
+    the same, and without it the model is being asked which category a purchase
+    belongs to while the name of the shop has been withheld from it. It is
+    labelled rather than pasted in so that the model can tell the difference
+    between what the page prints and what the file is called.
+    """
+    kept = "\n".join(line for line in document_text.splitlines() if line.strip())
+    if title is not None:
+        kept = f"Dokumentets tittel: {title}\n{kept}"
+    return kept[:MAX_DOCUMENT_CHARS]
+
+
+def build_prompt(
+    document_text: str, menu: tuple[MenuItem, ...], *, title: str | None = None
+) -> str:
     """The question, with the document above it and the menu below.
 
     The menu comes last on purpose: a small model attends most closely to the end
     of the prompt, and the instruction it must not lose is the one about
     answering with a number.
+
+    When the menu is narrowed to one direction, the question says which one and
+    asks about *what was bought* rather than about "denne betalingen". Both
+    changes are there because the model needs to be told whose side of the
+    transaction it is standing on. Left to work it out from an English-language
+    receipt full of the word "Order", it reads a purchase as a sale.
     """
-    excerpt = "\n".join(line for line in document_text.splitlines() if line.strip())
+    directions = {item.direction for item in menu}
+    if directions == {CashFlowDirection.UT}:
+        question = (
+            "Dette er et kjøp selskapet har gjort. Hvilken kostnadskategori hører kjøpet til?"
+        )
+        instruction = "Svar med kun tallet til kategorien som passer best til det som ble kjøpt."
+    elif directions == {CashFlowDirection.INN}:
+        question = "Dette er en innbetaling til selskapet. Hvilken kategori hører den til?"
+        instruction = "Svar med kun tallet til kategorien som passer best."
+    else:
+        question = "Hvilken kategori hører denne betalingen til?"
+        instruction = "Svar med kun tallet til kategorien som passer best."
     return (
         "Her er teksten fra et bilag:\n"
         "---\n"
-        f"{excerpt[:MAX_DOCUMENT_CHARS]}\n"
+        f"{excerpt(document_text, title=title)}\n"
         "---\n"
-        "Hvilken kategori hører denne betalingen til?\n\n"
+        f"{question}\n\n"
         f"{render_menu(menu)}\n\n"
-        "Svar med kun tallet til kategorien som passer best."
+        f"{instruction}"
     )
 
 
@@ -135,7 +188,11 @@ def parse_choice(reply: str, menu: tuple[MenuItem, ...]) -> MenuItem | None:
 
 
 async def classify(
-    document_text: str, *, ask: Ask, allowed: CashFlowDirection | None = None
+    document_text: str,
+    *,
+    ask: Ask,
+    allowed: CashFlowDirection | None = None,
+    title: str | None = None,
 ) -> CashFlowType | None:
     """Ask which category the document belongs to.
 
@@ -145,13 +202,13 @@ async def classify(
     called: an unavailable model is not an error for the user, it just means the
     register keeps its own reading.
     """
-    if not document_text.strip():
+    if not document_text.strip() and title is None:
         return None
 
     menu = build_menu(allowed)
     reply = await ask(
         system=_SYSTEM,
-        prompt=build_prompt(document_text, menu),
+        prompt=build_prompt(document_text, menu, title=title),
         # Room for a number and nothing else. A model that starts explaining gets
         # cut off, and the first number is what we were after anyway.
         max_tokens=8,
