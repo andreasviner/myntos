@@ -26,7 +26,7 @@ from myntos.auth.oidc.providers import (
     microsoft_profile,
     microsoft_well_known,
 )
-from tests.conftest import PASSWORD, TEST_ORIGIN, register, write
+from tests.conftest import PASSWORD, TEST_ORIGIN, invite_to_company, register, write
 
 MICROSOFT_TEMPLATE = "https://login.microsoftonline.com/{tenantid}/v2.0"
 TENANT = "72f988bf-86f1-41af-91ab-2d7cd011db47"
@@ -142,7 +142,9 @@ def test_a_provider_links_to_an_existing_password_account(
     assert body["user"]["id"] == registered["user"]["id"]
     assert body["user"]["has_password"] is True
     assert body["user"]["providers"] == ["google"]
-    assert body["memberships"][0]["organization_name"] == "Fjord Regnskap AS"
+    assert (
+        body["memberships"][0]["organization_id"] == registered["memberships"][0]["organization_id"]
+    )
 
     # And the password still works afterwards.
     client.cookies.clear()
@@ -287,28 +289,42 @@ def test_federated_signin_does_not_need_an_origin_header(
     assert client.get("/api/v1/auth/me").status_code == 200
 
 
-def test_a_federated_account_can_join_an_organization_by_invitation(
+def test_a_federated_account_can_take_up_an_invitation_to_a_company(
     client: TestClient, provider: StubProvider
 ) -> None:
+    """Signing in with Google is a way to *have* an account, not to be invited.
+
+    The invitation is to one company, so what the invitee gets is a company
+    membership at the invited role, and their own (empty) account alongside it.
+    """
     owner = register(client, "kari@example.no", organization_name="Fjord Regnskap AS")
     organization_id = owner["memberships"][0]["organization_id"]
-    invitation = write(
+    created = write(
         client,
         "POST",
-        f"/api/v1/organizations/{organization_id}/invitations",
-        json={"email": "kari@gmail.com", "role": "admin"},
-    ).json()
+        "/api/v1/companies",
+        json={
+            "organization_id": organization_id,
+            "orgnr": "910000004",
+            "name": "Klient En AS",
+        },
+    )
+    assert created.status_code == 201, created.text
+    company_id = created.json()["id"]
+    token = invite_to_company(client, company_id, email="kari@gmail.com", role="admin")
 
     invitee = TestClient(cast(Any, client.app), base_url=TEST_ORIGIN)
     _callback(invitee, code="auth-code", state=_start(invitee))
-    token = invitation["invite_url"].split("token=", maxsplit=1)[1]
     accepted = write(invitee, "POST", "/api/v1/auth/invitations/accept", json={"token": token})
     assert accepted.status_code == 200
-    roles = {
-        membership["organization_id"]: membership["role"]
-        for membership in accepted.json()["memberships"]
+
+    # The books they were asked to help with, at the role they were asked at,
+    # and nothing of the account that asked them.
+    theirs = invitee.get("/api/v1/companies").json()
+    assert [(company["id"], company["role"]) for company in theirs] == [(company_id, "admin")]
+    assert organization_id not in {
+        membership["organization_id"] for membership in accepted.json()["memberships"]
     }
-    assert roles[organization_id] == "admin"
 
 
 # --- Provider rules (pure) ---------------------------------------------------------

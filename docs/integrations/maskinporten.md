@@ -120,12 +120,23 @@ Two things this fails on, both verified 2026-08-24:
   ID-porten client registered with no Altinn scope issues: `scope: "openid"` and
   **no `aud` claim at all**, so there is nothing for Altinn to authorize.
 
-  The scope is **`altinn:enduser`**, registered on the ID-porten client in
-  Samarbeidsportalen and then requested in `IDPORTEN_SCOPES`. **Confirmed
-  2026-08-24**: adding it turned the exchange from 403 into a token, with nothing
-  else changed. It comes from Altinn's Altinn-2-era
+  **Any one `altinn:*` scope fixes it**, registered on the ID-porten client in
+  Samarbeidsportalen and then requested in `IDPORTEN_SCOPES`. What the scope
+  *is* does not matter to the exchange; that the token has an Altinn audience at
+  all does.
+
+  This paragraph said "the scope is `altinn:enduser`" until 2026-09-03, because
+  that is what was added in test on 2026-08-24 and the exchange went from 403 to
+  a token with nothing else changed. It was the wrong conclusion from a true
+  observation. **Production disproves it**: its ID-porten client has never held
+  `altinn:enduser`, requests
+  `altinn:accessmanagement/authorizedparties` as its only `altinn:*` scope, and
+  exchanges tokens on every company confirmation. `altinn:enduser` came from
+  Altinn's Altinn-2-era
   [ID-porten tutorial](https://altinn.github.io/docs/api/rest/kom-i-gang/tutorial-postman/id-porten-token/),
-  which was reason to doubt the *name* until it was tried; it survived.
+  and Samarbeidsportalen no longer offers it on either client: the
+  `altinn:enduser/*` scopes still in the picker are labelled LEGACY and point at
+  the same name without the prefix. Do not go looking for the checkbox.
 
   A separate report ([Altinn/altinn-authentication#7](https://github.com/Altinn/altinn-authentication/issues/7))
   says a test person must have logged into `tt02.altinn.no` once before their
@@ -234,6 +245,14 @@ Three states, and a call that fails looks the same in all three:
 A scope must be all three. Requesting one that is not granted fails the **whole**
 token request, so step 3 waits for step 1.
 
+`profile` is the exception that needs no grant from anybody: it is Digdir's own,
+so only steps 2 and 3 apply. It adds the `name` claim, from Folkeregisteret, and
+it is the only thing that lets a person's ID-porten login be recognised in a
+company's styreliste in Enhetsregisteret. Without it the organisasjon page can
+only say "trolig" where it could say "bekreftet"; nothing breaks, because
+`domain/identity/register_match.py` falls back to the name on the account. See
+[../register-access.md](../register-access.md).
+
 Also: **test and production are separate**. Adding a scope to a production client
 does nothing for `f8293b48`, which is a test client, and every verification in
 this repository runs against test.
@@ -241,7 +260,7 @@ this repository runs against test.
 | Scope | Maskinporten `f8293b48` | ID-porten `5aa404aa` |
 | --- | --- | --- |
 | `altinn:instances.read` / `.write` | usable | n/a (comes via the exchange) |
-| `altinn:enduser` | n/a | usable |
+| `altinn:enduser` | n/a | **retired** - not in the picker, and not needed: any `altinn:*` scope gives the token its audience |
 | `digdir:skattemelding` | usable | usable |
 | `skatteetaten:formueinntekt/skattemelding` (+ `/eiendom`) | usable | usable |
 | `skatteetaten:mvameldingvalidering` | not registered | usable |

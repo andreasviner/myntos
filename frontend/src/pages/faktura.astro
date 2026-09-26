@@ -14,13 +14,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     </div>
     <div class="head-actions">
       {/* En faktura kommer fra ett bestemt selskap, og det er selskapet som
-          står som selger på den. Derfor står valget her og ikke bare på
-          forsiden: å oppdage at utkastet gjaldt feil selskap etter at det er
-          utstedt kan bare rettes med kreditnota. */}
-      <label class="picker">
-        <span class="visually-hidden">Velg selskap</span>
-        <select id="company-picker" hidden></select>
-      </label>
+          står som selger på den. Hvilket, svarer selskapsvelgeren i toppen på,
+          og den står på hver side — å oppdage at utkastet gjaldt feil selskap
+          etter at det er utstedt kan bare rettes med kreditnota, så spørsmålet
+          skal ha ett svar og ikke to som kan bli uenige. */}
       <a class="btn btn-ghost" href="/parter/">Kunder og leverandører</a>
     </div>
   </header>
@@ -148,6 +145,22 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 <span>Deres referanse</span>
                 <input type="text" name="buyer_reference" maxlength="128" />
                 <span class="field-hint">Kreves av offentlige kjøpere.</span>
+              </label>
+
+              <!--
+                Bare når det er noe å velge mellom. Et selskap med én konto får
+                ingen nedtrekksliste med ett valg i: det ville lest som et
+                spørsmål man forventes å ha en mening om. Har selskapet flere,
+                er dette spørsmålet som gjør flere kontoer til noe annet enn en
+                liste: driftskontoen eller skattetrekkskontoen.
+              -->
+              <label class="field" id="konto-box" hidden>
+                <span>Betales til</span>
+                <select name="bank_account_id"></select>
+                <span class="field-hint">
+                  Kontoen kunden får beskjed om å betale til. Endres under
+                  Organisasjon → Selskapet.
+                </span>
               </label>
 
               <!--
@@ -627,7 +640,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     type RegisteredUnit,
     type Violation,
   } from '../lib/api';
-  import { currentCompany, loadCompanies, mountCompanyPicker } from '../lib/company';
+  import { currentCompany, loadCompanies } from '../lib/company';
   import { el, setStatus, show } from '../lib/dom';
   import { isoDate, kontonummer, kroner, todayIso } from '../lib/format';
   import { can, loadSession, redirectToLogin } from '../lib/session';
@@ -889,6 +902,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       delivery_place: blank('delivery_place'),
       due_date: blank('due_date'),
       buyer_reference: blank('buyer_reference'),
+      ...kontoPayload(),
       ...kidPayload(),
       note: blank('note'),
       reverse_charge:
@@ -907,6 +921,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     setStatus(el('#ki-status'), '');
     orgnrHint.textContent = ORGNR_HINT;
     setDefaults();
+    selectKonto(null);
     addLine();
     updateBuyerContext();
     kidManual = false;
@@ -1000,6 +1015,53 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       nextKidCustomer = null;
     }
     renderKid();
+  }
+
+  /**
+   * Which account the invoice is paid into, when there is a choice to make.
+   *
+   * Nothing is sent when the company has one account or none: omitting the key
+   * leaves the draft following the company's primary, which is the same answer
+   * and the honest one — the form asked nobody anything.
+   */
+  function kontoPayload(): { bank_account_id?: number } {
+    if (company.bank_accounts.length < 2) return {};
+    const chosen = value(form, 'bank_account_id');
+    return chosen === '' ? {} : { bank_account_id: Number(chosen) };
+  }
+
+  /** Fill the picker, and show it only where it is a question. */
+  function renderKontoer(): void {
+    const box = el('#konto-box');
+    show(box, company.bank_accounts.length > 1);
+    const select = form.querySelector<HTMLSelectElement>('[name="bank_account_id"]');
+    if (select === null) return;
+    select.replaceChildren();
+    for (const konto of company.bank_accounts) {
+      const option = document.createElement('option');
+      option.value = String(konto.id);
+      // The number first, because that is what the customer will be told to
+      // pay into; the name only helps the seller tell two of them apart.
+      option.textContent =
+        konto.label === null ? kontonummer(konto.account) : `${kontonummer(konto.account)} · ${konto.label}`;
+      select.append(option);
+    }
+  }
+
+  /**
+   * Point the picker at the account this draft names, or at the primary.
+   *
+   * A draft that names none follows whichever account is primary, and the list
+   * comes back primary-first, so the first option is that answer already.
+   */
+  function selectKonto(bankAccountId: number | null): void {
+    const select = form.querySelector<HTMLSelectElement>('[name="bank_account_id"]');
+    if (select === null) return;
+    const named =
+      bankAccountId === null
+        ? undefined
+        : company.bank_accounts.find((konto) => konto.id === bankAccountId);
+    select.value = String((named ?? company.bank_accounts[0])?.id ?? '');
   }
 
   function kidPayload(): { payment_reference: string; payment_reference_auto: boolean } {
@@ -1257,6 +1319,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     setField('due_date', document_.due_date ?? '');
     setField('buyer_reference', document_.buyer_reference ?? '');
     setField('note', document_.note ?? '');
+    selectKonto(document_.bank_account_id);
     // A draft says which of the three KID states it is in: automatic, a number
     // the seller typed, or none at all.
     kidManual = !document_.payment_reference_auto && document_.payment_reference !== null;
@@ -1396,12 +1459,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       ['Å betale', kroner(saved.gross_total), 'grand'],
       // The two the invoice is paid by. Shown together because a KID without an
       // account number is a number with nowhere to send the money.
+      //
+      // Read off the saved document and not off the company: the document is
+      // what the customer receives, and with several accounts on the company
+      // «which one» is a question only the document answers.
       [
         'Betales til',
-        company.bank_account === null
+        saved.seller_bank_account === null
           ? 'ingen konto lagt inn, legg den inn under Organisasjon → Selskapet'
-          : kontonummer(company.bank_account),
-        company.bank_account === null ? 'warn' : undefined,
+          : kontonummer(saved.seller_bank_account),
+        saved.seller_bank_account === null ? 'warn' : undefined,
       ],
       [
         'KID',
@@ -1728,7 +1795,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       // invoice number and the § 5-1 checks. Carrying any of that across would
       // be a document issued in the wrong company's name, correctable only by
       // kreditnota.
-      mountCompanyPicker(el<HTMLSelectElement>('#company-picker'), companies, company);
       el('#company-name').textContent = company.name;
 
       catalogue = await getFakturaCatalogue();
@@ -1749,7 +1815,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       // warning: the line editor selects «Ikke mva-registrert» and offers
       // nothing else, so this says what has already happened.
       show(el('#vat-note'), mayWrite && !company.vat_registered);
-      show(el('#konto-missing'), mayWrite && company.bank_account === null);
+      show(el('#konto-missing'), mayWrite && company.bank_accounts.length === 0);
+      renderKontoer();
       // The model is offered only where it can be used at all: a deployment
       // without a key has opted out, a company that turned KI off on /ki has
       // opted out for this set of books, and a viewer has nothing to draft.

@@ -4,7 +4,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import register, write
+from tests.conftest import join_company, register, write
 from tests.test_cashflow_api import OTHER_ORGNR, create_company, record, signed_in_company
 
 
@@ -201,17 +201,8 @@ def test_a_viewer_may_read_parties_but_not_add_them(client: TestClient) -> None:
     owner = register(client, "kari@example.no")
     organization_id = owner["memberships"][0]["organization_id"]
     company = create_company(client, organization_id)
-    invitation = write(
-        client,
-        "POST",
-        f"/api/v1/organizations/{organization_id}/invitations",
-        json={"email": "viewer@example.no", "role": "viewer"},
-    ).json()
-    token = invitation["invite_url"].split("token=")[1]
-    write(client, "POST", "/api/v1/auth/logout")
 
-    register(client, "viewer@example.no", full_name="Kikker Person")
-    write(client, "POST", "/api/v1/auth/invitations/accept", json={"token": token})
+    join_company(client, company["id"], email="viewer@example.no", role="viewer")
 
     assert client.get(f"/api/v1/companies/{company['id']}/parties").status_code == 200
     assert add_party(client, company["id"]).status_code == 403

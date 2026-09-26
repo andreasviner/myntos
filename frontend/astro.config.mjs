@@ -22,7 +22,7 @@ export default defineConfig({
       // through a single-use token. Listing either invites Google to index a
       // page that says nothing, so the sitemap covers the public site only.
       filter: (page) =>
-        !['/kontantstrom/', '/organisasjon/', '/parter/', '/invitasjon/'].includes(
+        !['/kontantstrom/', '/organisasjon/', '/parter/', '/invitasjon/', '/nytt-selskap/'].includes(
           new URL(page).pathname,
         ),
     }),

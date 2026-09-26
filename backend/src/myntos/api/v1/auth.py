@@ -10,7 +10,7 @@ MVA-melding still requires a separate ID-porten login by a real person
 (:mod:`myntos.auth.idporten`).
 """
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -44,7 +44,6 @@ from myntos.domain.identity.errors import IdentityError
 from myntos.domain.identity.models import (
     IdentityProvider,
     OAuthLoginAttempt,
-    Organization,
     OrganizationMembership,
     User,
     UserIdentity,
@@ -69,14 +68,22 @@ class UserResponse(BaseModel):
 
 
 class MembershipResponse(BaseModel):
+    """The caller's standing on one account.
+
+    Deliberately thin, and it used to be the centre of everything. The account
+    is not shown to anybody any more: what a person may do with a set of books
+    comes back with the books (``role`` and ``permissions`` on
+    :class:`~myntos.api.v1.companies.CompanyResponse`), and what those books
+    cost is on them too.
+
+    What is left is the pair the frontend genuinely needs: which account new
+    companies would be added to, and whether this caller may add them. The
+    name is not here on purpose. An account is routinely called after the first
+    company set up under it, and a name like that printed anywhere near a
+    different company reads as that company's data having crossed over.
+    """
+
     organization_id: int
-    organization_name: str
-    organization_slug: str
-    # True while the name is one signup invented rather than one anyone chose.
-    # The frontend uses it to offer a rename instead of presenting a made-up
-    # name as settled fact.
-    organization_name_is_placeholder: bool
-    plan: str
     role: str
     permissions: list[str]
 
@@ -120,6 +127,26 @@ class AcceptInvitationRequest(BaseModel):
     token: str = Field(min_length=1, max_length=256)
 
 
+class InvitationLookupResponse(BaseModel):
+    """What a live invitation says about itself, for the welcome page."""
+
+    # The books being shared, which is what an invitation is for. Never the
+    # account: the invitee gets access to this company and to nothing else on
+    # it.
+    company_name: str
+    # The address the invitation was sent to. Shown so the recipient knows which
+    # account to sign in with — the acceptance is refused for any other.
+    email: EmailStr
+    role: str
+    expires_at: datetime
+    # None when the person who sent it has since deleted their account.
+    inviter_name: str | None = None
+    # Who the inviter addressed it to, when they named somebody. Offered as the
+    # name on the account being created, so a person invited by name does not
+    # retype what the invitation already says.
+    full_name: str | None = None
+
+
 class ProviderResponse(BaseModel):
     """One federated sign-in method the interface may offer."""
 
@@ -150,13 +177,8 @@ def _user_response(user: User, providers: list[IdentityProvider]) -> UserRespons
 
 
 def _membership_response(membership: OrganizationMembership) -> MembershipResponse:
-    organization: Organization = membership.organization
     return MembershipResponse(
-        organization_id=organization.id,
-        organization_name=organization.name,
-        organization_slug=organization.slug,
-        organization_name_is_placeholder=organization.name_is_placeholder,
-        plan=organization.plan,
+        organization_id=membership.organization_id,
         role=membership.role.value,
         permissions=sorted(permission.value for permission in permissions_for(membership.role)),
     )
@@ -260,15 +282,47 @@ async def change_password(
     await revoke_all_sessions(db, user.id, except_session_id=session.id)
 
 
+@router.post("/invitations/lookup")
+async def lookup_invitation(
+    payload: AcceptInvitationRequest, db: DbSession
+) -> InvitationLookupResponse:
+    """Describe an invitation without accepting it, and without a session.
+
+    The page an invitation link opens has to say who is asking and into what
+    before it asks anybody to create an account. Everything it answers is
+    already in the email the reader is holding, so the token buys no information
+    it did not carry; an unusable token gets one refusal for every reason, so a
+    guessed one cannot be told from a spent one.
+
+    POST rather than GET, with the token in the body, for the reason the
+    acceptance is a POST: a secret in a query string ends up in access logs,
+    browser history and Referer headers.
+    """
+    described = await service.describe_invitation(db, token=payload.token)
+    return InvitationLookupResponse(
+        company_name=described.company_name,
+        email=described.email,
+        role=described.role.value,
+        expires_at=described.expires_at,
+        inviter_name=described.inviter_name,
+        full_name=described.full_name,
+    )
+
+
 @router.post("/invitations/accept")
 async def accept_invitation(
     payload: AcceptInvitationRequest, user: CurrentUser, db: DbSession
 ) -> SessionResponse:
-    """Join an organization with an invitation token.
+    """Take up an invitation to one company's books.
 
-    Requires being signed in: the invitation grants access to *an account*, so
-    the account has to exist first. A recipient without one registers (or signs
-    in with Google) using the invited address, then comes back here.
+    Requires being signed in: the invitation grants access *to an account of
+    your own*, so that account has to exist first. A recipient without one
+    registers (or signs in with Google) using the invited address, then comes
+    back here.
+
+    What it grants is the invited company and nothing else. The invitee does
+    not join the sender's account, cannot see its other companies, and cannot
+    add companies to it.
     """
     await service.accept_invitation(db, token=payload.token, user=user)
     return await _session_response(db, user)

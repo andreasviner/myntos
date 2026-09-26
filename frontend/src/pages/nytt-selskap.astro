@@ -1,0 +1,1135 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+{/* Sett opp regnskapet: én side, tre steg, ett spørsmål av gangen.
+
+    Dette lå før som en seksjon nederst på /organisasjon/, mellom medlemslisten
+    og de ventende invitasjonene, og var synlig bare for en organisasjon uten
+    regnskap i det hele tatt. Det gjorde det til to ting på én gang: en
+    innstillingsside for selskapet du har, og et skjema for det du ikke har.
+
+    Her er det én ting. Stegene er ikke pynt: de deler et skjema med sju felter
+    i tre spørsmål man kan svare på uten å lese noe annet først, og det siste
+    steget er det som pleide å mangle helt — at regnskapet er satt opp, og at
+    det neste man som regel vil gjøre er å slippe noen andre inn i det. */}
+
+<BaseLayout
+  title="Sett opp regnskapet | Myntos"
+  description="Sett opp regnskapet for et selskap i Myntos, og inviter kollegene dine inn."
+>
+  <div class="oppsett">
+    <header class="oppsett-head">
+      <p class="eyebrow">Nytt selskap</p>
+      <h1 id="tittel">Sett opp regnskapet</h1>
+      <p class="oppsett-ingress" id="ingress">
+        Vi henter det vi kan fra Enhetsregisteret og Altinn, så du slipper å skrive inn det som
+        allerede står registrert.
+      </p>
+    </header>
+
+    {/* Stegene, som en liste og ikke som prikker: den som lurer på hva som
+        gjenstår skal kunne lese det. `aria-current` er det som sier hvor man
+        er, så en skjermleser får samme svar som øyet. */}
+    <ol class="steg" id="steg">
+      <li data-steg="selskap"><span class="steg-tall">1</span> Selskapet</li>
+      <li data-steg="regnskap"><span class="steg-tall">2</span> Regnskapet</li>
+      <li data-steg="ferdig"><span class="steg-tall">3</span> Ferdig</li>
+    </ol>
+
+    <p class="status" id="side-status" hidden></p>
+
+    <div class="empty" id="laster">Henter …</div>
+
+    {/* Her sto en velger for hvilken konto regnskapet skulle settes opp i.
+
+        Den er borte. Kontoen er ikke noe brukeren ser lenger: medlemmene,
+        invitasjonene og abonnementet hører til selskapet, og et kontonavn på
+        skjermen leses som et selskapsnavn. En konto per innlogging er dessuten
+        det eneste som kan oppstå nå, siden ingen blir invitert inn i en konto.
+        Se docs/company-isolation.md. */}
+
+    {/* --- Steg 1: hvilket selskap ---------------------------------------- */}
+    <section class="oppsett-steg" id="steg-selskap" hidden>
+      <div class="card" id="altinn" hidden>
+        <h2>Selskapene dine i Altinn</h2>
+        <p class="card-hint" id="altinn-intro">
+          Logg inn med ID-porten, så henter vi selskapene du har rettigheter for. Da slipper du å
+          skrive inn organisasjonsnummeret, og du kan ikke skrive det feil.
+        </p>
+        <p class="status" id="altinn-status" hidden></p>
+        <a class="btn btn-primary" id="altinn-login" href="#">Hent selskapene mine</a>
+        <ul class="oppsett-parter" id="altinn-parter" hidden></ul>
+        {/* Svaret når selskapet allerede er tatt av noen andre. Knappen står
+            her og ikke i meldingen: den ene veien videre vi kan tilby er et
+            eget regnskap, og den andre går gjennom noen vi ikke kan navngi. */}
+        <button type="button" class="btn btn-ghost btn-small" id="altinn-nytt" hidden>
+          Opprett nytt regnskap likevel
+        </button>
+      </div>
+
+      <div class="card">
+        <h2 id="manuelt-tittel">Skriv inn organisasjonsnummeret</h2>
+        <form id="selskap-form" class="oppsett-form">
+          <div class="oppsett-par">
+            <label class="field">
+              <span>Organisasjonsnummer</span>
+              <input
+                type="text"
+                name="orgnr"
+                required
+                inputmode="numeric"
+                autocomplete="off"
+                placeholder="999 999 999"
+              />
+              <span class="field-hint" id="orgnr-hint">Vi henter navnet fra Enhetsregisteret.</span>
+            </label>
+            <label class="field">
+              <span>Navn på selskapet</span>
+              <input type="text" name="name" required placeholder="Nordmann Consulting AS" />
+              <span class="field-hint">
+                Navnet som står registrert. Det er dette som må stå på fakturaene.
+              </span>
+            </label>
+          </div>
+          <div class="oppsett-knapper">
+            <button class="btn btn-primary" type="submit">Neste</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    {/* --- Steg 2: om regnskapet ------------------------------------------ */}
+    <section class="oppsett-steg" id="steg-regnskap" hidden>
+      {/* Selskapet man valgte, som et kort og ikke som utfylte felter: det er
+          en bekreftelse på at vi snakker om riktig selskap, ikke noe som skal
+          rettes her. */}
+      <div class="card oppsett-valgt" id="valgt-kort">
+        <div>
+          <h2 id="valgt-navn"></h2>
+          <p class="oppsett-orgnr" id="valgt-orgnr"></p>
+          <p class="card-hint" id="valgt-detaljer"></p>
+        </div>
+        <button type="button" class="btn btn-ghost btn-small" id="bytt-selskap">Bytt selskap</button>
+      </div>
+
+      <div class="card">
+        <h2>Litt om regnskapet</h2>
+        <p class="status" id="regnskap-status" hidden></p>
+        <form id="regnskap-form" class="oppsett-form">
+          <div class="oppsett-par">
+            <label class="field">
+              <span>Første regnskapsår i Myntos</span>
+              <input type="number" name="first_financial_year" min="2000" max="2100" required />
+              <span class="field-hint">
+                Du kan ikke føre på datoer før dette året, og mva-satsene vi setter opp gjelder fra
+                da.
+              </span>
+            </label>
+            {/* Spurt her, mens vi har oppmerksomheten: uten kontonummer kan
+                ingen faktura utstedes, og det er en dårlig ting å oppdage midt
+                i den første. Kan stå tomt, for et regnskap skal kunne føres av
+                noen som ikke fakturerer. */}
+            <label class="field">
+              <span>Kontonummer</span>
+              <input
+                type="text"
+                name="bank_account"
+                inputmode="numeric"
+                autocomplete="off"
+                placeholder="1506.20.33158"
+              />
+              <span class="field-hint">
+                Kontoen fakturaene skal betales til. Kan fylles ut senere, men en faktura kan ikke
+                utstedes før den er på plass. Har selskapet flere kontoer, legges resten inn under
+                Organisasjon → Selskapet.
+              </span>
+            </label>
+          </div>
+          <div class="oppsett-knapper">
+            <button class="btn btn-primary" type="submit" id="opprett">Sett opp regnskapet</button>
+            <button type="button" class="btn btn-ghost" id="tilbake">Tilbake</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    {/* --- Steg 3: ferdig, og hvem skal inn --------------------------------
+
+        Kvitteringen først, og så det man som regel vil gjøre nå. Et regnskap
+        med én bruker er det vanlige på dag én og sjelden det man vil ha på dag
+        tretti: regnskapsføreren, kompanjongen eller den som skal se tallene
+        skal inn, og det spørsmålet er lettest å svare på her, mens man
+        allerede er i gang. */}
+    <section class="oppsett-steg" id="steg-ferdig" hidden>
+      <div class="card oppsett-kvittering">
+        <span class="oppsett-hake" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false">
+            <path
+              d="M4 12.5 9.5 18 20 6.5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.4"
+              stroke-linecap="round"
+              stroke-linejoin="round"></path>
+          </svg>
+        </span>
+        <div>
+          <h2 id="ferdig-tittel">Regnskapet er satt opp</h2>
+          <p class="card-hint" id="ferdig-tekst"></p>
+          <p class="status" id="ferdig-status" hidden></p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Inviter kollegene dine</h2>
+        <p class="card-hint">
+          Vi sender en e-post med en lenke inn i regnskapet. Invitasjonen gjelder bare adressen du
+          skriver inn, så en videresendt lenke er ikke en billett inn.
+        </p>
+        <p class="status" id="invitasjon-status" hidden></p>
+
+        <form id="invitasjon-form" class="oppsett-form">
+          <div class="oppsett-par">
+            <label class="field">
+              <span>E-postadresse</span>
+              <input type="email" name="email" required autocomplete="off" placeholder="ola@firma.no" />
+            </label>
+            <label class="field">
+              <span>Rolle</span>
+              <select name="role">
+                <option value="viewer">Leser: ser regnskapet, kan ikke endre noe</option>
+                <option value="member" selected>Medlem: kan føre bilag og lage fakturaer</option>
+                <option value="admin">Administrator: kan også styre selskaper og medlemmer</option>
+                <option value="owner">Eier: kan alt, også abonnementet</option>
+              </select>
+            </label>
+          </div>
+          <div class="oppsett-knapper">
+            <button class="btn btn-primary" type="submit" id="inviter">Send invitasjon</button>
+          </div>
+        </form>
+
+        {/* Hver invitasjon som er sendt, med hva som faktisk skjedde. En
+            liste og ikke en statuslinje, fordi man inviterer flere etter
+            hverandre og den forrige fortsatt er verdt å se. */}
+        <ul class="oppsett-invitert" id="invitert" hidden></ul>
+      </div>
+
+      <div class="oppsett-knapper oppsett-avslutt">
+        <a class="btn btn-primary" href="/">Åpne regnskapet</a>
+        <a class="btn btn-ghost" href="/organisasjon/">Til organisasjonen</a>
+      </div>
+    </section>
+  </div>
+</BaseLayout>
+
+{/* `is:global` og alt under `.oppsett`, av samme grunn som på /organisasjon/:
+    Altinn-listen og invitasjonsradene bygges med `createElement` og får aldri
+    attributtet Astro avgrenser stiler med. */}
+<style is:global>
+  .oppsett {
+    max-width: 44rem;
+    margin: 0 auto;
+  }
+
+  .oppsett-head {
+    margin-bottom: 1.4rem;
+  }
+  .oppsett h1 {
+    margin: 0.3rem 0 0.6rem;
+    font-size: clamp(1.7rem, 1.3rem + 1.7vw, 2.3rem);
+  }
+  .oppsett-ingress {
+    margin: 0;
+    color: var(--muted);
+    max-width: 34rem;
+  }
+
+  /* --- Stegene ------------------------------------------------------------ */
+
+  .steg {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.4rem;
+    list-style: none;
+    margin: 0 0 1.6rem;
+    padding: 0 0 1rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.9rem;
+    color: var(--faint);
+  }
+  .steg li {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .steg-tall {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 999px;
+    border: 1px solid var(--border-strong);
+    font-size: 0.8rem;
+    font-weight: 650;
+  }
+  /* Der man er: full farge. Det man har gjort: fortsatt lesbart, men ferdig.
+     Det som gjenstår: blekt, fordi det ikke er noe å gjøre med ennå. */
+  .steg li[aria-current='step'] {
+    color: var(--fg-strong);
+    font-weight: 600;
+  }
+  .steg li[aria-current='step'] .steg-tall {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-fg);
+  }
+  .steg li[data-gjort='true'] {
+    color: var(--muted);
+  }
+  .steg li[data-gjort='true'] .steg-tall {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* --- Kortene ------------------------------------------------------------ */
+
+  .oppsett-steg {
+    display: grid;
+    gap: 1rem;
+  }
+  .oppsett .card h2 {
+    margin: 0 0 0.5rem;
+    font-size: 1.05rem;
+    font-weight: 650;
+  }
+  .oppsett-form {
+    display: grid;
+    gap: 1rem;
+    margin-top: 0.9rem;
+  }
+  .oppsett-par {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  }
+  .oppsett-knapper {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+  .oppsett-avslutt {
+    margin-top: 0.4rem;
+  }
+
+  /* --- Altinn-listen ------------------------------------------------------ */
+
+  .oppsett-parter {
+    list-style: none;
+    margin: 1rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: 0.4rem;
+  }
+  .oppsett-part {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.75rem 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    background: var(--surface);
+    font: inherit;
+    text-align: start;
+    color: var(--fg);
+    cursor: pointer;
+    transition:
+      border-color 120ms ease,
+      background-color 120ms ease;
+  }
+  .oppsett-part:hover:not(:disabled) {
+    border-color: var(--accent);
+    background: var(--surface-2);
+  }
+  .oppsett-part:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+  .oppsett-part-tekst {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    min-width: 0;
+    flex: 1;
+  }
+  .oppsett-part-navn {
+    font-weight: 600;
+    color: var(--fg-strong);
+  }
+  .oppsett-part-meta,
+  .oppsett-part-roller {
+    font-size: 0.82rem;
+    color: var(--muted);
+  }
+  .oppsett-part-orgnr {
+    font-variant-numeric: tabular-nums;
+  }
+  .oppsett-part-tag {
+    flex: none;
+    font-size: 0.76rem;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.15rem 0.5rem;
+  }
+
+  /* --- Det valgte selskapet ----------------------------------------------- */
+
+  .oppsett-valgt {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .oppsett-valgt h2 {
+    margin: 0 0 0.2rem;
+  }
+  .oppsett-orgnr {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+  }
+  .oppsett-valgt .card-hint {
+    margin: 0.35rem 0 0;
+  }
+
+  /* --- Kvitteringen ------------------------------------------------------- */
+
+  .oppsett-kvittering {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+  .oppsett-kvittering h2 {
+    margin: 0 0 0.3rem;
+  }
+  .oppsett-hake {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.4rem;
+    height: 2.4rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    color: var(--accent);
+  }
+  .oppsett-hake svg {
+    width: 1.3rem;
+    height: 1.3rem;
+  }
+
+  /* --- De inviterte ------------------------------------------------------- */
+
+  .oppsett-invitert {
+    list-style: none;
+    margin: 1rem 0 0;
+    padding: 0.9rem 0 0;
+    border-top: 1px solid var(--border);
+    display: grid;
+    gap: 0.7rem;
+  }
+  .oppsett-invitert li {
+    display: grid;
+    gap: 0.35rem;
+  }
+  .oppsett-invitert-topp {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+  .oppsett-invitert-adresse {
+    font-weight: 600;
+    color: var(--fg-strong);
+  }
+  .oppsett-invitert-svar {
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .oppsett-invitert-svar[data-tone='ok'] {
+    color: var(--accent);
+  }
+  /* Lenken vises bare når e-posten ikke gikk. Da er den ikke en detalj, den er
+     hele veien videre. */
+  .oppsett-kopirad {
+    display: flex;
+    gap: 0.5rem;
+  }
+  .oppsett-kopirad input {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.82rem;
+  }
+</style>
+
+<script>
+  import {
+    ALREADY_CLAIMED,
+    ApiError,
+    createCompany,
+    getGovernmentLoginStatus,
+    governmentLoginStartUrl,
+    inviteMember,
+    listAuthorizedParties,
+    lookupUnit,
+    verifyCompany,
+    type AuthorizedParty,
+    type Company,
+    type Invitation,
+    type Membership,
+    type RegisteredUnit,
+  } from '../lib/api';
+  import { loadCompanies, mountChromeCompanyMenu } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import { orgnummer } from '../lib/format';
+  // The backend never reflects ID-porten's own error text, since it would be
+  // attacker-influenced content rendered in our page: the callback sends a fixed
+  // keyword and CALLBACK_ERRORS owns the wording.
+  import { CALLBACK_ERRORS } from '../lib/providers';
+  import { loadSession, redirectToLogin, setActiveCompany } from '../lib/session';
+
+  const CLAIMED_MESSAGE =
+    'Selskapet har allerede et regnskap registrert hos noen andre. Be en administrator der om tilgang.';
+
+  const sideStatus = el<HTMLParagraphElement>('#side-status');
+  const digitsOf = (value: string): string => value.replace(/[^0-9]+/g, '');
+
+  /** The organization the books will belong to. */
+  let membership: Membership;
+  /** Every company already on the account, so Altinn can say which are set up. */
+  let companies: Company[] = [];
+  /** The orgnr Altinn vouched for, when it was Altinn that filled the form in. */
+  let fromAltinn: string | null = null;
+  // --- The three steps ------------------------------------------------------------
+  //
+  // Sections that show one at a time, rather than three pages with state passed
+  // between them: everything answered so far is still in the DOM, so going back
+  // a step is going back, not filling it in again.
+
+  type Steg = 'selskap' | 'regnskap' | 'ferdig';
+  const ORDER: Steg[] = ['selskap', 'regnskap', 'ferdig'];
+
+  function visSteg(steg: Steg): void {
+    for (const name of ORDER) show(el(`#steg-${name}`), name === steg);
+    const at = ORDER.indexOf(steg);
+    for (const [index, name] of ORDER.entries()) {
+      const marker = el(`[data-steg="${name}"]`, el('#steg'));
+      if (index === at) marker.setAttribute('aria-current', 'step');
+      else marker.removeAttribute('aria-current');
+      marker.dataset.gjort = String(index < at);
+    }
+    // The organization is only a question while there is still a company to
+    // create; afterwards it is settled, and a control that would do nothing is
+    // worse than none.
+    // Scrolled to the top, because a step change is a change of subject and the
+    // browser keeps the scroll position of the step that just left.
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  // --- Step 1: which company ------------------------------------------------------
+
+  /** What the register says about a unit, in one line under the orgnr field. */
+  function describe(unit: RegisteredUnit): string {
+    const parts = [unit.organisation_form_description, unit.city].filter(
+      (part): part is string => typeof part === 'string' && part !== '',
+    );
+    // Worth saying plainly: someone outside Merverdiavgiftsregisteret should not
+    // start booking output VAT, and there is no other point at which we mention it.
+    if (!unit.registered_in_vat_register) parts.push('ikke mva-registrert');
+    if (unit.bankrupt) parts.push('registrert konkurs');
+    if (unit.under_liquidation) parts.push('under avvikling');
+    return parts.join(' · ');
+  }
+
+  /**
+   * Fill in the company name from its organisasjonsnummer.
+   *
+   * The registered name is what every filing has to carry, so letting the
+   * register supply it removes the one field a person can get subtly wrong, and
+   * the mismatch would otherwise stay invisible until a submission bounces.
+   *
+   * Advisory throughout. A register that is slow, unreachable or simply does not
+   * know the number must never be what stops someone setting up their books, so
+   * every failure here ends with a hint and a form the user can still fill in.
+   */
+  function wireOrgnrLookup(
+    form: HTMLFormElement,
+    // Called whenever the register has answered, or failed to. Step 2 shows
+    // what the register said about the chosen company, and picking one out of
+    // the Altinn list moves there immediately — before the lookup it starts has
+    // come back. Without this the confirmation card would sit there with a
+    // blank line under the name for good.
+    settled: () => void,
+  ): {
+    registered: () => RegisteredUnit | null;
+    choose: (orgnr: string, name: string) => void;
+  } {
+    const orgnrField = el<HTMLInputElement>('input[name="orgnr"]', form);
+    const nameField = el<HTMLInputElement>('input[name="name"]', form);
+    const hint = el('#orgnr-hint');
+
+    let found: RegisteredUnit | null = null;
+    let pending: ReturnType<typeof setTimeout> | undefined;
+    // Only the newest lookup may write to the form: typing nine digits, then
+    // correcting one, leaves two requests in flight and no guarantee of order.
+    let latest = 0;
+    // The last name *we* wrote, whether from the register or from Altinn.
+    let ourName: string | null = null;
+
+    const setName = (value: string): void => {
+      // An empty field, or one still holding what we put there, is ours to
+      // fill. Anything else the user typed deliberately, so leave it alone.
+      if (nameField.value.trim() === '' || nameField.value === ourName) {
+        nameField.value = value;
+        ourName = value;
+      }
+    };
+
+    const lookup = (orgnr: string): void => {
+      const ticket = ++latest;
+      hint.textContent = 'Slår opp i Enhetsregisteret …';
+      void lookupUnit(orgnr)
+        .then((unit) => {
+          if (ticket !== latest) return;
+          setName(unit.name);
+          found = unit;
+          hint.textContent = describe(unit);
+          settled();
+        })
+        .catch((error: unknown) => {
+          if (ticket !== latest) return;
+          found = null;
+          hint.textContent =
+            error instanceof ApiError
+              ? `${error.message} Du kan skrive navnet selv.`
+              : 'Vi fikk ikke slått opp nummeret. Du kan skrive navnet selv.';
+          settled();
+        });
+    };
+
+    orgnrField.addEventListener('input', () => {
+      clearTimeout(pending);
+      const orgnr = digitsOf(orgnrField.value);
+      if (orgnr.length !== 9) {
+        // Nothing to say yet, and nothing worth contradicting mid-typing.
+        latest += 1;
+        hint.textContent = 'Vi henter navnet fra Enhetsregisteret.';
+        return;
+      }
+      // A brief pause, so pasting a number or fixing its last digit costs one
+      // request rather than one per keystroke.
+      pending = setTimeout(() => lookup(orgnr), 250);
+    });
+
+    return {
+      registered: () => found,
+      /**
+       * Fill the form from a company picked out of the Altinn list.
+       *
+       * The register is still asked, immediately rather than after the typing
+       * pause: the address, the mva-registration and the Foretaksregisteret
+       * marking all come from there and from nowhere else, and Altinn carries
+       * none of them. Altinn's name goes in meanwhile so the field is never
+       * blank, and is replaced by the register's the moment it answers.
+       */
+      choose: (orgnr: string, name: string) => {
+        clearTimeout(pending);
+        orgnrField.value = orgnr;
+        found = null;
+        ourName = null;
+        setName(name);
+        lookup(orgnr);
+      },
+    };
+  }
+
+  /**
+   * The Altinn list: the companies this person may report for, as a picker.
+   *
+   * Three states, and which one shows is the deployment's and Altinn's answer
+   * rather than a preference:
+   *
+   * - **Absent.** No ID-porten client is configured, so nothing is offered.
+   *   `GET /skatt/status` says so before anything is drawn, because a login that
+   *   cannot be completed is worse than no button at all.
+   * - **A login button.** Configured, but this person has not logged in. The
+   *   round trip goes through BankID and back to this page.
+   * - **The list.** Logged in, so the companies are shown, each one filling in
+   *   the form when clicked.
+   *
+   * Reading the list does not spend the ID-porten login, so coming back to this
+   * page twice does not cost a second BankID.
+   */
+  function mountAltinn(choose: (orgnr: string, name: string) => void): void {
+    const block = el<HTMLDivElement>('#altinn');
+    const intro = el<HTMLParagraphElement>('#altinn-intro');
+    const altinnStatus = el<HTMLParagraphElement>('#altinn-status');
+    const loginLink = el<HTMLAnchorElement>('#altinn-login');
+    const list = el<HTMLUListElement>('#altinn-parter');
+    const anyway = el<HTMLButtonElement>('#altinn-nytt');
+
+    let parties: AuthorizedParty[] = [];
+    // The party the "opprett nytt likevel" button would act on. Held rather
+    // than closed over per row, so the button cannot end up wired to a company
+    // the list no longer shows.
+    let contested: AuthorizedParty | null = null;
+
+    anyway.addEventListener('click', () => {
+      const party = contested;
+      if (party === null) return;
+      show(anyway, false);
+      setStatus(altinnStatus, '');
+      choose(party.orgnr, party.name);
+    });
+
+    /** One row: the name, then what it is, then why it is being offered. */
+    const drawParty = (party: AuthorizedParty, already: boolean): HTMLButtonElement => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'oppsett-part';
+
+      const text = document.createElement('span');
+      text.className = 'oppsett-part-tekst';
+
+      const name = document.createElement('span');
+      name.className = 'oppsett-part-navn';
+      name.textContent = party.name;
+
+      // The orgnr always, because two companies in a group share a name more
+      // often than not — but on its own line and in groups of three, rather
+      // than welded to the end of the name.
+      const meta = document.createElement('span');
+      meta.className = 'oppsett-part-meta';
+      const number = document.createElement('span');
+      number.className = 'oppsett-part-orgnr';
+      number.textContent = orgnummer(party.orgnr);
+      meta.append(number);
+      const rest = [
+        party.unit_type,
+        party.parent_orgnr === null ? null : `underenhet av ${orgnummer(party.parent_orgnr)}`,
+      ].filter((part): part is string => typeof part === 'string' && part !== '');
+      if (rest.length > 0) meta.append(` · ${rest.join(' · ')}`);
+
+      text.append(name, meta);
+
+      // Altinn's own words for why this company is in the list. Last and quiet:
+      // it answers "why am I being offered this", which is a question people ask
+      // second, not first.
+      if (party.roles.length > 0) {
+        const roles = document.createElement('span');
+        roles.className = 'oppsett-part-roller';
+        roles.textContent = party.roles.join(', ');
+        text.append(roles);
+      }
+      button.append(text);
+
+      // Two different states, and only one of them is a dead end. "Allerede satt
+      // opp" is about this account and there is nothing left to do; "registrert
+      // av en annen" is about somebody else's, and there is.
+      const label = already ? 'Allerede satt opp' : party.claimed ? 'Registrert av en annen' : null;
+      if (label !== null) {
+        const tag = document.createElement('span');
+        tag.className = 'oppsett-part-tag';
+        tag.textContent = label;
+        button.append(tag);
+      }
+
+      button.disabled = already;
+      button.addEventListener('click', () => {
+        // Said here, where the choice is made, rather than left for the
+        // confirmation to refuse after the books have been created. The button
+        // below is the one way forward we can actually offer; the other goes
+        // through an organization we will not name.
+        if (party.claimed) {
+          contested = party;
+          setStatus(altinnStatus, CLAIMED_MESSAGE);
+          anyway.textContent = `Opprett nytt regnskap for ${party.name}`;
+          show(anyway, true);
+          return;
+        }
+        contested = null;
+        show(anyway, false);
+        setStatus(altinnStatus, '');
+        fromAltinn = party.orgnr;
+        choose(party.orgnr, party.name);
+        // Straight to the next question. Picking a company out of Altinn *is*
+        // the answer to "which company", and stopping to admire a filled-in
+        // form would be a step that asks nothing.
+        el<HTMLInputElement>('#regnskap-form input[name="first_financial_year"]').focus();
+        visSteg('regnskap');
+        visValgt();
+      });
+      return button;
+    };
+
+    const draw = (): void => {
+      list.replaceChildren();
+      const already = new Set(companies.map((company) => company.orgnr));
+      for (const party of parties) {
+        const item = document.createElement('li');
+        item.append(drawParty(party, already.has(party.orgnr)));
+        list.append(item);
+      }
+      show(list, parties.length > 0);
+    };
+
+    const load = (): void => {
+      setStatus(altinnStatus, 'Henter selskapene fra Altinn …', 'ok');
+      void listAuthorizedParties()
+        .then((found) => {
+          parties = found;
+          setStatus(
+            altinnStatus,
+            found.length === 0
+              ? 'Altinn har ingen selskaper registrert på deg. Du kan skrive inn nummeret selv.'
+              : '',
+            'ok',
+          );
+          draw();
+        })
+        .catch((error: unknown) => {
+          // The login can lapse between the status call and this one, and the
+          // way out of that is the button, not an error message.
+          if (error instanceof ApiError && error.status === 409) {
+            show(loginLink, true);
+            setStatus(altinnStatus, 'Innloggingen i ID-porten har gått ut. Logg inn på nytt.');
+            return;
+          }
+          setStatus(
+            altinnStatus,
+            error instanceof ApiError
+              ? error.message
+              : 'Vi fikk ikke hentet selskapene fra Altinn. Du kan skrive inn nummeret selv.',
+          );
+        });
+    };
+
+    void getGovernmentLoginStatus()
+      .then((state) => {
+        if (!state.available) return;
+        show(block, true);
+        loginLink.href = governmentLoginStartUrl('/nytt-selskap/');
+        show(loginLink, !state.logged_in);
+        if (!state.logged_in) return;
+        intro.textContent =
+          'Selskapene du har rettigheter for i Altinn. Velg ett, så fyller vi ut resten.';
+        // With the list on screen, typing a number by hand is the fallback
+        // rather than the offer, and the heading should say which is which.
+        el('#manuelt-tittel').textContent = 'Eller skriv inn organisasjonsnummeret selv';
+        load();
+      })
+      // Silent on purpose: this whole block is an offer to save typing, and an
+      // error banner about a convenience would sit on top of the form that
+      // still works perfectly well without it.
+      .catch(() => undefined);
+  }
+
+  // --- Step 2: the books ----------------------------------------------------------
+
+  const selskapForm = el<HTMLFormElement>('#selskap-form');
+  const { registered, choose } = wireOrgnrLookup(selskapForm, () => {
+    // Only when it is on screen: redrawing a hidden card is work nobody sees,
+    // and it would overwrite the name the user is still typing in step 1.
+    if (!el('#steg-regnskap').hidden) visValgt();
+  });
+
+  /** Show the company chosen in step 1, as the confirmation step 2 opens with. */
+  function visValgt(): void {
+    const data = new FormData(selskapForm);
+    const orgnr = digitsOf(String(data.get('orgnr') ?? ''));
+    el('#valgt-navn').textContent = String(data.get('name') ?? '').trim();
+    el('#valgt-orgnr').textContent = orgnummer(orgnr);
+    const unit = registered();
+    el('#valgt-detaljer').textContent = unit?.orgnr === orgnr ? describe(unit) : '';
+  }
+
+  selskapForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const orgnr = digitsOf(el<HTMLInputElement>('input[name="orgnr"]', selskapForm).value);
+    if (orgnr.length !== 9) {
+      el('#orgnr-hint').textContent = 'Et organisasjonsnummer er ni siffer.';
+      return;
+    }
+    // A number typed by hand carries no proof, even if the Altinn list filled
+    // the field in earlier and it was then edited.
+    if (fromAltinn !== orgnr) fromAltinn = null;
+    visSteg('regnskap');
+    visValgt();
+  });
+
+  el<HTMLButtonElement>('#bytt-selskap').addEventListener('click', () => {
+    visSteg('selskap');
+  });
+  el<HTMLButtonElement>('#tilbake').addEventListener('click', () => {
+    visSteg('selskap');
+  });
+
+  const regnskapForm = el<HTMLFormElement>('#regnskap-form');
+  const regnskapStatus = el<HTMLParagraphElement>('#regnskap-status');
+  const opprett = el<HTMLButtonElement>('#opprett');
+  el<HTMLInputElement>('input[name="first_financial_year"]', regnskapForm).value = String(
+    new Date().getFullYear(),
+  );
+
+  regnskapForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const selskap = new FormData(selskapForm);
+    const regnskap = new FormData(regnskapForm);
+    const orgnr = digitsOf(String(selskap.get('orgnr') ?? ''));
+    opprett.disabled = true;
+    setStatus(regnskapStatus, '');
+
+    // What the register said rides along only when it belongs to the number
+    // actually being submitted, since the orgnr may have been edited after the
+    // lookup, and then none of it describes this company.
+    const unit = registered();
+    const fromRegister = unit?.orgnr === orgnr ? unit : null;
+    // Same guard, for the same reason: Altinn said nothing about a number that
+    // was typed over afterwards.
+    const provenInAltinn = fromAltinn === orgnr;
+
+    // The registration flags come from Enhetsregisteret and nowhere else. They
+    // decide what every future salgsdokument may claim: whether it may show
+    // merverdiavgift at all (§ 15-14), and whether it must carry the word
+    // "Foretaksregisteret" (§ 5-1-2), so a guess is not good enough.
+    void createCompany({
+      organization_id: membership.organization_id,
+      orgnr,
+      name: String(selskap.get('name') ?? '').trim(),
+      first_financial_year: Number(regnskap.get('first_financial_year')),
+      address_line: fromRegister?.address_line ?? null,
+      postal_code: fromRegister?.postal_code ?? null,
+      city: fromRegister?.city ?? null,
+      vat_registered: fromRegister?.registered_in_vat_register ?? false,
+      in_foretaksregisteret: fromRegister?.registered_in_foretaksregisteret ?? false,
+      organisation_form: fromRegister?.organisation_form ?? null,
+      bank_account: String(regnskap.get('bank_account') ?? '').trim() || null,
+    })
+      .then(async (company) => {
+        companies = [...companies, company];
+        // The new books are what the rest of the site should open on, and what
+        // the header should say from here on. One call for both: this is where
+        // the two used to come apart, storing the new company's id beside the
+        // previous company's name, so the next page load painted one company's
+        // name above another company's figures until /companies answered.
+        setActiveCompany(company);
+        mountChromeCompanyMenu(companies, company);
+        // The cached list every other page shares is now behind what just
+        // happened here.
+        void loadCompanies(true).catch(() => undefined);
+
+        el('#ferdig-tittel').textContent = `Regnskapet for ${company.name} er satt opp`;
+        el('#ferdig-tekst').textContent =
+          'Kontoplanen, mva-kodene og regnskapsåret er på plass. Du kan begynne å føre med én gang.';
+        visSteg('ferdig');
+        el<HTMLInputElement>('#invitasjon-form input[name="email"]').focus();
+
+        if (!provenInAltinn) return;
+        // Picked out of the Altinn list, so the proof is already in hand: this
+        // person is logged in with ID-porten and Altinn just said they may act
+        // for it. Confirming here saves a second trip through BankID.
+        try {
+          const saved = await verifyCompany(company.id);
+          companies = companies.map((item) => (item.id === saved.id ? saved : item));
+          // Same company, now confirmed: the stored record carries the mark, so
+          // the next page load does not open with a red dot that is no longer
+          // true.
+          setActiveCompany(saved);
+          mountChromeCompanyMenu(companies, saved);
+          setStatus(el('#ferdig-status'), 'Eierskapet er bekreftet i Altinn.', 'ok');
+        } catch (error: unknown) {
+          // The books exist and work either way, so this is a note and not a
+          // failure. Everything that can go wrong here is answerable from
+          // /organisasjon/, which shows the company as unconfirmed.
+          setStatus(
+            el('#ferdig-status'),
+            `Eierskapet ble ikke bekreftet: ${
+              error instanceof ApiError && error.code === ALREADY_CLAIMED
+                ? CLAIMED_MESSAGE
+                : error instanceof ApiError
+                  ? error.message
+                  : 'vi fikk ikke kontakt med Altinn.'
+            }`,
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        setStatus(
+          regnskapStatus,
+          error instanceof ApiError ? error.message : 'Vi fikk ikke satt opp regnskapet.',
+        );
+      })
+      .finally(() => {
+        opprett.disabled = false;
+      });
+  });
+
+  // --- Step 3: who else is coming in ----------------------------------------------
+
+  const invitasjonForm = el<HTMLFormElement>('#invitasjon-form');
+  const invitasjonStatus = el<HTMLParagraphElement>('#invitasjon-status');
+  const invitert = el<HTMLUListElement>('#invitert');
+  const inviterKnapp = el<HTMLButtonElement>('#inviter');
+
+  /**
+   * One line per invitation sent, saying what actually happened.
+   *
+   * The link is shown only when the email did not go out. When it did, the
+   * inviter has nothing to do with the link and printing it anyway would invite
+   * them to send a second copy of a message already in the recipient's inbox.
+   * When it did not, the link is the entire way forward, so it gets a field and
+   * a copy button rather than a sentence.
+   */
+  function tegnInvitasjon(invitation: Invitation): void {
+    const row = document.createElement('li');
+
+    const top = document.createElement('div');
+    top.className = 'oppsett-invitert-topp';
+    const address = document.createElement('span');
+    address.className = 'oppsett-invitert-adresse';
+    address.textContent = invitation.email;
+    const answer = document.createElement('span');
+    answer.className = 'oppsett-invitert-svar';
+    answer.dataset.tone = invitation.email_sent === true ? 'ok' : 'nøytral';
+    answer.textContent =
+      invitation.email_sent === true
+        ? 'E-post sendt'
+        : 'Vi fikk ikke sendt e-posten. Send lenken selv:';
+    top.append(address, answer);
+    row.append(top);
+
+    if (invitation.email_sent !== true && invitation.invite_url !== null) {
+      const copyRow = document.createElement('div');
+      copyRow.className = 'oppsett-kopirad';
+      const field = document.createElement('input');
+      field.type = 'text';
+      field.readOnly = true;
+      field.value = invitation.invite_url;
+      field.setAttribute('aria-label', `Invitasjonslenke for ${invitation.email}`);
+      const copy = document.createElement('button');
+      copy.type = 'button';
+      copy.className = 'btn btn-ghost btn-small';
+      copy.textContent = 'Kopier';
+      copy.addEventListener('click', () => {
+        void navigator.clipboard.writeText(field.value).then(
+          () => {
+            copy.textContent = 'Kopiert';
+          },
+          // Clipboard access can be refused; selecting the text still works.
+          () => field.select(),
+        );
+      });
+      copyRow.append(field, copy);
+      row.append(copyRow);
+    }
+
+    invitert.append(row);
+    show(invitert, true);
+  }
+
+  invitasjonForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(invitasjonForm);
+    inviterKnapp.disabled = true;
+    setStatus(invitasjonStatus, '');
+    void inviteMember(
+      membership.organization_id,
+      String(data.get('email') ?? '').trim(),
+      String(data.get('role') ?? 'member'),
+    )
+      .then((invitation) => {
+        tegnInvitasjon(invitation);
+        // The form empties and keeps the focus: inviting two people is one
+        // action done twice, not two visits to the page.
+        invitasjonForm.reset();
+        el<HTMLInputElement>('input[name="email"]', invitasjonForm).focus();
+      })
+      .catch((error: unknown) => {
+        setStatus(
+          invitasjonStatus,
+          error instanceof ApiError ? error.message : 'Invitasjonen ble ikke opprettet.',
+        );
+      })
+      .finally(() => {
+        inviterKnapp.disabled = false;
+      });
+  });
+
+  // --- Getting here ---------------------------------------------------------------
+
+  /**
+   * Say what happened, when the browser is here because BankID went wrong.
+   *
+   * The ID-porten round trip starts and ends on this page, so a login that was
+   * cancelled or refused comes back here carrying `?error=`. Without this it
+   * would come back to a page that had simply forgotten it ever asked.
+   *
+   * The marker is then dropped from the URL: it describes one arrival, and
+   * leaving it there would make a reload re-announce a failure from minutes ago.
+   */
+  function meldFraOmInnlogging(): void {
+    const marker = new URLSearchParams(window.location.search).get('error');
+    if (marker === null) return;
+    setStatus(sideStatus, CALLBACK_ERRORS[marker] ?? 'Innloggingen feilet. Prøv en gang til.');
+    const url = new URL(window.location.href);
+    url.searchParams.delete('error');
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  }
+
+  meldFraOmInnlogging();
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    // Setting up books is an ``organization:manage`` errand on the account the
+    // books will belong to. Somebody invited to *a company* has no membership
+    // of that account at all and therefore lands here with nothing: told so,
+    // rather than shown a form that ends in a 404.
+    //
+    // The first such account, and no choice offered, because there is nothing
+    // to choose between: signup makes one, and nobody joins another.
+    const first = session.memberships.find((item) =>
+      item.permissions.includes('organization:manage'),
+    );
+    if (first === undefined) {
+      el('#laster').hidden = true;
+      setStatus(
+        sideStatus,
+        'Du kan ikke sette opp nye regnskap på denne kontoen. Er du invitert inn i et ' +
+          'selskap, er det bare det selskapet du har tilgang til.',
+      );
+      return;
+    }
+    membership = first;
+
+    try {
+      companies = await loadCompanies();
+    } catch {
+      // Only used to mark the Altinn rows that are already set up. Worth
+      // stepping over: it is the difference between a helpful list and a
+      // slightly less helpful one, not between a working page and a broken one.
+      companies = [];
+    }
+
+    el('#laster').hidden = true;
+    visSteg('selskap');
+    mountAltinn(choose);
+  });
+</script>

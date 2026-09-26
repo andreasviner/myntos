@@ -56,7 +56,23 @@ class InvitationError(IdentityError):
 
 
 class InvalidInvitationError(InvitationError):
-    """The invitation token is unknown, already used, or expired."""
+    """The invitation token is unknown, already used, or expired.
+
+    One error for all three, deliberately: distinguishing them would tell a
+    stranger holding a guessed token that they had guessed a real one. This is
+    about a *token*, presented by whoever holds it.
+    """
+
+
+class InvitationNotFoundError(InvitationError):
+    """This company has no invitation with that id.
+
+    A different question from the one above, asked by somebody who already has
+    access to the books: they named an id, and it is not one of theirs. Answered
+    404, like every other sub-resource that belongs to another company, so
+    managing invitations cannot be used to find out that an id exists somewhere
+    else. See ``tests/test_sibling_company_boundary.py``.
+    """
 
 
 class InvitationEmailMismatchError(InvitationError):

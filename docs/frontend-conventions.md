@@ -36,6 +36,16 @@ question the form had explicitly decided not to ask.
 If you ever remove that rule, every `hidden` on the site becomes conditional on
 what classes the element happens to carry.
 
+**An id the layout already uses is the same bug wearing a different hat.**
+`BaseLayout` gives `<main>` `id="innhold"`, because that is where the skip link
+points, so a page that names its own wrapper `innhold` makes `el('#innhold')`
+return the layout's `<main>` instead of the element the script meant. That
+shipped too: `/invitasjon/` hid its loading message, never revealed the card
+behind it, and on a dead token switched off the whole of `<main>` together with
+the error it was trying to show. Both paths drew a blank page, with nothing in
+the console and nothing in the markup to suggest why. An id has to be unique
+against the layout, not only against the page.
+
 ## Session and chrome
 
 - `lib/session.ts` owns the session. `loadSession()` fetches `/auth/me` **once
@@ -48,11 +58,33 @@ what classes the element happens to carry.
 - The `localStorage` hint (`myntos.signed-in`) exists only to avoid a flash of
   the wrong page before `/auth/me` answers. It is **not a credential** and grants
   nothing; the API's answer overrules it either way.
-- `rememberCompany()` / `rememberedCompany()` keep the selected company across
-  pages in `localStorage`. Cleared on sign-out.
-- `can(session, organizationId, permission)` is the only way a page should decide
-  what to show. Never branch on `role` — the role → permission table lives in the
-  backend (`domain/identity/access.py`) and the frontend reads the result.
+- The company being worked on is **one record** in `localStorage`
+  (`myntos.company`), owned by `lib/tenant.ts`, and `setActiveCompany(company)`
+  is the only way to change it. Read
+  [company-isolation.md](company-isolation.md#the-consistency-wall-frontend)
+  before touching anything company-scoped: the id, the name and the
+  confirmation mark are deliberately one value, `lib/api.ts` refuses any request
+  that names a different company, and `myntos.chrome` is for account-level facts
+  only. Cleared on sign-out.
+- `canInCompany(company, permission)` is the only way a page should decide what
+  to show about a set of books. Never branch on `role`: the role to permission
+  table lives in the backend (`domain/identity/access.py`) and the frontend
+  reads the result. `can(session, organizationId, permission)` is the
+  account-level sibling, and an account now carries one question worth asking
+  (may this person set up a company at all), so anything company-shaped that
+  reaches for it is asking the wrong thing.
+- **Ask the permission where you draw it. Never keep the answer in a variable.**
+  `/organisasjon/` held `mayAdmin` as a boolean assigned just after the first
+  draw, which is one step too late: every ordinary visit opened the page
+  read-only, so an owner got no «Legg til konto» button, no pencils, and an
+  empty account list telling them they could not add an account. It righted
+  itself only when a rename or a register fetch happened to draw the card a
+  second time, which is why it read as a permissions bug rather than an ordering
+  one. The company on screen also moves, on a switch, a rename or a
+  confirmation, and a permission copied out before that move is a permission for
+  the previous company. `/organisasjon/` asks through two small functions now
+  (`mayAdmin()`, `mayManage()`), for the same reason `bokene()` on that page is
+  a function rather than a captured value.
 
 ## API access
 
@@ -65,6 +97,14 @@ what classes the element happens to carry.
 - `error.isUnauthenticated` (401) is the ordinary answer for a visitor, not a
   failure. `redirectToLogin()` preserves where they were going in `?neste=`,
   which is validated as site-relative so it cannot become an open redirect.
+- `pnpm test` runs Vitest over `src/lib/*.test.ts`. It covers the company wall
+  and is where a new invariant in `lib/` belongs; the `.astro` pages have no
+  harness, so logic worth asserting is worth moving into `lib/`.
+- `request()` refuses, with `WrongCompanyError`, any path under
+  `/companies/{id}/` whose id is not the company the page is about, and any
+  answer carrying a different `company_id`. It subclasses `ApiError`, so the
+  handling rule above already shows it. If you hit one, the bug is upstream: a
+  stale `Company` held across a switch, not the guard.
 
 ## Forms
 
@@ -77,6 +117,11 @@ what classes the element happens to carry.
 - One `.status` element per form, written through `setStatus(node, message,
   tone)`. It uses `textContent`, never `innerHTML` — some of these messages
   originate from the API and could one day contain something a user typed.
+- An optional field is still a question. Anything the form can work without,
+  and that the user may not know yet, is one more thing standing between them
+  and the button: the invitation form dropped its "Navn (valgfritt)" for that
+  reason, and keeps the name only when a board row already supplied one. Prefer
+  filling such a value in from where it is known over asking for it.
 - Only offer a choice when there is one. A `<select>` with a single option is
   worse than no select: it reads as a question the user is expected to have an
   opinion about. The company-setup form hides its organization picker below two
@@ -100,12 +145,49 @@ Two things follow from that:
   anything, so submitting the form saves it and opens the review — there is no
   "save draft" button beside "issue" asking the user to pick.
 
+## A mark that is on every row is not a mark
+
+The register says who entered a voucher, and it says it **only when the
+register has more than one author** (`lib/authors.ts` owns that rule and is
+tested on it). On a one-person set of books «Ført av Kari Nordmann» is on every
+single row, answers nothing, and spends attention on the page a sole trader
+uses most. The moment a colleague's name appears it is the fastest thing on the
+row to read.
+
+Two details that are the whole reason the rule is in `lib/` rather than in the
+page:
+
+- **"Not recorded" counts as an author.** A register where some rows are
+  attributed and some are not has genuinely been written by more than one hand,
+  and hiding the mark there would hide the one thing the reader needs: which
+  rows nobody can be asked about. Such a row reads «ukjent» — never blank, and
+  never a name.
+- **Authors are counted by id, not by name.** Two people called Ola Nordmann on
+  the same books are two authors, and telling them apart is the point.
+
+The same shape applies to anything else the interface may one day attribute:
+decide it once over the whole listing, not per row, because the mark is a
+statement about the set of books and not about the entry.
+
 ## The company's own details live in one place
 
-`/organisasjon/#selskap` is the only editor for `bank_account`,
+`/organisasjon/#selskap` is the only editor for the company's bank accounts,
 `vat_registered`, `in_foretaksregisteret` and the address. It needs
 `organization:manage` — whether the business is VAT-registered is a statement
-about the entity that every future invoice repeats, not a bookkeeping entry.
+about the entity that every future invoice repeats, not a bookkeeping entry, and
+neither is where a customer is told to send money.
+
+The accounts are the one **list** on a page of facts, and they are a list
+because a company has as many as its bank gave it. The rules the page follows:
+
+- The marked one («Hovedkonto») is where an invoice is paid when it names none
+  itself, and it is marked rather than merely first — the order is a hint, the
+  word is the answer.
+- There is no way to un-mark it. Moving it is promoting another account, which
+  is the only shape that cannot leave a company with accounts and no default;
+  the backend refuses the other direction with `primary_bank_account_required`.
+- An empty list is a *line with colour*, not a missing field. It is what stops
+  `/faktura/` issuing anything, so it has to read as something to do.
 
 Anything that refuses work because one of them is missing must **link there**,
 not merely mention it. `setStatus()` writes `textContent`, so a notice that
@@ -131,21 +213,44 @@ Enhetsregisteret instead of leaving them false and warning about it afterwards.
 - Label things by what they are to the user. "Sett opp regnskapet", not "opprett
   selskap": the company already exists, it is the books that are new.
 
-## Organization vs. company
+## Every working page names its company
 
-The distinction confuses people, so the UI has to carry it rather than assume it:
+A page about a set of books says which set, in its own heading, and not only in
+the shared header (which collapses behind the menu button on a narrow screen).
+`/index.astro` is the pattern: the greeting is a small line above, the company
+name is the `<h1>`, the orgnr sits under it, and «Bytt selskap» appears only
+when the account holds more than one. The name goes in a
+`[data-session-company]` slot so it is painted from the stored record before
+first paint and corrected from `/companies` after, never assembled from a
+different source than the figures on the page.
 
-- **Organisasjon** = the Myntos account. Owns members, invitations and the
-  subscription.
-- **Selskap** = a set of books with an orgnr.
+## The account is not on screen at all
 
-For a sole trader these are the same thing named twice, which is why signup
-invents an organization name and the first company quietly replaces it — see
-[ARCHITECTURE.md § Where the organization's name comes from](ARCHITECTURE.md#where-the-organizations-name-comes-from).
-Anywhere both words appear on screen together, say which is which in a
-`.field-hint`. `organization_name_is_placeholder` on the membership tells you
-when the name is one Myntos made up, so `/organisasjon/` can ask for a real one
-instead of presenting the invented one as settled.
+**Selskap** (a set of books with an orgnr) is the only one of the two a user
+ever sees. Members, invitations, the subscription and every figure belong to it.
+
+**Organisasjon** is the account somebody signed up for. It owns the companies
+and answers one question the interface still needs: whether this person may add
+another one (`can(session, orgId, 'organization:manage')`, used by
+`/nytt-selskap/` and the «Legg til selskap» link). It has a name in the
+database; **no page may print it**, and there is no picker for it. An account is
+routinely called after the first company set up under it, so such a name shown
+near a different company is indistinguishable from a leak. It was reported as
+one, which is why the Organisasjonen card, the account picker and the account
+name on `/organisasjon/` are all gone. See
+[company-isolation.md](company-isolation.md#the-account-is-not-a-company).
+
+So on any page about a company:
+
+- ask `canInCompany(company, permission)`, not `can(session, orgId, …)`. The
+  role comes back on the company (`Company.role`, `Company.permissions`) because
+  access is a row per person per company: the same person can own their own
+  books and merely read a client's.
+- members and invitations are `listMembers(companyId)` /
+  `listInvitations(companyId)`. There is no account-level member list any more.
+- say which books an action is about. «Medlemmer i DIALGA AS», not «Medlemmer»:
+  the whole reason access moved is that "invite a colleague" used to hand over
+  every client at once without saying so.
 
 ## Theme
 

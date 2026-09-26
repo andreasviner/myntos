@@ -361,10 +361,12 @@ async def _check_person_chain(
         report.fail(
             "altinn exchange (person)",
             f"{error}\n"
-            "the scope is the cause, not the person: altinn:enduser has to be\n"
-            "  registered on the ID-porten client and requested in IDPORTEN_SCOPES.\n"
-            "  A browser session at tt02.altinn.no is not a prerequisite - that\n"
-            "  was tried and changed nothing",
+            "the scope is the cause, not the person: the ID-porten client needs\n"
+            "  at least one altinn:* scope registered on it in Samarbeidsportalen\n"
+            "  and requested in IDPORTEN_SCOPES, or its token has no audience\n"
+            "  Altinn recognises. authorizedparties alone is enough - production\n"
+            "  runs on exactly that. A browser session at tt02.altinn.no is not a\n"
+            "  prerequisite - that was tried and changed nothing",
         )
         # Deliberately not a return. Only the Altinn *submission* path needs this
         # token; Skatteetaten's REST API takes the ID-porten token directly, so

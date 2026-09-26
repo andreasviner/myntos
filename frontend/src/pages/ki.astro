@@ -38,6 +38,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       <li>Beløp leser vi alltid selv, rett fra teksten. Modellen skriver aldri et tall i regnskapet.</li>
       <li>Ingenting bokføres automatisk. Du ser og bekrefter hvert forslag.</li>
       <li>KI brukes bare når du selv laster opp et bilag eller ber om et fakturaforslag.</li>
+      <li>Bilder leses av modellen. Et fotografert kvitteringsbilde blir til tekst hos Løynd, og ingen annen tjeneste ser det.</li>
+      <li>Er noe uklart, spør vi heller enn å gjette. Retter du beskrivelsen, leser vi bilaget på nytt med det du skrev.</li>
     </ul>
     <p class="actions">
       <a class="btn btn-primary" href="https://loynd.no" rel="noopener">Mer om Løynd</a>
@@ -45,16 +47,68 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     </p>
   </section>
 
+  {/*
+    Hva som sendes, sagt før noen spør.
+
+    Siden lovet «bilaget ditt» da bilaget var én PDF og ingenting fulgte med.
+    Nå følger det med tre ting til, og to av dem er opplysninger om selskapet
+    ditt. Å la den setningen stå uendret ville vært å love noe mindre enn det
+    som faktisk skjer.
+  */}
+  <section class="card">
+    <h2>Hva som følger med bilaget</h2>
+    <p>
+      Modellen trenger å vite hva slags virksomhet den leser for. Et skjermkort er varekjøp
+      hos en som bygger datamaskiner og et privatuttak hos en frisør, og kvitteringen er den
+      samme i begge tilfeller. Derfor sendes dette sammen med dokumentene:
+    </p>
+    <ul class="ticks">
+      <li>
+        <strong>Vedtektsfestet formål og registrert aktivitet</strong>, slik de står i
+        Enhetsregisteret. Offentlige opplysninger vi allerede har hentet.
+      </li>
+      <li>
+        <strong>Næringskode, og om selskapet er mva-registrert.</strong> Det siste avgjør om
+        fradrag i det hele tatt er mulig.
+      </li>
+      <li>
+        <strong>Beskrivelsen i skjemaet.</strong> Den er for bilagene papiret ikke kan
+        avgjøre: 3 000 kroner inn fra en privatkonto er innskudd fra eier, et
+        tilbakebetalt lån eller et salg, og bare du vet hvilket.
+      </li>
+    </ul>
+    <p>
+      Beskrivelsen er <strong>ett felt, ikke to</strong>. Modellen skriver et forslag i
+      det, og retter du det, leser vi bilaget på nytt med setningen din. Da fyller
+      resten av skjemaet seg ut ut fra det du vet. Det er også teksten som havner på
+      bilaget i hovedboken, så den <strong>lagres og bokføres</strong>, i motsetning til
+      resten av det vi sender modellen.
+    </p>
+    <p>
+      Den kan likevel ikke fylle ut et felt på egen hånd: navn, datoer og valuta godtar
+      vi bare når de står i selve dokumentet, og det du skriver i beskrivelsen er ikke
+      dokumentet.
+    </p>
+  </section>
+
+  {/* Innstillingen gjelder ett selskap: det du står i.
+
+      Her sto det en selskapsvelger, og da var spørsmålet «hvilket selskap
+      skal jeg slå av?» før man kom til «skal jeg slå av?». Toppen av siden
+      vet allerede hvilket selskap man arbeider i, og det er der man bytter.
+      To steder å svare på samme spørsmål er dessuten to steder de kan svare
+      forskjellig — på en bryter som avgjør om dokumenter forlater huset.
+
+      Navnet står derfor i bryteren selv, hentet fra selskapet som faktisk
+      lagres på. Da er det ingen tvil om hva som slås av, og ingen måte å
+      slå av noe annet enn det man leser. */}
   <section class="card switch" data-auth-only="inn">
     <h2>Slå av KI</h2>
-    <p>
+    <p id="ki-om">
       KI er på. Slår du det av, gjelder det hele programmet for dette selskapet: ingen dokumenter
-      sendes til Løynd, og skjemaene fylles ut av programmets egen lesing av PDF-en.
+      sendes til Løynd, og skjemaene fylles ut av programmets egen lesing av PDF-en. Bilder
+      kan da ikke leses i det hele tatt, men de lagres som bilag som før.
     </p>
-    <label class="picker" hidden>
-      <span>Selskap</span>
-      <select id="company-picker"></select>
-    </label>
     {/*
       Avkrysset betyr av, ikke på.
 
@@ -71,7 +125,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     */}
     <label class="check">
       <input type="checkbox" id="ki-toggle" />
-      <span>Slå av KI-funksjoner for dette selskapet</span>
+      <span id="ki-toggle-tekst">Slå av KI-funksjoner for dette selskapet</span>
     </label>
     <p class="status" id="ki-status" role="status" hidden></p>
   </section>
@@ -157,17 +211,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     font-size: 0.95rem;
   }
 
-  .switch .picker {
-    display: block;
-    margin-bottom: 1rem;
-  }
-
-  .switch .picker span {
-    display: block;
-    font-size: 0.9rem;
-    margin-bottom: 0.35rem;
-  }
-
   .signed-out {
     text-align: center;
   }
@@ -175,7 +218,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
 <script>
   import { ApiError, updateCompany, type Company } from '../lib/api';
-  import { currentCompany, loadCompanies, mountCompanyPicker } from '../lib/company';
+  import { currentCompany, loadCompanies } from '../lib/company';
   import { el, setStatus } from '../lib/dom';
   import { loadSession } from '../lib/session';
 
@@ -189,7 +232,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
     const toggle = el<HTMLInputElement>('#ki-toggle');
     const status = el<HTMLParagraphElement>('#ki-status');
-    const picker = el<HTMLSelectElement>('#company-picker');
 
     /**
      * Whether KI is on for a company.
@@ -204,6 +246,19 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     function render(shown: Company): void {
       // Checked means off. See the note on the checkbox.
       toggle.checked = !isOn(shown);
+      // The company is named in the switch rather than called "dette
+      // selskapet", and it is named from the company the save will actually go
+      // to. A switch that decides whether documents leave the building must
+      // leave no doubt about which books it is deciding for, and the name is
+      // the only thing that removes that doubt.
+      el('#ki-toggle-tekst').textContent = `Slå av KI for ${shown.name}`;
+      el('#ki-om').textContent = isOn(shown)
+        ? `KI er på for ${shown.name}. Slår du det av, gjelder det hele programmet for dette ` +
+          'selskapet: ingen dokumenter sendes til Løynd, og skjemaene fylles ut av programmets ' +
+          'egen lesing av PDF-en. Innstillingen gjelder bare dette selskapet. Bytt selskap i ' +
+          'toppen av siden for å endre et annet.'
+        : `KI er av for ${shown.name}. Innstillingen gjelder bare dette selskapet. Bytt ` +
+          'selskap i toppen av siden for å endre et annet.';
       setStatus(
         status,
         isOn(shown)
@@ -213,13 +268,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       );
     }
 
-    mountCompanyPicker(picker, companies, company, (chosen) => {
-      company = chosen;
-      render(chosen);
-    });
-    // The picker hides itself when there is only one company; the label around
-    // it has to go with it, or the page shows the word "Selskap" over nothing.
-    el<HTMLLabelElement>('.switch .picker').hidden = picker.hidden;
     render(company);
 
     toggle.addEventListener('change', async () => {

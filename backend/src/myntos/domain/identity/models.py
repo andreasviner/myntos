@@ -132,13 +132,22 @@ def _provider_type() -> Enum:
 
 
 class Organization(Base):
-    """A Myntos account: the unit of membership and of billing.
+    """A Myntos account: whose companies these are, and nothing else.
 
-    ``plan`` is the seam for paid tiers. It is a plain string rather than an
-    enum so a price change does not need a migration, and it sits here rather
-    than on :class:`User` because that is the whole point — a plan bought by
-    one person covers every colleague they invite and every company they keep
-    books for.
+    It used to be the tenant, in the full sense: membership, billing and access
+    all hung off it, and a colleague invited to the account could open every set
+    of books under it. That collapsed two different questions into one row, and
+    it showed. A regnskapsfører cannot say "help me with this client only", and
+    an account named after its first company (which Myntos used to do) printed
+    beside a *different* company's figures is indistinguishable from a leak.
+
+    So this row now answers exactly two questions: which companies were set up
+    together, and who may add another one. What a person may open is
+    :class:`CompanyMembership`; what it costs is ``plan`` on the company.
+
+    Nothing displays its ``name``. It is kept because it is what signup made and
+    what invitations are cascaded by, and because a nameless row is harder to
+    talk about in a support conversation than a named one.
     """
 
     __tablename__ = "organization"
@@ -153,10 +162,15 @@ class Organization(Base):
     # (privat)") rather than one a person chose. It cannot be recomputed later —
     # the user may since have changed their own name — so it is stored. Anything
     # that learns a better name may take a placeholder over; a name someone
-    # actually typed is never overwritten. See
-    # :func:`myntos.domain.identity.service.adopt_name_if_placeholder`.
+    # actually typed is never overwritten. Nothing takes one over any more: see
+    # the note in myntos.domain.identity.service where
+    # ``adopt_name_if_placeholder`` used to be.
     name_is_placeholder: Mapped[bool] = mapped_column(Boolean, default=False)
-    plan: Mapped[str] = mapped_column(String(32), default="free")
+    # No ``plan`` here. What a subscription is for is a set of books, so it sits
+    # on :class:`~myntos.domain.ledger.models.Company`; see migration
+    # ``d1a7f2c6b483``. A second copy on the account would be a second answer to
+    # "what does this cost", and the day there is billing, one of them would be
+    # the one nobody charged from.
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     memberships: Mapped[list[OrganizationMembership]] = relationship(
@@ -215,7 +229,18 @@ class User(Base):
     identities: Mapped[list[UserIdentity]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    # At most one, and deleted with the account: a person's fødselsnummer is
+    # kept because they linked it to *this* account, and that reason ends when
+    # the account does.
+    government_identity: Mapped[UserGovernmentIdentity | None] = relationship(
+        back_populates="user", cascade="all, delete-orphan", uselist=False
+    )
     memberships: Mapped[list[OrganizationMembership]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    # What the person may actually open. ``memberships`` above says whose
+    # account they are on; this says which books they can read and write.
+    company_memberships: Mapped[list[CompanyMembership]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
     sessions: Mapped[list[UserSession]] = relationship(
@@ -258,6 +283,65 @@ class UserIdentity(Base):
     user: Mapped[User] = relationship(back_populates="identities")
 
 
+class UserGovernmentIdentity(Base):
+    """Who a Myntos account belongs to, as ID-porten has asserted it.
+
+    :class:`UserIdentity` answers "which Google account signs in here".  This
+    answers a different and heavier question: which *person*, in the state's
+    sense, has proved they are behind this account. It is written by the
+    ID-porten callback in :mod:`myntos.api.v1.skatt` and by nothing else.
+
+    Four decisions.
+
+    **Separate from :class:`GovernmentLoginAttempt`, which already holds a pid.**
+    That row is an authorization: minutes old, single-use, and worthless the
+    moment its token expires. This one is a fact about the account that should
+    outlive every login. That is the difference between "somebody is filing
+    right now" and "this account is Kari". Folding them together would mean the link
+    vanishing an hour after it was made, which is exactly when it starts being
+    useful.
+
+    **The fødselsnummer is stored, not hashed.** It is what Altinn and
+    Skatteetaten identify a submitter by, so a hash would have to be un-hashed
+    to be used, which is not a thing. It is never served over the API to anyone
+    but its owner, and never at all in a member listing: colleagues see the
+    *name* and the fact of a link, which is all the interface needs.
+
+    **``pid`` is not globally unique.** One person legitimately holds two
+    accounts (a personal one and one at a client's), and a unique constraint
+    would turn the second person's login into a database error at the worst
+    possible moment. What is unique is ``user_id``: an account has one person
+    behind it.
+
+    **The link is replaced, not appended to.** If a different person completes
+    ID-porten on the same account, the row now names them, because the only
+    claim it makes is who most recently proved themselves here. ``linked_at``
+    keeps the first time it happened; ``verified_at`` moves each login.
+    """
+
+    __tablename__ = "user_government_identity"
+    __table_args__ = (UniqueConstraint("user_id", name="uq_user_government_identity_user_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="CASCADE"))
+    # The fødselsnummer from ID-porten's ``pid`` claim.
+    pid: Mapped[str] = mapped_column(String(11))
+    # The person's name as ID-porten gives it, which is Folkeregisteret's. NULL
+    # when the deployment does not request the ``profile`` scope, and that has
+    # to stay a supported state: the scope is granted per client, so a name is
+    # something a deployment may simply not have. Everything that reads this
+    # falls back to the name on the account.
+    full_name: Mapped[str | None] = mapped_column(String(255))
+    # The assurance level the linking login reached. Recorded for the same
+    # reason the attempt records it: it is the evidence of how well this is
+    # known, not a detail of how it was obtained.
+    acr: Mapped[str | None] = mapped_column(String(64))
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    user: Mapped[User] = relationship(back_populates="government_identity")
+
+
 class OrganizationMembership(Base):
     """A user's role in one organization.
 
@@ -283,13 +367,64 @@ class OrganizationMembership(Base):
     user: Mapped[User] = relationship(back_populates="memberships")
 
 
-class OrganizationInvitation(Base):
-    """A pending invitation for someone to join an organization.
+class CompanyMembership(Base):
+    """A person's access to one set of books, and what they may do with it.
 
-    This is how a second, third and fourth person end up in the same
-    organization. The invitation is addressed to an email address and carries
-    the role the invitee will get; only the token's hash is stored, so a
-    database leak does not hand out memberships.
+    **This is the row that decides who may read and write a company.** Not
+    :class:`OrganizationMembership`, which now says only whose account a
+    company was set up under.
+
+    Access used to be account-wide: one membership let you into every company
+    the account held. That is right for a sole trader with one company and
+    wrong for everybody else. A regnskapsfører keeps one company per client, and
+    "invite my colleague to help with this client" was not expressible: the
+    invitation let them into every client's books at once. Worse, it read as
+    though it had not: the invitation form sat under the account, so what it
+    actually granted was invisible.
+
+    So access is per company, and the account is the thing that owns companies
+    rather than the thing that grants them. One row per person per company,
+    carrying its own role, so somebody can be an owner of their own books and a
+    viewer of a client's.
+
+    The role type is :class:`OrganizationRole` because the roles and the
+    permissions they carry are the same either way; only what they are held
+    *over* has changed. Renaming it would touch every call site in the
+    application to say nothing new.
+    """
+
+    __tablename__ = "company_membership"
+    __table_args__ = (
+        UniqueConstraint("company_id", "user_id", name="uq_company_membership_company_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("company.id", ondelete="CASCADE"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="CASCADE"))
+    role: Mapped[OrganizationRole] = mapped_column(_role_type())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    # No relationship to Company on purpose: it lives in the ledger models, and
+    # every query that needs both joins them explicitly. A relationship here
+    # would make the identity models import the ledger's, in the direction that
+    # does not already exist.
+    user: Mapped[User] = relationship(back_populates="company_memberships")
+
+
+class OrganizationInvitation(Base):
+    """A pending invitation for someone to join one company's books.
+
+    This is how a second, third and fourth person end up with access to a set
+    of books. The invitation is addressed to an email address and carries the
+    company it is for and the role the invitee will get; only the token's hash
+    is stored, so a database leak does not hand out memberships.
+
+    The table is still called ``organization_invitation``, and ``company_id`` is
+    nullable, because both are history rather than design: invitations were
+    account-wide before access was per company. A row with no company is one
+    written under those rules, and it is refused on acceptance rather than
+    guessed at, because there is no way to know which of an account's companies
+    the sender meant.
     """
 
     __tablename__ = "organization_invitation"
@@ -300,7 +435,20 @@ class OrganizationInvitation(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     organization_id: Mapped[int] = mapped_column(ForeignKey("organization.id", ondelete="CASCADE"))
+    # The books being shared. Nullable only for rows that predate per-company
+    # access; see the class docstring.
+    company_id: Mapped[int | None] = mapped_column(
+        ForeignKey("company.id", ondelete="CASCADE"), nullable=True
+    )
     email: Mapped[str] = mapped_column(String(EMAIL_LENGTH))
+    # Who the invitation is addressed to, when the inviter said. Optional
+    # because an address is enough to invite somebody, and it is a claim rather
+    # than a fact, because the inviter typed it or picked it out of the
+    # company's board list in Enhetsregisteret. It buys three things: the email can greet
+    # a person by name, the register's role table can show that this board
+    # member has been asked, and the person accepting sees the name they were
+    # invited under rather than an empty signup form.
+    full_name: Mapped[str | None] = mapped_column(String(255))
     role: Mapped[OrganizationRole] = mapped_column(_role_type())
     token_hash: Mapped[str] = mapped_column(String(TOKEN_HASH_LENGTH))
     # SET NULL rather than CASCADE: deleting the admin who sent an invitation
@@ -316,6 +464,11 @@ class OrganizationInvitation(Base):
     )
 
     organization: Mapped[Organization] = relationship(back_populates="invitations")
+    # Read-only: the row that owns this relationship is ``invited_by_user_id``,
+    # which is SET NULL rather than CASCADE, so the inviter may be gone. Loaded
+    # so the pending-invitation list can say who sent each one without a query
+    # per row.
+    invited_by: Mapped[User | None] = relationship(foreign_keys=[invited_by_user_id])
 
 
 class UserSession(Base):

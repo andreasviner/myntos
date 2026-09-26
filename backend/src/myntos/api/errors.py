@@ -50,6 +50,7 @@ from myntos.domain.identity.errors import (
     InvalidCredentialsError,
     InvalidInvitationError,
     InvitationEmailMismatchError,
+    InvitationNotFoundError,
     LastOwnerError,
     NoPasswordSetError,
     NotAMemberError,
@@ -59,10 +60,13 @@ from myntos.domain.identity.errors import (
 )
 from myntos.domain.ledger.errors import (
     AlreadyReversedError,
+    BankAccountNotFoundError,
     ChartIncompleteError,
     ClosedFinancialYearError,
     CompanyAlreadyClaimedError,
     CompanyNotFoundError,
+    CompanyOrgnrLockedError,
+    DuplicateBankAccountError,
     DuplicateCompanyError,
     DuplicatePartyError,
     InvalidAmountError,
@@ -72,6 +76,7 @@ from myntos.domain.ledger.errors import (
     NotAuthorizedForPartyError,
     PartyNotFoundError,
     PeriodOutsideBooksError,
+    PrimaryBankAccountRequiredError,
     UnknownCashFlowTypeError,
     UnknownTaxCodeError,
     VoucherNotFoundError,
@@ -102,6 +107,9 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     NoPasswordSetError: status.HTTP_409_CONFLICT,
     UnverifiedProviderEmailError: status.HTTP_403_FORBIDDEN,
     InvalidInvitationError: status.HTTP_400_BAD_REQUEST,
+    # 404, like every other record that belongs to another company: naming
+    # an id you do not have must not confirm that somebody else does.
+    InvitationNotFoundError: status.HTTP_404_NOT_FOUND,
     InvitationEmailMismatchError: status.HTTP_403_FORBIDDEN,
     # --- Accounting core ---
     # Same reasoning as NotAMemberError: another organization's company is
@@ -110,13 +118,25 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     VoucherNotFoundError: status.HTTP_404_NOT_FOUND,
     AttachmentNotFoundError: status.HTTP_404_NOT_FOUND,
     PartyNotFoundError: status.HTTP_404_NOT_FOUND,
+    # 404 for the same reason as every other sub-resource: an account belonging
+    # to the company next door is indistinguishable from one that never existed.
+    BankAccountNotFoundError: status.HTTP_404_NOT_FOUND,
     DuplicateCompanyError: status.HTTP_409_CONFLICT,
     DuplicatePartyError: status.HTTP_409_CONFLICT,
+    # 409: the number is a perfectly good one, the company simply already has it.
+    DuplicateBankAccountError: status.HTTP_409_CONFLICT,
+    # 409: well-formed, and refused by the state the company is in — the way to
+    # move the primary marking is to promote another account, not to clear this.
+    PrimaryBankAccountRequiredError: status.HTTP_409_CONFLICT,
     # 409: the request was well-formed and the caller may well be entitled to
     # these books — another organization simply confirmed the same orgnr first.
     # The frontend branches on the code to offer the way out, so this one must
     # stay distinguishable from DuplicateCompanyError.
     CompanyAlreadyClaimedError: status.HTTP_409_CONFLICT,
+    # 409 for the same reason: the request is well-formed, and what refuses it
+    # is the state the company is already in. Confirming ownership settles the
+    # orgnr, so the only way past this is a new set of books.
+    CompanyOrgnrLockedError: status.HTTP_409_CONFLICT,
     # 403, not 404: the company is one the caller can see, and what is missing
     # is the right to act for it in Altinn.
     NotAuthorizedForPartyError: status.HTTP_403_FORBIDDEN,

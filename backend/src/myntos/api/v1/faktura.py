@@ -167,6 +167,11 @@ class FakturaResponse(BaseModel):
     seller_vat_registered: bool
     seller_in_foretaksregisteret: bool
     seller_bank_account: str | None
+    # Which of the company's accounts this document is paid into. Null means
+    # "whichever is primary" — the answer for every company with one account,
+    # and for a draft nobody has picked for. The number above is what the
+    # document says; this is the choice it says it from.
+    bank_account_id: int | None
 
     issue_date: date | None
     delivery_date: date | None
@@ -225,6 +230,10 @@ class CreateFakturaRequest(BaseModel):
     # Default on: almost nobody wants to invent a payment reference, and one
     # derived from the invoice number is what makes a payment reconcilable.
     payment_reference_auto: bool = True
+    # Which account this invoice is paid into. Omitted means the company's
+    # primary, which is what a company with one account always wants and what
+    # the form leaves alone until there is a second one to choose between.
+    bank_account_id: int | None = None
     note: str | None = Field(default=None, max_length=1000)
     reverse_charge: bool = False
     lines: list[LinePayload] = Field(default_factory=list)
@@ -259,6 +268,7 @@ class UpdateFakturaRequest(BaseModel):
     # reference impossible to remove once set.
     payment_reference: str | None = Field(default=None, max_length=32)
     payment_reference_auto: bool | None = None
+    bank_account_id: int | None = None
     note: str | None = Field(default=None, max_length=1000)
     reverse_charge: bool | None = None
     lines: list[LinePayload] | None = None
@@ -354,6 +364,7 @@ def _faktura_response(
         seller_vat_registered=document.seller_vat_registered,
         seller_in_foretaksregisteret=document.seller_in_foretaksregisteret,
         seller_bank_account=document.seller_bank_account,
+        bank_account_id=document.bank_account_id,
         issue_date=document.issue_date,
         delivery_date=document.delivery_date,
         delivery_place=document.delivery_place,
@@ -470,6 +481,7 @@ async def create_faktura(
         order_reference=payload.order_reference,
         payment_reference=payload.payment_reference,
         payment_reference_auto=payload.payment_reference_auto,
+        bank_account_pk=payload.bank_account_id,
         note=payload.note,
         reverse_charge=payload.reverse_charge,
         lines=[line.to_input() for line in payload.lines],
@@ -621,6 +633,7 @@ async def update_faktura(
         order_reference=payload.order_reference,
         payment_reference=payload.payment_reference,
         payment_reference_auto=payload.payment_reference_auto,
+        bank_account_pk=payload.bank_account_id,
         note=payload.note,
         reverse_charge=payload.reverse_charge,
         lines=None if payload.lines is None else [line.to_input() for line in payload.lines],

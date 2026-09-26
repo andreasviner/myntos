@@ -51,13 +51,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   // attacker-influenced content rendered in our page, so the callback sends a
   // fixed keyword and CALLBACK_ERRORS owns the wording.
   import { CALLBACK_ERRORS, renderProviderButtons } from '../lib/providers';
-  import { rememberAuth } from '../lib/session';
-
-  /** Only site-relative paths, so ?neste= cannot become an open redirect. */
-  function safeNext(value: string | null): string {
-    if (value === null || !value.startsWith('/') || value.startsWith('//')) return '/';
-    return value;
-  }
+  import { rememberAuth, safeNext } from '../lib/session';
 
   const params = new URLSearchParams(window.location.search);
   const next = safeNext(params.get('neste'));

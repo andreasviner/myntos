@@ -25,6 +25,14 @@ two:
     Whether a usable government login exists, and who it belongs to. Never the
     token: nothing outside the server has any use for it.
 
+The callback also leaves something behind that outlives the token it produced:
+a row in ``user_government_identity`` saying which person this account belongs
+to. That is a different fact from "can file right now" - an authorization
+expires within the hour, and who somebody is does not - and it is what lets the
+member list show a colleague as confirmed, and a company's styreliste in
+Enhetsregisteret show which of those people can open the books
+(:mod:`myntos.domain.identity.register_match`).
+
 And one endpoint that spends the login rather than creating it:
 
 ``GET /skatt/altinn/authorized-parties``
@@ -36,6 +44,7 @@ And one endpoint that spends the login rather than creating it:
 
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -55,6 +64,7 @@ from myntos.auth.idporten.vault import is_configured as vault_is_configured
 from myntos.auth.tokens import generate_token
 from myntos.core.clock import as_utc, utc_now
 from myntos.core.config import get_settings
+from myntos.domain.identity import service
 from myntos.domain.identity.models import GovernmentLoginAttempt, User
 from myntos.domain.ledger import service as ledger_service
 from myntos.integrations.altinn.authorized_parties import (
@@ -85,6 +95,34 @@ class GovernmentLoginStatus(BaseModel):
     pid: str | None = None
     acr: str | None = None
     expires_at: str | None = None
+    # The durable link, which outlives the authorization above. ``linked`` stays
+    # true after the token expires: the question "have you shown us who you
+    # are" has a different answer from "can you file right now", and the
+    # interface asks both.
+    linked: bool = False
+    # The name ID-porten gave, when the deployment requests the ``profile``
+    # scope. Null otherwise, and the interface says "bekreftet" without a name
+    # rather than inventing one.
+    linked_name: str | None = None
+    linked_at: str | None = None
+
+
+logger = logging.getLogger(__name__)
+
+# Where a government login lands when the attempt did not say. ``/skatt/`` used
+# to be this value and is not a page: every failure went to a 404 carrying a
+# query string nothing read, which is a good way to lose a bug report. The
+# confirm-company flow is the only thing that starts this login today, so its
+# page is the honest fallback.
+DEFAULT_RETURN_PATH = "/organisasjon/"
+
+# The only two ID-porten error codes that mean the person changed their mind.
+# Everything else is our registration or our request being wrong, and reporting
+# those as "innloggingen ble avbrutt" sends whoever has to fix it looking at the
+# user's behaviour rather than at Samarbeidsportalen. That mistake cost an
+# afternoon once already: an unregistered scope in IDPORTEN_SCOPES arrives here
+# as invalid_scope and used to be indistinguishable from a cancelled BankID.
+_USER_CANCELLED = frozenset({"access_denied", "user_cancel"})
 
 
 def _unavailable() -> HTTPException:
@@ -107,11 +145,19 @@ def _frontend_url(path: str) -> str:
     return f"{get_settings().frontend_base_url.rstrip('/')}{path}"
 
 
-def _failed(marker: str) -> RedirectResponse:
-    """Back to the frontend with our own error code, never ID-porten's text."""
-    return RedirectResponse(
-        _frontend_url(f"/skatt/?error={marker}"), status_code=status.HTTP_303_SEE_OTHER
-    )
+def _failed(marker: str, *, redirect_to: str | None = None) -> RedirectResponse:
+    """Back to the frontend with our own error code, never ID-porten's text.
+
+    ``redirect_to`` is where the flow started, carried on the attempt row. The
+    success path has always honoured it; losing it here dropped somebody who was
+    confirming a company onto an unrelated page, holding a message about
+    something they had not done.
+    """
+    path, _, fragment = (redirect_to or DEFAULT_RETURN_PATH).partition("#")
+    # The fragment has to stay last, or the browser keeps it and drops the query.
+    query = "&" if "?" in path else "?"
+    target = f"{path}{query}error={marker}" + (f"#{fragment}" if fragment else "")
+    return RedirectResponse(_frontend_url(target), status_code=status.HTTP_303_SEE_OTHER)
 
 
 async def _active_attempt(db: DbSession, user: User) -> GovernmentLoginAttempt | None:
@@ -142,11 +188,30 @@ async def _active_attempt(db: DbSession, user: User) -> GovernmentLoginAttempt |
 async def government_login_status(user: CurrentUser, db: DbSession) -> GovernmentLoginStatus:
     """Whether this user may submit something right now."""
     available = is_configured() and vault_is_configured()
+    # The link is reported whether or not ID-porten is configured *now*: a
+    # deployment that turns the feature off does not un-prove what somebody
+    # already showed, and the member list would otherwise blank out.
+    identity = await service.government_identity_for(db, user.id)
+    linked = identity is not None
+    linked_name = identity.full_name if identity is not None else None
+    linked_at = as_utc(identity.linked_at).isoformat() if identity is not None else None
     if not available:
-        return GovernmentLoginStatus(available=False, logged_in=False)
+        return GovernmentLoginStatus(
+            available=False,
+            logged_in=False,
+            linked=linked,
+            linked_name=linked_name,
+            linked_at=linked_at,
+        )
     attempt = await _active_attempt(db, user)
     if attempt is None:
-        return GovernmentLoginStatus(available=True, logged_in=False)
+        return GovernmentLoginStatus(
+            available=True,
+            logged_in=False,
+            linked=linked,
+            linked_name=linked_name,
+            linked_at=linked_at,
+        )
     return GovernmentLoginStatus(
         available=True,
         logged_in=True,
@@ -157,6 +222,9 @@ async def government_login_status(user: CurrentUser, db: DbSession) -> Governmen
             if attempt.token_expires_at is not None
             else None
         ),
+        linked=linked,
+        linked_name=linked_name,
+        linked_at=linked_at,
     )
 
 
@@ -352,6 +420,7 @@ async def idporten_callback(
     code: str | None = None,
     state: str | None = None,
     error: str | None = None,
+    error_description: str | None = None,
 ) -> RedirectResponse:
     """Finish the login and store the authorization.
 
@@ -361,15 +430,41 @@ async def idporten_callback(
     attempt's ``user_id`` is what binds the token to a person.
     """
     del request  # Present for symmetry with auth.py, which records the caller.
-    if error is not None or code is None or state is None:
-        return _failed("innlogging_avbrutt")
-
-    attempt = await db.scalar(
-        select(GovernmentLoginAttempt).where(GovernmentLoginAttempt.state == state)
-    )
     now = utc_now()
+
+    # Looked up before anything is decided, because the attempt is what knows
+    # where the flow started. ID-porten returns ``state`` even when it refuses,
+    # which is the whole reason a failure can go back where it came from.
+    attempt = None
+    if state is not None:
+        attempt = await db.scalar(
+            select(GovernmentLoginAttempt).where(GovernmentLoginAttempt.state == state)
+        )
+    came_from = attempt.redirect_to if attempt is not None else None
+
+    if error is not None:
+        # ``error_description`` is written by ID-porten for us, not for the
+        # person: it names scopes and client ids. Logged, never rendered.
+        logger.warning(
+            "ID-porten refused the authorization request: error=%s description=%s",
+            error,
+            error_description,
+        )
+        if error in _USER_CANCELLED:
+            return _failed("innlogging_avbrutt", redirect_to=came_from)
+        return _failed("innlogging_ikke_mulig", redirect_to=came_from)
+
+    if code is None or state is None:
+        logger.warning(
+            "ID-porten callback carried neither an error nor a usable "
+            "code/state pair (code=%s, state=%s)",
+            code is not None,
+            state is not None,
+        )
+        return _failed("innlogging_avbrutt", redirect_to=came_from)
+
     if attempt is None or attempt.consumed_at is not None or as_utc(attempt.expires_at) <= now:
-        return _failed("innlogging_utlopt")
+        return _failed("innlogging_utlopt", redirect_to=came_from)
 
     # Stamped before the exchange: a replayed callback must fail even if the
     # first exchange is still in flight.
@@ -380,8 +475,12 @@ async def idporten_callback(
         login = await get_client().exchange_code(
             code=code, code_verifier=attempt.code_verifier, nonce=attempt.nonce
         )
-    except IdPortenError:
-        return _failed("innlogging_feilet")
+    except IdPortenError as failure:
+        # The exception carries the token endpoint's own complaint, which is
+        # usually about the client assertion (a wrong kid, an unregistered key)
+        # and is the only place that says so.
+        logger.warning("ID-porten refused the code exchange: %s", failure)
+        return _failed("innlogging_feilet", redirect_to=attempt.redirect_to)
 
     # The assurance level actually reached, not the one requested. Skatteetaten
     # requires high for a submission, and a token that did not reach it must not
@@ -389,14 +488,34 @@ async def idporten_callback(
     # every call site that later trusts the row.
     required = get_settings().idporten_acr_values.strip()
     if required and login.acr != required:
-        return _failed("for_lav_sikkerhet")
+        logger.warning(
+            "ID-porten login reached acr=%s but %s is required; storing nothing",
+            login.acr,
+            required,
+        )
+        return _failed("for_lav_sikkerhet", redirect_to=attempt.redirect_to)
 
     attempt.sealed_token = seal(login.access_token)
     attempt.token_expires_at = login.expires_at
     attempt.pid = login.pid
     attempt.acr = login.acr
+    # And remember *who this account belongs to*, beyond the hour this token
+    # lives. The attempt is an authorization and expires like one; the link is a
+    # fact about the account, and it is what lets the member list say a
+    # colleague has confirmed who they are, and the board list in
+    # Enhetsregisteret say which of those people can open the books. Written
+    # only after the assurance check above: a login that fell short is not
+    # evidence of anything.
+    await service.link_government_identity(
+        db,
+        user_id=attempt.user_id,
+        pid=login.pid,
+        full_name=login.name,
+        acr=login.acr,
+    )
     await db.flush()
 
     return RedirectResponse(
-        _frontend_url(attempt.redirect_to or "/skatt/"), status_code=status.HTTP_303_SEE_OTHER
+        _frontend_url(attempt.redirect_to or DEFAULT_RETURN_PATH),
+        status_code=status.HTTP_303_SEE_OTHER,
     )

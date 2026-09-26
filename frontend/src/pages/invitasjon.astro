@@ -2,88 +2,323 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 ---
 
-<BaseLayout title="Invitasjon | Myntos" description="Bli med i en organisasjon på Myntos.">
-  <div class="auth-page">
-    <h1>Invitasjon</h1>
-    <p class="status" id="status" hidden></p>
+{/* Velkommen: siden en invitasjonslenke åpner.
 
-    <div class="card" id="panel">
-      <p id="message">Sjekker invitasjonen …</p>
-      <div class="actions" id="actions" hidden>
-        <a class="btn btn-primary" id="primary" href="/logg-inn/">Logg inn</a>
-        <a class="btn btn-ghost" id="secondary" href="/registrer/">Opprett konto</a>
+    For mange er dette det aller første de ser av Myntos. Den gamle siden møtte
+    dem med «Sjekker invitasjonen …» og deretter en beskjed om å logge inn, uten
+    å si hvem som spurte eller hva de ble sluppet inn i — altså en påloggingsside
+    for en tjeneste de aldri har hørt om, som er nøyaktig slik svindel ser ut.
+
+    Nå spør vi først: /auth/invitations/lookup svarer uten innlogging, fordi alt
+    den forteller står i e-posten leseren allerede har i hånden. Da kan siden si
+    hvem som inviterte, hvilken organisasjon det gjelder, og hva rollen betyr,
+    før den ber om noe som helst. */}
+
+<BaseLayout
+  title="Invitasjon | Myntos"
+  description="Du er invitert til å bli med i en organisasjon på Myntos."
+>
+  <div class="velkommen">
+    <div class="empty" id="laster">Henter invitasjonen …</div>
+
+    {/* --- Invitasjonen holder ----------------------------------------------
+
+        IDen er ikke «innhold». BaseLayout gir <main> id="innhold", fordi det er
+        målet for «Hopp til innhold», og to elementer med samme id gjør at
+        el('#innhold') treffer <main> i stedet for dette kortet. Da skjulte
+        siden lastemeldingen og viste aldri noe mer, og feilsiden under skrudde
+        av hele <main> og tok seg selv med: begge veier endte i et hvitt ark. */}
+    <div id="invitasjonen" hidden>
+      <header class="velkommen-head">
+        <p class="eyebrow">Invitasjon</p>
+        <h1 id="tittel">Velkommen til Myntos</h1>
+        <p class="velkommen-ingress" id="ingress"></p>
+      </header>
+
+      <p class="status" id="status" hidden></p>
+
+      <div class="card velkommen-kort">
+        <dl class="velkommen-felt">
+          {/* Selskapet, ikke kontoen. Det er ett regnskap man blir invitert
+              inn i, og kontoen til den som inviterer får man aldri se. */}
+          <dt>Selskap</dt>
+          <dd id="felt-selskap"></dd>
+          <dt>Rollen din</dt>
+          <dd id="felt-rolle"></dd>
+          {/* Bare når den som inviterte skrev et navn. Da er dette en
+              invitasjon til en person og ikke til en adresse, og det er verdt
+              å si. Det er også den beste kontrollen leseren har på at
+              meldingen faktisk gjelder dem.
+
+              To elementer som skjules hver for seg, ikke ett som pakker dem
+              inn: lista er et to-kolonners rutenett med dt og dd som direkte
+              barn, og en wrapper ville blitt ett felt i stedet for to. */}
+          <dt id="felt-navn-merkelapp" hidden>Til</dt>
+          <dd id="felt-navn" hidden></dd>
+          <dt>Sendt til</dt>
+          <dd id="felt-epost"></dd>
+          <dt>Gjelder til</dt>
+          <dd id="felt-frist"></dd>
+        </dl>
+
+        <div class="velkommen-knapper" id="knapper" hidden>
+          <a class="btn btn-primary" id="primary" href="/registrer/">Opprett konto</a>
+          <a class="btn btn-ghost" id="secondary" href="/logg-inn/">Jeg har konto</a>
+        </div>
+        <p class="card-hint" id="knapper-hjelp" hidden>
+          Bruk e-postadressen invitasjonen ble sendt til. Vi tar deg tilbake hit automatisk.
+        </p>
+      </div>
+
+      {/* Hva Myntos er, for den som aldri har hørt om oss. Under handlingen og
+          ikke over: den som allerede vet hva dette er skal ikke lese en
+          reklametekst for å finne knappen. */}
+      <section class="velkommen-om" id="om">
+        <h2>Hva er Myntos?</h2>
+        <p>
+          Et norsk regnskapsprogram: bilag, fakturaer, kontantstrøm og mva, med reglene og ordene
+          som gjelder her. Vi henter det vi kan fra Enhetsregisteret og Altinn i stedet for å be deg
+          skrive det inn.
+        </p>
+        <ul class="velkommen-punkter">
+          <li>
+            <strong>Du får bare dette ene regnskapet.</strong> Har den som inviterte deg flere
+            selskaper, ser du ingenting av dem, og invitasjonen gjelder bare adressen den ble
+            sendt til.
+          </li>
+          <li>
+            <strong>Du får bare det rollen din gir.</strong> En leser kan ikke endre noe, og du
+            kan når som helst gå ut igjen.
+          </li>
+          <li>
+            <strong>Du kan lese kildekoden.</strong> Se hva programmet gjør med tallene dine,
+            og <a href="/personvern/">personvernerklæringen</a> sier hva vi lagrer.
+          </li>
+        </ul>
+      </section>
+    </div>
+
+    {/* --- Invitasjonen holder ikke ------------------------------------------
+
+        Egen tilstand, ikke en feilmelding på toppen av et tomt kort. En lenke
+        som er brukt opp, utløpt eller feilskrevet er ikke noe leseren kan rette
+        selv, så det eneste ærlige er å si det og peke på den som kan. */}
+    <div id="stopp" hidden>
+      <header class="velkommen-head">
+        <p class="eyebrow">Invitasjon</p>
+        <h1 id="stopp-tittel">Denne lenken virker ikke lenger</h1>
+        <p class="velkommen-ingress" id="stopp-tekst"></p>
+      </header>
+      <div class="velkommen-knapper">
+        <a class="btn btn-ghost" href="/">Til forsiden</a>
       </div>
     </div>
   </div>
 </BaseLayout>
 
 <style>
-  .auth-page {
-    max-width: 30rem;
+  .velkommen {
+    max-width: 38rem;
     margin: 0 auto;
   }
-  .actions {
+
+  .velkommen-head {
+    margin-bottom: 1.4rem;
+  }
+  .velkommen h1 {
+    margin: 0.3rem 0 0.6rem;
+    font-size: clamp(1.7rem, 1.3rem + 1.7vw, 2.3rem);
+  }
+  .velkommen-ingress {
+    margin: 0;
+    font-size: 1.05rem;
+    color: var(--muted);
+  }
+
+  /* Opplysningene som en definisjonsliste: fire spørsmål med hvert sitt svar,
+     og ingen av dem er felter noen skal fylle ut. */
+  .velkommen-felt {
+    display: grid;
+    grid-template-columns: minmax(7rem, auto) 1fr;
+    gap: 0.5rem 1.2rem;
+    margin: 0;
+  }
+  .velkommen-felt dt {
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  .velkommen-felt dd {
+    margin: 0;
+    color: var(--fg-strong);
+    font-weight: 550;
+  }
+
+  .velkommen-knapper {
     display: flex;
     flex-wrap: wrap;
     gap: 0.6rem;
-    margin-top: 1rem;
+    margin-top: 1.4rem;
+  }
+  .velkommen-kort .card-hint {
+    margin: 0.7rem 0 0;
+  }
+
+  .velkommen-om {
+    margin-top: 2.4rem;
+  }
+  .velkommen-om h2 {
+    margin: 0 0 0.6rem;
+    font-size: 1.1rem;
+  }
+  .velkommen-om p {
+    margin: 0 0 1rem;
+    color: var(--muted);
+  }
+  .velkommen-punkter {
+    display: grid;
+    gap: 0.7rem;
+    margin: 0;
+    padding-left: 1.1rem;
+    color: var(--muted);
+  }
+  .velkommen-punkter strong {
+    color: var(--fg-strong);
   }
 </style>
 
 <script>
-  import { acceptInvitation, ApiError } from '../lib/api';
-  import { el, setStatus } from '../lib/dom';
+  import { acceptInvitation, ApiError, lookupInvitation, type InvitationLookup } from '../lib/api';
+  import { el, setStatus, show } from '../lib/dom';
+  import { isoDate } from '../lib/format';
   import { loadSession } from '../lib/session';
 
-  const message = el<HTMLParagraphElement>('#message');
+  /** What each role means, in the same words the invitation email used. */
+  const ROLES: Record<string, string> = {
+    viewer: 'Leser: du ser regnskapet, men kan ikke endre noe',
+    member: 'Medlem: du kan føre bilag og lage fakturaer',
+    admin: 'Administrator: du kan også styre selskaper og medlemmer',
+    owner: 'Eier: du kan alt, også abonnementet',
+  };
+
+  const laster = el('#laster');
+  const innhold = el('#invitasjonen');
   const status = el<HTMLParagraphElement>('#status');
-  const actions = el<HTMLDivElement>('#actions');
+  const knapper = el<HTMLDivElement>('#knapper');
   const primary = el<HTMLAnchorElement>('#primary');
   const secondary = el<HTMLAnchorElement>('#secondary');
 
   const token = new URLSearchParams(window.location.search).get('token');
 
-  if (token === null || token === '') {
-    message.textContent = 'Lenken mangler en invitasjonskode. Be avsenderen sende den på nytt.';
-  } else {
-    void loadSession().then((session) => {
-      if (session === null) {
-        // The invitation grants access to an account, so the account has to
-        // exist first, and it must use the invited address, or the backend
-        // will refuse the token.
-        message.textContent =
-          'Logg inn eller opprett en konto med e-postadressen invitasjonen ble sendt til. Så kommer du tilbake hit automatisk.';
-        const back = `/invitasjon/?token=${encodeURIComponent(token)}`;
-        primary.href = `/logg-inn/?neste=${encodeURIComponent(back)}`;
-        secondary.href = '/registrer/';
-        actions.hidden = false;
-        return;
-      }
+  /** The dead end: a link that cannot be used, and why. */
+  function stopp(message: string, title = 'Denne lenken virker ikke lenger'): void {
+    laster.hidden = true;
+    show(innhold, false);
+    el('#stopp-tittel').textContent = title;
+    el('#stopp-tekst').textContent = message;
+    show(el('#stopp'), true);
+  }
 
-      message.textContent = 'Blir med i organisasjonen …';
-      void acceptInvitation(token)
-        .then((updated) => {
-          const joined = updated.memberships[updated.memberships.length - 1];
+  /** Fill in what the invitation says, whoever is reading it. */
+  function beskriv(invitation: InvitationLookup): void {
+    const who = invitation.inviter_name;
+    el('#tittel').textContent =
+      who === null
+        ? `Du er invitert til å føre regnskapet for ${invitation.company_name}`
+        : `${who} har invitert deg til å føre regnskapet for ${invitation.company_name}`;
+    el('#ingress').textContent =
+      'Myntos er et norsk regnskapsprogram. Slik får du tilgang til dette regnskapet.';
+    el('#felt-selskap').textContent = invitation.company_name;
+    el('#felt-navn').textContent = invitation.full_name ?? '';
+    show(el('#felt-navn-merkelapp'), invitation.full_name !== null);
+    show(el('#felt-navn'), invitation.full_name !== null);
+    el('#felt-rolle').textContent = ROLES[invitation.role] ?? invitation.role;
+    el('#felt-epost').textContent = invitation.email;
+    el('#felt-frist').textContent = isoDate(invitation.expires_at.slice(0, 10));
+    laster.hidden = true;
+    show(innhold, true);
+  }
+
+  if (token === null || token === '') {
+    stopp(
+      'Lenken mangler invitasjonskoden. Be den som inviterte deg om å sende invitasjonen på nytt.',
+      'Lenken er ufullstendig',
+    );
+  } else {
+    // Both requests at once. The invitation describes itself without a session,
+    // and whether anyone is signed in decides only what the page asks for next,
+    // so waiting for one before starting the other would be a round trip spent
+    // on nothing.
+    void Promise.all([lookupInvitation(token), loadSession()])
+      .then(async ([invitation, session]) => {
+        beskriv(invitation);
+
+        if (session === null) {
+          // Not signed in: the account has to exist first, and it must use the
+          // invited address or the acceptance is refused. "Opprett konto" is
+          // the primary action because most people opening an invitation have
+          // no account yet.
+          const back = `/invitasjon/?token=${encodeURIComponent(token)}`;
+          // The address rides along: it is the only one the acceptance will
+          // take, and a signup form that lets you type another is a form with a
+          // trap in it.
+          primary.href =
+            `/registrer/?neste=${encodeURIComponent(back)}` +
+            `&epost=${encodeURIComponent(invitation.email)}` +
+            // The name only when there is one; an empty parameter would clear
+            // a field the signup form is right to leave alone.
+            (invitation.full_name === null
+              ? ''
+              : `&navn=${encodeURIComponent(invitation.full_name)}`);
+          secondary.href = `/logg-inn/?neste=${encodeURIComponent(back)}`;
+          show(knapper, true);
+          show(el('#knapper-hjelp'), true);
+          return;
+        }
+
+        // Signed in as somebody else: the one thing worth saying is which
+        // address this invitation is for, and the way out is to sign out.
+        if (session.user.email.toLowerCase() !== invitation.email.toLowerCase()) {
           setStatus(
             status,
-            `Du er nå medlem av ${joined?.organization_name ?? 'organisasjonen'}.`,
-            'ok',
+            `Du er logget inn som ${session.user.email}. Invitasjonen gjelder ${invitation.email}, ` +
+              'så logg ut og inn igjen med den adressen.',
           );
-          message.textContent = 'Sender deg til oversikten …';
+          primary.href = '/';
+          primary.textContent = 'Til oversikten';
+          show(secondary, false);
+          show(knapper, true);
+          return;
+        }
+
+        setStatus(status, 'Gir deg tilgang til regnskapet …', 'ok');
+        try {
+          await acceptInvitation(token);
+          setStatus(status, `Du har nå tilgang til ${invitation.company_name}.`, 'ok');
+          el('#ingress').textContent = 'Sender deg til oversikten …';
           window.setTimeout(() => {
             window.location.href = '/';
           }, 1200);
-        })
-        .catch((error: unknown) => {
-          message.textContent =
+        } catch (error: unknown) {
+          setStatus(
+            status,
             error instanceof ApiError
               ? error.message
-              : 'Invitasjonen kunne ikke brukes. Be avsenderen sende en ny.';
+              : 'Invitasjonen kunne ikke brukes. Be avsenderen sende en ny.',
+          );
           primary.href = '/';
           primary.textContent = 'Til oversikten';
-          secondary.hidden = true;
-          actions.hidden = false;
-        });
-    });
+          show(secondary, false);
+          show(knapper, true);
+        }
+      })
+      .catch((error: unknown) => {
+        // One refusal covers unknown, spent and expired, deliberately: the
+        // backend will not confirm to a stranger that a guessed token was real.
+        stopp(
+          error instanceof ApiError && error.status === 400
+            ? 'Invitasjonen er brukt opp, trukket tilbake eller utløpt. Be den som inviterte deg om å sende en ny.'
+            : 'Vi fikk ikke kontakt med Myntos akkurat nå. Prøv igjen om litt.',
+        );
+      });
   }
 </script>

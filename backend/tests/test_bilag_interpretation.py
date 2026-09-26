@@ -13,10 +13,12 @@ from decimal import Decimal
 
 import pytest
 
+from myntos.domain.bilag import interpretation
 from myntos.domain.bilag.interpretation import (
     FieldSource,
     InvoiceSuggestion,
     PartyHint,
+    _clean_name,
     amounts_in,
     apply_conversion,
     apply_type,
@@ -172,12 +174,15 @@ def test_a_purchase_becomes_money_out_with_a_type_and_a_vat_code() -> None:
     assert suggestion.description == "Faktura 104588, Telenor Norge AS"
     assert suggestion.counterparty_orgnr == "910000004"
     # Everything proposed is accounted for, and nothing else claims to be.
+    # party_id is among them although no party matched: the sender is named on
+    # the invoice, and the form offers that name as a motpart to register.
     assert set(suggestion.filled) == {
         "occurred_on",
         "gross_amount",
         "type_code",
         "tax_code",
         "description",
+        "party_id",
     }
     assert suggestion.warnings == []
 
@@ -189,6 +194,298 @@ def test_a_registered_supplier_is_recognised_by_organisasjonsnummer() -> None:
     assert suggestion.party_id == 42
     assert suggestion.direction is CashFlowDirection.UT
     assert "party_id" in suggestion.filled
+
+
+def test_a_sender_nobody_registered_is_still_offered_as_a_motpart() -> None:
+    """There is no party row to point at, but the invoice names one.
+
+    The form puts that name in the motpart list as its own choice, and registers
+    it under the name if the user posts with it selected. So the field counts as
+    proposed, marked with where the name came from rather than where a party row
+    came from.
+    """
+    suggestion = only(PURCHASE)
+
+    assert suggestion.party_id is None
+    assert suggestion.counterparty_name == "Telenor Norge AS"
+    assert suggestion.sources["party_id"] is FieldSource.DOCUMENT
+
+
+def test_app_chrome_is_not_a_counterparty() -> None:
+    """Four phone screenshots, and the top of each is a toolbar.
+
+    The last-resort rule takes the first name-shaped line off the top of the
+    page, which is a letterhead on an invoice and a status bar on a screenshot.
+    A bank app's "Add receipt" button and an AliExpress search box both reached
+    the motpart field of a purchase this way. The list that already refused
+    these words was applied to the model's answers and not to the parser's, and
+    the model is asked for a name only where the parser found none.
+    """
+    text = (
+        "16:04\nReserved 05. September 2026\n- NOK 1 011,44\n"
+        "Add receipt\nUpload\nDetails\nAmount\nNOK -1 011,44\n"
+        "Account\nLINDEMAN TECHNOLOGIES AS\nShow more\nHome\nPayments\n"
+    )
+    reading = interpretation.read(text, today=date(2026, 9, 7))
+
+    assert reading.seller_name is None
+
+
+def test_a_line_the_phone_cut_short_is_not_a_counterparty() -> None:
+    """ "Order ID, product or sto..." is a search box with no room for its label."""
+    assert interpretation._clean_name("Order ID, product or sto...") is None
+    assert interpretation._clean_name("Eite Technology Store") == "Eite Technology Store"
+
+
+# --- A bank statement states its direction, an invoice does not ------------------
+
+REFUND = (
+    "Details\nAmount\nNOK 26 266,40\nAccount\nLINDEMAN TECHNOLOGIES AS\n1520.34.91244\n"
+    "Booked\n03.09.2026\nDate\n23.08.2026\nMerchant name\nEbay O:10-15068-4\n"
+    "\n--- Dokument 2: IMG_9367.png ---\n"
+    "Details\nAmount\nNOK -27 850,81\nAccount\nLINDEMAN TECHNOLOGIES AS\n1520.34.91244\n"
+    "Booked\n24.08.2026\nDate\n23.08.2026\nMerchant name\nEbay O:10-15068-4\n"
+)
+
+
+def test_a_minus_on_a_bank_line_means_the_money_left() -> None:
+    """The one thing a statement says about direction and an invoice never does.
+
+    An invoice for 12 500 and a card purchase of 12 500 are the same figure. Our
+    amount pattern had no sign group at all, so "NOK -27 850,81" and "NOK
+    26 266,40" arrived as two positive numbers with nothing to tell them apart.
+    """
+    reading = interpretation.read(REFUND, today=date(2026, 9, 7), has_letterhead=False)
+
+    # 26 266,40 back against 27 850,81 out: the company is worse off by the
+    # difference, which is the exchange rate moving between the two.
+    assert reading.gross_amount == Decimal("1584.41")
+    assert reading.total_is_negative is True
+    assert reading.shows_a_return is True
+
+
+def test_a_bilag_is_the_sum_of_what_is_on_it() -> None:
+    """Not the largest of the figures, and not the first: all of them.
+
+    Nine screenshots of an AliExpress order that charged the card three times
+    are one voucher of 1 758,29. Largest and first were arbitrary in the same
+    way, answering "which of these is the bilag" when the answer is "all".
+    """
+    text = (
+        "Details\nAmount\nNOK -146,23\n1520.34.91244\n"
+        "\n--- Dokument 2: b.png ---\nDetails\nAmount\nNOK -1 011,44\n1520.34.91244\n"
+        "\n--- Dokument 3: c.png ---\nDetails\nAmount\nNOK -600,62\n1520.34.91244\n"
+    )
+    reading = interpretation.read(text, today=date(2026, 9, 7), has_letterhead=False)
+
+    assert reading.gross_amount == Decimal("1758.29")
+    assert reading.total_is_negative is True
+    assert reading.shows_a_return is False
+
+
+def test_the_same_payment_from_two_sides_is_counted_once() -> None:
+    """The bank writes the charge as -600,62 and the shop as 600,62.
+
+    Counted twice it doubles the bilag; matched by sign as well as by figure it
+    cancels to nothing. It is one payment, and the bank is the one saying which
+    way it went.
+    """
+    text = (
+        "Details\nAmount\nNOK -600,62\n1520.34.91244\n"
+        "\n--- Dokument 2: order.png ---\nTotal for 1 items: 600,62 kr\n1520.34.91244\n"
+    )
+    reading = interpretation.read(text, today=date(2026, 9, 7), has_letterhead=False)
+
+    assert reading.gross_amount == Decimal("600.62")
+    assert reading.total_is_negative is True
+    assert reading.shows_a_return is False
+
+
+def test_a_receipts_fee_line_is_not_added_to_the_charge_that_includes_it() -> None:
+    """The FINN receipt says 3 250 plus 315 in fees; the account was charged 3 565.
+
+    Adding every document's total gave 3 880, which is the charge plus a part of
+    itself. When a file on the bilag prints a kontonummer, that is the file that
+    says what moved, and the rest describe the same money in more detail.
+    """
+    text = (
+        "Kjøpesum 3 250,00\nAvgift for Trygg betaling 206,00\nFrakt 109,00\nTotalt 315,00\n"
+        "\n--- Dokument 2: bank.png ---\n"
+        "Details\nAmount\nNOK -3 565,00\nAccount\nLINDEMAN TECHNOLOGIES AS\n1520.34.91244\n"
+    )
+    reading = interpretation.read(text, today=date(2026, 9, 7), has_letterhead=False)
+
+    assert reading.gross_amount == Decimal("3565.00")
+
+
+def test_with_nothing_saying_what_moved_the_largest_total_is_the_bilag() -> None:
+    """Adding up needs amounts that are independent of each other.
+
+    With no file saying what left the account, nothing on the bilag is
+    independent: the files are one payment written at different granularities.
+    The FINN bilag prints "Totalt 3 565 kr" on the purchase and "Totalt 315,00
+    kr" on the fee receipt, and the 315 is inside the 3 565.
+    """
+    text = "Totalt 3 565,00\n\n--- Dokument 2: gebyr.png ---\nTotalt 315,00\n"
+    reading = interpretation.read(text, today=date(2026, 9, 7))
+
+    assert reading.gross_amount == Decimal("3565.00")
+
+
+def test_one_purchase_documented_twice_is_not_two_purchases() -> None:
+    """The FINN advert and the bank line both say 7 500,00."""
+    text = (
+        "Totalt 7 500,00\n1520.34.91244\n"
+        "\n--- Dokument 2: bank.png ---\nAmount\nNOK 7 500,00\n1520.34.91244\n"
+    )
+    reading = interpretation.read(text, today=date(2026, 9, 7), has_letterhead=False)
+
+    assert reading.gross_amount == Decimal("7500.00")
+
+
+def test_a_bank_prints_the_same_payment_twice_on_one_screen() -> None:
+    """Once large at the top and once in a details table, and it is one payment.
+
+    Within one document the largest labelled figure is still the total, which is
+    what keeps an invoice's subtotals from being added to it.
+    """
+    text = (
+        "Reserved 05. September 2026\n- NOK 146,23\nDetails\nAmount\nNOK -146,23\n1520.34.91244\n"
+    )
+    reading = interpretation.read(text, today=date(2026, 9, 7), has_letterhead=False)
+
+    assert reading.gross_amount == Decimal("146.23")
+
+
+def test_an_invoice_is_unchanged_because_it_signs_nothing() -> None:
+    """The blast radius of the sign rule is documents that print a sign."""
+    reading = interpretation.read(PURCHASE, today=date(2026, 9, 7))
+
+    assert reading.total_is_negative is None
+    assert reading.shows_a_return is False
+    assert reading.gross_amount == Decimal("1808.75")
+
+
+def test_a_net_of_two_legs_says_that_it_is_one() -> None:
+    """A difference does not look like a difference in an amount field.
+
+    27 850,81 out and 26 266,40 back for the same GBP 2 137,00 leaves 1 584,41,
+    which is the exchange rate moving between the two and not something that was
+    bought. Unexplained it reads as a small purchase.
+    """
+    reading = interpretation.read(REFUND, today=date(2026, 9, 7), has_letterhead=False)
+    suggestion = interpretation.suggest(
+        REFUND,
+        today=date(2026, 9, 7),
+        own_orgnr="938193045",
+        own_name="Lindeman Technologies AS",
+        reading=reading,
+    )
+
+    assert suggestion.gross_amount == Decimal("1584.41")
+    assert any("differansen mellom dem" in warning for warning in suggestion.warnings)
+    assert any("valutatap" in warning for warning in suggestion.warnings)
+
+
+def test_money_that_came_back_is_not_told_to_charge_vat_on_it() -> None:
+    """A return filed as a sale adds output VAT the company does not owe.
+
+    25 % of the 26 266,40 eBay sent back is 5 253 kroner of tax on a purchase
+    that was cancelled. Said rather than overruled: the catalogue has no home
+    for a refund, since every money-in category in it is a revenue one.
+    """
+    reading = interpretation.read(REFUND, today=date(2026, 9, 7), has_letterhead=False)
+    suggestion = interpretation.suggest(
+        REFUND,
+        today=date(2026, 9, 7),
+        own_orgnr="938193045",
+        own_name="Lindeman Technologies AS",
+        reading=reading,
+    )
+    interpretation.apply_type(
+        suggestion,
+        reading=reading,
+        type_code="salg_hoy_sats",
+        source=interpretation.FieldSource.MODEL,
+    )
+
+    assert suggestion.tax_code is None
+    assert any("refusjon og ikke et salg" in warning for warning in suggestion.warnings)
+
+
+def test_an_ordinary_sale_is_not_accused_of_being_a_refund() -> None:
+    """One sign on the page is one direction, and nothing to warn about."""
+    text = "Details\nAmount\nNOK 12 500,00\nAccount\nLINDEMAN TECHNOLOGIES AS\n"
+    reading = interpretation.read(text, today=date(2026, 9, 7), has_letterhead=False)
+    suggestion = interpretation.suggest(
+        text,
+        today=date(2026, 9, 7),
+        own_orgnr="938193045",
+        own_name="Lindeman Technologies AS",
+        reading=reading,
+    )
+    interpretation.apply_type(
+        suggestion,
+        reading=reading,
+        type_code="salg_hoy_sats",
+        source=interpretation.FieldSource.MODEL,
+    )
+
+    assert reading.shows_a_return is False
+    assert not any("refusjon" in warning for warning in suggestion.warnings)
+
+
+def test_a_label_is_a_label_and_not_a_prefix() -> None:
+    """ "Selgeren har sendt pakken" is a status line, not "Selger" plus a name.
+
+    Without a word boundary the label was stripped off the front of the word it
+    is part of, and a FINN status page arrived with the counterparty "en har
+    sendt pakken".
+    """
+    assert interpretation._clean_name("Selger: Anders A") == "Anders A"
+    assert interpretation._clean_name("Fra Telenor Norge AS") == "Telenor Norge AS"
+    assert interpretation._clean_name("Selgeren har sendt pakken") == "Selgeren har sendt pakken"
+
+
+def test_a_clause_never_becomes_the_sellers_name() -> None:
+    """A name that is a sentence does more damage than fill one field.
+
+    It becomes the bilagstekst when the item line is missing, and it is what a
+    registered party is matched against. "Forsikre produktet mot uhell" is a
+    checkbox on FINN sitting one line under "Selger", which is a label and
+    normally tells the truth.
+    """
+    text = "Selger\nForsikre produktet mot uhell\nTotalt 3 000 kr\n"
+    reading = interpretation.read(text, today=date(2026, 9, 7), has_letterhead=False)
+
+    assert reading.seller_name is None
+
+
+def test_a_camera_roll_title_is_not_a_counterparty() -> None:
+    """The title is a last-resort sender, and a photograph has one too.
+
+    An eBay order confirmation says "eBay" in its title and nowhere in its text,
+    which is why the fallback exists. A screenshot's title is "IMG_9362", and
+    that reached the motpart field once the chrome above it was refused.
+    """
+    assert interpretation._clean_title("IMG_9362.png") is None
+    assert interpretation._clean_title("Screenshot 2026-09-05 at 16.04.png") is None
+    assert interpretation._clean_title("eBay") == "eBay"
+
+
+def test_a_clause_off_a_status_page_is_not_offered_as_a_motpart() -> None:
+    """Shown in the bilagstekst is one thing, registered as a party another.
+
+    "en har sendt pakken" is the tail of "Selgeren har sendt pakken" on a FINN
+    status page. It is genuinely printed there, so it can end up in
+    ``counterparty_name``, but a party register full of sentences is worse than
+    one that is short.
+    """
+    assert not interpretation.offerable("en har sendt pakken")
+    assert interpretation.offerable("Linjeforeningen Elektra")
+    # A lone lowercase token is a marketplace handle, and handles are most of
+    # the counterparties this system meets.
+    assert interpretation.offerable("daisyaus-0")
 
 
 # --- Reading an invoice we issued ourselves ---------------------------------------
@@ -258,8 +555,48 @@ def test_an_invoice_without_vat_asks_about_reverse_charge() -> None:
     suggestion = only(text)
 
     assert suggestion.type_code == "datakostnad"
-    assert suggestion.tax_code is None
+    # Code 0, not the category's default of 25 %. Neither is certainly right on
+    # a foreign invoice, but only one of them claims a deduction of 20 kroner
+    # that the seller never charged.
+    assert suggestion.tax_code == "0"
     assert any("omvendt avgiftsplikt" in warning for warning in suggestion.warnings)
+
+
+def test_a_zero_in_the_mva_column_beats_the_categorys_default_rate() -> None:
+    """Brønnøysundregistrene's registreringsgebyr, as its text layer comes out.
+
+    The rate is not on a line that says "mva". It is the last column of the item
+    row, welded to the amount before it by the extractor, under a heading that
+    names the column. Read only for labelled lines, the invoice says nothing
+    about VAT, and the form fell back to 25 % and proposed a deduction of 1 365
+    kroner on a public fee that carries none.
+    """
+    text = (
+        "NOKARTIKKEL ENH ANTALL PRIS BELØP IMVA\n"
+        "0411011 Aksjeselskap STK 1,0 6 825,00 6 825,000%\n"
+        "Fakturanummer: 935091521\n"
+        "Fakturadato : 01.09.2026\n"
+        "Organisasjonsnummer: 938 386 730\n"
+        "SUM I NOK : 6 825,00\n"
+    )
+    suggestion = only(text)
+
+    assert suggestion.gross_amount == Decimal("6825.00")
+    assert suggestion.tax_code == "0"
+    assert suggestion.sources["tax_code"] is FieldSource.DOCUMENT
+    assert suggestion.vat_amount == Decimal(0)
+
+
+def test_a_lone_mva_label_does_not_turn_discounts_into_vat_rates() -> None:
+    """The column rule needs a column, which means a heading that names several.
+
+    A "Mva" over a total is a label. Treating it as a table heading would make
+    the 10 % in a discount column the VAT rate of the whole bilag.
+    """
+    text = "Faktura 77\nFakturadato 01.03.2026\nSkruer 4 stk 500,00 10%\nMva\nÅ betale 500,00\n"
+    suggestion = only(text)
+
+    assert suggestion.tax_code is None
 
 
 def test_a_foreign_currency_is_pointed_out() -> None:
@@ -532,3 +869,288 @@ def test_a_category_that_is_never_a_driftsmiddel_gets_no_note() -> None:
     note_capitalisation(proposal)
 
     assert not any("driftsmiddel" in warning for warning in proposal.warnings)
+
+
+# --- What the fixture bilag in regnaskaps_tests/ taught us --------------------
+#
+# Every test below stands for a document that came out wrong. They are written
+# from the text those documents actually produce, because the failures were all
+# in the shape of the text rather than in the arithmetic on it.
+
+# Brønnøysundregistrene's own faktura, as pypdf flattens it. The *customer's*
+# organisasjonsnummer is printed near the top under a heading and the sender's
+# only in a footer — which is the whole difficulty.
+BRREG = """0411011 Aksjeselskap STK 1,0 6 825,00 6 825,000%
+Deres ref:
+Vår ref: 2026-2478488
+Organisasjonsnummer: 938 386 730
+Foretaksnavn:DIALGA AS
+SUM I NOK : 6 825,00
+Brønnøysundregistrene, Pb 900, 8910 BRØNNØYSUND  Telefon: 75 00 75 00 firmapost@brreg.no
+ Bank: Nordea Bank, SWIFT: NDEANOKK, IBAN: NO59 63450530699, Organisasjonsnr.: NO 974760673
+BESKRIVELSE
+F A K T U R A
+Fakturanummer: 935091521
+Fakturadato : 01.09.2026
+"""
+
+CUSTOMER_ORGNR = "938386730"
+
+
+def test_being_named_first_is_not_proof_we_sent_it() -> None:
+    """The worst outcome in the whole pipeline, and it was reachable.
+
+    Named first used to be enough to read a document as one we issued, and this
+    invoice names its recipient first. A 6 825-krone registration fee therefore
+    came back as money *in* — and because the category menu is narrowed by the
+    direction, the only answers on offer were kinds of sale.
+    """
+    proposal = suggest(BRREG, today=TODAY, own_orgnr=CUSTOMER_ORGNR, own_name="Dialga AS")
+    assert proposal.direction.value == "ut"
+    assert proposal.gross_amount == Decimal("6825.00")
+
+
+def test_the_sender_is_looked_for_beside_the_other_partys_number() -> None:
+    """Not beside the first number on the page, which may well be ours."""
+    found = read(BRREG, today=TODAY, own_orgnr=CUSTOMER_ORGNR)
+    # Our own reference block is not the sender's name.
+    assert found.seller_name != "Deres ref"
+    assert found.seller_name is None or "938 386 730" not in found.seller_name
+
+
+def test_a_field_label_is_not_a_counterparty() -> None:
+    """What is left of "Org.nr: NO 991 107 711 MVA" once the number is taken off.
+
+    None rather than the label, so the model's MOTPART can fill the gap. An
+    empty counterparty is a question; "Org.nr" is a wrong answer wearing the
+    clothes of a read one.
+    """
+    for label in ("Org.nr", "Deres ref", "Vår ref", "nummer", "Levering", "Status"):
+        assert _clean_name(label) is None
+    assert _clean_name("Linjeforeningen Elektra") == "Linjeforeningen Elektra"
+
+
+def test_a_bank_footer_is_not_a_counterparty() -> None:
+    """It sits where the sender's organisasjonsnummer sits, and reads as prose."""
+    assert _clean_name("Bank: Nordea Bank, SWIFT: NDEANOKK, IBAN: NO59 63450530699") is None
+
+
+def test_a_sentence_is_not_a_counterparty() -> None:
+    """Off a FINN status page, and genuinely printed there — which is the trap.
+
+    The quote check can say the words are on the page. It cannot say they are
+    a party's name, and on a page of prose that is the entire difficulty.
+    """
+    assert _clean_name("en valgte deg. Vi oppdaterer informasjonen her når") is None
+
+
+def test_an_extractor_section_label_is_not_a_counterparty() -> None:
+    """ "[Page 1]" is Løynd's heading, at the top of the text where a name sits."""
+    assert _clean_name("[Page 1]") is None
+
+
+def test_a_letterspaced_heading_is_not_what_the_payment_was_for() -> None:
+    """ "F A K T U R A" is the word FAKTURA, and it reached the ledger as prose."""
+    found = read(BRREG, today=TODAY, own_orgnr=CUSTOMER_ORGNR)
+    assert found.item_text != "F A K T U R A"
+
+
+# Linjeforeningen Elektra's invoice: the total is labelled by its payment
+# instruction and the rate only by a two-row column heading.
+ELEKTRA = """LINJEFORENINGEN ELEKTRA
+Org.nr.: NO 991 107 711 MVA
+FAKTURA
+Fakturanr.: 1075
+Fakturadato: 2026-09-06
+Ordrenummer: 79 Avdeling: 04 Verksted
+Beskrivelse Antall Enh.pris
+Beløp
+Mva
+(25 %)
+Beløp
+(inkl. mva)
+Batteri 1 1 152,00 1 152,00 288,00 1 440,00
+Betales til bankkonto 4202.11.39496 NOK  1 440,00
+"""
+
+
+def test_a_payment_instruction_states_the_total() -> None:
+    """ "Betales til bankkonto 4202.11.39496 NOK 1 440,00" — the only total line.
+
+    The last figure on the line is the amount, so the kontonummer in front of it
+    is not mistaken for one.
+    """
+    assert read(ELEKTRA, today=TODAY).gross_amount == Decimal("1440.00")
+
+
+def test_an_abbreviated_label_still_names_the_invoice() -> None:
+    """ "Fakturanr.: 1075" — the full stop used to make the parser give up here.
+
+    It then fell through to the next label in the list, which is "ordrenummer",
+    and a faktura came back numbered 79 after its order line.
+    """
+    found = read(ELEKTRA, today=TODAY)
+    assert found.invoice_number == "1075"
+    assert found.number_kind is None
+
+
+def test_a_rate_in_a_two_row_column_heading_is_read() -> None:
+    """A table header split over two lines is a label with no rate beside it."""
+    found = read(ELEKTRA, today=TODAY)
+    assert found.vat_rate == Decimal("0.25")
+    # And with the gross known, the amount is arithmetic rather than a guess.
+    assert found.vat_amount == Decimal("288.00")
+
+
+# A FINN receipt: a private-seller purchase carrying no VAT, with two FINN fees
+# under it at two different rates.
+FINN = """"SEASONIC TX1600W Titanium"
+Kjøpsdato:
+30.08.2026, kl 10:08
+Frakt med PostNord
+109,00 kr
+Mva. 25 %
+Avgift for Trygg betaling
+206,00 kr
+Mva. 0 %
+Totalt
+3 565,00 kr
+"""
+
+
+def test_a_fee_is_not_vat() -> None:
+    """ "Avgift" is the ordinary Norwegian word for a fee.
+
+    Read as a VAT label, "Avgift for Trygg betaling 206,00 kr" made 206 kroner
+    of deductible VAT appear on a purchase from a private individual.
+    """
+    assert read(FINN, today=TODAY).vat_amount != Decimal("206.00")
+
+
+def test_a_labelled_amount_does_not_reach_over_a_line_with_words_on_it() -> None:
+    """How the fee above was claimed: two lines below a rate that had no figure."""
+    assert read(FINN, today=TODAY).vat_amount is None
+
+
+def test_two_rates_on_one_bilag_propose_no_code_at_all() -> None:
+    """25 % on the postage, 0 % on the fee, and no VAT on the thing itself.
+
+    One entry cannot carry two rates. Proposing either would put a deduction on
+    the whole 3 565 that does not exist, so the user is told what the document
+    showed and asked to decide.
+    """
+    found = read(FINN, today=TODAY)
+    assert found.vat_rate is None
+    assert found.printed_rates == (Decimal("0.25"), Decimal("0"))
+
+    proposal = suggest(FINN, today=TODAY, own_orgnr=OWN_ORGNR, own_name=OWN_NAME)
+    apply_type(proposal, reading=found, type_code="varekjop", source=FieldSource.DOCUMENT)
+
+    assert proposal.tax_code is None
+    assert any("flere mva-satser" in warning for warning in proposal.warnings)
+
+
+def test_a_bank_screenshot_states_its_amount_under_amount() -> None:
+    """A payment confirmation is a bilag, and it says "Amount", not "Å betale"."""
+    screenshot = "Anders A\n01. September 2026\nDetails\nAmount NOK 7 500,00\nBooked 02.09.2026"
+    assert read(screenshot, today=TODAY).gross_amount == Decimal("7500.00")
+
+
+def test_an_item_row_of_figure_columns_still_names_the_thing() -> None:
+    """The Elektra invoice, as Løynd's extractor hands it over.
+
+    Two things about this table beat the reader before: a two-line header over
+    six columns puts seven unusable lines between "Beskrivelse" and the first
+    item, and the item row is one word followed by five figures, which is mostly
+    digits by any measure of length. The description that came out was "Faktura
+    1075, LINJEFORENINGEN ELEKTRA" — the sender, because nothing else was found.
+    """
+    text = "\n".join(
+        [
+            "LINJEFORENINGEN ELEKTRA",
+            "Fakturanr.: 1075",
+            "Fakturadato: 2026-09-06",
+            "Beskrivelse Antall Enh.pris",
+            "(ekskl. mva)",
+            "Beløp",
+            "(ekskl. mva)",
+            "Mva",
+            "(25 %)",
+            "Beløp",
+            "(inkl. mva)",
+            "Batteri 1 1 152,00 1 152,00 288,00 1 440,00",
+            "Betales til bankkonto 4202.11.39496 NOK  1 440,00",
+        ]
+    )
+
+    found = read(text, today=date(2026, 9, 6))
+
+    assert found.item_text == "Batteri"
+    suggestion = suggest(text, today=TODAY, own_orgnr=OWN_ORGNR, own_name=OWN_NAME, reading=found)
+    assert suggestion.description == "Faktura 1075, Batteri"
+
+
+def test_a_field_label_under_a_heading_is_not_what_was_bought() -> None:
+    """Reading further down the page costs something, and this is the price.
+
+    The Brønnøysund invoice has "Fakturanummer" a few lines under its item
+    heading and the FINN receipt has "Selger". Both are the right length, all
+    letters, and free of figures, and both reached the ledger as the
+    description of a purchase. A row of an item table has a price on it; a
+    label does not.
+    """
+    text = "\n".join(
+        [
+            "Brønnøysundregistrene",
+            "Beskrivelse",
+            "Fakturanummer",
+            "935091521",
+            "Kundenummer",
+            "Gebyr for registrering av aksjeselskap 1 6 825,00 0,00 6 825,00",
+        ]
+    )
+
+    assert read(text, today=TODAY).item_text == "Gebyr for registrering av aksjeselskap"
+
+
+def test_a_header_field_whose_value_was_stripped_is_not_an_item() -> None:
+    """The Brønnøysund invoice, whose "BESKRIVELSE" heading sits above its header.
+
+    Nothing under that heading is an item: the lines are the invoice's own
+    fields, and "Ordredato 01.09.2026" survives every other test — right
+    length, mostly letters, no noise word — until its date is stripped off and
+    a bare label is left. It reached the ledger as what a 6 825-krone
+    registration fee was for.
+    """
+    text = "\n".join(
+        [
+            "BESKRIVELSE",
+            "F A K T U R A",
+            "Fakturanummer: 935091521",
+            "Ordrenr 5752816",
+            "Ordredato 01.09.2026",
+        ]
+    )
+
+    assert read(text, today=TODAY).item_text is None
+
+
+def test_an_item_line_with_no_price_beside_it_is_still_read() -> None:
+    """The fallback, and the receipt shape that needs it.
+
+    A web receipt lists what was bought on its own line and its totals further
+    down, so requiring a price on the same line would read nothing at all here.
+    Preferring a priced row is a preference, not a requirement.
+    """
+    text = "\n".join(
+        [
+            "Item name",
+            "NEW Apple Mac Studio M3 Ultra 28-Core 96GB RAM 1TB SSD 60-Core GPU",
+            "Quantity 1",
+            "Order total GBP 2,137.00",
+        ]
+    )
+
+    assert read(text, today=TODAY).item_text == (
+        "NEW Apple Mac Studio M3 Ultra 28-Core 96GB RAM 1TB SSD 60-Core GPU"
+    )

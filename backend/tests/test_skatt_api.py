@@ -103,6 +103,12 @@ def test_an_unconfigured_deployment_says_unavailable(client: TestClient) -> None
         "pid": None,
         "acr": None,
         "expires_at": None,
+        # The durable link is reported whatever the deployment does with
+        # ID-porten today: turning the feature off does not un-prove what
+        # somebody already showed.
+        "linked": False,
+        "linked_name": None,
+        "linked_at": None,
     }
 
 
@@ -196,7 +202,7 @@ def test_a_completed_login_is_usable_and_names_the_person(
         follow_redirects=False,
     )
     assert response.status_code == 303
-    assert response.headers["location"] == "https://app.example/skatt/"
+    assert response.headers["location"] == "https://app.example/organisasjon/"
 
     body = client.get("/api/v1/skatt/status").json()
     assert body["available"] is True
@@ -288,6 +294,58 @@ def test_a_failed_exchange_reports_our_own_error_code(
     assert "detailed" not in location
 
 
+def test_a_refusal_is_not_reported_as_a_cancelled_login(
+    client: TestClient, idporten: StubIdPorten
+) -> None:
+    """An unregistered scope is our fault, and must not read as the user's.
+
+    ID-porten refuses the whole authorization request when any requested scope
+    is not on the client, and answers by redirecting here with
+    ``error=invalid_scope``. Reporting that as "innloggingen ble avbrutt" tells
+    the person to try again at something that cannot work, and tells whoever
+    has to fix it to look at the wrong thing entirely.
+    """
+    register(client)
+    _start(client)
+    response = client.get(
+        "/api/v1/skatt/idporten/callback"
+        "?error=invalid_scope&error_description=Scope+altinn%3Aenduser+not+registered",
+        follow_redirects=False,
+    )
+    location = response.headers["location"]
+    assert location.endswith("error=innlogging_ikke_mulig")
+    # ID-porten's own wording names scopes and client ids. It belongs in the
+    # log, not on a page in front of a customer.
+    assert "altinn" not in location
+    assert "Scope" not in location
+
+
+def test_a_failure_returns_to_where_the_login_started(
+    client: TestClient, idporten: StubIdPorten
+) -> None:
+    """The success path always honoured redirect_to; the failure path did not.
+
+    Somebody who pressed "Bekreft selskapet" on /organisasjon/ was dropped on a
+    different page holding a message about something they had not done.
+    """
+    register(client)
+    started = client.get(
+        "/api/v1/skatt/idporten/start?redirect_to=/organisasjon/%23selskap",
+        follow_redirects=False,
+    )
+    state = started.headers["location"].split("state=")[1]
+    # ID-porten returns ``state`` on a refusal too, which is the only reason a
+    # failure can find its way back to the page the login started from.
+    response = client.get(
+        f"/api/v1/skatt/idporten/callback?error=access_denied&state={state}",
+        follow_redirects=False,
+    )
+    # The fragment stays last, or the browser keeps it and drops the query.
+    assert response.headers["location"] == (
+        "https://app.example/organisasjon/?error=innlogging_avbrutt#selskap"
+    )
+
+
 def test_a_cancelled_login_is_not_an_error_page(client: TestClient, idporten: StubIdPorten) -> None:
     """ID-porten returns ``error`` when the person backs out. Ordinary, not broken."""
     register(client)
@@ -351,7 +409,7 @@ def test_a_crafted_redirect_target_is_dropped(client: TestClient, idporten: Stub
         f"/api/v1/skatt/idporten/callback?code=auth-code&state={state}",
         follow_redirects=False,
     )
-    assert done.headers["location"] == "https://app.example/skatt/"
+    assert done.headers["location"] == "https://app.example/organisasjon/"
 
 
 def test_a_site_relative_redirect_target_is_kept(
@@ -415,4 +473,4 @@ def test_the_origin_check_does_not_block_the_callback(
         follow_redirects=False,
     )
     assert response.status_code == 303
-    assert response.headers["location"] == "https://app.example/skatt/"
+    assert response.headers["location"] == "https://app.example/organisasjon/"

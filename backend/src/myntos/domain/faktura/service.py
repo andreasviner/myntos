@@ -81,6 +81,7 @@ from myntos.domain.ledger.errors import ChartIncompleteError, UnknownTaxCodeErro
 from myntos.domain.ledger.models import (
     Account,
     Company,
+    CompanyBankAccount,
     Journal,
     Party,
     PartyType,
@@ -171,6 +172,22 @@ async def credited_by(db: AsyncSession, document_pks: Sequence[int]) -> dict[int
 # --- Writing a draft -----------------------------------------------------------------
 
 
+def _chosen_bank_account(document: SalesDocument, company: Company) -> CompanyBankAccount | None:
+    """The account this document is paid into, resolved against the company now.
+
+    The document may name one (``bank_account_id``); if it does not, or if the
+    one it named has since been closed, the company's primary account answers.
+    Scanned rather than queried because ``bank_accounts`` is eagerly loaded, and
+    scanned against *this* company because the alternative is a lookup by
+    primary key alone — the hole docs/company-isolation.md is about.
+    """
+    if document.bank_account_id is not None:
+        for account in company.bank_accounts:
+            if account.id == document.bank_account_id:
+                return account
+    return company.primary_bank_account
+
+
 def _snapshot_seller(document: SalesDocument, company: Company) -> None:
     """Copy the seller's details onto the document.
 
@@ -188,7 +205,18 @@ def _snapshot_seller(document: SalesDocument, company: Company) -> None:
     document.seller_vat_registered = company.vat_registered
     document.seller_in_foretaksregisteret = company.in_foretaksregisteret
     document.seller_organisation_form = company.organisation_form
-    document.seller_bank_account = company.bank_account
+    # A choice that no longer exists is dropped rather than re-pointed, and a
+    # document that never made one is left alone. Both end up in the same state
+    # — following the company's primary — and that is the point: pinning a draft
+    # to whichever account happened to be primary the first time it was saved
+    # would make a company that later changes its primary keep invoicing on the
+    # old one, silently, from a form that shows no account selected.
+    account = _chosen_bank_account(document, company)
+    if document.bank_account_id is not None and (
+        account is None or account.id != document.bank_account_id
+    ):
+        document.bank_account_id = None
+    document.seller_bank_account = None if account is None else account.account
 
 
 def _snapshot_buyer(document: SalesDocument, party: Party) -> None:
@@ -304,6 +332,7 @@ async def create_draft(
     order_reference: str | None = None,
     payment_reference: str | None = None,
     payment_reference_auto: bool = True,
+    bank_account_pk: int | None = None,
     note: str | None = None,
     reverse_charge: bool = False,
     lines: Sequence[LineInput] = (),
@@ -316,6 +345,10 @@ async def create_draft(
     in the SAF-T kundereskontro, while a one-off consumer sale does not, and
     forcing every walk-in into the register would fill it with names nobody
     wants to see again.
+
+    ``bank_account_pk`` says which of the company's accounts this one is paid
+    into. Omitted means the primary, which is the answer for every company that
+    has one account and the sensible default for the rest.
     """
     now = today or utc_now().date()
     document = SalesDocument(
@@ -340,6 +373,13 @@ async def create_draft(
         seller_name=company.name,
         seller_orgnr=company.orgnr,
     )
+    if bank_account_pk is not None:
+        # Looked up with the company, so a neighbouring company's account id in
+        # the payload is a 404 rather than a number on this company's invoice.
+        chosen = await ledger_service.get_bank_account(
+            db, company=company, bank_account_pk=bank_account_pk
+        )
+        document.bank_account_id = chosen.id
     _snapshot_seller(document, company)
 
     if party_pk is not None:
@@ -378,6 +418,7 @@ async def update_draft(
     order_reference: str | None = None,
     payment_reference: str | None = None,
     payment_reference_auto: bool | None = None,
+    bank_account_pk: int | None = None,
     note: str | None = None,
     reverse_charge: bool | None = None,
     lines: Sequence[LineInput] | None = None,
@@ -387,13 +428,22 @@ async def update_draft(
 
     The seller is re-snapshotted along the way. Without it a draft would keep the
     company as it stood when the draft was started, and the compliance findings
-    the caller gets back would describe that — so someone who fixed the missing
+    the caller gets back would describe that — so someone who added the missing
     kontonummer, came back to the draft and saved it would still be told the
     company has none, with no way to clear the finding. Issue re-snapshots too,
     so this only makes the answer *before* issue agree with the answer at it.
     """
     document = await get_document(db, company=company, document_pk=document_pk)
     _assert_draft(document)
+    # Before the snapshot, which resolves the choice into the number that gets
+    # printed. Omitted means "leave it alone" as everywhere else here, so a form
+    # that does not offer the picker — a company with one account — cannot move
+    # the invoice off the account it was drafted against.
+    if bank_account_pk is not None:
+        chosen = await ledger_service.get_bank_account(
+            db, company=company, bank_account_pk=bank_account_pk
+        )
+        document.bank_account_id = chosen.id
     _snapshot_seller(document, company)
 
     if party_pk is not None:
@@ -564,6 +614,7 @@ async def _build_voucher(
     journal: Journal,
     voucher_no: str,
     financial_year: int,
+    created_by_user_id: int | None = None,
 ) -> Transaction:
     """The double entry behind an issued invoice.
 
@@ -651,6 +702,10 @@ async def _build_voucher(
         voucher_type=document.document_type.value,
         # SAF-T SourceDocumentID: the invoice number this entry documents.
         source_document_id=document.document_number,
+        # Whoever issued the faktura entered this voucher too — it is the same
+        # button. Carried through from issue() rather than left empty, so the
+        # register attributes an invoice the same way it attributes a payment.
+        created_by_user_id=created_by_user_id,
     )
     transaction.lines = lines
     return transaction
@@ -751,6 +806,7 @@ async def issue(
         journal=journal,
         voucher_no=await _voucher_number(db, journal, financial_year.year),
         financial_year=financial_year.year,
+        created_by_user_id=user_id,
     )
     posting.post(transaction, now=document.issued_at)
     db.add(transaction)
@@ -867,6 +923,7 @@ async def credit_note(
         seller_in_foretaksregisteret=original.seller_in_foretaksregisteret,
         seller_organisation_form=original.seller_organisation_form,
         seller_bank_account=original.seller_bank_account,
+        bank_account_id=original.bank_account_id,
         delivery_date=original.delivery_date,
         delivery_place=original.delivery_place,
         currency_code=original.currency_code,
@@ -906,7 +963,11 @@ async def credit_note(
     # still produced rather than crashing if it somehow is not.
     if original.transaction_pk is not None:
         reversal = await _reverse_voucher(
-            db, company=company, original_pk=original.transaction_pk, on=issue_date
+            db,
+            company=company,
+            original_pk=original.transaction_pk,
+            on=issue_date,
+            created_by_user_id=user_id,
         )
         posting.post(reversal, now=issued_at)
         db.add(reversal)
@@ -923,7 +984,12 @@ async def credit_note(
 
 
 async def _reverse_voucher(
-    db: AsyncSession, *, company: Company, original_pk: int, on: date
+    db: AsyncSession,
+    *,
+    company: Company,
+    original_pk: int,
+    on: date,
+    created_by_user_id: int | None = None,
 ) -> Transaction:
     """Build the reversing voucher for the invoice's ledger entry.
 
@@ -944,6 +1010,10 @@ async def _reverse_voucher(
     )
     reversal.transaction_date = on
     reversal.reverses_transaction_pk = original.id
+    # The person crediting, not the person who invoiced. Those differ often
+    # enough — a colleague credits what somebody else sent — that copying the
+    # original's author would misattribute the correction.
+    reversal.created_by_user_id = created_by_user_id
     return reversal
 
 

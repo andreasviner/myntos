@@ -6,6 +6,7 @@ That is the point — the arithmetic is already covered by
 round trip as a balanced, immutable, correctly-scoped voucher.
 """
 
+import json
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -17,7 +18,7 @@ from myntos.core.clock import utc_now
 from myntos.domain.bilag import classification
 from myntos.domain.ledger.cashflow import CashFlowDirection
 from myntos.integrations import loynd, norgesbank
-from tests.conftest import register, write
+from tests.conftest import PASSWORD, join_company, register, write
 
 ORGNR = "910000004"
 OTHER_ORGNR = "910000012"
@@ -216,6 +217,165 @@ def test_money_out_books_to_the_cost_account(client: TestClient) -> None:
     assert entry["vat_amount"] == "125.00"
     assert entry["account_number"] == "6800"
     assert entry["tax_code"] == "1"
+
+
+def test_a_refund_reduces_the_cost_and_takes_the_deduction_back(client: TestClient) -> None:
+    """Money in that is not income, which the account number alone cannot say.
+
+    A refund goes back to the account the purchase came from, so the cost goes
+    down rather than turnover going up, and the VAT on it is the deduction
+    returning rather than tax owed on a sale. Booked as "Salg med 25 % mva" the
+    eBay refund would have reported 5 253 kroner of output VAT on a purchase
+    that was cancelled.
+    """
+    company = signed_in_company(client)
+    purchase = record(client, company["id"], type_code="varekjop", gross_amount="1250.00").json()
+    assert purchase["vat_amount"] == "250.00"
+
+    refund = record(
+        client,
+        company["id"],
+        type_code="refusjon_varekjop",
+        gross_amount="1250.00",
+        description="Refundert av leverandøren",
+    ).json()
+
+    # Money in, and on the same account as the purchase it undoes.
+    assert refund["direction"] == "inn"
+    assert refund["account_number"] == "4000"
+    assert refund["net_amount"] == "1000.00"
+    assert refund["vat_amount"] == "250.00"
+    assert refund["tax_code"] == "1"
+
+    # The deduction is gone, and nothing is owed: 2710 was credited, not 2700.
+    summary = client.get(f"/api/v1/companies/{company['id']}/cashflow/summary").json()
+    assert summary["input_vat"] == "0.00"
+    assert summary["output_vat"] == "0.00"
+
+
+def test_a_kreditnota_reduces_the_sale_and_gives_the_output_vat_back(
+    client: TestClient,
+) -> None:
+    """Money out that is not a cost, which is the refund case in reverse.
+
+    A cancelled sale has to leave turnover and take its output VAT with it. The
+    old rule picked the VAT account off the bank's direction — money out meant
+    2710 — so a kreditnota claimed a deduction on goods the company had sold
+    while leaving the 250 kroner it charged the customer standing as tax owed.
+    Both halves are wrong by the same amount, so the summary is the test.
+    """
+    company = signed_in_company(client)
+    sale = record(client, company["id"], type_code="salg_hoy_sats", gross_amount="1250.00").json()
+    assert sale["vat_amount"] == "250.00"
+
+    note = record(
+        client,
+        company["id"],
+        type_code="kreditnota_salg_hoy_sats",
+        gross_amount="1250.00",
+        description="Kreditnota 1, kunden returnerte varen",
+    ).json()
+
+    # Money out, and on the same account as the sale it undoes.
+    assert note["direction"] == "ut"
+    assert note["account_number"] == "3000"
+    assert note["net_amount"] == "1000.00"
+    assert note["vat_amount"] == "250.00"
+    assert note["tax_code"] == "3"
+
+    # Nothing owed and no deduction invented: 2700 was debited, not 2710.
+    summary = client.get(f"/api/v1/companies/{company['id']}/cashflow/summary").json()
+    assert summary["output_vat"] == "0.00"
+    assert summary["input_vat"] == "0.00"
+
+
+def test_every_sales_category_has_a_kreditnota_that_matches_it(client: TestClient) -> None:
+    """The mirror of the refund catalogue, and derived for the same reason."""
+    register(client)
+    catalogue = client.get("/api/v1/cashflow/types").json()
+    by_code = {entry["code"]: entry for entry in catalogue["types"]}
+
+    notes = {code: entry for code, entry in by_code.items() if code.startswith("kreditnota_")}
+    assert len(notes) == 6
+    for code, entry in notes.items():
+        sale = by_code[code.removeprefix("kreditnota_")]
+        assert entry["direction"] == "ut"
+        assert sale["direction"] == "inn"
+        assert entry["account_number"] == sale["account_number"]
+        assert entry["default_tax_code"] == sale["default_tax_code"]
+        assert entry["reverses"] == sale["code"]
+
+
+def test_settling_a_filed_mva_melding_is_not_a_new_cost(client: TestClient) -> None:
+    """Paying the MVA-melding moves the debt, not the result or a new deduction.
+
+    Before 2740 existed the only categories that fitted were a cost, which
+    deducts VAT already deducted, or a private withdrawal, which turns the
+    company's tax into the owner's spending money.
+    """
+    company = signed_in_company(client)
+    entry = record(
+        client,
+        company["id"],
+        type_code="mva_oppgjor",
+        gross_amount="12500.00",
+        description="Mva-melding 3. termin",
+    ).json()
+
+    assert entry["account_number"] == "2740"
+    assert entry["net_amount"] == "12500.00"
+    assert entry["vat_amount"] == "0.00"
+
+    summary = client.get(f"/api/v1/companies/{company['id']}/cashflow/summary").json()
+    assert summary["input_vat"] == "0.00"
+    assert summary["output_vat"] == "0.00"
+
+
+def test_a_loan_and_its_instalments_never_reach_the_result(client: TestClient) -> None:
+    """Borrowed money is not income and repaying it is not a cost.
+
+    Both legs land on 2220, so drawing 50 000 and repaying 5 000 of it leaves
+    45 000 of debt and nothing at all in the income statement. Booked as income
+    and cost the same 5 000 would be deducted twice: once when the loan bought
+    something and again when it was paid back.
+    """
+    company = signed_in_company(client)
+    drawn = record(client, company["id"], type_code="laneopptak", gross_amount="50000.00").json()
+    repaid = record(client, company["id"], type_code="avdrag_lan", gross_amount="5000.00").json()
+
+    assert drawn["account_number"] == "2220"
+    assert repaid["account_number"] == "2220"
+    assert (drawn["vat_amount"], repaid["vat_amount"]) == ("0.00", "0.00")
+
+
+def test_every_cost_category_has_a_refund_that_matches_it(client: TestClient) -> None:
+    """Derived, not written out, so the two cannot drift apart.
+
+    A refund booked to a different account than its purchase leaves both the
+    cost and the deduction overstated, and nothing in the books says so.
+    """
+    register(client)
+    catalogue = client.get("/api/v1/cashflow/types").json()
+    by_code = {entry["code"]: entry for entry in catalogue["types"]}
+
+    refunds = {code: entry for code, entry in by_code.items() if code.startswith("refusjon_")}
+    assert len(refunds) == 16
+    for code, entry in refunds.items():
+        cost = by_code[code.removeprefix("refusjon_")]
+        assert entry["direction"] == "inn"
+        assert cost["direction"] == "ut"
+        assert entry["account_number"] == cost["account_number"]
+        assert entry["default_tax_code"] == cost["default_tax_code"]
+        # Sent so the form can group them apart from the ways of earning money.
+        assert entry["reverses"] == cost["code"]
+        assert cost["reverses"] is None
+
+    # Payroll is left out on purpose: money back on wages is refusjon av
+    # sykepenger, which belongs on its own income account and not as a credit
+    # to 5000. Equity already has its own money-in twin.
+    assert "refusjon_lonn" not in by_code
+    assert "refusjon_arbeidsgiveravgift" not in by_code
+    assert "refusjon_privatuttak" not in by_code
 
 
 def test_a_type_without_vat_books_the_whole_amount(client: TestClient) -> None:
@@ -428,6 +588,124 @@ def test_reversing_a_voucher_from_another_company_is_not_found(client: TestClien
     assert response.status_code == 404
 
 
+# --- Who entered it -------------------------------------------------------------
+
+
+def sign_in(client: TestClient, email: str) -> None:
+    """Become an account that already exists — ``join_company`` left us as the
+    invitee, and some of these tests have to read the register as the owner."""
+    write(client, "POST", "/api/v1/auth/logout")
+    response = write(
+        client, "POST", "/api/v1/auth/login", json={"email": email, "password": PASSWORD}
+    )
+    assert response.status_code == 200, response.text
+
+
+def listing(client: TestClient, company_id: int) -> dict[int, Any]:
+    """The register keyed by voucher id, which is how these tests read it."""
+    response = client.get(f"/api/v1/companies/{company_id}/cashflow")
+    assert response.status_code == 200, response.text
+    return {entry["id"]: entry for entry in response.json()}
+
+
+def test_an_entry_names_the_person_who_recorded_it(client: TestClient) -> None:
+    company = signed_in_company(client, email="kari@example.no", full_name="Kari Nordmann")
+    entry = record(client, company["id"], type_code="varekjop", gross_amount="100.00").json()
+
+    assert entry["created_by_name"] == "Kari Nordmann"
+    assert entry["created_by_id"] is not None
+    # And the same answer when read back, not only in the echo of the write.
+    assert listing(client, company["id"])[entry["id"]]["created_by_name"] == "Kari Nordmann"
+
+
+def test_two_colleagues_entries_are_told_apart(client: TestClient) -> None:
+    """The whole reason the column exists: one journal, two people writing in it."""
+    owner = register(client, "kari@example.no", full_name="Kari Nordmann")
+    company = create_company(client, owner["memberships"][0]["organization_id"])
+    mine = record(client, company["id"], type_code="varekjop", gross_amount="100.00").json()
+
+    join_company(client, company["id"], email="ola@example.no", full_name="Ola Nordmann")
+    theirs = record(client, company["id"], type_code="varekjop", gross_amount="200.00").json()
+
+    entries = listing(client, company["id"])
+    assert entries[mine["id"]]["created_by_name"] == "Kari Nordmann"
+    assert entries[theirs["id"]]["created_by_name"] == "Ola Nordmann"
+    assert entries[mine["id"]]["created_by_id"] != entries[theirs["id"]]["created_by_id"]
+
+
+def test_a_reversal_names_whoever_undid_it_not_whoever_booked_it(client: TestClient) -> None:
+    """The two are different people often enough that copying would misattribute."""
+    owner = register(client, "kari@example.no", full_name="Kari Nordmann")
+    company = create_company(client, owner["memberships"][0]["organization_id"])
+    entry = record(client, company["id"], type_code="varekjop", gross_amount="100.00").json()
+
+    join_company(client, company["id"], email="ola@example.no", full_name="Ola Nordmann")
+    reversal = write(
+        client, "POST", f"/api/v1/companies/{company['id']}/cashflow/{entry['id']}/reversal"
+    ).json()
+
+    assert reversal["created_by_name"] == "Ola Nordmann"
+    entries = listing(client, company["id"])
+    assert entries[entry["id"]]["created_by_name"] == "Kari Nordmann"
+
+
+def test_a_correction_names_whoever_corrected_it(client: TestClient) -> None:
+    """All three vouchers are attributed, and the two new ones to the corrector."""
+    owner = register(client, "kari@example.no", full_name="Kari Nordmann")
+    company = create_company(client, owner["memberships"][0]["organization_id"])
+    entry = record(client, company["id"], type_code="varekjop", gross_amount="100.00").json()
+
+    join_company(client, company["id"], email="ola@example.no", full_name="Ola Nordmann")
+    corrected = write(
+        client,
+        "PUT",
+        f"/api/v1/companies/{company['id']}/cashflow/{entry['id']}",
+        json={
+            "type_code": "varekjop",
+            "occurred_on": date(THIS_YEAR, 3, 14).isoformat(),
+            "gross_amount": "125.00",
+            "description": "Rettet",
+            "tax_code": None,
+            "payment_method": "bank",
+            "party_id": None,
+        },
+    ).json()
+
+    assert corrected["created_by_name"] == "Ola Nordmann"
+    entries = listing(client, company["id"])
+    assert entries[entry["id"]]["created_by_name"] == "Kari Nordmann"
+    # The reversal the correction posted is Ola's too, so a reader can see that
+    # one person made the entry and another decided it was wrong.
+    reversal_id = entries[entry["id"]]["reversed_by_id"]
+    assert entries[reversal_id]["created_by_name"] == "Ola Nordmann"
+
+
+def test_an_entry_still_names_a_colleague_who_has_since_left(client: TestClient) -> None:
+    """Removing somebody's access does not unsay what they did.
+
+    The membership is what decides who may open the books; the entry records who
+    wrote in them. Dropping the name along with the access would leave the
+    register unable to answer "who booked this" for exactly the person somebody
+    is asking about.
+    """
+    owner = register(client, "kari@example.no", full_name="Kari Nordmann")
+    company = create_company(client, owner["memberships"][0]["organization_id"])
+    colleague = join_company(
+        client, company["id"], email="ola@example.no", full_name="Ola Nordmann"
+    )
+    entry = record(client, company["id"], type_code="varekjop", gross_amount="100.00").json()
+
+    sign_in(client, "kari@example.no")
+    removed = write(
+        client,
+        "DELETE",
+        f"/api/v1/companies/{company['id']}/members/{colleague['user']['id']}",
+    )
+    assert removed.status_code == 204, removed.text
+
+    assert listing(client, company["id"])[entry["id"]]["created_by_name"] == "Ola Nordmann"
+
+
 # --- Bilag documents ------------------------------------------------------------
 
 
@@ -440,6 +718,24 @@ def upload(client: TestClient, company_id: int, voucher_id: int, content: bytes,
     )
 
 
+def test_the_register_is_told_what_each_attachment_actually_is(client: TestClient) -> None:
+    """The badge beside a filed document names its kind, and it has to be true.
+
+    Nine screenshots of an AliExpress order came back labelled "PDF 394 kB" and
+    so on, because the badge was a constant and the response carried no type at
+    all. The archive is the part of this that has to be right in five years.
+    """
+    company = signed_in_company(client)
+    entry = record(client, company["id"], type_code="varekjop", gross_amount="100.00").json()
+
+    upload(client, company["id"], entry["id"], PDF_BYTES, "kvittering.pdf")
+    upload(client, company["id"], entry["id"], png_bytes(), "skjermbilde.png")
+
+    listed = client.get(f"/api/v1/companies/{company['id']}/cashflow").json()
+    kinds = {row["filename"]: row["content_type"] for row in listed[0]["attachments"]}
+    assert kinds == {"kvittering.pdf": "application/pdf", "skjermbilde.png": "image/png"}
+
+
 def test_a_pdf_can_be_attached_and_read_back(client: TestClient) -> None:
     company = signed_in_company(client)
     entry = record(client, company["id"], type_code="varekjop", gross_amount="100.00").json()
@@ -448,6 +744,7 @@ def test_a_pdf_can_be_attached_and_read_back(client: TestClient) -> None:
     assert response.status_code == 201, response.text
     attachment = response.json()
     assert attachment["filename"] == "kvittering.pdf"
+    assert attachment["content_type"] == "application/pdf"
     assert attachment["byte_size"] == len(PDF_BYTES)
 
     download = client.get(f"/api/v1/companies/{company['id']}/dokument/{attachment['id']}")
@@ -570,12 +867,38 @@ INVOICE_LINES = [
 def interpret(
     client: TestClient, company_id: int, content: bytes, name: str = "faktura.pdf"
 ) -> Any:
+    """The ordinary one-document upload, which is still the common case."""
+    return interpret_many(client, company_id, [(name, content)])
+
+
+def interpret_many(
+    client: TestClient,
+    company_id: int,
+    documents: list[tuple[str, bytes]],
+    *,
+    forklaring: str | None = None,
+) -> Any:
+    """Several files, and optionally the sentence the user typed about them.
+
+    The field is ``files`` and repeats, which is how a multipart form carries a
+    list — the same shape ``<input type="file" multiple>`` produces.
+    """
     return write(
         client,
         "POST",
         f"/api/v1/companies/{company_id}/cashflow/forslag",
-        files={"file": (name, content, "application/pdf")},
+        files=[("files", (name, content, _content_type(content))) for name, content in documents],
+        **({"data": {"forklaring": forklaring}} if forklaring is not None else {}),
     )
+
+
+def _content_type(content: bytes) -> str:
+    """What the fixture bytes are, so a test never has to say it twice."""
+    if content.startswith(b"\x89PNG"):
+        return "image/png"
+    if content.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    return "application/pdf"
 
 
 def test_an_uploaded_invoice_proposes_the_whole_entry(client: TestClient) -> None:
@@ -681,7 +1004,7 @@ def test_the_model_picks_the_category_and_the_answer_says_so(
         return str(rekvisita.number)
 
     monkeypatch.setattr(loynd, "is_configured", lambda: True)
-    monkeypatch.setattr(loynd, "complete", fake_complete)
+    stub_loynd(monkeypatch, fake_complete)
 
     company = signed_in_company(client)
     suggestion = interpret(client, company["id"], text_pdf(INVOICE_LINES)).json()
@@ -700,7 +1023,7 @@ def test_a_document_the_model_cannot_place_falls_back_to_our_own_reading(
         raise loynd.LoyndUnavailableError("nede")
 
     monkeypatch.setattr(loynd, "is_configured", lambda: True)
-    monkeypatch.setattr(loynd, "complete", refusing)
+    stub_loynd(monkeypatch, refusing)
 
     company = signed_in_company(client)
     suggestion = interpret(client, company["id"], text_pdf(INVOICE_LINES)).json()
@@ -750,6 +1073,29 @@ def answering(category: str, fields: str) -> Any:
     return complete
 
 
+def stub_loynd(monkeypatch: pytest.MonkeyPatch, complete: Any) -> None:
+    """Stand in for both ways of asking, with one answer behind them.
+
+    The extraction question goes through ``loynd.stream`` in the running
+    application, because the description is typed onto the page as it is
+    written. Deriving the streaming stub from the non-streaming one keeps every
+    test here honest about that — and it means each of them exercises the
+    incremental parser rather than leaving it to the handful of tests written
+    for it, since the answer arrives in pieces that split labels down the
+    middle.
+    """
+    monkeypatch.setattr(loynd, "complete", complete)
+
+    async def stream(*, system: str, prompt: str, max_tokens: int = 16) -> Any:
+        answer = await complete(system=system, prompt=prompt, max_tokens=max_tokens)
+        # Seven characters at a time, which lands a chunk boundary inside
+        # "BESKRIVELSE" and inside the sentence after it.
+        for start in range(0, len(answer), 7):
+            yield answer[start : start + 7]
+
+    monkeypatch.setattr(loynd, "stream", stream)
+
+
 def test_a_receipt_with_none_of_our_words_still_fills_the_form(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -763,11 +1109,7 @@ def test_a_receipt_with_none_of_our_words_still_fills_the_form(
     menu = classification.build_menu(CashFlowDirection.UT)
     inventar = next(item for item in menu if item.type_code == "inventar")
     monkeypatch.setattr(loynd, "is_configured", lambda: True)
-    monkeypatch.setattr(
-        loynd,
-        "complete",
-        answering(str(inventar.number), RECEIPT_ANSWER),
-    )
+    stub_loynd(monkeypatch, answering(str(inventar.number), RECEIPT_ANSWER))
 
     company = signed_in_company(client)
     suggestion = interpret(client, company["id"], text_pdf(RECEIPT_LINES)).json()
@@ -793,11 +1135,7 @@ def test_a_model_answer_the_document_does_not_support_changes_nothing(
 ) -> None:
     """Invented is not the same as unavailable, but it ends the same way."""
     monkeypatch.setattr(loynd, "is_configured", lambda: True)
-    monkeypatch.setattr(
-        loynd,
-        "complete",
-        answering("0", INVENTED_ANSWER),
-    )
+    stub_loynd(monkeypatch, answering("0", INVENTED_ANSWER))
 
     company = signed_in_company(client)
     suggestion = interpret(client, company["id"], text_pdf(RECEIPT_LINES)).json()
@@ -816,17 +1154,8 @@ def test_a_viewer_may_read_the_register_but_not_add_to_it(client: TestClient) ->
     owner = register(client, "kari@example.no")
     organization_id = owner["memberships"][0]["organization_id"]
     company = create_company(client, organization_id)
-    invitation = write(
-        client,
-        "POST",
-        f"/api/v1/organizations/{organization_id}/invitations",
-        json={"email": "viewer@example.no", "role": "viewer"},
-    ).json()
-    token = invitation["invite_url"].split("token=")[1]
-    write(client, "POST", "/api/v1/auth/logout")
 
-    register(client, "viewer@example.no", full_name="Kikker Person")
-    write(client, "POST", "/api/v1/auth/invitations/accept", json={"token": token})
+    join_company(client, company["id"], email="viewer@example.no", role="viewer")
 
     assert client.get(f"/api/v1/companies/{company['id']}/cashflow").status_code == 200
     denied = record(client, company["id"], type_code="varekjop", gross_amount="100.00")
@@ -834,21 +1163,20 @@ def test_a_viewer_may_read_the_register_but_not_add_to_it(client: TestClient) ->
     assert denied.json()["code"] == "permission_denied"
 
 
-def test_a_member_may_not_add_a_company(client: TestClient) -> None:
-    """Taking on a new set of books is an administrative act."""
+def test_an_invited_colleague_cannot_add_books_to_the_account(client: TestClient) -> None:
+    """Being asked to help with one company is not a key to the account.
+
+    Setting up a set of books is an administrative act on an *account*, and an
+    invitation grants access to one company and nothing else: no membership of
+    the sender's account, so no way to add a second company to it. 404 rather
+    than 403, because a non-member is told nothing about whether the account
+    exists.
+    """
     owner = register(client, "kari@example.no")
     organization_id = owner["memberships"][0]["organization_id"]
-    invitation = write(
-        client,
-        "POST",
-        f"/api/v1/organizations/{organization_id}/invitations",
-        json={"email": "medlem@example.no", "role": "member"},
-    ).json()
-    token = invitation["invite_url"].split("token=")[1]
-    write(client, "POST", "/api/v1/auth/logout")
+    company = create_company(client, organization_id)
 
-    register(client, "medlem@example.no", full_name="Medlem Person")
-    write(client, "POST", "/api/v1/auth/invitations/accept", json={"token": token})
+    join_company(client, company["id"], email="medlem@example.no", role="member")
 
     response = write(
         client,
@@ -856,7 +1184,7 @@ def test_a_member_may_not_add_a_company(client: TestClient) -> None:
         "/api/v1/companies",
         json={"organization_id": organization_id, "orgnr": ORGNR, "name": "Snik AS"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 def test_the_register_needs_a_session(client: TestClient) -> None:
@@ -963,7 +1291,7 @@ def test_the_filename_names_the_shop_when_the_page_does_not(
         return "UKJENT"
 
     monkeypatch.setattr(loynd, "is_configured", lambda: True)
-    monkeypatch.setattr(loynd, "complete", complete)
+    stub_loynd(monkeypatch, complete)
 
     company = signed_in_company(client)
     interpret(client, company["id"], text_pdf(RECEIPT_LINES), name="Order details _ eBay.pdf")
@@ -990,7 +1318,7 @@ def test_a_company_with_ki_off_is_never_asked_and_says_so(
         raise AssertionError("the document was uploaded despite KI being off")
 
     monkeypatch.setattr(loynd, "is_configured", lambda: True)
-    monkeypatch.setattr(loynd, "complete", refuse)
+    stub_loynd(monkeypatch, refuse)
     monkeypatch.setattr(loynd, "extract_file", refuse_upload)
 
     company = signed_in_company(client)
@@ -1045,13 +1373,13 @@ def test_a_purchase_is_never_offered_a_sales_category(
         return "UKJENT"
 
     monkeypatch.setattr(loynd, "is_configured", lambda: True)
-    monkeypatch.setattr(loynd, "complete", complete)
+    stub_loynd(monkeypatch, complete)
 
     company = signed_in_company(client)
     suggestion = interpret(client, company["id"], text_pdf(RECEIPT_LINES)).json()
 
     assert suggestion["direction"] == "ut"
-    menu_prompt = next(prompt for prompt in seen if "Svar med kun tallet" in prompt)
+    menu_prompt = next(prompt for prompt in seen if "Svar med tallet" in prompt)
     assert "Salg til utlandet" not in menu_prompt
     assert "Verktøy og inventar" in menu_prompt
     # And the direction is stated once rather than repeated on every line, which
@@ -1376,3 +1704,671 @@ def test_the_catalogue_offers_the_import_codes_and_the_asset_category(
     types = {entry["code"]: entry for entry in catalogue["types"]}
     assert types["driftsmiddel"]["account_number"] == "1250"
     assert types["driftsmiddel"]["direction"] == "ut"
+
+
+# --- Several documents, and the sentence that explains them ------------------
+#
+# Every test below is drawn from a real bilag in `regnaskaps_tests/`, because
+# the shapes that broke the one-file endpoint were not hypothetical. A FINN
+# purchase arrives as an advert, a chat, a FINN receipt and a bank line; an
+# AliExpress order arrives as nine screenshots; and one of them cannot be
+# decided from the paper at all.
+
+# The FINN receipt for a power supply, as the vision model transcribes it. The
+# advert's asking price (3 500) and the agreed price (3 250) are both on the
+# page, which is exactly why the totals line matters.
+FINN_RECEIPT_LINES = [
+    '"SEASONIC TX1600W Titanium"',
+    "Hei. Takk for kjøpet ditt.",
+    "FINN-kode:",
+    "473 945 486",
+    "Kjøpsdato:",
+    "30.08.2026, kl 10:08",
+    "Frakt med PostNord              109,00 kr",
+    "Avgift for Trygg betaling       206,00 kr",
+    "Totalt                          315,00 kr",
+]
+
+# The bank line for the same purchase, from a different screenshot.
+FINN_BANK_LINES = [
+    "Outgoing payment",
+    "Finnseasonic Tx1600w",
+    "30.08.2026",
+    "-NOK 3 565,00",
+    "LINDEMAN TECHNOLOGIES AS",
+    "1520.34.91244",
+]
+
+
+def png_bytes() -> bytes:
+    """The smallest thing that sniffs as a PNG.
+
+    The endpoint never decodes it — Løynd does, and Løynd is stubbed in these
+    tests — so a valid header is the whole requirement. Writing a real image
+    here would test Pillow rather than the route.
+    """
+    return b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+
+
+def test_several_documents_are_read_into_one_proposal(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bilag is what the documents say together, not what the first one says.
+
+    The FINN receipt carries the date and the fees; the bank line carries the
+    amount that actually left the account. Neither alone is the entry.
+    """
+    seen: list[str] = []
+
+    async def fake_complete(*, system: str, prompt: str, max_tokens: int = 16) -> str:
+        del system, max_tokens
+        seen.append(prompt)
+        return "1"
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    stub_loynd(monkeypatch, fake_complete)
+
+    company = signed_in_company(client)
+    response = interpret_many(
+        client,
+        company["id"],
+        [
+            ("kvittering.pdf", text_pdf(FINN_RECEIPT_LINES)),
+            ("bank.pdf", text_pdf(FINN_BANK_LINES)),
+        ],
+    )
+    assert response.status_code == 200
+    suggestion = response.json()
+
+    # Both documents reached the model, each under its own heading.
+    assert any("Dokument 1" in prompt and "Dokument 2" in prompt for prompt in seen)
+    assert any("SEASONIC" in prompt and "1520.34.91244" in prompt for prompt in seen)
+
+    # And both are accounted for in the answer, in the order they were uploaded.
+    assert [row["filename"] for row in suggestion["documents_read"]] == [
+        "kvittering.pdf",
+        "bank.pdf",
+    ]
+    assert all(row["chars"] > 0 for row in suggestion["documents_read"])
+
+
+def test_a_single_document_is_not_given_a_heading(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The common case must send the prompt it always sent.
+
+    One invoice, one text, no "Dokument 1:" preamble — so nothing measured
+    against the old prompt has to be measured again.
+    """
+    seen: list[str] = []
+
+    async def fake_complete(*, system: str, prompt: str, max_tokens: int = 16) -> str:
+        del system, max_tokens
+        seen.append(prompt)
+        return "1"
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    stub_loynd(monkeypatch, fake_complete)
+
+    company = signed_in_company(client)
+    interpret(client, company["id"], text_pdf(INVOICE_LINES))
+
+    assert seen and not any("--- Dokument" in prompt for prompt in seen)
+
+
+def test_there_is_no_ceiling_on_how_many_documents_a_bilag_may_have(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The AliExpress case: nine screenshots for one order.
+
+    A limit here would be a limit on what may be documented, and
+    bokføringsloven has an opinion about that which our convenience does not
+    outrank.
+    """
+
+    async def fake_complete(*, system: str, prompt: str, max_tokens: int = 16) -> str:
+        del system, prompt, max_tokens
+        return "1"
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    stub_loynd(monkeypatch, fake_complete)
+
+    company = signed_in_company(client)
+    response = interpret_many(
+        client,
+        company["id"],
+        [(f"skjerm-{n}.pdf", text_pdf([f"Ordre {n}", "Totalt 146,23 kr"])) for n in range(12)],
+    )
+    assert response.status_code == 200
+    assert len(response.json()["documents_read"]) == 12
+
+
+def test_an_empty_upload_is_refused_rather_than_read_as_an_empty_bilag(
+    client: TestClient,
+) -> None:
+    company = signed_in_company(client)
+    response = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company['id']}/cashflow/forslag",
+        files=[("files", ("tom.pdf", b"", "application/pdf"))],
+    )
+    assert response.status_code == 415
+
+
+def test_a_photograph_is_accepted_where_it_used_to_be_refused(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Most small-company bilag are a photograph, and used to be unfileable.
+
+    The route sniffs the bytes and hands Løynd the real content type; the
+    transcription comes back as text and is read exactly like a text layer.
+    """
+    sent: list[str] = []
+
+    async def fake_extract(*, content: bytes, filename: str, content_type: str) -> Any:
+        del content, filename
+        sent.append(content_type)
+        return loynd.ExtractedDocument(text="\n".join(FINN_RECEIPT_LINES))
+
+    async def fake_complete(*, system: str, prompt: str, max_tokens: int = 16) -> str:
+        del system, prompt, max_tokens
+        return "1"
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "extract_file", fake_extract)
+    stub_loynd(monkeypatch, fake_complete)
+
+    company = signed_in_company(client)
+    response = interpret_many(client, company["id"], [("IMG_9355.png", png_bytes())])
+
+    assert response.status_code == 200
+    # The real type, not the hardcoded "application/pdf" this used to send.
+    assert sent == ["image/png"]
+    assert response.json()["documents_read"][0]["content_type"] == "image/png"
+
+
+def test_an_image_that_could_not_be_read_says_so_in_its_own_words(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ "The PDF may be damaged" is the wrong advice about a photograph.
+
+    There is no local fallback for pixels, so an image Løynd could not read is
+    simply unread, and the sentence has to send the user somewhere useful.
+    """
+
+    async def empty(**_: Any) -> Any:
+        return loynd.ExtractedDocument(text="", empty=True)
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "extract_file", empty)
+
+    company = signed_in_company(client)
+    suggestion = interpret_many(client, company["id"], [("uskarp.png", png_bytes())]).json()
+
+    warnings = " ".join(suggestion["warnings"])
+    assert "bildene" in warnings
+    assert "skadet" not in warnings
+
+
+def test_one_unreadable_document_among_several_is_named_not_counted(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def selective(*, content: bytes, filename: str, content_type: str) -> Any:
+        del content, content_type
+        if filename == "uskarp.png":
+            return loynd.ExtractedDocument(text="", empty=True)
+        return loynd.ExtractedDocument(text="\n".join(FINN_RECEIPT_LINES))
+
+    async def fake_complete(**_: Any) -> str:
+        return "1"
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "extract_file", selective)
+    stub_loynd(monkeypatch, fake_complete)
+
+    company = signed_in_company(client)
+    suggestion = interpret_many(
+        client,
+        company["id"],
+        [("kvittering.png", png_bytes()), ("uskarp.png", png_bytes())],
+    ).json()
+
+    warnings = " ".join(suggestion["warnings"])
+    assert "uskarp.png" in warnings
+    # The readable one still filled the form in.
+    assert suggestion["occurred_on"] == date(2026, 8, 30).isoformat()
+
+
+def test_the_users_own_explanation_reaches_the_model(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `finn/` case: 3 000 kroner that the documents cannot classify.
+
+    An outgoing 3 000 and an incoming 3 000 on the same day are an owner
+    covering a purchase out of pocket, a loan, or a sale. Only the person who
+    made the payment knows which, and the box is where they say so.
+    """
+    seen: list[str] = []
+
+    async def fake_complete(*, system: str, prompt: str, max_tokens: int = 16) -> str:
+        del system, max_tokens
+        seen.append(prompt)
+        return "1"
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    stub_loynd(monkeypatch, fake_complete)
+
+    company = signed_in_company(client)
+    note = "kjøpt powersupply, la ut 3000 av pengene privat, ikke refundert enda"
+    suggestion = interpret_many(
+        client,
+        company["id"],
+        [("kvittering.pdf", text_pdf(FINN_RECEIPT_LINES))],
+        forklaring=note,
+    ).json()
+
+    assert any(note in prompt for prompt in seen)
+    assert any("Brukerens egen forklaring" in prompt for prompt in seen)
+    assert suggestion["context_used"] is True
+
+
+def test_the_explanation_cannot_put_words_in_the_documents_mouth(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The note is context, never evidence.
+
+    Quoted fields are accepted only when the *document* contains them. If the
+    note counted as document text, anyone could set the counterparty by typing
+    it in the box — and the check that makes every other model answer
+    trustworthy would be gone.
+    """
+
+    async def fake_complete(*, system: str, prompt: str, max_tokens: int = 16) -> str:
+        del system, max_tokens
+        if "MOTPART" not in prompt:
+            return "1"
+        return "DATO: UKJENT\nVALUTA: UKJENT\nMOTPART: Oppdiktet Leverandør AS\nBESKRIVELSE: noe"
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    stub_loynd(monkeypatch, fake_complete)
+
+    company = signed_in_company(client)
+    suggestion = interpret_many(
+        client,
+        company["id"],
+        [("kvittering.pdf", text_pdf(FINN_RECEIPT_LINES))],
+        forklaring="Kjøpt fra Oppdiktet Leverandør AS",
+    ).json()
+
+    # The name is in the note and nowhere in the document, so it is discarded.
+    assert suggestion["counterparty_name"] != "Oppdiktet Leverandør AS"
+
+
+def test_a_company_with_ki_off_never_has_its_explanation_read(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Off means off, including the box the user typed in."""
+
+    async def refuse(**_: Any) -> str:
+        raise AssertionError("the model was asked despite KI being off")
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    stub_loynd(monkeypatch, refuse)
+
+    company = signed_in_company(client)
+    write(client, "PATCH", f"/api/v1/companies/{company['id']}", json={"ki_enabled": False})
+
+    suggestion = interpret_many(
+        client,
+        company["id"],
+        [("faktura.pdf", text_pdf(INVOICE_LINES))],
+        forklaring="noe personlig",
+    ).json()
+
+    assert suggestion["ki_used"] is False
+    assert suggestion["context_used"] is False
+
+
+def test_a_bilag_the_documents_cannot_settle_comes_back_with_a_question(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The register asks, rather than proposing something it cannot know.
+
+    A receipt with no total is not a failure to report — it is a question with
+    an answer, and the answer has a box to go in.
+    """
+
+    async def fake_complete(**_: Any) -> str:
+        return "1"
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    stub_loynd(monkeypatch, fake_complete)
+
+    company = signed_in_company(client)
+    suggestion = interpret(
+        client, company["id"], text_pdf(["Kvittering", "Takk for handelen"])
+    ).json()
+
+    assert suggestion["questions"]
+    assert suggestion["questions"][0]["field"] == "gross_amount"
+    assert suggestion["questions"][0]["text"].endswith("?")
+
+
+def test_the_model_may_ask_one_question_of_its_own(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On the same round trip as everything else it is asked.
+
+    A fifth line rather than a second call: the question is worth having and
+    not worth a second wait.
+    """
+
+    async def fake_complete(*, system: str, prompt: str, max_tokens: int = 16) -> str:
+        del system, max_tokens
+        if "MOTPART" not in prompt:
+            return "1"
+        return (
+            "DATO: UKJENT\nVALUTA: UKJENT\nMOTPART: UKJENT\n"
+            "BESKRIVELSE: noe\n"
+            "SPØRSMÅL: Ble strømforsyningen kjøpt til selskapet eller privat?"
+        )
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    stub_loynd(monkeypatch, fake_complete)
+
+    company = signed_in_company(client)
+    suggestion = interpret(client, company["id"], text_pdf(FINN_RECEIPT_LINES)).json()
+
+    asked = [q for q in suggestion["questions"] if q["asked_by_model"]]
+    assert len(asked) == 1
+    assert asked[0]["text"] == "Ble strømforsyningen kjøpt til selskapet eller privat?"
+
+
+def test_the_models_question_is_checked_before_it_is_shown(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """It fills no field, so the check is only about shape — but it is a check.
+
+    A model that answers with a statement instead of a question has not asked
+    anything, and putting a statement under a question mark heading would be
+    the interface telling a small lie about what it holds.
+    """
+
+    async def fake_complete(*, system: str, prompt: str, max_tokens: int = 16) -> str:
+        del system, max_tokens
+        if "MOTPART" not in prompt:
+            return "1"
+        return (
+            "DATO: UKJENT\nVALUTA: UKJENT\nMOTPART: UKJENT\n"
+            "BESKRIVELSE: noe\nSPØRSMÅL: Dette er nok et privatkjøp."
+        )
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    stub_loynd(monkeypatch, fake_complete)
+
+    company = signed_in_company(client)
+    suggestion = interpret(client, company["id"], text_pdf(FINN_RECEIPT_LINES)).json()
+
+    assert not any(q["asked_by_model"] for q in suggestion["questions"])
+
+
+def test_answering_in_the_box_changes_what_comes_back(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The loop the whole feature is for: ask, answer, read again.
+
+    The second read sends the sentence to the model, and the question that
+    prompted it is no longer asked.
+    """
+
+    async def fake_complete(**_: Any) -> str:
+        return "1"
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    stub_loynd(monkeypatch, fake_complete)
+
+    company = signed_in_company(client)
+    bank = text_pdf(["Innbetaling", "30.08.2026", "Totalt 3 000,00", "Andreas Lindeman"])
+
+    first = interpret_many(client, company["id"], [("bank.pdf", bank)]).json()
+    second = interpret_many(
+        client,
+        company["id"],
+        [("bank.pdf", bank)],
+        forklaring="dette er penger jeg la ut privat og fikk igjen",
+    ).json()
+
+    assert second["context_used"] is True
+    # Whatever else changed, the register stopped asking a question the user
+    # has now answered.
+    assert len(second["questions"]) <= len(first["questions"])
+
+
+ELEKTRA_LINES = [
+    "LINJEFORENINGEN ELEKTRA",
+    "Org.nr.:    NO 991 107 711 MVA",
+    "FAKTURA",
+    "Fakturanr.:                      1075",
+    f"Fakturadato:              {THIS_YEAR}-09-06",
+    "Beskrivelse Antall Enh.pris",
+    "(ekskl. mva)",
+    "Beløp",
+    "(ekskl. mva)",
+    "Mva",
+    "(25 %)",
+    "Beløp",
+    "(inkl. mva)",
+    "Batteri 1 1 152,00 1 152,00 288,00 1 440,00",
+    "Betales til bankkonto 4202.11.39496 NOK  1 440,00",
+]
+
+
+def test_a_battery_is_asked_about_rather_than_filed_under_motoring(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The whole chain, on the bilag that occasioned it.
+
+    An item line reading "Batteri" and nothing else came back as *Drivstoff og
+    bilkostnad* with a description of "Faktura 1075, LINJEFORENINGEN ELEKTRA".
+    Three things were wrong with that and all three are here: the item line is
+    read off the table now, the model's runner-up becomes a question the user
+    can answer, and a "description" that is only the sender is refused.
+    """
+    menu = classification.build_menu(CashFlowDirection.UT)
+    bilkostnad = next(item for item in menu if item.type_code == "bilkostnad")
+    varekjop = next(item for item in menu if item.type_code == "varekjop")
+
+    async def fake_complete(*, system: str, prompt: str, max_tokens: int = 16) -> str:
+        del system, max_tokens
+        if "MOTPART" not in prompt:
+            return f"{bilkostnad.number}/{varekjop.number}"
+        return (
+            "DATO: UKJENT\nVALUTA: UKJENT\nMOTPART: LINJEFORENINGEN ELEKTRA\n"
+            "BESKRIVELSE: LINJEFORENINGEN ELEKTRA\nSPØRSMÅL: UKJENT"
+        )
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    stub_loynd(monkeypatch, fake_complete)
+
+    company = signed_in_company(client)
+    suggestion = interpret(client, company["id"], text_pdf(ELEKTRA_LINES)).json()
+
+    # The category the model led with still stands as the proposal — the doubt is
+    # a question, not a veto.
+    assert suggestion["type_code"] == "bilkostnad"
+    asked = [q for q in suggestion["questions"] if q["field"] == "type_code"]
+    assert len(asked) == 1
+    assert asked[0]["text"] == (
+        "Er dette «Drivstoff og bilkostnad» eller «Varekjøp»? Skriv gjerne hva som ble kjøpt."
+    )
+    assert asked[0]["asked_by_model"]
+    # And the description names the thing rather than the sender.
+    assert suggestion["description"] == "Faktura 1075, Batteri"
+
+
+# --- watching the proposal arrive -------------------------------------------------
+
+
+def stream_events(client: TestClient, company_id: int, content: bytes, *, name: str) -> list[Any]:
+    """Every frame the streaming route sends, parsed, in order."""
+    response = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company_id}/cashflow/forslag/strom",
+        files=[("files", (name, content, _content_type(content)))],
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("text/event-stream")
+    events: list[Any] = []
+    event: str | None = None
+    for line in response.text.splitlines():
+        if line.startswith("event: "):
+            event = line[len("event: ") :]
+        elif line.startswith("data: ") and event is not None:
+            events.append((event, json.loads(line[len("data: ") :])))
+    return events
+
+
+def test_the_description_arrives_while_it_is_being_written(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The point of the route.
+
+    Nine screenshots take a minute and a half, and what used to happen in that
+    minute was a spinner and then a form that filled itself in all at once. The
+    sentence is now typed out as the model writes it — and only the sentence:
+    the date, the currency and the seller each have a box of their own.
+    """
+    menu = classification.build_menu(CashFlowDirection.UT)
+    inventar = next(item for item in menu if item.type_code == "inventar")
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    stub_loynd(monkeypatch, answering(str(inventar.number), RECEIPT_ANSWER))
+
+    company = signed_in_company(client)
+    events = stream_events(client, company["id"], text_pdf(RECEIPT_LINES), name="Order details.pdf")
+
+    names = [name for name, _ in events]
+    # The file list first, the sentence in pieces, the proposal last.
+    assert names[0] == "dokumenter"
+    assert names[-1] == "forslag"
+    assert names.count("beskrivelse") > 1
+
+    written = "".join(payload["tekst"] for name, payload in events if name == "beskrivelse")
+    assert written == "Apple Mac Studio til kontoret"
+    # None of the other three lines went past on the way.
+    assert "GBP" not in written
+    assert "daisyaus-0" not in written
+
+
+def test_the_last_frame_is_what_the_json_route_would_have_returned(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One pipeline, two routes, and no room for them to disagree.
+
+    A client that ignores every frame but the last has the plain JSON answer —
+    which is what makes the streaming route an improvement to the wait rather
+    than a second implementation of the proposal.
+    """
+    menu = classification.build_menu(CashFlowDirection.UT)
+    inventar = next(item for item in menu if item.type_code == "inventar")
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    stub_loynd(monkeypatch, answering(str(inventar.number), RECEIPT_ANSWER))
+
+    company = signed_in_company(client)
+    streamed = stream_events(
+        client, company["id"], text_pdf(RECEIPT_LINES), name="Order details.pdf"
+    )[-1][1]
+    plain = interpret(
+        client, company["id"], text_pdf(RECEIPT_LINES), name="Order details.pdf"
+    ).json()
+
+    assert streamed == plain
+
+
+def test_the_files_are_reported_before_the_proposal_exists(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A photograph that came back blank is worth knowing about immediately.
+
+    It is the one thing in the answer the user can act on straight away — take
+    the picture again — and waiting for the rest of the proposal to arrive
+    before saying so wastes the only part of the wait that had a use.
+    """
+
+    async def blank(*, content: bytes, filename: str, content_type: str) -> Any:
+        del content, filename, content_type
+        return loynd.ExtractedDocument(text="", empty=True)
+
+    async def one(**_: Any) -> str:
+        return "1"
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "extract_file", blank)
+    stub_loynd(monkeypatch, one)
+
+    company = signed_in_company(client)
+    events = stream_events(client, company["id"], png_bytes(), name="uskarp.png")
+
+    name, payload = events[0]
+    assert name == "dokumenter"
+    assert payload == [{"filename": "uskarp.png", "content_type": "image/png", "chars": 0}]
+
+
+def test_a_file_we_cannot_read_is_refused_before_the_stream_opens(
+    client: TestClient,
+) -> None:
+    """A status code, not a frame inside a 200.
+
+    Once the first byte of a streamed response is out the status line is spent,
+    so everything that can be refused is refused first.
+    """
+    company = signed_in_company(client)
+    response = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company['id']}/cashflow/forslag/strom",
+        files=[("files", ("notater.txt", b"ikke et dokument", "text/plain"))],
+    )
+
+    assert response.status_code == 415
+
+
+def test_reading_the_same_bilag_again_does_not_transcribe_it_again(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """What makes re-reading on every edit affordable.
+
+    Editing the description re-reads the bilag, and transcribing nine
+    screenshots costs ninety seconds of a graphics card. The text is remembered
+    by the bytes it came from, so the second read costs a prompt.
+    """
+    reads: list[str] = []
+
+    async def counting(*, content: bytes, filename: str, content_type: str) -> Any:
+        del content, content_type
+        reads.append(filename)
+        return loynd.ExtractedDocument(text="\n".join(FINN_RECEIPT_LINES))
+
+    async def one(**_: Any) -> str:
+        return "1"
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "extract_file", counting)
+    stub_loynd(monkeypatch, one)
+
+    company = signed_in_company(client)
+    first = interpret_many(client, company["id"], [("kvittering.png", png_bytes())])
+    second = interpret_many(
+        client,
+        company["id"],
+        [("kvittering.png", png_bytes())],
+        forklaring="kjøpt strømforsyning, la ut privat",
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    # Read once, proposed twice.
+    assert reads == ["kvittering.png"]
+    # And the second proposal did see the sentence.
+    assert second.json()["context_used"] is True

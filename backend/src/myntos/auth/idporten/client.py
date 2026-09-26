@@ -54,7 +54,12 @@ from urllib.parse import urlencode
 import httpx
 import jwt
 
-from myntos.auth.signing_keys import SigningKey, SigningKeyError, load_signing_key
+from myntos.auth.signing_keys import (
+    SigningKey,
+    SigningKeyError,
+    load_signing_key,
+    load_signing_key_material,
+)
 from myntos.core.clock import utc_now
 from myntos.core.config import Settings, get_settings
 
@@ -128,6 +133,14 @@ class GovernmentLogin:
     acr: str
     subject: str
     refresh_token: str | None
+    # The person's name, from Folkeregisteret by way of the ``name`` claim.
+    # ``None`` unless the ``profile`` scope was requested *and* granted on this
+    # client, which is a per-deployment fact rather than something to assume:
+    # scopes are ticked onto a client in Samarbeidsportalen one at a time. Its
+    # absence must never fail a login: a submission is attributed to the pid,
+    # and the name is only ever used to recognise the same person in
+    # Enhetsregisteret.
+    name: str | None = None
 
     def is_usable(self, *, at: datetime | None = None) -> bool:
         return (at or utc_now()) < self.expires_at
@@ -276,6 +289,7 @@ class IdPortenClient:
             acr=str(claims.get("acr", "")),
             subject=str(claims["sub"]),
             refresh_token=refresh_token if isinstance(refresh_token, str) else None,
+            name=_name_from(claims),
         )
 
     def _client_authentication(self, *, issuer: str) -> dict[str, str]:
@@ -410,6 +424,20 @@ def _pid_from(claims: dict[str, Any]) -> str:
     return pid.strip()
 
 
+def _name_from(claims: dict[str, Any]) -> str | None:
+    """The person's name, if this login carried one.
+
+    Unlike :func:`_pid_from`, an absence is not a failure. The ``name`` claim
+    comes with the ``profile`` scope, which is granted per client, so a
+    deployment that has not been given it gets a perfectly usable login with no
+    name on it.
+    """
+    name = claims.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    return name.strip()
+
+
 def _b64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
@@ -451,22 +479,12 @@ def is_configured(settings: Settings | None = None) -> bool:
     return bool(
         (settings.idporten_client_id or "").strip()
         and (settings.idporten_redirect_uri or "").strip()
-        and (_key_file_present(settings) or _secret(settings))
+        and (
+            settings.idporten_key_file is not None
+            or settings.idporten_key_material is not None
+            or _secret(settings)
+        )
     )
-
-
-def _key_file_present(settings: Settings) -> bool:
-    """Whether the configured client key is actually there to be read.
-
-    That the *path* is set is not the question. A path naming a file that does
-    not exist is the ordinary shape of a half-finished deployment: the variable
-    is copied from the template, and the key is copied afterwards, or forgotten.
-    Answering "configured" from the path alone offers a login that fails deeper
-    in :func:`build_client` with an unreadable-key error, which is the precise
-    outcome this function exists to prevent.
-    """
-    path = settings.idporten_key_file
-    return path is not None and path.is_file()
 
 
 def _secret(settings: Settings) -> str | None:
@@ -489,12 +507,17 @@ def build_client(settings: Settings) -> IdPortenClient:
         )
 
     signing_key: SigningKey | None = None
+    material = settings.idporten_key_material
     key_path = settings.idporten_key_file
-    if key_path is not None:
-        try:
+    try:
+        if material is not None:
+            signing_key = load_signing_key_material(
+                material, kid=settings.idporten_kid, source="IDPORTEN_JWK"
+            )
+        elif key_path is not None:
             signing_key = load_signing_key(key_path, kid=settings.idporten_kid)
-        except SigningKeyError as error:
-            raise IdPortenError(f"the ID-porten client key is unusable: {error}") from error
+    except SigningKeyError as error:
+        raise IdPortenError(f"the ID-porten client key is unusable: {error}") from error
 
     client_secret = _secret(settings)
     if signing_key is None and not client_secret:

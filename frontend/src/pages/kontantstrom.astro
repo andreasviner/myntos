@@ -12,10 +12,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       <p class="eyebrow" id="company-name">Kontantstrøm</p>
       <h1>Inn og ut</h1>
     </div>
-    <label class="picker">
-      <span class="visually-hidden">Velg selskap</span>
-      <select id="company-picker" hidden></select>
-    </label>
+    {/* Registeret er ett selskaps. Hvilket, svarer selskapsvelgeren i toppen
+        på — ett sted, ikke ett per side. */}
   </header>
 
   <p class="status" id="page-status" hidden></p>
@@ -51,13 +49,73 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           kvittering skal føres uten omveier — men den er den mindre vanlige,
           og står deretter.
         */}
+        {/*
+          Spørsmålene står rett over beskrivelsen, ikke under, fordi de er
+          grunnen til å skrive i den. Et felt med en overskrift blir stående som
+          det er; et felt med et spørsmål rett over seg blir besvart.
+        */}
+        <ul class="asks" id="doc-questions" hidden></ul>
+
+        {/*
+          Ett beskrivelsesfelt, ikke to. Det var to: ett for det brukeren kunne
+          fortelle modellen, og ett nede i skjemaet for teksten som havner i
+          hovedboken. Men det er samme setning. «Kjøpt strømforsyning, la ut
+          3000 privat» er både det modellen mangler for å forstå bilaget og en
+          helt riktig bilagstekst, og to felter for samme sak er to steder å
+          skrive den. Ett av dem blir stående tomt.
+
+          Så dette feltet er begge: modellen skriver i det, brukeren retter det,
+          og retter brukeren det, leses bilaget om igjen med setningen som
+          kontekst. Det er derfor det ikke lenger finnes en «les på nytt»-knapp.
+
+          Det står over opplastingen, ikke under, fordi rekkefølgen er et
+          spørsmål: «hva gjaldt det?» er det brukeren vet uten å slå opp, og
+          skriver de det først, er det den setningen modellen leser bilaget med.
+          Skriver de ingenting, fyller modellen det ut selv. Begge veier
+          fungerer, og feltet sier hvilken det er på vei ned.
+        */}
+        <label class="field explain" data-field="description" for="description-input">
+          <span class="explain-label">
+            Beskrivelse <span class="muted">(valgfritt)</span>
+            <span class="tag" data-tag hidden></span>
+          </span>
+          {/*
+            Feltet er låst mens modellen er på vei til å skrive i det, og bare
+            da. Å taste i en boks som er i ferd med å bli overskrevet er å miste
+            det man skrev, og en boks som ser tom og redigerbar ut mens den
+            venter, ser ut som en boks som ikke kommer til å bli fylt ut.
+            Skrev brukeren noe selv, står feltet åpent: da er det ingen som skal
+            overskrive det.
+          */}
+          <span class="description-wrap">
+            <textarea
+              id="description-input"
+              name="description"
+              rows="2"
+              maxlength="255"
+              placeholder="Hva gjaldt betalingen?"
+            ></textarea>
+            <span class="description-busy" id="description-busy" hidden aria-hidden="true">
+              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            </span>
+          </span>
+        </label>
+
+        {/*
+          Flere filer, fordi et bilag ofte ikke er én fil. Et kjøp fra en privat
+          selger på FINN er annonsen, meldingene der prisen ble avtalt,
+          kvitteringen og linja på kontoutskriften — ingen av de fire er bilaget
+          alene. Bilder er med for samme grunn: de fleste kvitteringer i et lite
+          selskap finnes bare som et skjermbilde eller et kamerabilde.
+        */}
         <div class="dropzone" id="dropzone">
           <input
             class="visually-hidden"
             type="file"
             name="document"
             id="file-input"
-            accept="application/pdf,.pdf"
+            multiple
+            accept="application/pdf,.pdf,image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif"
           />
           <label class="dropzone-cta" for="file-input">
             <svg class="dropzone-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -69,23 +127,26 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 stroke-linecap="round"
                 stroke-linejoin="round"></path>
             </svg>
-            <strong>Last opp faktura eller kvittering</strong>
-            <span class="dropzone-hint" id="file-hint">Dra PDF-en hit, eller velg fil.</span>
+            <strong>Last opp faktura, kvittering eller skjermbilder</strong>
+            <span class="dropzone-hint" id="file-hint">
+              Dra filene hit, eller velg dem. PDF og bilder, så mange som bilaget trenger.
+            </span>
           </label>
 
-          <div class="dropzone-file" id="drop-file" hidden>
-            <span class="badge">PDF</span>
-            <span class="file-name" id="file-name"></span>
-            <button type="button" class="btn-link" id="file-clear">Fjern</button>
-          </div>
+          <ul class="dropzone-files" id="drop-files" hidden></ul>
+          <p class="dropzone-more" id="drop-more" hidden>
+            <label class="btn-link" for="file-input">Legg til flere filer</label>
+            <button type="button" class="btn-link" id="file-clear">Fjern alle</button>
+          </p>
         </div>
+
 
         <p class="reading" id="doc-reading" hidden>Leser bilaget …</p>
         <ul class="doc-warnings" id="doc-warnings" hidden></ul>
 
         <p class="manual" id="manual-row">
           <button type="button" class="btn-link" id="manual-entry">
-            Ingen PDF? Fyll inn manuelt
+            Ingen bilag? Fyll inn manuelt
           </button>
         </p>
 
@@ -132,24 +193,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
               <span class="tag" data-tag hidden></span>
             </span>
             <select name="party_id" id="party-select"></select>
-            {/* Egen linje for det bilaget sier, slik at den faste hjelpeteksten
-                med lenken til /parter blir stående. */}
+            {/* Egen linje for navnet bilaget oppga, slik at den faste
+                hjelpeteksten med lenken til /parter blir stående. */}
             <span class="field-hint" id="party-note" hidden></span>
             <span class="field-hint">
-              Kunden eller leverandøren. <a href="/parter/">Registrer nye her</a>.
+              Føringen går fint uten. <a href="/parter/">Se motpartene dine</a>.
             </span>
-          </label>
-
-          <label class="field" data-field="description">
-            <span>Beskrivelse <span class="tag" data-tag hidden></span></span>
-            <input
-              type="text"
-              name="description"
-              maxlength="255"
-              required
-              placeholder="Faktura 104, konsulenttimer mars"
-            />
-            <span class="field-hint">Dette blir teksten på bilaget i hovedboken.</span>
           </label>
 
           <div class="field-row">
@@ -241,7 +290,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           <p>
             <strong>Rediger</strong> gjør derfor to ting når du lagrer: motposterer den
             opprinnelige føringen og legger inn den rettede. Alle tre bilagene blir stående i
-            regnskapet, men registeret viser dem som én linje — den som gjelder nå. Trekanten
+            regnskapet, men registeret viser dem som én linje: den som gjelder nå. Trekanten
             foran datoen henter fram de to eldre.
           </p>
           <p>
@@ -457,11 +506,24 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     font-size: 0.84rem;
     color: var(--muted);
   }
-  .dropzone-file {
+  .dropzone-files {
+    list-style: none;
+    margin: 0;
+    padding: 0.4rem 0.8rem 0;
+    text-align: left;
+  }
+  .dropzone-files li {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.7rem 0.8rem;
+    padding: 0.35rem 0;
+    font-size: 0.9rem;
+  }
+  .dropzone-more {
+    display: flex;
+    gap: 1rem;
+    margin: 0;
+    padding: 0.3rem 0.8rem 0.7rem;
     font-size: 0.9rem;
   }
   .file-name {
@@ -469,6 +531,121 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* Filer som ikke ga tekst. Ikke en feil — bilaget er lastet opp og lagres —
+     men brukeren må se hvilken av seks som ikke ble lest, ikke bare at én ikke
+     ble det. */
+  .dropzone-files li[data-unread] .file-name {
+    color: var(--muted);
+  }
+  .file-note {
+    font-size: 0.82rem;
+    color: var(--muted);
+  }
+  .explain {
+    display: block;
+    margin: 0 0 1rem;
+  }
+  .explain-label {
+    display: block;
+    margin-bottom: 0.35rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+  .explain textarea {
+    width: 100%;
+    resize: vertical;
+    font: inherit;
+  }
+  /* Prikkene ligger oppå feltet i stedet for under, slik at høyden ikke hopper
+     idet den første bokstaven kommer. */
+  .description-wrap {
+    display: block;
+    position: relative;
+  }
+  .description-busy {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.32rem;
+    padding-left: 0.7rem;
+    border-radius: inherit;
+    pointer-events: none;
+  }
+  .description-busy .dot {
+    width: 0.4rem;
+    height: 0.4rem;
+    border-radius: 50%;
+    background: var(--muted);
+    opacity: 0.45;
+    animation: description-blink 1.1s ease-in-out infinite;
+  }
+  .description-busy .dot:nth-child(2) {
+    animation-delay: 0.18s;
+  }
+  .description-busy .dot:nth-child(3) {
+    animation-delay: 0.36s;
+  }
+  @keyframes description-blink {
+    0%,
+    70%,
+    100% {
+      opacity: 0.25;
+    }
+    35% {
+      opacity: 0.9;
+    }
+  }
+  /* Respekterer at noen har slått av bevegelse. Prikkene er fortsatt der og
+     sier fortsatt det samme; de står bare stille. */
+  @media (prefers-reduced-motion: reduce) {
+    .description-busy .dot {
+      animation: none;
+      opacity: 0.5;
+    }
+  }
+  .explain textarea:disabled {
+    /* Låst, ikke avslått. Standardstilen for disabled gjør feltet grått og
+       dødt, og dette feltet er verken. */
+    background: var(--surface, #fff);
+    opacity: 1;
+    cursor: progress;
+  }
+  /* Spørsmål, ikke advarsler. De står i normal tekstfarge og med et
+     spørsmålstegn-merke, så de leses som noe å svare på og ikke som noe som
+     har gått galt. */
+  .asks {
+    list-style: none;
+    margin: 0 0 0.8rem;
+    padding: 0;
+    display: grid;
+    gap: 0.5rem;
+  }
+  .asks li {
+    position: relative;
+    padding: 0.6rem 0.8rem 0.6rem 2.2rem;
+    border: 1px solid var(--line);
+    border-radius: 0.5rem;
+    font-size: 0.92rem;
+  }
+  .asks li::before {
+    content: '?';
+    position: absolute;
+    left: 0.85rem;
+    font-weight: 700;
+    color: var(--accent, currentColor);
+  }
+  /* Gjetning, ikke avlesning: et spørsmål modellen fant på skal ikke se like
+     sikkert ut som et registeret utledet av sin egen lesning. */
+  .asks li[data-ki] {
+    border-style: dashed;
+  }
+  .ask-source {
+    display: block;
+    margin-top: 0.2rem;
+    font-size: 0.78rem;
+    color: var(--muted);
   }
   .reading {
     margin: -0.4rem 0 1rem;
@@ -596,9 +773,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     documentUrl,
     getCatalogue,
     getSummary,
-    interpretDocument,
+    interpretDocumentStreaming,
     listCashFlow,
     listParties,
+    createParty,
     editCashFlow,
     recordCashFlow,
     reverseCashFlow,
@@ -610,11 +788,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     type Direction,
     type FieldSource,
     type AttachmentInfo,
+    type DocumentRead,
     type InvoiceSuggestion,
     type Party,
     type Summary,
   } from '../lib/api';
-  import { currentCompany, loadCompanies, mountCompanyPicker } from '../lib/company';
+  import { authorOf, namesAuthors } from '../lib/authors';
+  import { currentCompany, loadCompanies } from '../lib/company';
   import {
     foldCorrections,
     foldNote,
@@ -626,11 +806,18 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   import { fileSize, isoDate, kroner, todayIso } from '../lib/format';
   import { can, loadSession, redirectToLogin } from '../lib/session';
 
+  /**
+   * What the file dialogs offer. One string, because the entry form and the
+   * per-row control accept the same things and a pair that drifts apart is a
+   * dialog that refuses a file the backend would have taken.
+   */
+  const ATTACHMENT_ACCEPT =
+    'application/pdf,.pdf,image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif';
+
   const pageStatus = el<HTMLParagraphElement>('#page-status');
   const formStatus = el<HTMLParagraphElement>('#form-status');
   const loading = el<HTMLDivElement>('#loading');
   const content = el<HTMLDivElement>('#content');
-  const picker = el<HTMLSelectElement>('#company-picker');
   const typeSelect = el<HTMLSelectElement>('#type-select');
   const taxSelect = el<HTMLSelectElement>('#tax-select');
   const partySelect = el<HTMLSelectElement>('#party-select');
@@ -643,9 +830,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   const submit = el<HTMLButtonElement>('#entry-submit');
   const fileInput = el<HTMLInputElement>('#file-input');
   const dropzone = el<HTMLDivElement>('#dropzone');
-  const dropFile = el<HTMLDivElement>('#drop-file');
-  const fileName = el<HTMLSpanElement>('#file-name');
+  const dropFiles = el<HTMLUListElement>('#drop-files');
+  const dropMore = el<HTMLParagraphElement>('#drop-more');
+  const descriptionBox = el<HTMLTextAreaElement>('#description-input');
+  const descriptionBusy = el<HTMLSpanElement>('#description-busy');
+  const askList = el<HTMLUListElement>('#doc-questions');
   const reading = el<HTMLParagraphElement>('#doc-reading');
+  const readingText = reading;
   const warningList = el<HTMLUListElement>('#doc-warnings');
   const formFields = el<HTMLDivElement>('#form-fields');
   const manualRow = el<HTMLParagraphElement>('#manual-row');
@@ -654,13 +845,35 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   let catalogue: Catalogue;
   let company: Company;
   let parties: Party[] = [];
+  // Navnet bilaget oppga, når ingen registrert motpart svarer til det. Det
+  // ligger i listen som sitt eget valg, slik at feltet viser hvem betalingen
+  // var med i stedet for «ingen valgt».
+  let unregistered: string | null = null;
   let mayWrite = false;
+  // Om registeret skal si hvem som førte hva. Avgjort én gang per lasting, over
+  // hele listen og ikke per rad: merket betyr «det er flere hender i denne
+  // boken», og det er en egenskap ved registeret. Regelen står i lib/authors.ts.
+  let marksAuthor = false;
+
+  // Verdien det ene valget som ikke peker på en rad i registeret har. Ikke et
+  // tall, slik at den aldri kan forveksles med en id.
+  const NEW_PARTY = 'ny';
 
   function option(value: string, label: string): HTMLOptionElement {
     const node = document.createElement('option');
     node.value = value;
     node.textContent = label;
     return node;
+  }
+
+  /**
+   * What to call one attached file, in the two words the badge has room for.
+   *
+   * The same two the file list above the form uses, so a document is called the
+   * same thing before it is filed and after.
+   */
+  function kindOf(contentType: string): string {
+    return contentType.startsWith('image/') ? 'BILDE' : 'PDF';
   }
 
   function cell(value: string, className?: string): HTMLTableCellElement {
@@ -679,14 +892,58 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     return catalogue.types.find((entry) => entry.code === typeSelect.value);
   }
 
-  /** Repopulate the type list for the chosen direction and follow its default. */
+  /** What to call an entry whose description was left empty. */
+  function describedByType(): string {
+    return selectedType()?.label ?? 'Betaling';
+  }
+
+  /** Hva gruppen med reverseringer heter, i hver sin retning. */
+  const REVERSAL_GROUP: Record<Direction, string> = {
+    inn: 'Penger tilbake på et kjøp',
+    ut: 'Kreditnota til en kunde',
+  };
+
+  /** Prefikset gruppen selv sier, og som derfor ikke skal stå på hver linje. */
+  const REVERSAL_PREFIX = /^(?:Refusjon|Kreditnota): /;
+
+  /**
+   * Fill the category list for the direction, reversals in a group of their own.
+   *
+   * Sixteen refunds against twelve ways of earning money would otherwise bury
+   * the ordinary case: someone registering a sale would scroll past "Refusjon:
+   * leie av lokaler" to reach it. Only grouped, never hidden, since a refund is
+   * exactly as valid a thing for money to be, and the same holds the other way
+   * round for the six kreditnotaer on the money-out list.
+   *
+   * Which family lands here is read off `reverses` rather than off the code,
+   * so a reversal added to the catalogue appears in its group without this
+   * page being told about it.
+   */
   function fillTypes(): void {
     const direction = currentDirection();
+    const entries = catalogue.types.filter((t) => t.direction === direction);
     typeSelect.replaceChildren();
-    for (const entry of catalogue.types.filter((t) => t.direction === direction)) {
-      typeSelect.append(option(entry.code, entry.label));
+
+    const reversals = entries.filter((entry) => entry.reverses !== null);
+    for (const entry of entries) {
+      if (entry.reverses === null) typeSelect.append(option(entry.code, entry.label));
+    }
+    if (reversals.length > 0) {
+      const group = document.createElement('optgroup');
+      group.label = REVERSAL_GROUP[direction];
+      for (const entry of reversals) {
+        // The prefix is the group's job now, so the label reads as the thing
+        // being reversed rather than repeating "Refusjon:" sixteen times.
+        group.append(option(entry.code, capitalised(entry.label.replace(REVERSAL_PREFIX, ''))));
+      }
+      typeSelect.append(group);
     }
     applyType();
+  }
+
+  /** A label that has lost its prefix, given its capital letter back. */
+  function capitalised(label: string): string {
+    return label.charAt(0).toUpperCase() + label.slice(1);
   }
 
   /**
@@ -699,6 +956,17 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   function fillParties(): void {
     const previous = partySelect.value;
     partySelect.replaceChildren(option('', 'ingen valgt'));
+
+    // Øverst, fordi det er den motparten bilaget faktisk handler om. Bare
+    // navnet står der: nummeret lages av registeret og organisasjonsnummeret
+    // blir stående tomt, som er alt et bilag fra en du møter én gang er verdt
+    // å lagres under.
+    if (unregistered !== null) {
+      const group = document.createElement('optgroup');
+      group.label = 'Ikke registrert';
+      group.append(option(NEW_PARTY, unregistered));
+      partySelect.append(group);
+    }
 
     const groups: [string, Party[]][] = [
       ['Kunder', parties.filter((party) => party.party_type === 'kunde')],
@@ -751,6 +1019,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     else tag.dataset.source = source;
   }
 
+  /**
+   * Say what happens to a name the register does not have yet.
+   *
+   * One line, and only while that choice is the one showing. Most bilag are
+   * from someone the company meets once, so the ordinary case is a name in the
+   * field and nothing to read about it.
+   */
+  function showPartyNote(): void {
+    const note = el<HTMLSpanElement>('#party-note');
+    const isNew = partySelect.value === NEW_PARTY;
+    note.textContent = isNew ? 'Ny motpart. Navnet lagres når du fører.' : '';
+    note.hidden = !isNew;
+  }
+
   function clearMarks(): void {
     for (const field of form.querySelectorAll<HTMLElement>('.field[data-field]')) {
       markField(field.dataset.field ?? '', null);
@@ -779,8 +1061,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   };
 
   /** Put a proposal into the form, and say which parts of it came from where. */
-  function applySuggestion(suggestion: InvoiceSuggestion): void {
+  function applySuggestion(suggestion: InvoiceSuggestion, { keepDescription = false } = {}): void {
     clearMarks();
+    // What the last read named is not evidence about this one, and the list is
+    // rebuilt below either way.
+    unregistered = null;
 
     /**
      * Mark one field with where its value came from.
@@ -828,21 +1113,41 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       if (amount !== null) amount.value = suggestion.gross_amount;
       mark('gross_amount');
     }
-    if (suggestion.description !== null) {
-      const description = form.querySelector<HTMLInputElement>('input[name="description"]');
-      if (description !== null) description.value = suggestion.description;
+    // The finished value replaces whatever was streamed, because it is the
+    // authoritative one: the reference goes in front of the sentence, and a
+    // printed item line beats a composed one. Usually that means a prefix
+    // appearing. Skipped entirely when the read was caused by the user editing
+    // this field — then their sentence is the input, not the output.
+    if (!keepDescription && suggestion.description !== null) {
+      descriptionBox.value = suggestion.description;
+      written = suggestion.description;
+      readWith = suggestion.description;
       mark('description');
+    } else if (keepDescription) {
+      markField('description', 'Din tekst');
     }
     if (suggestion.party_id !== null) {
       partySelect.value = String(suggestion.party_id);
       mark('party_id');
-    } else if (suggestion.counterparty_name !== null) {
-      // Named on the invoice but not in the register. Saying so is more use than
-      // an empty field, since the fix is one page away.
-      const partyNote = el<HTMLSpanElement>('#party-note');
-      partyNote.textContent =
-        `Bilaget er fra ${suggestion.counterparty_name}, som ikke er registrert som part ennå.`;
-      partyNote.hidden = false;
+    } else if (suggestion.counterparty_name !== null && suggestion.sources.party_id !== undefined) {
+      // Named on the bilag, not in the register, and that is a perfectly
+      // ordinary thing for a bilag to be. It used to leave the field reading
+      // "ingen valgt" under a sentence explaining that the sender was not a
+      // registered party, which is a wordy way of showing the one thing the
+      // field is for and then not showing it.
+      //
+      // Now the name is the choice. Picking something else, or "ingen valgt",
+      // is still one click away.
+      //
+      // Only when the proposal is marked, which is the backend saying the name
+      // is one it would stand behind as a party. A name it read but will not
+      // vouch for is still in `counterparty_name`, and stays out of a list
+      // whose entries turn into rows in the register.
+      unregistered = suggestion.counterparty_name;
+      fillParties();
+      partySelect.value = NEW_PARTY;
+      mark('party_id');
+      showPartyNote();
     }
 
     // Said out loud, because the alternative is a form that came back half
@@ -877,22 +1182,211 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     manualRow.hidden = true;
   }
 
-  function showFile(file: File | null): void {
-    dropFile.hidden = file === null;
-    el<HTMLLabelElement>('.dropzone-cta').hidden = file !== null;
-    fileName.textContent = file === null ? '' : `${file.name} (${fileSize(file.size)})`;
+  /**
+   * The files this bilag is made of, in the order they were added.
+   *
+   * Held here rather than read off the input, because the input cannot
+   * accumulate: picking two more files replaces the two already chosen, and a
+   * user assembling a FINN purchase out of four screenshots would lose the
+   * first two every time they went back for more. This array is the truth, and
+   * it is what gets both read and attached.
+   */
+  let chosen: File[] = [];
+
+  /**
+   * Which read is current, and what the model has written into the description.
+   *
+   * `reads` counts them so a late answer from an abandoned read can be
+   * recognised and dropped. Two are genuinely in flight whenever somebody adds
+   * a file while the previous read is still going, or edits the description
+   * twice — and a stale answer painting the form is worse than no answer,
+   * because it looks like a correct one.
+   *
+   * `written` is what has arrived so far in the current read, kept separately
+   * from the field's value so that appending a piece cannot pick up whatever
+   * the user has meanwhile typed.
+   */
+  let reads = 0;
+  let written = '';
+  /**
+   * What the description held when the last read finished.
+   *
+   * Compared against on the way out of the field, so that tabbing through the
+   * box, or clicking into it and out again, is not mistaken for an edit — the
+   * model's own sentence would otherwise read as something the user had typed
+   * and trigger a read of the bilag with it.
+   */
+  let readWith = '';
+
+  function showFiles(): void {
+    el<HTMLLabelElement>('.dropzone-cta').hidden = chosen.length > 0;
+    dropFiles.hidden = chosen.length === 0;
+    dropMore.hidden = chosen.length === 0;
+    dropFiles.replaceChildren(
+      ...chosen.map((file) => {
+        const row = document.createElement('li');
+        const badge = document.createElement('span');
+        badge.className = 'badge';
+        badge.textContent = kindOf(file.type);
+        const name = document.createElement('span');
+        name.className = 'file-name';
+        name.textContent = `${file.name} (${fileSize(file.size)})`;
+        const drop = document.createElement('button');
+        drop.type = 'button';
+        drop.className = 'btn-link';
+        drop.textContent = 'Fjern';
+        drop.addEventListener('click', () => {
+          chosen = chosen.filter((candidate) => candidate !== file);
+          showFiles();
+          // Ikke lest på nytt automatisk. Å fjerne én av seks filer skal ikke
+          // koste et halvt minutts venting og skrive over det brukeren har
+          // rettet i skjemaet i mellomtiden.
+        });
+        row.append(badge, name, drop);
+        return row;
+      }),
+    );
   }
 
-  /** Hand the file to the backend and let it fill the form in. */
-  async function readDocument(file: File): Promise<void> {
-    showFile(file);
+  /**
+   * Show what the register still needs to know.
+   *
+   * The answer goes in the box below and the bilag is read again, so these are
+   * not decoration: they are the prompt that turns an optional free-text field
+   * into a question with an answer. Cleared on every read, because a question
+   * that has been answered must not still be on screen.
+   */
+  function showQuestions(suggestion: InvoiceSuggestion): void {
+    const asks = suggestion.questions;
+    askList.hidden = asks.length === 0;
+    askList.replaceChildren(
+      ...asks.map((ask) => {
+        const row = document.createElement('li');
+        if (ask.asked_by_model) row.dataset.ki = 'true';
+        row.append(ask.text);
+        if (ask.asked_by_model) {
+          const source = document.createElement('span');
+          source.className = 'ask-source';
+          source.textContent = 'Spurt av KI';
+          row.append(source);
+        }
+        return row;
+      }),
+    );
+    // Sende folk til boksen de skal svare i, uten å stjele fokus fra det de
+    // holder på med: bare når det faktisk er noe å svare på.
+    if (asks.length > 0) descriptionBox.setAttribute('aria-describedby', 'doc-questions');
+  }
+
+  /** Mark the files that produced no text, so the user can see which. */
+  /**
+   * Lock the description while the model is on its way to writing in it.
+   *
+   * Only while it is *about* to be written: a field the user filled in
+   * themselves is never locked, because nothing is going to overwrite it and
+   * taking it away mid-sentence would be the rudest possible moment.
+   */
+  function describing(busy: boolean): void {
+    descriptionBusy.hidden = !busy;
+    descriptionBox.disabled = busy;
+    // The placeholder would otherwise show through under the dots and read as
+    // a question nobody is being asked yet.
+    descriptionBox.placeholder = busy ? '' : DESCRIPTION_PLACEHOLDER;
+  }
+
+  const DESCRIPTION_PLACEHOLDER = descriptionBox.placeholder;
+
+  function markUnread(suggestion: InvoiceSuggestion): void {
+    markRead(suggestion.documents_read);
+  }
+
+  /** Mark the files that produced no text, so the user can see which. */
+  function markRead(documents: DocumentRead[]): void {
+    const rows = [...dropFiles.children];
+    for (const [index, read] of documents.entries()) {
+      const row = rows[index];
+      if (row === undefined) continue;
+      if (read.chars > 0) {
+        delete (row as HTMLElement).dataset.unread;
+        continue;
+      }
+      (row as HTMLElement).dataset.unread = 'true';
+      const note = document.createElement('span');
+      note.className = 'file-note';
+      note.textContent = 'ikke lest';
+      row.append(note);
+    }
+  }
+
+  /**
+   * Hand the whole bilag to the backend and let it fill the form in.
+   *
+   * `keepDescription` says the sentence in the box is an input rather than an
+   * output: it is sent to the model as context and left alone afterwards. That
+   * is obviously right when the read was caused by the user editing it, and it
+   * defaults to the same thing whenever the box holds anything the model did
+   * not write itself — text typed before a file was even chosen, or an answer
+   * to a question, both of which would otherwise be overwritten by the reply
+   * they were meant to inform. `readWith` is what the model last put there, so
+   * "the model's own sentence" is a comparison and not a guess.
+   */
+  async function readDocuments({
+    keepDescription = descriptionBox.value.trim() !== '' &&
+      descriptionBox.value !== readWith,
+  } = {}): Promise<void> {
+    if (chosen.length === 0) return;
+    reads += 1;
+    const read = reads;
+    if (!keepDescription) {
+      written = '';
+      describing(true);
+    }
+    showFiles();
+    // Reading images is inference and not parsing, so a bilag of six
+    // screenshots is a genuine wait rather than a flicker. Say how many, so the
+    // spinner is a progress report instead of a mystery.
+    readingText.textContent =
+      chosen.length === 1
+        ? 'Leser bilaget …'
+        : `Leser ${chosen.length} dokumenter … bilder tar litt tid.`;
     reading.hidden = false;
     submit.disabled = true;
     setStatus(formStatus, '');
+    // The fields open before the answer arrives, because the description is
+    // written into one of them while we wait. A form that appeared only at the
+    // end would leave the typing happening somewhere the user cannot see.
+    revealFields();
     try {
-      applySuggestion(await interpretDocument(company.id, file));
+      const suggestion = await interpretDocumentStreaming(
+        company.id,
+        chosen,
+        keepDescription ? descriptionBox.value : undefined,
+        {
+          onDocuments: (documents) => {
+            if (read !== reads) return;
+            markRead(documents);
+          },
+          onDescription: (piece) => {
+            // A stale read must not type into the box. Two reads can overlap —
+            // the user adds a file while the previous read is still going — and
+            // the older one's sentence arriving into the newer one's field
+            // would interleave two descriptions character by character.
+            if (read !== reads || keepDescription) return;
+            // The first piece is what the dots were waiting for.
+            describing(false);
+            written += piece;
+            descriptionBox.value = written;
+            markField('description', 'Skriver …', 'ki');
+          },
+        },
+      );
+      if (read !== reads) return;
+      applySuggestion(suggestion, { keepDescription });
+      markUnread(suggestion);
+      showQuestions(suggestion);
       revealFields();
     } catch (error: unknown) {
+      if (read !== reads) return;
       // The fields open even so. A reading that failed is precisely the case
       // where the user has to fill them in, and leaving them shut would answer
       // "we could not read it" with nowhere to go.
@@ -909,27 +1403,94 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         clearFile();
       }
     } finally {
-      reading.hidden = true;
-      submit.disabled = false;
+      // Only the current read owns the spinner and the submit button. An
+      // abandoned one clearing them would say "finished" while the real read is
+      // still going.
+      if (read === reads) {
+        reading.hidden = true;
+        submit.disabled = false;
+        // Whatever happened, the field goes back to the user. A read that
+        // failed leaves them with an empty box to fill in, and a box they
+        // cannot type in is the one thing that would make that worse.
+        describing(false);
+      }
     }
   }
 
   function clearFile(): void {
     fileInput.value = '';
-    showFile(null);
+    chosen = [];
+    showFiles();
     clearMarks();
+    // No bilag, no name off one. Rebuilt so the choice disappears from the
+    // list rather than lingering as something the form would go and register.
+    unregistered = null;
+    fillParties();
+    askList.hidden = true;
+    askList.replaceChildren();
+    written = '';
+    readWith = '';
+  }
+
+  /** Add files to the bilag, skipping any already on it. */
+  function addFiles(files: FileList | null | undefined): void {
+    if (!files || files.length === 0) return;
+    for (const file of files) {
+      // Same name and same size is the same file picked twice, which is what
+      // happens when somebody re-opens the dialog rather than adding to it.
+      const already = chosen.some(
+        (candidate) => candidate.name === file.name && candidate.size === file.size,
+      );
+      if (!already) chosen.push(file);
+    }
+    // Emptied so that picking the same file again after removing it still fires
+    // a change event; the array above is what we actually keep.
+    fileInput.value = '';
+    void readDocuments();
   }
 
   fileInput.addEventListener('change', () => {
-    const file = fileInput.files?.[0];
-    if (file === undefined) {
-      showFile(null);
-      return;
-    }
-    void readDocument(file);
+    addFiles(fileInput.files);
   });
 
   el<HTMLButtonElement>('#file-clear').addEventListener('click', clearFile);
+
+  /*
+    Editing the description reads the bilag again. There used to be a button
+    for this, and a button is a worse design for the same thing: it asks the
+    user to know that answering the question was only half of it, and the half
+    that fills the form in is the one behind a control they have to notice.
+
+    Two things keep it from being expensive. The wait is debounced past the end
+    of a sentence rather than fired per keystroke, and the server remembers what
+    each file said — so the second read costs a prompt and not another ninety
+    seconds of transcribing screenshots.
+  */
+  const REREAD_AFTER_MS = 1200;
+  let rereadTimer: number | undefined;
+
+  function scheduleReread(): void {
+    window.clearTimeout(rereadTimer);
+    const typed = descriptionBox.value.trim();
+    // Nothing to read with, nothing to read, or nothing changed since last time.
+    if (chosen.length === 0 || typed === '' || typed === readWith.trim()) return;
+    rereadTimer = window.setTimeout(() => {
+      readWith = descriptionBox.value;
+      void readDocuments({ keepDescription: true });
+    }, REREAD_AFTER_MS);
+  }
+
+  descriptionBox.addEventListener('input', scheduleReread);
+  // And immediately on the way out of the field, because somebody who has
+  // finished typing and clicked elsewhere has finished; waiting out the timer
+  // then is a pause with nothing happening in it.
+  descriptionBox.addEventListener('blur', () => {
+    window.clearTimeout(rereadTimer);
+    const typed = descriptionBox.value.trim();
+    if (chosen.length === 0 || typed === '' || typed === readWith.trim()) return;
+    readWith = descriptionBox.value;
+    void readDocuments({ keepDescription: true });
+  });
 
   el<HTMLButtonElement>('#cancel-edit-button').addEventListener('click', () => {
     endEdit();
@@ -963,14 +1524,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   }
   dropzone.addEventListener('drop', (dropEvent) => {
     dropEvent.preventDefault();
-    const file = dropEvent.dataTransfer?.files?.[0];
-    if (file === undefined) return;
-    // Assigning back to the input keeps one source of truth for the file that
-    // gets attached on submit, whether it was dropped or picked.
-    const transfer = new DataTransfer();
-    transfer.items.add(file);
-    fileInput.files = transfer.files;
-    void readDocument(file);
+    // Every dropped file, not just the first. Dragging a folder of screenshots
+    // onto the zone is the natural way to assemble a multi-document bilag.
+    addFiles(dropEvent.dataTransfer?.files);
   });
 
   // --- Registeret -------------------------------------------------------------
@@ -1016,6 +1572,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       pair('Mva-kode', entry.tax_code ?? '-'),
       // 1900 er kontantkassen og 1920 bankkontoen.
       pair('Betalt via', entry.payment_account === '1900' ? 'Kontant' : 'Bankkonto'),
+      // Alltid her, også når bare én person fører: den som åpner detaljene har
+      // spurt om denne føringen, og da er «hvem førte den» et av svarene.
+      // Merket oppe på raden er det som kommer og går.
+      pair('Ført av', authorOf(entry)),
     );
 
     holder.append(list);
@@ -1062,7 +1622,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       const link = document.createElement('a');
       link.href = documentUrl(company.id, attachment.id);
       link.className = 'badge';
-      link.textContent = `PDF ${fileSize(attachment.byte_size)}`;
+      // What the file is, not what most files are. Nine screenshots of an
+      // AliExpress order were all labelled "PDF", which is the register
+      // describing the bilag wrongly in the one column that describes it.
+      link.textContent = `${kindOf(attachment.content_type)} ${fileSize(attachment.byte_size)}`;
       link.title = attachment.filename;
       documents.append(link, document.createTextNode(' '));
     }
@@ -1113,6 +1676,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
     const when = cell(isoDate(entry.occurred_on));
     const what = cell(entry.description);
+    if (marksAuthor) {
+      // Under beskrivelsen, ikke i en egen kolonne: kolonnen ville stått tom på
+      // en bok med én fører, og registeret har alt seks kolonner på en telefon.
+      // Samme plass som merknaden om en retting, av samme grunn.
+      const who = document.createElement('span');
+      who.className = 'entry-author';
+      who.textContent = `Ført av ${authorOf(entry)}`;
+      what.append(who);
+    }
     row.append(
       when,
       cell(entry.voucher_no),
@@ -1176,6 +1748,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   }
 
   function renderEntries(rows: RegisterRow[]): void {
+    // Over alle bilagene, også de som ligger sammenslått under en retting: en
+    // føring en kollega rettet er nettopp et register med to hender i.
+    marksAuthor = namesAuthors(rows.flatMap(vouchersIn));
     body.replaceChildren();
     for (const row of rows) {
       body.append(
@@ -1228,19 +1803,26 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     flag.hidden = missing === 0;
   }
 
-  /** A per-row "add a PDF" control, for a bilag that arrives after the entry. */
+  /** A per-row "add the bilag" control, for one that arrives after the entry. */
   function uploadControl(entry: CashFlowEntry): HTMLLabelElement {
     const label = document.createElement('label');
     label.className = 'btn-link';
-    label.textContent = 'Legg ved PDF';
+    label.textContent = 'Legg ved bilag';
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = 'application/pdf,.pdf';
+    input.multiple = true;
+    input.accept = ATTACHMENT_ACCEPT;
     input.hidden = true;
     input.addEventListener('change', () => {
-      const file = input.files?.[0];
-      if (file === undefined) return;
-      void uploadDocument(company.id, entry.id, file)
+      const files = [...(input.files ?? [])];
+      if (files.length === 0) return;
+      // Sequentially, so a rejected file is reported by name rather than as one
+      // of several simultaneous failures.
+      void files
+        .reduce(
+          (chain, file) => chain.then(() => uploadDocument(company.id, entry.id, file)),
+          Promise.resolve() as Promise<unknown>,
+        )
         .then(() => refresh())
         .catch((error: unknown) => {
           setStatus(
@@ -1348,8 +1930,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
     const amount = form.querySelector<HTMLInputElement>('input[name="gross_amount"]');
     if (amount !== null) amount.value = entry.gross_amount;
-    const description = form.querySelector<HTMLInputElement>('input[name="description"]');
-    if (description !== null) description.value = entry.description;
+    // The description is the textarea at the top of the form now, not an input
+    // further down. Editing an entry has to fill in the one that exists.
+    descriptionBox.value = entry.description;
+    readWith = entry.description;
     partySelect.value = entry.party_id === null ? '' : String(entry.party_id);
 
     const method = form.querySelector<HTMLSelectElement>('select[name="payment_method"]');
@@ -1389,12 +1973,52 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       const field = target.closest<HTMLElement>('.field[data-field]');
       if (field !== null) markField(field.dataset.field ?? '', null);
     }
+    // Last, because the line above has just taken the proposal mark off the
+    // field the user touched, and this one belongs to the choice, not the mark.
+    if (target === partySelect) showPartyNote();
   });
+
+  /**
+   * The party the voucher points at, registering the name from the bilag first
+   * if that is the choice showing.
+   *
+   * Only the name goes in. The number is generated and the organisasjonsnummer
+   * stays empty, because a name is what the bilag actually said, and a party
+   * with nothing but a name is still a party the next bilag can be matched
+   * against.
+   */
+  async function chosenParty(picked: string): Promise<number | null> {
+    if (picked === '') return null;
+    if (picked !== NEW_PARTY) return Number(picked);
+    if (unregistered === null) return null;
+    try {
+      const party = await createParty(company.id, {
+        // Money out means we are the customer, so the other side is a supplier.
+        party_type: currentDirection() === 'ut' ? 'leverandor' : 'kunde',
+        name: unregistered,
+      });
+      parties = [...parties, party];
+      return party.id;
+    } catch (error: unknown) {
+      // Said in terms of the form the user is looking at. The register's own
+      // wording is about numbers and duplicates, which reads like a mystery
+      // next to a payment that has nothing wrong with it.
+      throw new ApiError(
+        error instanceof ApiError ? error.status : 0,
+        `Vi fikk ikke lagt ${unregistered} inn som motpart, så betalingen er ikke ført. ` +
+          'Velg «ingen valgt» og før den, eller prøv igjen.',
+        null,
+      );
+    }
+  }
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     const data = new FormData(form);
-    const file = fileInput.files?.[0];
+    // Captured before the form is reset, and every one of them: the bilag is
+    // all of the documents, and archiving only the first would leave four of
+    // five screenshots of a FINN purchase nowhere at all.
+    const attaching = [...chosen];
 
     submit.disabled = true;
     setStatus(formStatus, '');
@@ -1404,32 +2028,46 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       type_code: String(data.get('type_code') ?? ''),
       occurred_on: String(data.get('occurred_on') ?? ''),
       gross_amount: String(data.get('gross_amount') ?? ''),
-      description: String(data.get('description') ?? '').trim(),
+      // Optional to the user, not to the ledger. A voucher has to say what it
+      // concerns, so an empty box falls back to the category the user did
+      // choose: "Varekjøp" beside a date and an amount is a real bilagstekst,
+      // and it is what the register would have shown anyway. Refusing to post
+      // instead would make "(valgfritt)" a label over a field that blocks you.
+      description: String(data.get('description') ?? '').trim() || describedByType(),
       tax_code: String(data.get('tax_code') ?? ''),
       payment_method: (data.get('payment_method') === 'kontant' ? 'kontant' : 'bank') as
         | 'bank'
         | 'kontant',
-      party_id: data.get('party_id') ? Number(data.get('party_id')) : null,
+      // Filled in below: the one choice that is not a row in the register has
+      // to become one before the voucher can point at it.
+      party_id: null as number | null,
     };
-    const saving =
-      edited === null
+    const saving = chosenParty(String(data.get('party_id') ?? '')).then((partyPk) => {
+      values.party_id = partyPk;
+      return edited === null
         ? recordCashFlow(company.id, values)
         : editCashFlow(company.id, edited.id, values);
+    });
     void saving
       .then(async (entry) => {
-        // The entry is posted whether or not the document sticks; a failed
-        // upload must therefore not read as a failed registration.
-        if (file !== undefined) {
+        // The entry is posted whether or not the documents stick; a failed
+        // upload must therefore not read as a failed registration. Each is
+        // attached on its own and a failure names the file, because "the
+        // document was rejected" about six of them says nothing actionable.
+        const rejected: string[] = [];
+        for (const file of attaching) {
           try {
             await uploadDocument(company.id, entry.id, file);
-          } catch (error: unknown) {
-            setStatus(
-              pageStatus,
-              error instanceof ApiError
-                ? `Betalingen er ført, men dokumentet ble avvist: ${error.message}`
-                : 'Betalingen er ført, men dokumentet ble ikke lagret.',
-            );
+          } catch {
+            rejected.push(file.name);
           }
+        }
+        if (rejected.length > 0) {
+          setStatus(
+            pageStatus,
+            `Betalingen er ført, men disse ble ikke lagret: ${rejected.join(', ')}. ` +
+              'Legg dem ved på nytt fra registeret under.',
+          );
         }
         setStatus(
           formStatus,
@@ -1442,6 +2080,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         endEdit();
         form.reset();
         clearFile();
+        descriptionBox.value = '';
         el<HTMLInputElement>('#date-input').value = todayIso();
         fillTypes();
         fillParties();
@@ -1480,7 +2119,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       const current = currentCompany(companies);
       if (current === undefined) return;
       company = current;
-      mountCompanyPicker(picker, companies, company);
 
       el('#company-name').textContent = company.name;
       mayWrite = can(session, company.organization_id, 'ledger:write');
@@ -1490,14 +2128,22 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       for (const code of catalogue.tax_codes) {
         taxSelect.append(option(code.code, `${code.code}: ${code.description}`));
       }
-      parties = await listParties(company.id);
-      fillParties();
+
       el<HTMLInputElement>('#date-input').value = todayIso();
       el('#file-hint').textContent =
         `Dra PDF-en hit, eller velg fil. Maks ${fileSize(catalogue.max_attachment_bytes)}.`;
       fillTypes();
 
-      await refresh();
+      // Asked together, not one after the other. The counterparty list and the
+      // register are two independent questions about the same company, and in
+      // single file the second could not leave the browser until the first had
+      // crossed the country and come back. Nothing between them reads
+      // `parties`, so there was nothing ordering them but the way it was
+      // written.
+      const [loadedParties] = await Promise.all([listParties(company.id), refresh()]);
+      parties = loadedParties;
+      fillParties();
+
       loading.hidden = true;
       content.hidden = false;
     } catch (error: unknown) {

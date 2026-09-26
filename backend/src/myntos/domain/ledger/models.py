@@ -35,6 +35,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     Date,
@@ -49,6 +50,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from myntos.db.base import Base
@@ -102,9 +104,12 @@ class PartyType(enum.StrEnum):
 class Company(Base):
     """The reporting entity — SAF-T ``Header`` / ``Company``.
 
-    One row per bookkeeping-obligated business, owned by the
-    :class:`~myntos.domain.identity.models.Organization` whose members keep its
-    books. A regnskapsfører is one organization with many companies.
+    One row per bookkeeping-obligated business. ``organization_id`` says which
+    account set it up and is what decides where a *new* company may be added;
+    who may read and write *this* one is
+    :class:`~myntos.domain.identity.models.CompanyMembership`, one row per
+    person per company. A regnskapsfører is one account with many companies and
+    a different set of colleagues on each.
 
     ``orgnr`` is unique **per organization**, not globally: two accounting firms
     may each keep a set of books for the same client, and a global constraint
@@ -162,9 +167,24 @@ class Company(Base):
     # the marking above can be checked against what the register says rather than
     # against what somebody ticked.
     organisation_form: Mapped[str | None] = mapped_column(String(16))
-    # Where invoices are paid. Carried into the e-invoice as
-    # PayeeFinancialAccount, and printed on the PDF.
-    bank_account: Mapped[str | None] = mapped_column(String(34))
+    # Where invoices are paid is a table of its own — see
+    # :class:`CompanyBankAccount`. It used to be a column here, and one column
+    # is one account: a business with a driftskonto and a skattetrekkskonto had
+    # to keep the second one somewhere else, which in practice meant on a
+    # sticky note beside the screen.
+
+    # What this set of books costs, and therefore what it may use.
+    #
+    # Per company rather than per account, because a set of books is the thing
+    # that has a size: a regnskapsfører with twenty clients is not one
+    # subscription, and a private person with one company should not be priced
+    # as though they might have twenty. It also puts the price next to the thing
+    # being paid for, which is where somebody looks for it.
+    #
+    # A plain string, and nothing enforces it yet: there is no billing. It says
+    # what tier these books are on so that the day there is one, the column it
+    # bills from is already the right shape.
+    plan: Mapped[str] = mapped_column(String(32), default="free")
 
     # Whether this company's documents may be shown to a model at all.
     #
@@ -194,10 +214,11 @@ class Company(Base):
     # register is the authority for every one of them, so a copy here is a cache
     # with a timestamp rather than a second opinion.
     #
-    # Only the fields something in the system actually uses are stored. The rest
-    # of what the register holds — board, revisor, kapital, formål, historical
-    # names — is fetched live for display and never persisted: it changes
-    # without telling us, and some of it is other people's personal data.
+    # These are the fields the system *uses*: an invoice repeats them, a filing
+    # asks for them, and code reads them by name. Everything else the register
+    # holds is kept too, but whole and off to one side, in
+    # :class:`CompanyRegisterSnapshot` — a column per field would mean a
+    # migration every time Brønnøysund adds one.
 
     # SN2007. The næringsspesifikasjon asks for it, which is why this one is
     # stored rather than merely shown.
@@ -241,13 +262,166 @@ class Company(Base):
     def is_verified(self) -> bool:
         return self.verified_at is not None
 
+    @property
+    def primary_bank_account(self) -> CompanyBankAccount | None:
+        """The account an invoice is paid to unless it says otherwise.
+
+        ``None`` when the company has no account at all, which is the ordinary
+        state of books somebody set up ten minutes ago and the reason a
+        salgsdokument cannot be issued yet. Never raises: ``bank_accounts`` is
+        eagerly loaded, so this is a list scan and not a lazy query firing
+        inside whatever happens to be reading it.
+        """
+        for account in self.bank_accounts:
+            if account.is_primary:
+                return account
+        return None
+
     organization: Mapped[Organization] = relationship()
+    # Lazy on purpose, and never joined into a listing: see the class docstring.
+    register_snapshot: Mapped[CompanyRegisterSnapshot | None] = relationship(
+        back_populates="company", cascade="all, delete-orphan", uselist=False
+    )
     financial_years: Mapped[list[FinancialYear]] = relationship(
         back_populates="company", cascade="all, delete-orphan"
     )
     accounts: Mapped[list[Account]] = relationship(
         back_populates="company", cascade="all, delete-orphan"
     )
+    # Eager, unlike every other collection on this table, and the exception is
+    # deliberate: the primary account decides whether an invoice can be issued
+    # at all, so every response that carries a company carries its accounts,
+    # and a lazy load would be a MissingGreenlet inside a running request.
+    # Ordered primary-first so the interface and the invoice agree on which one
+    # is "the" account without either of them having to sort.
+    bank_accounts: Mapped[list[CompanyBankAccount]] = relationship(
+        back_populates="company",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="(CompanyBankAccount.is_primary.desc(), CompanyBankAccount.id)",
+    )
+
+
+class CompanyBankAccount(Base):
+    """One kontonummer the company is paid into.
+
+    A table and not a column, because a company has as many accounts as its bank
+    gave it: a driftskonto to invoice against, a skattetrekkskonto that
+    skattebetalingsloven § 5-12 requires be kept apart from the operating money,
+    a currency account, a savings account. The column that used to be here
+    (``company.bank_account``) could hold exactly one, so everyone with two put
+    the second one nowhere.
+
+    Three rules, each one load-bearing:
+
+    1. **The number is stored normalised**, eleven digits with no separators,
+       checked by :func:`myntos.domain.ledger.bankkonto.validate_bank_account`
+       before it is written. It reaches the outside world on every invoice and
+       an issued salgsdokument cannot be corrected.
+    2. **Unique per company, not globally.** Two sets of books may legitimately
+       name the same account — a sole trader's ENK and the AS that took it over
+       is the ordinary case — and a global constraint would let whoever typed it
+       first lock everybody else out. Same reasoning as ``orgnr`` on
+       :class:`Company`.
+    3. **At most one primary**, enforced by a partial unique index rather than
+       by hoping the service always clears the old one first. ``is_primary`` is
+       what an invoice falls back to when it names no account of its own, so two
+       of them would make "where does this get paid" depend on row order.
+
+    Deleting one is allowed and does not rewrite history: an issued
+    salgsdokument carries its own copy of the number
+    (``SalesDocument.seller_bank_account``), and the foreign key from the
+    document is ``SET NULL`` so a closed account takes nothing with it.
+    """
+
+    __tablename__ = "company_bank_account"
+    __table_args__ = (
+        UniqueConstraint("company_id", "account", name="uq_company_bank_account_number"),
+        # Partial, so it binds the primary and leaves the rest alone. Being
+        # checked statement by statement is what shapes the service: it demotes
+        # in one flush and promotes in the next, because a single flush is free
+        # to write the two updates in either order. This index is the backstop
+        # for two requests promoting different rows at once, where a
+        # check-then-write would let both through and leave the company with two
+        # answers to "which account is this invoice paid to".
+        Index(
+            "uq_company_bank_account_primary",
+            "company_id",
+            unique=True,
+            sqlite_where=text("is_primary"),
+            postgresql_where=text("is_primary"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("company.id", ondelete="CASCADE"))
+    # Eleven digits, no separators. String and not an integer: a kontonummer is
+    # a written identifier that may begin with a zero, and arithmetic on one is
+    # never the right thing to do.
+    account: Mapped[str] = mapped_column(String(11))
+    # What the person calls it — "Drift", "Skattetrekk", "Valuta". Optional,
+    # because a company with one account does not need to name it, and required
+    # naming would be a form field to skip rather than a fact to record.
+    label: Mapped[str | None] = mapped_column(String(64))
+    # The one an invoice is paid to when it names none itself. A Python-side
+    # default only, like the booleans on Company: the migration carries the
+    # server default that backfills the existing rows and then drops it.
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    company: Mapped[Company] = relationship(back_populates="bank_accounts")
+
+
+class CompanyRegisterSnapshot(Base):
+    """Everything Enhetsregisteret answered about a company, kept whole.
+
+    The columns on :class:`Company` are the handful the system reads by name —
+    the næringskode a næringsspesifikasjon asks for, the address and flags an
+    invoice repeats. This is the rest, and the reason it is stored rather than
+    shown and discarded is that the alternative is asking Brønnøysund again for
+    something we already had. Styre and revisor, kapital and formål, tidligere
+    navn, stiftelsesdato: none of it is used today, and all of it is one answer
+    away from being usable without a second round trip.
+
+    Kept as JSON rather than as columns on purpose. Nothing in here is queried
+    by field, the register adds fields without asking, and a column per field
+    would make every one of those additions a migration. What *is* queried —
+    which company, and how old the answer is — is a column.
+
+    One row per company, replaced rather than appended: this is the current
+    picture, not a history. A register answer that has been superseded says
+    nothing useful about a business, only about our fetching.
+
+    Held in its own table rather than on ``company`` because every page load
+    lists companies and none of them wants a document-sized blob dragged along
+    for the ride.
+
+    It is public data — Enhetsregisteret publishes all of it — but it does name
+    people, and a copy that is never refreshed is a copy that quietly goes
+    wrong. ``fetched_at`` is what keeps it honest, and it is shown next to the
+    data wherever the data is shown.
+    """
+
+    __tablename__ = "company_register_snapshot"
+    __table_args__ = (
+        UniqueConstraint("company_id", name="uq_company_register_snapshot_company_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("company.id", ondelete="CASCADE"))
+    # The orgnr the answer is *about*. Not derived from the company at read
+    # time: an unconfirmed company's orgnr can still be corrected, and a
+    # snapshot describing the number that was there before must be recognisable
+    # as stale rather than silently reread as the new one's.
+    orgnr: Mapped[str] = mapped_column(String(9))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # The unit as :class:`myntos.integrations.brreg.RegisteredUnit` renders it,
+    # and the roles as the same module returns them. JSONB where we have it,
+    # because a JSON column on PostgreSQL reparses on every read for nothing.
+    unit: Mapped[dict[str, object]] = mapped_column(JSON().with_variant(JSONB, "postgresql"))
+    roles: Mapped[list[dict[str, object]]] = mapped_column(JSON().with_variant(JSONB, "postgresql"))
+
+    company: Mapped[Company] = relationship(back_populates="register_snapshot")
 
 
 class FinancialYear(Base):
@@ -561,6 +735,28 @@ class Transaction(Base):
     gl_posting_date: Mapped[date] = mapped_column(Date)
     system_entry_date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+    # Who entered it. ``system_entry_date`` says when the system recorded the
+    # voucher and said nothing about by whom, which is fine for one person and
+    # useless the moment a second one has a CompanyMembership on the same books:
+    # a regnskapsfører and the owner both post to the same journal, and "who
+    # booked this as a private withdrawal" had no answer in the data at all.
+    #
+    # Nullable, and not because a voucher may lack an author. Three reasons it
+    # can be NULL: rows posted before this column existed, GDPR erasure taking
+    # the person and leaving the record, and a voucher some future job posts
+    # with nobody logged in. A reader must therefore treat NULL as "not
+    # recorded" and never as "nobody": the register shows «ukjent» for it rather
+    # than inventing a name or quietly leaving the field out.
+    #
+    # SET NULL rather than CASCADE, for the same reason as the bilag archive:
+    # deleting the person must never delete the bookkeeping they did. A posted
+    # voucher is history (bokføringsloven § 13) and outlives every account.
+    #
+    # Not a SAF-T field: the standard's Transaction has no user, so this is ours
+    # and does not reach the export.
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("app_user.id", ondelete="SET NULL")
     )
     description: Mapped[str] = mapped_column(String(255))
     # SAF-T TransactionType — bilagstype.

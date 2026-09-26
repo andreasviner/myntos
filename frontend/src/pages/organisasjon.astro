@@ -2,434 +2,368 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 ---
 
+{/* Selskapet: hvem det er, og hvem som har tilgang til regnskapet.
+
+    Siden er bygget som ett kort per spørsmål, og hvert kort viser først svaret
+    og deretter — bak «Endre» — skjemaet som retter det. En side som møter deg
+    med seks skjemaer ser ut som seks oppgaver du har til gode; de samme seks
+    som opplysninger ser ut som det de er, nemlig at alt er på plass.
+
+    Alt som bygges i JavaScript her — Altinn-listen, rollene, medlemsradene —
+    får aldri attributtet Astro bruker for å avgrense stiler til én side. Derfor
+    er stilarket under `is:global` og alt henger under `.org`. Uten det står
+    listene upyntet, som de gjorde før. */}
+
 <BaseLayout
-  title="Organisasjonen | Myntos"
-  description="Medlemmer, roller og invitasjoner i organisasjonen din."
+  title="Selskapet | Myntos"
+  description="Selskapet, medlemmene som fører regnskapet og invitasjonene til det."
   width="wide"
 >
-  <header class="page-head">
-    <div>
-      <p class="eyebrow">Organisasjon</p>
-      <h1 id="organization-name">…</h1>
-    </div>
-    <label class="picker">
-      <span class="visually-hidden">Velg organisasjon</span>
-      <select id="organization-picker" hidden></select>
-    </label>
-  </header>
+  <div class="org">
+    {/* Selskapet, og bare selskapet.
 
-  <p class="status" id="page-status" hidden></p>
+        Her sto kontoen over overskriften, og en velger for å bytte konto ved
+        siden av. Begge er borte: kontoen eier selskapene og ingenting annet
+        noen ser på, og et kontonavn — som gjerne er navnet på det første
+        selskapet noen satte opp — leses som selskapets eget når det står to
+        centimeter over et annet selskaps tall. Det ble meldt som en lekkasje,
+        og det er nettopp slik det ser ut. Se docs/company-isolation.md. */}
+    <header class="org-head">
+      <div>
+        <p class="eyebrow">Selskap</p>
+        <h1 id="sidetittel">…</h1>
+      </div>
+    </header>
 
-  {/* Øverst på siden, fordi det er hit «Ubekreftet» i toppen lenker.
+    <p class="status" id="page-status" hidden></p>
 
-      Gult og ikke rødt: ingenting er galt. Regnskapet føres, fakturaer
-      utstedes, og alt virker. Det som mangler er at noen har vist at de kan
-      opptre for selskapet, og det er en oppgave som venter — ikke en feil som
-      har skjedd. */}
-  <div class="varsel" id="ubekreftet-varsel" hidden>
-    <div>
-      <p class="varsel-tittel">Selskapet ditt er ikke bekreftet hos oss</p>
-      <p class="varsel-tekst" id="ubekreftet-tekst">
-        Logg inn med ID-porten for å bekrefte rollen din i selskapet. Vi spør Altinn hvilke
-        selskaper du kan opptre for, og bekrefter regnskapet mot det. Regnskapet virker som før
-        i mellomtiden.
-      </p>
-      <p class="status" id="ubekreftet-status" hidden></p>
-    </div>
-    {/* Én knapp, med ett navn, synlig i samme øyeblikk som varselet.
+    {/* Øverst på siden, fordi det er hit «Ubekreftet» i toppen lenker.
 
-        Knappen heter det den gjør: bekrefte selskapet. At den underveis må
-        innom ID-porten er vår sak, ikke en avgjørelse brukeren skal ta i
-        toppen av siden — en knapp som skifter navn til «Logg inn med
-        ID-porten» ser ut som en annen oppgave enn den varselet ber om, og da
-        leter man videre etter bekreftelsesknappen som allerede står der.
-        Avsnittet over sier at ID-porten brukes; knappen sier hva man får. */}
-    <div class="varsel-knapper">
-      <button type="button" class="btn btn-primary" id="varsel-fiks">Bekreft selskapet</button>
-      <a class="btn btn-ghost" id="varsel-nytt" href="#nytt-selskap" hidden>Opprett nytt regnskap</a>
-    </div>
-  </div>
-
-  <div class="empty" id="loading">Henter …</div>
-
-  <div id="content" hidden>
-    <p class="lead">
-      Abonnement og betaling hører til organisasjonen, ikke til den enkelte. Å invitere en kollega
-      inn koster derfor ingenting ekstra, og gir dem tilgang til de samme selskapene som deg.
-    </p>
-
-    {/* Bare for den som kan styre organisasjonen. Navnet er ikke pynt: det står
-        i toppen av hver side og i invitasjonene kollegaer får. */}
-    <div id="rename" hidden>
-      <h2>Navn</h2>
-      <div class="card">
-        <p class="status" id="rename-status" hidden></p>
-        <p class="card-hint" id="placeholder-note" hidden>
-          Navnet under er et vi fant på da du opprettet kontoen. Skriv inn navnet du vil at
-          organisasjonen skal hete.
+        Gult og ikke rødt: ingenting er galt. Regnskapet føres, fakturaer
+        utstedes, og alt virker. Det som mangler er at noen har vist at de kan
+        opptre for selskapet, og det er en oppgave som venter — ikke en feil som
+        har skjedd. */}
+    <div class="varsel" id="ubekreftet-varsel" hidden>
+      <div>
+        <p class="varsel-tittel">Selskapet ditt er ikke bekreftet hos oss</p>
+        <p class="varsel-tekst" id="ubekreftet-tekst">
+          Logg inn med ID-porten for å bekrefte rollen din i selskapet. Vi spør Altinn hvilke
+          selskaper du kan opptre for, og bekrefter regnskapet mot det. Regnskapet virker som før
+          i mellomtiden.
         </p>
-        <form id="rename-form" class="rename-form">
-          <label class="field">
-            <span>Navn på organisasjonen</span>
-            <input
-              type="text"
-              id="rename-input"
-              name="name"
-              required
-              maxlength="255"
-              autocomplete="organization"
-            />
-            <span class="field-hint">
-              Organisasjonen er Myntos-kontoen, og den eier medlemmene og abonnementet, og kan holde
-              flere selskaper. Adressen til organisasjonen endres ikke, så lenker fortsetter å virke.
-            </span>
-          </label>
-          <button class="btn btn-primary" type="submit" id="rename-submit">Lagre navnet</button>
-        </form>
+        <p class="status" id="ubekreftet-status" hidden></p>
+      </div>
+      {/* Én knapp, med ett navn, synlig i samme øyeblikk som varselet. Knappen
+          heter det den gjør: bekrefte selskapet. At den underveis må innom
+          ID-porten er vår sak, ikke en avgjørelse brukeren skal ta i toppen av
+          siden. */}
+      <div class="varsel-knapper">
+        <button type="button" class="btn btn-primary" id="varsel-fiks">Bekreft selskapet</button>
       </div>
     </div>
 
-    {/* Selskapet, altså det som står på fakturaene. Kontonummeret hører hit og ikke
-        på fakturaskjemaet: det er det samme på hver faktura, og en faktura som
-        er utstedt kan bare rettes med kreditnota. Derfor nekter /faktura/ å
-        utstede så lenge feltet er tomt. */}
-    <div id="selskap" hidden>
-      <h2>Selskapet</h2>
-      <div class="card">
-        <p class="card-hint">
-          Dette er det selskapet fakturaene kommer fra, og feltene under er de fakturaen selv
-          gjentar, jf. bokføringsforskriften § 5-1-2. Endringer gjelder fakturaer som utstedes
-          etterpå; en utstedt faktura bærer sin egen kopi av alt dette.
-        </p>
-        <p class="status" id="selskap-status" hidden></p>
+    <div class="empty" id="loading">Henter …</div>
 
-        {/* Eierskapet.
+    <div id="content" hidden>
+      {/* --- Selskapet ------------------------------------------------------
 
-            Å skrive inn ni siffer viser ingenting. Et regnskap er ubekreftet
-            til noen har vist gjennom Altinn at de kan opptre for selskapet, og
-            det er den samme rettigheten en innsending senere hviler på.
-
-            Regnskapet virker like fullt. Bokføring er ikke sperret bak en
-            BankID-innlogging på en søndag kveld; det bekreftelsen avgjør er
-            hvem selskapet hører til, ikke om det kan føres. */}
-        <div class="eierskap" id="eierskap" hidden>
-          <p class="eierskap-tekst" id="eierskap-tekst"></p>
-          <p class="status" id="eierskap-status" hidden></p>
-          <div class="eierskap-knapper">
-            <a class="btn btn-ghost btn-small" id="eierskap-login" href="#" hidden>
-              Logg inn med ID-porten
-            </a>
-            <button type="button" class="btn btn-ghost btn-small" id="eierskap-bekreft" hidden>
-              Bekreft eierskap i Altinn
-            </button>
-            <a class="btn btn-ghost btn-small" id="eierskap-nytt" href="#nytt-selskap" hidden>
-              Opprett nytt regnskap
-            </a>
+          Det siden handler om. Opplysningene står som opplysninger, ikke som
+          utfylte felter, og skjemaet kommer fram når noen ber om det.
+          Kontonummeret hører hit og ikke på fakturaskjemaet: det er det samme
+          på hver faktura, og en utstedt faktura kan bare rettes med kreditnota.
+          Derfor nekter /faktura/ å utstede så lenge feltet er tomt. */}
+      <section id="selskap" hidden>
+        <div class="org-section-head">
+          <h2>Selskapet</h2>
+          <div class="org-section-tools">
+            <span class="org-merke" id="selskap-merke" hidden></span>
           </div>
         </div>
 
-        <label class="field" id="selskap-picker-field" hidden>
-          <span>Selskap</span>
-          <select id="selskap-picker"></select>
-        </label>
-        {/* Organisasjonen er kontoen, og den kan holde så mange regnskaper den
-            vil: ett selskap for den som driver ett, ett per klient for en
-            regnskapsfører. Abonnementet henger på organisasjonen, så et selskap
-            til koster ikke noe ekstra. */}
-        <p class="card-hint">
-          Fører du regnskap for flere selskaper?
-          <a href="#nytt-selskap">Legg til et selskap til</a> lenger ned på siden. Medlemmene og
-          abonnementet er organisasjonens, og gjelder for alle selskapene i den.
-        </p>
+        <div class="card">
+          <p class="status" id="selskap-status" hidden></p>
 
-        <form id="selskap-form" class="selskap-form">
-          <label class="field">
-            <span>Navn</span>
-            <input type="text" name="name" required maxlength="255" autocomplete="off" />
-            <span class="field-hint">Slik navnet står i Enhetsregisteret.</span>
-          </label>
-          <label class="field">
-            <span>Organisasjonsnummer</span>
-            <input type="text" id="selskap-orgnr" readonly />
-            <span class="field-hint">
-              Kan ikke endres. Det er nøkkelen til hver innsending dette regnskapet får, så et
-              nytt nummer er et nytt selskap.
-            </span>
-          </label>
+          {/* Opplysninger, ikke et skjema. Den som kommer hit for å se hva som
+              står registrert skal se det med én gang; den som kom for å rette
+              én ting retter den der den står, og lar resten være. */}
+          <dl class="org-felt" id="selskap-felt"></dl>
 
-          <label class="field">
-            <span>Kontonummer</span>
-            <input
-              type="text"
-              name="bank_account"
-              inputmode="numeric"
-              maxlength="20"
-              placeholder="1506.20.33158"
-              autocomplete="off"
-            />
-            <span class="field-hint" id="konto-hint"></span>
-          </label>
+          {/* --- Kontonummer ------------------------------------------------
 
-          <label class="field">
-            <span>Adresse</span>
-            <input type="text" name="address_line" maxlength="255" autocomplete="off" />
-          </label>
-          <div class="pair">
-            <label class="field">
-              <span>Postnummer</span>
-              <input type="text" name="postal_code" maxlength="16" autocomplete="off" />
-            </label>
-            <label class="field">
-              <span>Sted</span>
-              <input type="text" name="city" maxlength="128" autocomplete="off" />
-            </label>
+              Egen liste og ikke én linje blant opplysningene over, fordi det
+              er flertall: et selskap har så mange kontoer som banken ga det,
+              og skattetrekket skal etter skattebetalingsloven § 5-12 stå for
+              seg. Den øverste er merket, og det er den fakturaen betales til
+              når den ikke sier noe annet.
+
+              Tom liste er ikke ingenting å si: /faktura/ nekter å utstede så
+              lenge den er tom, og en utstedt faktura kan bare rettes med
+              kreditnota. Derfor står tomheten som en linje med farge, ikke som
+              et felt som mangler. */}
+          <div class="org-kontoer">
+            <div class="org-kort-head">
+              <h3>Kontonummer</h3>
+              <button type="button" class="btn btn-ghost btn-small" id="konto-ny" hidden>
+                Legg til konto
+              </button>
+            </div>
+            <p class="status" id="konto-status" hidden></p>
+            <ul class="org-kontoliste" id="konto-liste"></ul>
           </div>
 
-          <label class="check">
-            <input type="checkbox" name="vat_registered" />
-            <span>
-              Registrert i Merverdiavgiftsregisteret
-              <span class="field-hint">
-                Uten dette kan fakturaene ikke vise merverdiavgift, og linjene settes til «Ikke
-                mva-registrert». Å kreve inn mva uten å være registrert er å kreve inn en avgift
-                på statens vegne uten å ha rett til det, og pengene skyldes likevel.
-              </span>
-            </span>
-          </label>
-          <label class="check">
-            <input type="checkbox" name="in_foretaksregisteret" />
-            <span>
-              Registrert i Foretaksregisteret
-              <span class="field-hint">
-                Da skal ordet «Foretaksregisteret» og hovedkontorets adresse stå på hvert
-                salgsdokument. Alle AS, ASA og NUF er registrert der.
-              </span>
-            </span>
-          </label>
+          {/* Eierskapet.
 
-          <button class="btn btn-primary" type="submit" id="selskap-submit">Lagre selskapet</button>
-        </form>
+              Å skrive inn ni siffer viser ingenting. Et regnskap er ubekreftet
+              til noen har vist gjennom Altinn at de kan opptre for selskapet,
+              og det er den samme rettigheten en innsending senere hviler på.
 
-        {/* Alt Enhetsregisteret vet, hentet i stedet for skrevet inn.
+              Regnskapet virker like fullt. Bokføring er ikke sperret bak en
+              BankID-innlogging på en søndag kveld; det bekreftelsen avgjør er
+              hvem selskapet hører til, ikke om det kan føres. */}
+          <div class="org-eierskap" id="eierskap" hidden>
+            <p class="org-eierskap-tekst" id="eierskap-tekst"></p>
+            <p class="status" id="eierskap-status" hidden></p>
+            <div class="org-knapperad">
+              <a class="btn btn-ghost btn-small" id="eierskap-login" href="#" hidden>
+                Logg inn med ID-porten
+              </a>
+              <button type="button" class="btn btn-ghost btn-small" id="eierskap-bekreft" hidden>
+                Bekreft eierskap i Altinn
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
 
-            Feltene over er de fakturaen gjentar, og de lagres. Dette er resten:
-            styret, revisor, næringskode, kapital, formål. Det vises og lagres
-            ikke — det endrer seg uten å si fra, og noe av det er andres
-            personopplysninger som vi ikke har noe å gjøre med en gammel kopi
-            av. Navnet er det eneste registeret ikke får overskrive: et navn
-            noen har rettet med vilje og et navn som er blitt gammelt ser like
-            ut herfra, og bare det ene bør røres. */}
-        <div class="register">
-          <div class="register-head">
-            <h3>Fra Enhetsregisteret</h3>
+      {/* --- Tilgang til dette regnskapet -------------------------------------
+
+          Medlemmene og invitasjonene hører til selskapet over, ikke til
+          kontoen. Det er den endringen som gjør «hjelp meg med denne ene
+          klienten» mulig å si: før fikk den man inviterte hvert selskap på
+          kontoen på én gang, og skjemaet som ga dem det sto under kontoen, der
+          ingenting sa fra om det.
+
+          Rett under Selskapet, foran registeroppslaget: å invitere en kollega
+          er en av de to tingene noen faktisk gjør på denne siden, og den lå
+          tidligere under en tabell man bare leser. */}
+      <section id="tilgang">
+        <h2>Tilgang</h2>
+
+        <div class="card">
+          <div class="org-kort-head">
+            <h3 id="medlemmer-tittel">Medlemmer</h3>
+            <button type="button" class="btn btn-ghost btn-small" id="invite-vis" hidden>
+              Inviter en kollega
+            </button>
+          </div>
+          <div class="table-scroll">
+            <table class="data org-medlemmer">
+              <thead>
+                <tr>
+                  <th>Navn</th>
+                  <th>E-post</th>
+                  <th>Rolle</th>
+                  {/* Hvem som har vist hvem de er. Ikke det samme som å være
+                      logget inn: en ID-porten-innlogging varer en time, mens
+                      det den viste står. Det er denne koblingen som gjør at
+                      styrelisten lenger nede kan si «bekreftet» og ikke bare
+                      «trolig». */}
+                  <th>ID-porten</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="members"></tbody>
+            </table>
+          </div>
+
+          <div id="invite" hidden>
+            <p class="status" id="invite-status" hidden></p>
+            <form id="invite-form" class="org-form">
+              {/* Står bare når invitasjonen ble startet fra en rad i styret.
+                  Da har man allerede pekt på en person, og skjemaet skal si
+                  hvem, og ikke be om det på nytt. */}
+              <p class="org-invite-for" id="invite-for" hidden></p>
+              <label class="field">
+                <span>E-postadresse</span>
+                <input type="email" name="email" required autocomplete="off" />
+                <span class="field-hint">
+                  Vi sender en e-post med lenken hit. Invitasjonen gjelder bare denne adressen, og
+                  en videresendt lenke er ikke en billett inn.
+                </span>
+              </label>
+              {/* Navnet spørres det ikke om. Det er en merkelapp og ingen
+                  kontroll — invitasjonen gjelder adressen, og det er den man må
+                  logge inn med — så et tomt felt over «Send invitasjon» ba om
+                  noe man ikke behøver å vite for å invitere en kollega, og
+                  gjorde en handling på to sekunder til et skjema.
+
+                  Feltet står likevel, skjult, fordi «Inviter» i styret fra
+                  Enhetsregisteret fyller det: da har registeret oppgitt navnet,
+                  det står i klartekst i #invite-for over, og det er navnet som
+                  lar styrelisten si «Invitert» om nettopp den raden. Se
+                  docs/register-access.md. */}
+              <input type="hidden" name="full_name" />
+              <label class="field">
+                <span>Rolle</span>
+                <select name="role">
+                  <option value="viewer">Leser: ser regnskapet, kan ikke føre</option>
+                  <option value="member" selected>Medlem: kan føre bilag</option>
+                  <option value="admin">Administrator: kan også styre selskaper og medlemmer</option>
+                  <option value="owner">Eier: kan alt, inkludert abonnement</option>
+                </select>
+              </label>
+              <div class="org-knapperad org-form-knapper">
+                <button class="btn btn-primary" type="submit" id="invite-submit">
+                  Send invitasjon
+                </button>
+                <button class="btn btn-ghost" type="button" id="invite-avbryt">Avbryt</button>
+              </div>
+            </form>
+
+            {/* Bare når e-posten ikke gikk. Gikk den, har avsenderen ingenting
+                med lenken å gjøre, og å vise den likevel er å be dem sende en
+                kopi til av en melding som allerede ligger i innboksen. */}
+            <div class="org-lenke" id="invite-link-box" hidden>
+              <p class="card-hint">
+                <strong>Vi fikk ikke sendt e-posten.</strong> Kopier lenken og send den selv. Den
+                vises bare denne ene gangen, for vi lagrer bare et hash av den.
+              </p>
+              <div class="org-kopirad">
+                <input type="text" id="invite-link" readonly />
+                <button class="btn btn-ghost" type="button" id="copy-link">Kopier</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" id="invitations-card" hidden>
+          <h3>Ventende invitasjoner</h3>
+          <div class="table-scroll">
+            <table class="data org-invitasjoner">
+              <thead>
+                <tr>
+                  <th>Hvem</th>
+                  <th>Rolle</th>
+                  {/* Den første tingen man lurer på om en invitasjon man ikke
+                      kjenner igjen. */}
+                  <th>Sendt av</th>
+                  <th>Utløper</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="invitations"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      {/* --- Fra Enhetsregisteret --------------------------------------------
+
+          Hentet i stedet for skrevet inn. Rollene står øverst, fordi det er dem
+          folk kommer hit for å se; resten av registeropplysningene ligger bak
+          en utvidelse, siden de sjelden er spørsmålet.
+
+          Står nederst fordi det er oppslag, ikke noe man gjør noe med: det
+          man kommer hit for å endre (selskapet, medlemmene) står over.
+
+          Ingenting herfra lagres utover feltene i Selskapet: registeret endrer seg
+          uten å si fra, og noe av det er andres personopplysninger som vi ikke
+          har noe å gjøre med en gammel kopi av. */}
+      <section id="register" hidden>
+        <div class="org-section-head">
+          <h2>Fra Enhetsregisteret</h2>
+          <div class="org-section-tools">
+            <span class="org-synk" id="register-synk"></span>
             <button type="button" class="btn btn-ghost btn-small" id="register-hent">
               Hent på nytt
             </button>
           </div>
-          <p class="card-hint" id="register-hint">
-            Adresse, organisasjonsform, næringskode, mva-registrering og kontaktopplysninger
-            hentes herfra. Navnet lar vi stå slik du har det.
-          </p>
+        </div>
+
+        <div class="card">
           <p class="status" id="register-status" hidden></p>
-          <dl class="register-felt" id="register-felt"></dl>
+
           <div id="register-roller" hidden>
-            <h4>Roller</h4>
+            <h3>Roller</h3>
             <p class="card-hint">
-              Slik de står registrert i dag. Underenheter har ingen egne roller, så da er det
-              hovedenhetens som vises.
+              Slik de står registrert i dag. Én rad per person: den som både er daglig leder og
+              sitter i styret står én gang, med begge rollene. Underenheter har ingen egne roller,
+              så da er det hovedenhetens som vises.
             </p>
-            <table class="data register-roller-tabell">
-              <thead>
-                <tr>
-                  <th>Rolle</th>
-                  <th>Navn</th>
-                  <th>Merknad</th>
-                </tr>
-              </thead>
-              <tbody id="register-roller-rader"></tbody>
-            </table>
+            {/* Hvorfor merket til høyre er formulert som det er.
+
+                Registeret gir et navn og ingenting mer: ingen fødselsnummer,
+                ingen fødselsdato (den kaster vi med vilje). Så koblingen mot
+                medlemslisten er en navnesammenligning, og da må merket si hvor
+                mye den sammenligningen er verdt. «Bekreftet» er et navn fra
+                ID-porten, altså fra Folkeregisteret, som er registerets egen
+                kilde. «Trolig» er navnet noen skrev inn selv. Forskjellen er
+                hele grunnen til at det er verdt å koble ID-porten. */}
+            <p class="card-hint">
+              Merknaden sier om personen kan åpne regnskapet. Den gir ingen tilgang og tar ingen
+              bort. Den sammenligner navn, og sier hvor sikkert det er.
+            </p>
+            <div class="table-scroll">
+              <table class="data org-roller">
+                <thead>
+                  <tr>
+                    <th>Navn</th>
+                    <th>Roller</th>
+                    <th>Merknad</th>
+                  </tr>
+                </thead>
+                <tbody id="register-roller-rader"></tbody>
+              </table>
+            </div>
           </div>
+
+          <p class="empty" id="register-tomt">Ingenting hentet fra registeret ennå.</p>
+
+          <details class="org-mer" id="register-mer" hidden>
+            <summary>Alt registeret har om selskapet</summary>
+            <dl class="org-felt" id="register-felt"></dl>
+          </details>
         </div>
-      </div>
-    </div>
+      </section>
 
-    {/* Å legge til et selskap gjør man en gang, kanskje to. Det hører derfor
-        her, hos organisasjonen som skal eie regnskapet, og ikke som en knapp på
-        forsiden man går forbi hver dag.
+      {/* --- Ingen bøker ennå ---------------------------------------------
 
-        Altinn-blokken står åpen og øverst i stedet for bak et klikk. Altinn vet
-        allerede hvilke selskaper du har rettigheter for, og det er de samme
-        rettighetene en innsending senere hviler på, så å hente listen derfra er
-        ingen snarvei rundt noe: den fjerner det ene feltet der en skrivefeil
-        gir et regnskap for feil selskap.
-
-        Hele Altinn-blokken er skjult når ID-porten ikke er satt opp i denne
-        installasjonen. Å tilby en innlogging som ikke kan fullføres er verre
-        enn å la være. */}
-    <div id="nytt-selskap" hidden>
-      <h2>Legg til et selskap</h2>
-      <div class="card nytt-selskap">
-        <p class="card-hint">
-          Regnskapet settes opp i organisasjonen som står øverst på siden, med kontoplan,
-          mva-koder og regnskapsår. Et selskap til koster ikke noe ekstra: abonnementet er
-          organisasjonens.
-        </p>
-        <p class="status" id="nytt-selskap-status" hidden></p>
-
-        <div class="altinn" id="altinn" hidden>
-          <p class="card-hint" id="altinn-intro">
-            Fører du regnskap for flere selskaper? Logg inn med ID-porten, så henter vi dem du
-            har rettigheter for i Altinn, slik at du slipper å skrive inn hvert
-            organisasjonsnummer.
-          </p>
-          <p class="status" id="altinn-status" hidden></p>
-          <a class="btn btn-ghost" id="altinn-login" href="#">Hent selskaper fra Altinn</a>
-          <ul class="altinn-parter" id="altinn-parter" hidden></ul>
-          {/* Svaret når selskapet allerede er tatt. Knappen står her og ikke i
-              meldingen: den ene veien videre vi kan tilby er et eget regnskap,
-              og den andre — å be om tilgang — går gjennom noen vi ikke kan
-              navngi. */}
-          <button type="button" class="btn btn-ghost btn-small" id="altinn-nytt" hidden>
-            Opprett nytt regnskap likevel
-          </button>
-        </div>
-
-        <form id="company-form" class="nytt-selskap-form">
-          {/* Organisasjonsnummeret først: navn og adresse hentes fra
-              Enhetsregisteret så snart ni siffer er skrevet inn. */}
-          <div class="field-row">
-            <label class="field">
-              <span>Organisasjonsnummer</span>
-              <input
-                type="text"
-                name="orgnr"
-                required
-                inputmode="numeric"
-                autocomplete="off"
-                placeholder="999 999 999"
-              />
-              <span class="field-hint" id="orgnr-hint">
-                Vi henter navnet fra Enhetsregisteret.
-              </span>
-            </label>
-            <label class="field">
-              <span>Navn på selskapet</span>
-              <input type="text" name="name" required placeholder="Nordmann Consulting AS" />
-            </label>
-          </div>
-          <div class="field-row">
-            <label class="field">
-              <span>Første regnskapsår i Myntos</span>
-              <input type="number" name="first_financial_year" min="2000" max="2100" required />
-              <span class="field-hint">
-                Du kan ikke føre på datoer før dette året. Mva-satsene vi setter opp gjelder fra
-                da.
-              </span>
-            </label>
-            {/* Spurt om her, mens vi har oppmerksomheten: uten kontonummer kan
-                ingen faktura utstedes, og det er en dårlig ting å oppdage midt i
-                den første. Kan stå tomt, for regnskapet skal kunne føres av noen
-                som ikke fakturerer, og det kan fylles ut over. */}
-            <label class="field">
-              <span>Kontonummer</span>
-              <input
-                type="text"
-                name="bank_account"
-                inputmode="numeric"
-                autocomplete="off"
-                placeholder="1506.20.33158"
-              />
-              <span class="field-hint">
-                Kontoen fakturaene skal betales til. Kan fylles ut senere, men en faktura kan
-                ikke utstedes før den er på plass.
-              </span>
-            </label>
-          </div>
-          {/* Ikke «opprett selskap»: selskapet finnes fra før, det er regnskapet
-              vi setter opp her. */}
-          <button class="btn btn-primary" type="submit" id="company-submit">
-            Sett opp regnskapet
-          </button>
-        </form>
-      </div>
-    </div>
-
-    <h2>Medlemmer</h2>
-    <div class="card">
-      <div class="table-scroll">
-        <table class="data">
-          <thead>
-            <tr>
-              <th>Navn</th>
-              <th>E-post</th>
-              <th>Rolle</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="members"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div id="manage" hidden>
-      <h2>Inviter en kollega</h2>
-      <div class="card">
-        <p class="status" id="invite-status" hidden></p>
-        <form id="invite-form" class="invite-form">
-          <label class="field">
-            <span>E-postadresse</span>
-            <input type="email" name="email" required autocomplete="off" />
-            <span class="field-hint">
-              Invitasjonen gjelder bare denne adressen, og en videresendt lenke er ikke en billett inn.
-            </span>
-          </label>
-          <label class="field">
-            <span>Rolle</span>
-            <select name="role">
-              <option value="viewer">Leser: ser regnskapet, kan ikke føre</option>
-              <option value="member" selected>Medlem: kan føre bilag</option>
-              <option value="admin">Administrator: kan også styre selskaper og medlemmer</option>
-              <option value="owner">Eier: kan alt, inkludert abonnement</option>
-            </select>
-          </label>
-          <button class="btn btn-primary" type="submit" id="invite-submit">Send invitasjon</button>
-        </form>
-
-        <div class="invite-link" id="invite-link-box" hidden>
+          Én lenke, ikke et skjema. Å sette opp et regnskap er en egen oppgave
+          med tre spørsmål og en Altinn-innlogging i seg, og den lå her fordi
+          det var her den ble født — mellom medlemslisten og de ventende
+          invitasjonene, på en side som ellers handler om selskapet du allerede
+          har. Nå har den sin egen side, og dette er bare veien dit for den ene
+          som trenger den: en konto uten regnskap i det hele tatt. */}
+      <section id="ingen-boker" hidden>
+        <h2>Ingen regnskap ennå</h2>
+        <div class="card">
           <p class="card-hint">
-            <strong>Kopier lenken og send den selv.</strong> Myntos sender ikke e-post ennå, og
-            lenken vises bare denne ene gangen, for vi lagrer bare et hash av den.
+            Du fører ingen regnskap ennå. Å sette opp ett tar et minutt: vi henter selskapet
+            fra Altinn eller Enhetsregisteret, så du slipper å skrive inn det som allerede står
+            registrert. Hvert regnskap har sitt eget abonnement, så du betaler for det du
+            faktisk fører.
           </p>
-          <div class="copy-row">
-            <input type="text" id="invite-link" readonly />
-            <button class="btn btn-ghost" type="button" id="copy-link">Kopier</button>
+          <div class="org-knapperad">
+            <a class="btn btn-primary" href="/nytt-selskap/">Sett opp regnskapet</a>
           </div>
         </div>
-      </div>
-
-      <h2>Ventende invitasjoner</h2>
-      <div class="card">
-        <div class="table-scroll">
-          <table class="data">
-            <thead>
-              <tr>
-                <th>E-post</th>
-                <th>Rolle</th>
-                <th>Utløper</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody id="invitations"></tbody>
-          </table>
-        </div>
-        <p class="empty" id="invitations-empty" hidden>Ingen invitasjoner venter.</p>
-      </div>
+      </section>
     </div>
   </div>
 </BaseLayout>
 
-<style>
-  .page-head {
+{/* `is:global`, og alt under `.org`.
+
+    Grunnen står øverst i filen: Astro merker elementene i malen med et
+    attributt og avgrenser stilene til det, og et element laget med
+    `createElement` får det aldri. Altinn-listen, rollene og medlemsradene
+    bygges i JavaScript, så en vanlig `<style>` her ville truffet overskriftene
+    og latt listene stå upyntet — som de sto. Prefikset `.org` gjør jobben
+    avgrensningen skulle gjort. */}
+<style is:global>
+  /* --- Toppen ------------------------------------------------------------- */
+
+  .org-head {
     display: flex;
     flex-wrap: wrap;
     align-items: flex-end;
@@ -437,109 +371,608 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     gap: 1rem;
     margin-bottom: 1rem;
   }
-  .page-head h1 {
+  .org-head h1 {
     margin: 0;
     font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
   }
-  .eyebrow {
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    font-size: 0.78rem;
-    font-weight: 700;
-    color: var(--muted);
-    margin: 0 0 0.4rem;
+  .org .eyebrow {
+    margin-bottom: 0.4rem;
   }
-  .visually-hidden {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    white-space: nowrap;
-  }
-  .nytt-selskap {
-    max-width: 38rem;
-  }
-  .nytt-selskap-form {
-    margin-top: 1rem;
-    display: grid;
-    gap: 1rem;
-    justify-items: start;
-  }
-  .altinn {
-    padding-bottom: 1.2rem;
-    border-bottom: 1px solid var(--border);
-  }
-  .altinn-parter {
-    list-style: none;
-    margin: 1rem 0 0;
-    padding: 0;
-    display: grid;
-    gap: 0.4rem;
-    /* Enough for a handful without scrolling, and a scrollbar for the
-       regnskapsfører with forty clients rather than a page that never ends. */
-    max-height: 17rem;
-    overflow-y: auto;
-  }
-  .altinn-part {
-    width: 100%;
+
+  /* --- Seksjoner ----------------------------------------------------------
+     Overskriften og det man kan gjøre med seksjonen står på samme linje, så
+     «Endre» hører synlig til det den endrer. */
+
+  .org-section-head {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
-    gap: 0.2rem 0.6rem;
-    text-align: left;
-    padding: 0.6rem 0.75rem;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface);
-    color: inherit;
-    font: inherit;
-    cursor: pointer;
+    justify-content: space-between;
+    gap: 0.6rem 1rem;
+    margin: 2.6rem 0 0.9rem;
   }
-  .altinn-part:hover:not(:disabled) {
-    border-color: var(--border-strong);
+  .org-section-head h2 {
+    margin: 0;
   }
-  /* Already set up. Kept in the list rather than filtered out: seeing that a
-     client is there is the answer to "did I add Bergen avdeling or not?", and
-     a list that quietly shortened itself could not answer it. */
-  .altinn-part:disabled {
-    cursor: default;
-    color: var(--muted);
+  .org-section-tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
   }
-  .altinn-part-meta {
+  .org-synk {
     color: var(--faint);
-    font-size: 0.84rem;
+    font-size: 0.85rem;
   }
-  /* Tatt av noen andre. Ikke deaktivert, slik «allerede satt opp» er: her er
-     det noe å gjøre, det er bare ikke det man trodde. */
-  .altinn-part[data-claimed='true'] .altinn-part-meta {
+  .org-kort-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    margin-bottom: 0.6rem;
+  }
+  .org-kort-head h3 {
+    margin: 0;
+  }
+
+  /* --- Selskapet, som opplysning ------------------------------------------ */
+
+  /* Bekreftet eller ikke, sagt med ett ord der navnet står. Gull og ikke rødt:
+     ubekreftet er en oppgave som venter, ikke en feil som har skjedd. */
+  .org-merke {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.28rem 0.7rem;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--accent-line);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .org-merke[data-tone='vent'] {
+    border-color: var(--gold);
+    background: var(--gold-soft);
     color: var(--gold);
   }
-  #altinn-nytt {
-    margin-top: 0.8rem;
-  }
-  .eierskap {
+
+  /* --- Opplysninger med blyant --------------------------------------------
+     Siden er en side med fakta. En linje er et faktum og en blyant, og
+     blyanten gjør om den ene linjen til et lite skjema — ikke hele kortet til
+     et stort. Den som kom for å lese, leser. */
+
+  .org-felt {
     display: grid;
-    gap: 0.6rem;
-    justify-items: start;
-    margin: 0.4rem 0 1.2rem;
-    padding-bottom: 1.2rem;
-    border-bottom: 1px solid var(--border);
+    grid-template-columns: minmax(9rem, 12rem) minmax(0, 1fr);
+    align-items: baseline;
+    gap: 0 1.5rem;
+    margin: 1.4rem 0 0;
   }
-  .eierskap-tekst {
-    color: var(--muted);
+  .org-felt dt,
+  .org-felt dd {
+    padding: 0.45rem 0;
+    border-top: 1px solid var(--border);
+  }
+  /* Første linje trenger ingen strek over seg: kortkanten er der allerede. */
+  .org-felt dt:first-of-type,
+  .org-felt dt:first-of-type + dd {
+    border-top: none;
+  }
+  .org-felt dt {
+    color: var(--faint);
+    font-size: 0.9rem;
+  }
+  .org-felt dd {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
     margin: 0;
-    max-width: 44rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
-  .eierskap-tekst[data-tone='ok'] {
+  .org-felt dd > span:first-child {
+    min-width: 0;
+  }
+  .org-felt [data-numerisk='true'] {
+    font-family: var(--font-numeric);
+  }
+  /* Det som mangler og som noe annet står og venter på. */
+  .org-felt [data-tone='vent'] {
+    color: var(--gold);
+  }
+  .org-felt [data-tone='av'] {
+    color: var(--muted);
+  }
+  /* Ett ord i stedet for blyanten, der verdien er avgjort. */
+  .org-felt-merke {
+    color: var(--faint);
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  /* Blyanten. Dempet til den trengs: den skal finnes, ikke rope. */
+  .org-blyant {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 1.7rem;
+    height: 1.7rem;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--radius-small);
+    background: none;
+    color: var(--faint);
+    cursor: pointer;
+    /* Dempet, ikke skjult. En blyant som først kommer fram når musen er over
+       linjen, er en blyant man må finne ut at finnes. */
+    opacity: 0.5;
+    transition:
+      opacity 120ms ease,
+      color 120ms ease,
+      border-color 120ms ease;
+  }
+  .org-blyant svg {
+    width: 0.95rem;
+    height: 0.95rem;
+  }
+  .org-felt dd:hover .org-blyant,
+  .org-blyant:hover,
+  .org-blyant:focus-visible {
+    opacity: 1;
+    color: var(--accent);
+  }
+  .org-blyant:hover {
+    border-color: var(--border);
+  }
+
+  /* --- Kontonumrene -------------------------------------------------------
+     En liste og ikke en tabell: hver rad er ett tall, eventuelt et navn, og to
+     ting man kan gjøre med det. Hovedkontoen står øverst og er merket, fordi
+     det er den fakturaen betales til når den ikke sier noe annet. */
+
+  .org-kontoer {
+    margin-top: 1.6rem;
+    padding-top: 1.2rem;
+    border-top: 1px solid var(--border);
+  }
+  .org-kontoliste {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .org-kontoliste li {
+    padding: 0.55rem 0;
+    border-top: 1px solid var(--border);
+  }
+  .org-kontoliste li:first-child {
+    border-top: none;
+  }
+  .org-konto-rad {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.35rem 0.75rem;
+  }
+  .org-konto-nummer {
+    font-family: var(--font-numeric);
+  }
+  .org-konto-navn {
+    color: var(--muted);
+    font-size: 0.9rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  /* Skyver knappene til høyre uten å gi raden en egen kolonne å holde tom. */
+  .org-konto-handlinger {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    margin-left: auto;
+  }
+  .org-konto-tom {
+    margin: 0;
+    padding: 0.55rem 0;
+    color: var(--gold);
+  }
+
+  /* Den ene linjen som står åpen. */
+  .org-endre {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    width: 100%;
+    padding: 0.15rem 0;
+  }
+  .org-endre input,
+  .org-endre select {
+    flex: 1 1 10rem;
+    min-width: 0;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.95rem;
+  }
+  .org-endre-hjelp {
+    flex: 1 0 100%;
+    margin: 0.1rem 0 0.3rem;
+  }
+
+  @media (max-width: 40rem) {
+    .org-felt {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .org-felt dt {
+      padding-bottom: 0;
+    }
+    .org-felt dt + dd {
+      border-top: none;
+      padding-top: 0.1rem;
+    }
+  }
+
+  .org-eierskap {
+    display: grid;
+    justify-items: start;
+    gap: 0.6rem;
+    margin-top: 1.4rem;
+    padding-top: 1.2rem;
+    border-top: 1px solid var(--border);
+  }
+  .org-eierskap-tekst {
+    margin: 0;
+    max-width: 46rem;
+    color: var(--muted);
+    font-size: 0.93rem;
+  }
+  .org-eierskap-tekst[data-tone='ok'] {
     color: var(--faint);
   }
-  .eierskap-knapper {
+  .org-eierskap .status {
+    margin: 0;
+  }
+
+  .org-knapperad {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
   }
-  .varsel {
+
+  /* --- Skjemaene ----------------------------------------------------------
+     To kolonner der det er plass, og alt som gjelder hele selskapet — de to
+     avkrysningene og knappene — over hele bredden. */
+
+  .org-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 0 1.2rem;
+    /* A measure, not the card's width. The card is 72rem across on a desktop,
+       and a text field that wide is one nobody can see both ends of. */
+    max-width: 38rem;
+  }
+  .org-form > .field {
+    min-width: 0;
+  }
+  .org-form-tittel,
+  .org-form .check,
+  .org-form .org-par,
+  .org-form-knapper {
+    grid-column: 1 / -1;
+  }
+  .org-form-tittel {
+    margin: 0 0 0.8rem;
+  }
+  .org-par {
+    display: grid;
+    grid-template-columns: minmax(8rem, 1fr) minmax(8rem, 1fr);
+    gap: 0 1.2rem;
+  }
+  .org-form .check .field-hint {
+    display: block;
+    margin-top: 0.15rem;
+  }
+  .org-form-knapper {
+    margin-top: 0.8rem;
+  }
+  @media (max-width: 34rem) {
+    .org-par {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  /* --- Registeret ---------------------------------------------------------- */
+
+  .org-roller td {
+    vertical-align: top;
+  }
+  .org-roller-navn {
+    font-weight: 600;
+  }
+  .org-roller-orgnr {
+    display: block;
+    color: var(--faint);
+    font-family: var(--font-numeric);
+    font-size: 0.85rem;
+  }
+  /* Rollene som merkelapper, én per rolle. Én person står på én rad, og
+     hvor mange hatter vedkommende har er da noe man ser i stedet for å lete
+     etter navnet en gang til lenger ned. */
+  .org-rollemerker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .org-rollemerker li {
+    padding: 0.15rem 0.55rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    background: var(--surface-2);
+    color: var(--fg);
+    font-size: 0.82rem;
+    white-space: nowrap;
+  }
+
+  /* --- Merket: kan denne personen åpne regnskapet? --------------------------
+
+     Fire tilstander, og forskjellen mellom dem er hvor sikre vi er, ikke hvor
+     alvorlig det er. Derfor er ingen av dem rød: et styremedlem uten tilgang er
+     helt normalt, ofte med vilje, og en rød prikk ville lest som en feil noen
+     skulle rette.
+
+     «Bekreftet» er fylt, «trolig» er den samme fargen i omriss. At sikkerheten
+     leses som fyll og ikke som en annen farge er poenget: de sier det samme,
+     med ulik tyngde. Ordene bærer det uansett, for den som ikke ser forskjell
+     på to grønnfarger. */
+  .org-tilgang {
+    display: inline-block;
+    padding: 0.15rem 0.55rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius-pill);
+    font-size: 0.82rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .org-tilgang-bekreftet {
+    background: var(--accent-soft);
+    border-color: var(--accent-line);
+    color: var(--accent);
+  }
+  .org-tilgang-trolig {
+    background: transparent;
+    border-color: var(--accent-line);
+    color: var(--muted);
+  }
+  .org-tilgang-invitert {
+    background: var(--gold-soft);
+    border-color: var(--gold);
+    color: var(--gold);
+  }
+  .org-tilgang-ingen {
+    background: var(--surface-2);
+    border-color: var(--border);
+    color: var(--faint);
+    font-weight: 400;
+  }
+  /* Rollen står inne i merket, dempet: «Har tilgang Administrator» er ett
+     utsagn, ikke to merkelapper som konkurrerer. */
+  .org-tilgang-rolle {
+    font-weight: 400;
+    opacity: 0.8;
+  }
+  /* Navnet vi koblet mot, adressen invitasjonen gikk til, «Representant for de
+     ansatte». Alt sammen under merket, i samme dempede form, fordi det er
+     begrunnelse og ikke svar. */
+  .org-tilgang-detalj {
+    display: block;
+    margin-top: 0.2rem;
+    color: var(--faint);
+    font-size: 0.82rem;
+  }
+  .org-tilgang-detalj + .btn-link,
+  .org-tilgang + .btn-link {
+    display: inline-block;
+    margin-top: 0.3rem;
+  }
+
+  .org-mer {
+    margin-top: 1.4rem;
+    padding-top: 1.2rem;
+    border-top: 1px solid var(--border);
+  }
+  .org-mer > summary {
+    cursor: pointer;
+    color: var(--accent);
+    font-size: 0.93rem;
+    font-weight: 600;
+  }
+  .org-mer[open] > summary {
+    margin-bottom: 0.4rem;
+  }
+
+  /* --- Altinn-listen -------------------------------------------------------
+     Selve grunnen til at dette arket er globalt: hver rad her er laget i
+     JavaScript. Navnet på én linje, nummeret og enhetstypen under, rollene
+     dempet til slutt — i stedet for alt sammen i én midtstilt klump, som er
+     det en knapp gjør når ingen har sagt noe annet. */
+
+  .org-altinn {
+    margin: 1.2rem 0;
+    padding-bottom: 1.4rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .org-altinn h3 {
+    margin: 0 0 0.3rem;
+  }
+  .org-altinn > .btn {
+    margin-top: 0.9rem;
+  }
+  .org-parter {
+    list-style: none;
+    margin: 1rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: 0.5rem;
+    /* Nok til en håndfull uten å rulle, og en rullelist for regnskapsføreren
+       med førti klienter i stedet for en side som aldri tar slutt. */
+    max-height: 22rem;
+    overflow-y: auto;
+  }
+  .org-part {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    width: 100%;
+    padding: 0.7rem 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    background: var(--surface);
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition:
+      border-color 120ms ease,
+      background-color 120ms ease;
+  }
+  .org-part:hover:not(:disabled) {
+    border-color: var(--accent);
+    background: var(--surface-2);
+  }
+  /* Navnet, nummeret og rollene under hverandre, og hver på sin linje: det er
+     hele forskjellen fra listen som sto her før, der navnet og de ni sifrene
+     var sveiset sammen til ett ord. */
+  .org-part-tekst {
+    flex: 1;
+    min-width: 0;
+    display: grid;
+    gap: 0.1rem;
+  }
+  .org-part-navn {
+    font-weight: 620;
+    line-height: 1.3;
+  }
+  .org-part-meta {
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  .org-part-orgnr {
+    font-family: var(--font-numeric);
+  }
+  .org-part-roller {
+    color: var(--faint);
+    font-size: 0.8rem;
+  }
+  /* Statusen til høyre, der øyet leter etter den, og på egen linje når raden
+     blir smal. */
+  .org-part-tag {
+    padding: 0.2rem 0.6rem;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--muted);
+    font-size: 0.76rem;
+    font-weight: 650;
+    white-space: nowrap;
+  }
+  /* Allerede satt opp. Blir stående i listen i stedet for å bli filtrert bort:
+     å se at en klient er der er svaret på «la jeg inn Bergen avdeling eller
+     ikke?», og en liste som stilltiende kortet seg selv ned kunne ikke svart. */
+  .org-part:disabled {
+    cursor: default;
+    background: var(--surface-2);
+    color: var(--muted);
+  }
+  .org-part:disabled .org-part-navn {
+    font-weight: 600;
+  }
+  /* Tatt av noen andre. Ikke deaktivert, slik «allerede satt opp» er: her er
+     det noe å gjøre, det er bare ikke det man trodde. */
+  .org-part[data-claimed='true'] .org-part-tag {
+    border-color: var(--gold);
+    background: var(--gold-soft);
+    color: var(--gold);
+  }
+  @media (max-width: 34rem) {
+    .org-part {
+      flex-wrap: wrap;
+      align-items: flex-start;
+    }
+  }
+
+  /* --- Medlemmer ----------------------------------------------------------- */
+
+  .org select.role {
+    min-width: 10rem;
+    padding-block: 0.35rem;
+    font-size: 0.88rem;
+  }
+  .org-deg {
+    margin-left: 0.35rem;
+    color: var(--faint);
+    font-weight: 400;
+  }
+  /* The action column, and only that one: the roles table's last column is a
+     merknad, and pushing prose to the right edge would read as a number. */
+  .org-medlemmer td:last-child {
+    text-align: right;
+  }
+
+  #invite {
+    margin-top: 1.4rem;
+    padding-top: 1.3rem;
+    border-top: 1px solid var(--border);
+  }
+  /* Hvem invitasjonen ble startet for, når den kom fra en rad i styret. Over
+     hele skjemaet, fordi den svarer på spørsmålet skjemaet ellers stiller. */
+  .org-invite-for {
+    grid-column: 1 / -1;
+    margin: 0 0 0.2rem;
+    padding: 0.55rem 0.75rem;
+    border-radius: var(--radius-small);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+  /* To handlinger i samme celle. De står med luft mellom seg fordi den ene
+     sender en ny lenke og den andre gjør invitasjonen ugyldig, og de skal ikke
+     kunne treffes i stedet for hverandre. */
+  .org-invitasjoner td:last-child {
+    text-align: right;
+    white-space: nowrap;
+  }
+  .org-invitasjoner td:last-child .btn-link + .btn-link {
+    margin-left: 0.9rem;
+  }
+  .org-lenke {
+    grid-column: 1 / -1;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
+  .org-kopirad {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
+  }
+  .org-kopirad input {
+    font-family: var(--font-numeric);
+    font-size: 0.85rem;
+  }
+
+  /* --- Varselet øverst ------------------------------------------------------ */
+
+  .org .varsel {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -550,194 +983,85 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     background: var(--gold-soft);
     border: 1px solid var(--gold);
     border-left-width: 3px;
-    border-radius: 10px;
+    border-radius: var(--radius-small);
   }
-  .varsel-tittel {
+  .org .varsel-tittel {
     margin: 0 0 0.3rem;
     font-weight: 650;
     color: var(--fg-strong);
   }
-  .varsel-tekst {
+  .org .varsel-tekst {
     margin: 0;
     max-width: 46rem;
     color: var(--fg);
   }
-  .varsel-knapper {
+  .org .varsel .status {
+    margin: 0.6rem 0 0;
+  }
+  .org .varsel-knapper {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
   }
-  .register {
-    margin-top: 1.6rem;
-    padding-top: 1.4rem;
-    border-top: 1px solid var(--border);
-  }
-  .register-head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 1rem;
-  }
-  .register-head h3 {
-    margin: 0;
-  }
-  .register-felt {
-    display: grid;
-    grid-template-columns: minmax(10rem, auto) minmax(0, 1fr);
-    gap: 0.35rem 1.2rem;
-    margin: 1rem 0 0;
-  }
-  .register-felt dt {
-    color: var(--faint);
-  }
-  .register-felt dd {
-    margin: 0;
-    overflow-wrap: anywhere;
-  }
-  .register-roller-tabell {
-    margin-top: 0.6rem;
-  }
-  @media (max-width: 40rem) {
-    .register-felt {
-      grid-template-columns: minmax(0, 1fr);
-      gap: 0 0;
-    }
-    .register-felt dd {
-      margin-bottom: 0.7rem;
-    }
-  }
-  .invite-form {
-    display: grid;
-    gap: 0 1rem;
-    grid-template-columns: minmax(14rem, 1fr) minmax(14rem, 1.4fr) auto;
-    align-items: start;
-  }
-  .rename-form {
-    display: grid;
-    gap: 0 1rem;
-    grid-template-columns: minmax(14rem, 1fr) auto;
-    align-items: start;
-  }
-  .invite-form button,
-  .rename-form button {
-    margin-top: 1.55rem;
-  }
-  @media (max-width: 54rem) {
-    .invite-form,
-    .rename-form {
-      grid-template-columns: minmax(0, 1fr);
-    }
-    .invite-form button,
-    .rename-form button {
-      margin-top: 0;
-    }
-  }
-  .invite-link {
-    border-top: 1px solid var(--border);
-    margin-top: 0.5rem;
-    padding-top: 1rem;
-  }
-  .copy-row {
-    display: flex;
-    gap: 0.5rem;
-    margin-top: 0.6rem;
-  }
-  .copy-row input {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.85rem;
-  }
-  select.role {
-    min-width: 9rem;
-  }
-  .selskap-form {
-    display: grid;
-    gap: 0 1rem;
-    grid-template-columns: minmax(14rem, 1fr) minmax(14rem, 1fr);
-    align-items: start;
-  }
-  .selskap-form .pair {
-    display: grid;
-    gap: 0 1rem;
-    grid-template-columns: minmax(6rem, 1fr) minmax(8rem, 2fr);
-  }
-  /* The two checkboxes and the button each say something about the whole
-     company rather than about the column they happen to land in. */
-  .selskap-form .check,
-  .selskap-form button {
-    grid-column: 1 / -1;
-  }
-  .selskap-form button {
-    justify-self: start;
-    margin-top: 0.6rem;
-  }
-  .selskap-form .check .field-hint {
-    display: block;
-    margin-top: 0.15rem;
-  }
-  #selskap-orgnr {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  }
-  #selskap-picker-field {
-    max-width: 24rem;
-  }
-  @media (max-width: 54rem) {
-    .selskap-form {
-      grid-template-columns: minmax(0, 1fr);
-    }
+
+  .org .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 </style>
-
 <script>
+  import { CALLBACK_ERRORS } from '../lib/providers';
   import {
     ALREADY_CLAIMED,
     ApiError,
+    ORGNR_LOCKED,
+    addBankAccount,
     changeMemberRole,
-    createCompany,
+    deleteBankAccount,
     getGovernmentLoginStatus,
     governmentLoginStartUrl,
     inviteMember,
-    listAuthorizedParties,
     listInvitations,
+    getCompanyRegister,
     listMembers,
-    lookupUnit,
     refreshCompany,
     removeMember,
-    renameOrganization,
+    resendInvitation,
     revokeInvitation,
+    updateBankAccount,
     updateCompany,
     verifyCompany,
-    type AuthorizedParty,
+    type BankAccount,
     type Company,
-    type CompanyRefresh,
     type GovernmentLoginStatus,
     type Invitation,
     type Member,
     type Membership,
-    type RegisteredUnit,
+    type RegisterAccess,
+    type RegisterAnswer,
+    type RegisteredRoleWithAccess,
   } from '../lib/api';
-  import { loadCompanies } from '../lib/company';
+  import { currentCompany, loadCompanies, mountChromeCompanyMenu } from '../lib/company';
   import { el, setStatus, show } from '../lib/dom';
-  import { isoDate, kontonummer, kroner } from '../lib/format';
-  import {
-    loadSession,
-    redirectToLogin,
-    rememberCompany,
-    rememberedCompany,
-    setChromeCompany,
-  } from '../lib/session';
+  import { isoDate, kontonummer, kroner, orgnummer } from '../lib/format';
+  import { canInCompany, loadSession, redirectToLogin, setActiveCompany } from '../lib/session';
 
   /**
    * What the user is told when an orgnr is already spoken for.
    *
    * One string, because it is said in two places — under the Altinn list, where
-   * the choice is made, and under the Selskapet card, where a confirmation is
-   * refused — and two wordings for one rule would read as two rules. It names
-   * no organization on purpose: the caller is not a member of the one holding
-   * the claim, and the way in is to ask them rather than us.
+   * the choice is made, and under Selskapet, where a confirmation is refused —
+   * and two wordings for one rule would read as two rules. It names no
+   * organization on purpose: the caller is not a member of the one holding the
+   * claim, and the way in is to ask them rather than us.
    */
   const CLAIMED_MESSAGE =
-    'Selskapet har allerede et regnskap registrert. Be en administrator der om tilgang, ' +
-    'eller opprett et nytt.';
+    'Selskapet har allerede et regnskap registrert hos noen andre. Be en administrator der ' +
+    'om tilgang.';
 
   /**
    * Whether this deployment offers the ID-porten login, and whether the caller
@@ -763,20 +1087,87 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
   const pageStatus = el<HTMLParagraphElement>('#page-status');
   const inviteStatus = el<HTMLParagraphElement>('#invite-status');
-  const picker = el<HTMLSelectElement>('#organization-picker');
+  // Here was a <select> for switching account. Gone with the account itself:
+  // see the note where showOrganization used to be, further down.
   const memberBody = el<HTMLTableSectionElement>('#members');
   const invitationBody = el<HTMLTableSectionElement>('#invitations');
 
-  let membership: Membership;
-  let mayManage = false;
+  /**
+   * The caller's standing on the *account*, which this page barely needs.
+   *
+   * One thing only: whether they may set up a company at all, for the empty
+   * state below. Everything else on this page is about a set of books, and what
+   * a person may do with those comes from the company itself
+   * (`canInCompany`), because access is a row per person per company.
+   */
+  let konto: Membership | undefined;
   /**
    * Every company the caller can reach, across all their organizations. Fetched
    * once: the picker below filters by organization rather than refetching, so
    * switching back and forth costs nothing.
    */
   let companies: Company[] = [];
-  /** The company the Selskapet form is showing, or null when there is none. */
+  /** The company the page is showing, or null when there is none. */
   let selskap: Company | null = null;
+  /** The register's answer for that company: stored, or freshly fetched. */
+  let register: RegisterAnswer | null = null;
+
+  /**
+   * What the caller may do with the books on screen. Asked, never remembered.
+   *
+   * These were two booleans, assigned once and only after the first draw, which
+   * is one step too late. showSelskap() paints the account list, the register
+   * button and the pencils on every field, and all of them ask, so an ordinary
+   * visit opened on the read-only page: no «Legg til konto» for an owner, and
+   * an empty account list telling them they could not add one. It stayed that
+   * way until a rename or a register fetch happened to draw the card a second
+   * time, which is why it looked like a permissions problem rather than an
+   * ordering one.
+   *
+   * Functions for the same reason `bokene()` is one. `selskap` moves when the
+   * company is switched, renamed or confirmed, and a permission copied out
+   * before that is a permission for a different set of books.
+   */
+  const mayManage = (): boolean => canInCompany(selskap, 'member:manage');
+  const mayAdmin = (): boolean => canInCompany(selskap, 'organization:manage');
+
+  const digitsOf = (value: string): string => value.replace(/[^0-9]+/g, '');
+
+  /**
+   * The confirmation the browser left this page in the middle of.
+   *
+   * Confirming ownership takes two steps that are separated by leaving the
+   * site: log in with ID-porten, then ask Altinn. Nothing carried the second
+   * step across the round trip, so pressing «Bekreft selskapet» sent people
+   * through BankID and returned them to a page that had quietly forgotten why
+   * they went — logged in, still unconfirmed, and still showing the same
+   * warning. The banner was not lying; the confirmation had never run.
+   *
+   * `sessionStorage`, not the URL: it belongs to this tab and this errand, and
+   * a marker on the address bar would replay the confirmation on every reload
+   * and travel in any link somebody copied.
+   */
+  const RESUME_KEY = 'myntos.bekreft-selskap';
+
+  function rememberConfirm(companyId: number): void {
+    try {
+      window.sessionStorage.setItem(RESUME_KEY, String(companyId));
+    } catch {
+      // Private-mode Safari throws on access. The button still works; it just
+      // takes the second press it always took.
+    }
+  }
+
+  /** Read the pending confirmation and clear it, so it is attempted once. */
+  function takeConfirm(): number | null {
+    try {
+      const raw = window.sessionStorage.getItem(RESUME_KEY);
+      window.sessionStorage.removeItem(RESUME_KEY);
+      return raw === null ? null : Number(raw);
+    } catch {
+      return null;
+    }
+  }
 
   function cell(value: string): HTMLTableCellElement {
     const td = document.createElement('td');
@@ -792,206 +1183,747 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     setStatus(pageStatus, error instanceof ApiError ? error.message : fallback);
   }
 
-  function renderMembers(members: Member[]): void {
-    memberBody.replaceChildren();
-    for (const member of members) {
-      const row = document.createElement('tr');
-
-      const role = document.createElement('td');
-      if (mayManage) {
-        const select = document.createElement('select');
-        select.className = 'role';
-        for (const [value, label] of ROLES) {
-          const node = document.createElement('option');
-          node.value = value;
-          node.textContent = label;
-          node.selected = value === member.role;
-          select.append(node);
-        }
-        select.addEventListener('change', () => {
-          void changeMemberRole(membership.organization_id, member.user_id, select.value)
-            .then(() => refresh())
-            .catch((error: unknown) => {
-              // The server refused: the last owner, or granting owner as an
-              // admin. Put the select back so it never shows a role that is
-              // not the one in force.
-              select.value = member.role;
-              report(error, 'Rollen kunne ikke endres.');
-            });
-        });
-        role.append(select);
-      } else {
-        role.textContent = roleLabel(member.role);
-      }
-
-      const actions = document.createElement('td');
-      if (mayManage || member.is_self) {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'btn-link';
-        button.textContent = member.is_self ? 'Forlat organisasjonen' : 'Fjern';
-        button.addEventListener('click', () => {
-          void leave(member);
-        });
-        actions.append(button);
-      }
-
-      row.append(
-        cell(member.full_name + (member.is_self ? ' (deg)' : '')),
-        cell(member.email),
-        role,
-        actions,
-      );
-      memberBody.append(row);
-    }
+  /** One `<dt>/<dd>` pair, skipped entirely when there is nothing to say. */
+  function field(
+    list: HTMLElement,
+    label: string,
+    value: string | null,
+    options: { tone?: 'vent' | 'av'; numeric?: boolean } = {},
+  ): void {
+    if (value === null || value === '') return;
+    const term = document.createElement('dt');
+    term.textContent = label;
+    const detail = document.createElement('dd');
+    detail.textContent = value;
+    if (options.tone !== undefined) detail.dataset.tone = options.tone;
+    if (options.numeric === true) detail.dataset.numerisk = 'true';
+    list.append(term, detail);
   }
 
-  async function leave(member: Member): Promise<void> {
-    const question = member.is_self
-      ? 'Forlate organisasjonen? Du mister tilgangen til alle selskapene i den.'
-      : `Fjerne ${member.full_name} fra organisasjonen?`;
-    if (!window.confirm(question)) return;
-    try {
-      await removeMember(membership.organization_id, member.user_id);
-      if (member.is_self) {
-        window.location.href = '/';
-        return;
-      }
-      await refresh();
-    } catch (error: unknown) {
-      report(error, 'Medlemmet kunne ikke fjernes.');
-    }
-  }
+  /**
+   * Say what happened when ID-porten sent the browser back here having failed.
+   *
+   * The government login leaves the site entirely, so the only thing that
+   * survives the round trip is a marker on the query string. Until this
+   * existed the backend put that marker on `/skatt/?error=`, a route that does
+   * not exist, so every failure ended on a 404 and the person was left with a
+   * button that had visibly done nothing.
+   *
+   * The marker is dropped from the address afterwards: it describes one trip
+   * back from BankID, and leaving it in place would replay the message on
+   * every reload and on any link somebody copied out of the address bar.
+   */
+  function reportCallbackError(): void {
+    const marker = new URLSearchParams(window.location.search).get('error');
+    if (marker === null) return;
+    setStatus(pageStatus, CALLBACK_ERRORS[marker] ?? 'Innloggingen feilet. Prøv en gang til.');
 
-  function renderInvitations(invitations: Invitation[]): void {
-    invitationBody.replaceChildren();
-    for (const invitation of invitations) {
-      const row = document.createElement('tr');
-      const actions = document.createElement('td');
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'btn-link';
-      button.textContent = 'Trekk tilbake';
-      button.addEventListener('click', () => {
-        void revokeInvitation(membership.organization_id, invitation.id)
-          .then(() => refresh())
-          .catch((error: unknown) => report(error, 'Invitasjonen kunne ikke trekkes tilbake.'));
-      });
-      actions.append(button);
-
-      row.append(
-        cell(invitation.email),
-        cell(roleLabel(invitation.role)),
-        cell(isoDate(invitation.expires_at.slice(0, 10))),
-        actions,
-      );
-      invitationBody.append(row);
-    }
-    show(el('#invitations-empty'), invitations.length === 0);
-  }
-
-  async function refresh(): Promise<void> {
-    renderMembers(await listMembers(membership.organization_id));
-    if (mayManage) renderInvitations(await listInvitations(membership.organization_id));
-  }
-
-  /** Show whose name is on screen, and whether it is one we made up. */
-  function showOrganization(): void {
-    el('#organization-name').textContent = membership.organization_name;
-    el<HTMLInputElement>('#rename-input').value = membership.organization_name;
-    show(el('#placeholder-note'), membership.organization_name_is_placeholder);
-    // The picker carries the same name, and a rename must not leave a stale one
-    // in a list the user is about to pick from.
-    const option = [...picker.options].find(
-      (item) => item.value === String(membership.organization_id),
-    );
-    if (option !== undefined) option.textContent = membership.organization_name;
+    const url = new URL(window.location.href);
+    url.searchParams.delete('error');
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
   }
 
   // --- Selskapet ---------------------------------------------------------------
   //
-  // The company's own details, and the only place they can be edited. Two of
-  // them decide what an invoice is allowed to say (see § 5-1-2), and one of
-  // them, kontonummeret, decides whether an invoice can be issued at all: a
+  // The company's own details: shown as details, and edited behind a button.
+  // Two of them decide what an invoice is allowed to say (see § 5-1-2), and one
+  // of them, kontonummeret, decides whether an invoice can be issued at all: a
   // document with nowhere to pay it is refused by the backend, because an
   // issued invoice can only be corrected with a kreditnota.
 
-  const selskapForm = el<HTMLFormElement>('#selskap-form');
   const selskapStatus = el<HTMLParagraphElement>('#selskap-status');
-  const selskapPicker = el<HTMLSelectElement>('#selskap-picker');
 
-  function selskapField(name: string): HTMLInputElement | null {
-    return selskapForm.querySelector<HTMLInputElement>(`[name="${name}"]`);
+  /**
+   * The row that is currently open for editing, or null.
+   *
+   * One at a time, and by key rather than by element: the list is rebuilt from
+   * scratch on every draw, so a held element would be an orphan a moment later.
+   */
+  let redigerer: string | null = null;
+
+  /** A pencil, 14px, in the current text colour. */
+  function pencil(): SVGSVGElement {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.9');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z');
+    svg.append(path);
+    return svg;
   }
 
-  /** Fill the form from `selskap`, and say what is still missing. */
-  function showSelskap(): void {
-    const here = companies.filter(
-      (company) => company.organization_id === membership.organization_id,
-    );
-    // Only ask which one when there is a choice to make.
-    show(el('#selskap-picker-field'), here.length > 1);
-    selskapPicker.replaceChildren();
-    for (const company of here) {
-      const option = document.createElement('option');
-      option.value = String(company.id);
-      option.textContent = company.name;
-      selskapPicker.append(option);
+  /**
+   * One line of an information list, and how to change it.
+   *
+   * The page is a page of facts. A field is a fact plus a pencil, and pressing
+   * the pencil turns that one line into a small form — not the whole card into
+   * a large one. Somebody who came to read reads; somebody who came to correct
+   * the kontonummer corrects the kontonummer.
+   *
+   * `rediger` absent means the register owns the value and we only show it.
+   */
+  interface Felt {
+    nokkel: string;
+    navn: string;
+    /** Empty string means the row is left out entirely. */
+    vis: string;
+    tone?: 'vent' | 'av';
+    numerisk?: boolean;
+    /** A word in place of the pencil, for a value that is settled. */
+    merke?: string;
+    /** Builds the inputs, and reads them back into a save. */
+    rediger?: {
+      felter: (
+        | { navn: string; verdi: string; bredde?: string; plassholder?: string }
+      )[];
+      valg?: { verdi: string; etikett: string }[];
+      hjelp?: string;
+      lagre: (verdier: string[]) => Promise<void>;
+    };
+  }
+
+  /** Draw a list of facts into a `<dl>`, with the open row as a form. */
+  function tegnFelt(list: HTMLDListElement, felter: Felt[], status: HTMLElement): void {
+    list.replaceChildren();
+    for (const felt of felter) {
+      if (felt.vis === '' && felt.rediger === undefined) continue;
+      const term = document.createElement('dt');
+      term.textContent = felt.navn;
+      const detail = document.createElement('dd');
+
+      if (redigerer === felt.nokkel && felt.rediger !== undefined) {
+        detail.append(redigeringsform(felt.rediger, list, felter, status));
+      } else {
+        const value = document.createElement('span');
+        if (felt.tone !== undefined) value.dataset.tone = felt.tone;
+        if (felt.numerisk === true) value.dataset.numerisk = 'true';
+        value.textContent = felt.vis;
+        detail.append(value);
+        if (felt.merke !== undefined) {
+          const merke = document.createElement('span');
+          merke.className = 'org-felt-merke';
+          merke.textContent = felt.merke;
+          detail.append(merke);
+        } else if (felt.rediger !== undefined) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'org-blyant';
+          button.title = `Endre ${felt.navn.toLowerCase()}`;
+          button.setAttribute('aria-label', button.title);
+          button.append(pencil());
+          button.addEventListener('click', () => {
+            redigerer = felt.nokkel;
+            setStatus(status, '');
+            tegnFelt(list, felter, status);
+            list.querySelector<HTMLElement>('.org-endre input, .org-endre select')?.focus();
+          });
+          detail.append(button);
+        }
+      }
+      list.append(term, detail);
     }
-    // Whatever is already on screen, else the company the rest of the site is
-    // showing, else the first. Going through rememberedCompany is what keeps
-    // /organisasjon/ editing the same set of books that /faktura/ would invoice
-    // from. With several companies on the account, "the first one" is a
-    // different answer on every page.
-    selskap =
-      here.find((company) => company.id === selskap?.id) ??
-      here.find((company) => company.id === rememberedCompany()) ??
-      here[0] ??
-      null;
-    // Nothing to show for an organization that keeps no books yet; the section
-    // below is where a set of books is started.
-    show(
-      el('#selskap'),
-      selskap !== null && membership.permissions.includes('organization:manage'),
+  }
+
+  /** The one row that is open: inputs, Lagre, Avbryt. */
+  function redigeringsform(
+    rediger: NonNullable<Felt['rediger']>,
+    list: HTMLDListElement,
+    felter: Felt[],
+    status: HTMLElement,
+  ): HTMLFormElement {
+    const form = document.createElement('form');
+    form.className = 'org-endre';
+
+    const controls: (HTMLInputElement | HTMLSelectElement)[] = [];
+    if (rediger.valg !== undefined) {
+      const select = document.createElement('select');
+      for (const option of rediger.valg) {
+        const node = document.createElement('option');
+        node.value = option.verdi;
+        node.textContent = option.etikett;
+        node.selected = option.verdi === rediger.felter[0]?.verdi;
+        select.append(node);
+      }
+      controls.push(select);
+      form.append(select);
+    } else {
+      for (const spec of rediger.felter) {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = spec.verdi;
+        input.autocomplete = 'off';
+        input.setAttribute('aria-label', spec.navn);
+        if (spec.plassholder !== undefined) input.placeholder = spec.plassholder;
+        if (spec.bredde !== undefined) input.style.flex = spec.bredde;
+        controls.push(input);
+        form.append(input);
+      }
+    }
+
+    const save = document.createElement('button');
+    save.type = 'submit';
+    save.className = 'btn btn-primary btn-small';
+    save.textContent = 'Lagre';
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'btn btn-ghost btn-small';
+    cancel.textContent = 'Avbryt';
+    cancel.addEventListener('click', () => {
+      redigerer = null;
+      setStatus(status, '');
+      tegnFelt(list, felter, status);
+    });
+    form.append(save, cancel);
+
+    if (rediger.hjelp !== undefined) {
+      const help = document.createElement('p');
+      help.className = 'field-hint org-endre-hjelp';
+      help.textContent = rediger.hjelp;
+      form.append(help);
+    }
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      save.disabled = true;
+      setStatus(status, '');
+      void rediger
+        .lagre(controls.map((control) => control.value.trim()))
+        .then(() => {
+          redigerer = null;
+        })
+        .catch((error: unknown) => {
+          setStatus(status, error instanceof ApiError ? error.message : 'Ble ikke lagret.');
+        })
+        .finally(() => {
+          save.disabled = false;
+        });
+    });
+    return form;
+  }
+
+  /** Save a change to the company, and redraw everything that shows it. */
+  async function lagreSelskap(
+    company: Company,
+    payload: Parameters<typeof updateCompany>[1],
+  ): Promise<void> {
+    const saved = await updateCompany(company.id, payload);
+    const moved = saved.orgnr !== company.orgnr;
+    companies = companies.map((item) => (item.id === saved.id ? saved : item));
+    selskap = saved;
+    redigerer = null;
+    showSelskap();
+    setStatus(selskapStatus, 'Lagret.', 'ok');
+    if (moved) {
+      // A different orgnr is a different company as far as the register is
+      // concerned, and what is on screen belongs to the old one.
+      register = null;
+      showRegister();
+      await loadStoredRegister(saved);
+    }
+  }
+
+  /** What the Selskapet card says, line by line. */
+  function selskapFelter(company: Company): Felt[] {
+    const may = mayAdmin();
+    const felter: Felt[] = [
+      {
+        nokkel: 'name',
+        navn: 'Navn',
+        vis: company.name,
+        rediger: may
+          ? {
+              felter: [{ navn: 'Navn', verdi: company.name }],
+              hjelp: 'Slik navnet står i Enhetsregisteret.',
+              lagre: ([name]) => lagreSelskap(company, { name: name ?? '' }),
+            }
+          : undefined,
+      },
+      {
+        nokkel: 'orgnr',
+        navn: 'Organisasjonsnummer',
+        vis: orgnummer(company.orgnr),
+        numerisk: true,
+        // Settled once somebody has confirmed it in Altinn: the confirmation is
+        // about that number, and a different number is a different company.
+        merke: company.verified ? 'Bekreftet' : undefined,
+        rediger:
+          may && !company.verified
+            ? {
+                felter: [{ navn: 'Organisasjonsnummer', verdi: orgnummer(company.orgnr) }],
+                lagre: async ([orgnr]) => {
+                  const digits = digitsOf(orgnr ?? '');
+                  if (digits.length !== 9) {
+                    throw new Error('Organisasjonsnummeret må være ni siffer.');
+                  }
+                  try {
+                    await lagreSelskap(company, { orgnr: digits });
+                  } catch (error: unknown) {
+                    // Somebody confirmed the company in another tab while this
+                    // row stood open. Redrawing takes the pencil away, so the
+                    // next attempt is not the same refusal again.
+                    if (error instanceof ApiError && error.code === ORGNR_LOCKED) {
+                      companies = await loadCompanies(true);
+                      redigerer = null;
+                      showSelskap();
+                    }
+                    throw error;
+                  }
+                },
+              }
+            : undefined,
+      },
+      {
+        nokkel: 'adresse',
+        navn: 'Adresse',
+        vis:
+          [company.address_line, [company.postal_code, company.city].filter(Boolean).join(' ')]
+            .filter((part) => part !== null && part !== '')
+            .join(', ') || 'Ikke oppgitt',
+        tone: company.address_line === null ? 'av' : undefined,
+        rediger: may
+          ? {
+              felter: [
+                { navn: 'Adresse', verdi: company.address_line ?? '', bredde: '3 1 9rem' },
+                { navn: 'Postnummer', verdi: company.postal_code ?? '', bredde: '0 0 5rem' },
+                { navn: 'Sted', verdi: company.city ?? '', bredde: '2 1 6rem' },
+              ],
+              hjelp:
+                'Hentes fra Enhetsregisteret. Står på fakturaen fordi bokføringsforskriften ' +
+                '§ 5-1-2 krever hovedkontorets adresse fra selskaper i Foretaksregisteret.',
+              lagre: ([line, postal, city]) =>
+                lagreSelskap(company, {
+                  address_line: line ?? '',
+                  postal_code: postal ?? '',
+                  city: city ?? '',
+                }),
+            }
+          : undefined,
+      },
+      {
+        nokkel: 'vat_registered',
+        navn: 'Merverdiavgift',
+        vis: company.vat_registered ? 'Registrert' : 'Ikke registrert',
+        tone: company.vat_registered ? undefined : 'av',
+        rediger: may
+          ? {
+              felter: [{ navn: 'Merverdiavgift', verdi: String(company.vat_registered) }],
+              valg: [
+                { verdi: 'true', etikett: 'Registrert i Merverdiavgiftsregisteret' },
+                { verdi: 'false', etikett: 'Ikke registrert' },
+              ],
+              hjelp:
+                'Uten dette kan fakturaene ikke vise merverdiavgift. Å kreve inn mva uten å ' +
+                'være registrert er å kreve inn en avgift på statens vegne uten å ha rett til ' +
+                'det, og pengene skyldes likevel.',
+              lagre: ([value]) => lagreSelskap(company, { vat_registered: value === 'true' }),
+            }
+          : undefined,
+      },
+      {
+        nokkel: 'in_foretaksregisteret',
+        navn: 'Foretaksregisteret',
+        vis: company.in_foretaksregisteret ? 'Registrert' : 'Ikke registrert',
+        tone: company.in_foretaksregisteret ? undefined : 'av',
+        rediger: may
+          ? {
+              felter: [
+                { navn: 'Foretaksregisteret', verdi: String(company.in_foretaksregisteret) },
+              ],
+              valg: [
+                { verdi: 'true', etikett: 'Registrert i Foretaksregisteret' },
+                { verdi: 'false', etikett: 'Ikke registrert' },
+              ],
+              hjelp:
+                'Da skal ordet «Foretaksregisteret» og hovedkontorets adresse stå på hvert ' +
+                'salgsdokument. Alle AS, ASA og NUF er registrert der.',
+              lagre: ([value]) =>
+                lagreSelskap(company, { in_foretaksregisteret: value === 'true' }),
+            }
+          : undefined,
+      },
+      // Abonnementet og rollen sto tidligere på et kort for kontoen, sammen
+      // med et kontonavn som så ut som et selskapsnavn. Begge hører hjemme
+      // her: et regnskap er det som har en størrelse og en pris, og rollen din
+      // er noe du har over disse bøkene og ikke over kontoen. Ingen blyant på
+      // noen av dem — det finnes ingenting å selge ennå, og rollen din er det
+      // ikke du som setter.
+      { nokkel: 'plan', navn: 'Abonnement', vis: company.plan },
+      { nokkel: 'rolle', navn: 'Din rolle', vis: roleLabel(company.role) },
+    ];
+
+    // What the register owns. Shown, never edited here: a refresh would
+    // overwrite anything typed, so a pencil would be a promise we do not keep.
+    const fraRegisteret: [string, string | null][] = [
+      ['Organisasjonsform', company.organisation_form],
+      [
+        'Næring',
+        company.industry_code === null
+          ? null
+          : `${company.industry_code} ${company.industry_description ?? ''}`.trim(),
+      ],
+      ['Nettsted', company.website],
+      ['Telefon', company.phone],
+      ['E-post', company.email],
+      ['Underenhet av', company.parent_orgnr === null ? null : orgnummer(company.parent_orgnr)],
+    ];
+    for (const [navn, verdi] of fraRegisteret) {
+      if (verdi === null || verdi === '') continue;
+      felter.push({ nokkel: navn, navn, vis: verdi });
+    }
+    return felter;
+  }
+
+  // --- Kontonumrene ------------------------------------------------------------
+  //
+  // The one collection on a page of facts, and it is a collection because a
+  // company is paid into as many accounts as its bank gave it: a driftskonto to
+  // invoice against, a skattetrekkskonto that skattebetalingsloven § 5-12
+  // requires be kept apart. The marked one is where an invoice goes when it
+  // says nothing else, and /faktura/ is where it says something else.
+
+  const kontoStatus = el<HTMLParagraphElement>('#konto-status');
+
+  /**
+   * The account row open for editing, `'ny'` for the add form, or null.
+   *
+   * By id rather than by element, for the same reason `redigerer` is by key:
+   * the list is rebuilt from scratch on every draw, so a held element would be
+   * an orphan a moment later.
+   */
+  let redigererKonto: number | 'ny' | null = null;
+
+  /** Adopt a company the account endpoints answered with, and redraw. */
+  function kontoLagret(saved: Company, melding: string): void {
+    companies = companies.map((item) => (item.id === saved.id ? saved : item));
+    selskap = saved;
+    redigererKonto = null;
+    showSelskap();
+    setStatus(kontoStatus, melding, 'ok');
+  }
+
+  /** A small button in an account row. */
+  function kontoKnapp(tekst: string, handling: () => Promise<void>): HTMLButtonElement {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-ghost btn-small';
+    button.textContent = tekst;
+    button.addEventListener('click', () => {
+      button.disabled = true;
+      setStatus(kontoStatus, '');
+      void handling()
+        .catch((error: unknown) => {
+          setStatus(kontoStatus, error instanceof ApiError ? error.message : 'Ble ikke lagret.');
+        })
+        .finally(() => {
+          button.disabled = false;
+        });
+    });
+    return button;
+  }
+
+  /**
+   * The number and the name, as a form. `konto` null means a new account.
+   *
+   * The account number is asked for grouped the way people read it; the backend
+   * strips the separators and checks the mod-11 digit, which is the check that
+   * matters — a transposed pair is discovered by a customer whose payment
+   * bounced, weeks later, and an issued invoice cannot be corrected.
+   */
+  function kontoSkjema(company: Company, konto: BankAccount | null): HTMLFormElement {
+    const form = document.createElement('form');
+    form.className = 'org-endre';
+
+    const nummer = document.createElement('input');
+    nummer.type = 'text';
+    nummer.autocomplete = 'off';
+    nummer.placeholder = '1506.20.33158';
+    nummer.setAttribute('aria-label', 'Kontonummer');
+    nummer.value = konto === null ? '' : kontonummer(konto.account);
+    nummer.style.flex = '2 1 9rem';
+
+    const navn = document.createElement('input');
+    navn.type = 'text';
+    navn.autocomplete = 'off';
+    navn.placeholder = 'Navn, for eksempel Drift';
+    navn.setAttribute('aria-label', 'Navn på kontoen');
+    navn.value = konto?.label ?? '';
+    navn.style.flex = '1 1 7rem';
+
+    const lagre = document.createElement('button');
+    lagre.type = 'submit';
+    lagre.className = 'btn btn-primary btn-small';
+    lagre.textContent = konto === null ? 'Legg til' : 'Lagre';
+
+    const avbryt = document.createElement('button');
+    avbryt.type = 'button';
+    avbryt.className = 'btn btn-ghost btn-small';
+    avbryt.textContent = 'Avbryt';
+    avbryt.addEventListener('click', () => {
+      redigererKonto = null;
+      setStatus(kontoStatus, '');
+      showKontoer(company);
+    });
+
+    const hjelp = document.createElement('p');
+    hjelp.className = 'field-hint org-endre-hjelp';
+    hjelp.textContent =
+      'Elleve siffer. Kontrollsifferet kontrolleres når du lagrer. Navnet er valgfritt og ' +
+      'står ikke på fakturaen. Det er der for å skille kontoene fra hverandre.';
+
+    form.append(nummer, navn, lagre, avbryt, hjelp);
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      lagre.disabled = true;
+      setStatus(kontoStatus, '');
+      const payload = { account: nummer.value.trim(), label: navn.value.trim() };
+      const request =
+        konto === null
+          ? addBankAccount(company.id, payload)
+          : updateBankAccount(company.id, konto.id, payload);
+      void request
+        .then((saved) => {
+          kontoLagret(saved, konto === null ? 'Kontoen er lagt til.' : 'Lagret.');
+        })
+        .catch((error: unknown) => {
+          setStatus(kontoStatus, error instanceof ApiError ? error.message : 'Ble ikke lagret.');
+        })
+        .finally(() => {
+          lagre.disabled = false;
+        });
+    });
+    return form;
+  }
+
+  /** One account as a line: the number, what it is called, and what it is for. */
+  function kontoRad(company: Company, konto: BankAccount): HTMLDivElement {
+    const rad = document.createElement('div');
+    rad.className = 'org-konto-rad';
+
+    const nummer = document.createElement('span');
+    nummer.className = 'org-konto-nummer';
+    nummer.textContent = kontonummer(konto.account);
+    rad.append(nummer);
+
+    if (konto.label !== null) {
+      const navn = document.createElement('span');
+      navn.className = 'org-konto-navn';
+      navn.textContent = konto.label;
+      rad.append(navn);
+    }
+    if (konto.is_primary) {
+      // Merket og ikke bare øverst. Rekkefølgen er et hint; ordet er svaret på
+      // hvor fakturaen betales når den ikke sier noe annet.
+      const merke = document.createElement('span');
+      merke.className = 'org-felt-merke';
+      merke.textContent = 'Hovedkonto';
+      rad.append(merke);
+    }
+    if (!mayAdmin()) return rad;
+
+    const handlinger = document.createElement('div');
+    handlinger.className = 'org-konto-handlinger';
+    if (!konto.is_primary) {
+      handlinger.append(
+        kontoKnapp('Gjør til hovedkonto', async () => {
+          kontoLagret(
+            await updateBankAccount(company.id, konto.id, { is_primary: true }),
+            `${kontonummer(konto.account)} er nå hovedkonto.`,
+          );
+        }),
+      );
+    }
+    handlinger.append(
+      kontoKnapp('Fjern', async () => {
+        // Confirm og ikke et eget steg: en fjernet konto kan legges inn igjen,
+        // og utstedte fakturaer beholder nummeret de ble utstedt med — det
+        // står på dokumentet, ikke i denne listen.
+        const svar = window.confirm(
+          `Fjerne ${kontonummer(konto.account)}? Fakturaer som alt er utstedt beholder ` +
+            'nummeret sitt.',
+        );
+        if (!svar) return;
+        kontoLagret(await deleteBankAccount(company.id, konto.id), 'Kontoen er fjernet.');
+      }),
     );
+
+    const blyant = document.createElement('button');
+    blyant.type = 'button';
+    blyant.className = 'org-blyant';
+    blyant.title = 'Endre kontonummeret';
+    blyant.setAttribute('aria-label', blyant.title);
+    blyant.append(pencil());
+    blyant.addEventListener('click', () => {
+      redigererKonto = konto.id;
+      setStatus(kontoStatus, '');
+      showKontoer(company);
+      el<HTMLInputElement>('.org-endre input', el('#konto-liste')).focus();
+    });
+    handlinger.append(blyant);
+
+    rad.append(handlinger);
+    return rad;
+  }
+
+  /** The whole list, with at most one row open. */
+  function showKontoer(company: Company): void {
+    show(el('#konto-ny'), mayAdmin() && redigererKonto !== 'ny');
+    const liste = el<HTMLUListElement>('#konto-liste');
+    liste.replaceChildren();
+
+    for (const konto of company.bank_accounts) {
+      const rad = document.createElement('li');
+      rad.append(
+        redigererKonto === konto.id ? kontoSkjema(company, konto) : kontoRad(company, konto),
+      );
+      liste.append(rad);
+    }
+    if (redigererKonto === 'ny') {
+      const ny = document.createElement('li');
+      ny.append(kontoSkjema(company, null));
+      liste.append(ny);
+    } else if (company.bank_accounts.length === 0) {
+      // Tomheten er en opplysning og ikke et manglende felt: uten en konto kan
+      // ingen faktura utstedes i det hele tatt, og /faktura/ lenker hit for
+      // nettopp dette.
+      //
+      // Og den bærer veien videre selv. «Legg til konto» står oppe ved
+      // overskriften, og det er en annen linje enn den man leser: den som kom
+      // hit fra /faktura/ fikk vite at ingen faktura kan utstedes, uten noe å
+      // trykke på i samme blikk, og lette etter knappen et helt kort unna.
+      // Setningen om at det ikke går er ikke et svar på hvor det gjøres.
+      //
+      // Den som ikke får legge inn noe får vite hvem som får. Å bare si «du kan
+      // ikke» er å låse døra uten å si hvem som har nøkkelen, og det er samme
+      // svar som eierskapsavsnittet gir lenger nede.
+      const tom = document.createElement('li');
+      tom.className = 'org-konto-tom';
+      tom.textContent = 'Ingen konto lagt inn. Ingen faktura kan utstedes uten. ';
+      if (mayAdmin()) {
+        const legg = document.createElement('button');
+        legg.type = 'button';
+        legg.className = 'btn-link';
+        legg.textContent = 'Legg inn kontonummer';
+        legg.addEventListener('click', nyKonto);
+        tom.append(legg);
+      } else {
+        tom.append('Be en administrator for dette regnskapet om å legge inn en.');
+      }
+      liste.append(tom);
+    }
+  }
+
+  /** Open the add form, and put the cursor in it. */
+  function nyKonto(): void {
+    redigererKonto = 'ny';
+    setStatus(kontoStatus, '');
+    if (selskap !== null) showKontoer(selskap);
+    el<HTMLInputElement>('.org-endre input', el('#konto-liste')).focus();
+  }
+
+  el('#konto-ny').addEventListener('click', nyKonto);
+
+  /** Every fact about the company, and whether anyone has confirmed it. */
+  function showSelskapDetaljer(company: Company): void {
+    const merke = el<HTMLSpanElement>('#selskap-merke');
+    show(merke, true);
+    merke.dataset.tone = company.verified ? 'ok' : 'vent';
+    merke.textContent = company.verified ? 'Bekreftet' : 'Ubekreftet';
+
+    tegnFelt(el<HTMLDListElement>('#selskap-felt'), selskapFelter(company), selskapStatus);
+    showKontoer(company);
+  }
+
+  /**
+   * What the page is called: the company, and a label above it.
+   *
+   * The label is a *word*, never the organisation's name, and that is the whole
+   * point. An organisation adopts the name of the first company set up under it
+   * (`adopt_name_if_placeholder`), so an account is routinely called after one
+   * of its companies. Printed above a different company it read as that
+   * company's name having crossed over — the one thing this page must never
+   * look like, whether or not any data actually moved.
+   *
+   * Which organisation you are in is answered by the picker in this header when
+   * The company, and nothing above it: there is no account on this page.
+   */
+  /**
+   * The books every member and invitation call on this page is about.
+   *
+   * A function rather than a captured value, and it throws rather than
+   * returning null: every one of those calls is behind a control that is hidden
+   * when there is no company, so reaching one without books is a bug, and a
+   * request built from a guess would be the worst kind. `selskap` moves when
+   * the company is renamed or confirmed, so reading it late is also what keeps
+   * these calls pointed at the right company.
+   */
+  function bokene(): Company {
+    if (selskap === null) throw new Error('ingen bøker valgt');
+    return selskap;
+  }
+
+  function showTittel(): void {
+    // Never an account name, however provisional this page's own state is: see
+    // the note where showOrganization used to be.
+    el('#sidetittel').textContent = selskap === null ? 'Ingen regnskap ennå' : selskap.name;
+    const medlemmer = el('#medlemmer-tittel');
+    medlemmer.textContent =
+      selskap === null ? 'Medlemmer' : `Medlemmer i ${selskap.name}`;
+  }
+
+  /** Draw the whole Selskapet section from `companies` and `selskap`. */
+  function showSelskap(): void {
+    // Whatever is already on screen, else whatever the rest of the site is
+    // showing. Going through `currentCompany` rather than reading the stored id
+    // directly is what keeps /organisasjon/ describing the same set of books
+    // that /faktura/ would invoice from: it does not merely read the choice, it
+    // *writes* it, along with the header and the record the next page load
+    // paints from (lib/tenant.ts).
+    //
+    // Every company the caller can reach, with no filtering by account: access
+    // is per company now, so `companies` is already exactly the list of books
+    // this person may open, whoever set them up.
+    const kept = companies.find((company) => company.id === selskap?.id);
+    selskap = kept ?? currentCompany(companies) ?? null;
+
+    show(el('#selskap'), selskap !== null);
+    showTittel();
+    // Everyone who can open the books may read what the register said: it is a
+    // stored answer and a plain lookup. Asking Brønnøysund for a *new* one can
+    // move the VAT flag, which is a change to every future invoice, so that
+    // button needs the permission editing needs.
+    show(el('#register'), selskap !== null);
+    show(el('#register-hent'), mayAdmin());
+    // No books at all is the one case this page cannot answer, so it points at
+    // the page that can. Only for someone whose *account* could set one up: an
+    // invitation to a refusal is worse than silence, and somebody invited to a
+    // company has no account to add one to.
+    show(el('#ingen-boker'), companies.length === 0 && konto !== undefined);
     if (selskap === null) {
       showEierskap();
       return;
     }
-    selskapPicker.value = String(selskap.id);
     // The header is company-first, and this page is where a company is renamed,
     // switched and confirmed. Every one of those has to reach the top of the
     // page, or the header would keep asserting what the card no longer says.
-    setChromeCompany(selskap);
+    setActiveCompany(selskap);
+    // And the same for the switcher behind the name: a company set up or
+    // renamed here is one the menu on every other page has to know about.
+    mountChromeCompanyMenu(companies, selskap);
+
+    showSelskapDetaljer(selskap);
     showEierskap();
-
-    el<HTMLInputElement>('#selskap-orgnr').value = selskap.orgnr;
-    const set = (name: string, value: string): void => {
-      const node = selskapField(name);
-      if (node !== null) node.value = value;
-    };
-    set('name', selskap.name);
-    set('address_line', selskap.address_line ?? '');
-    set('postal_code', selskap.postal_code ?? '');
-    set('city', selskap.city ?? '');
-    set('bank_account', selskap.bank_account === null ? '' : kontonummer(selskap.bank_account));
-    const check = (name: string, state: boolean): void => {
-      const node = selskapField(name);
-      if (node !== null) node.checked = state;
-    };
-    check('vat_registered', selskap.vat_registered);
-    check('in_foretaksregisteret', selskap.in_foretaksregisteret);
-
-    // The hint carries the consequence rather than the format: the format is in
-    // the placeholder, and the consequence is what people actually run into.
-    const hint = el('#konto-hint');
-    hint.dataset.tone = selskap.bank_account === null ? 'warn' : 'plain';
-    hint.textContent =
-      selskap.bank_account === null
-        ? 'Mangler. Uten kontonummer kan ingen faktura utstedes. Den ville sagt hva kunden ' +
-          'skylder, men ikke hvor det skal betales. Kontrollsifferet kontrolleres når du lagrer.'
-        : 'Står på hver faktura, og i PaymentMeans i EHF-filen sammen med KID-en.';
+    showRegisterAge();
   }
+
+  {/* Her var det en selskapsvelger i overskriften på Selskapet-kortet. Den er
+      borte av samme grunn som de fire andre på nettstedet: spørsmålet «hvilket
+      selskap» besvares i toppen, på hver side, ett sted. Byttet der laster
+      siden på nytt, så dette kortet tegnes for det selskapet man kom til. */}
 
   // --- Eierskapet --------------------------------------------------------------
   //
@@ -1013,7 +1945,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     const status = eierskapStatus();
     if (error instanceof ApiError && error.code === ALREADY_CLAIMED) {
       setStatus(status, CLAIMED_MESSAGE);
-      show(el('#eierskap-nytt'), true);
       return;
     }
     if (error instanceof ApiError && error.status === 409) {
@@ -1045,6 +1976,36 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     return saved;
   }
 
+  /**
+   * Ask Altinn, and say what came back.
+   *
+   * Shared by the banner's button and by the resume after ID-porten, so the two
+   * paths cannot drift into saying different things about the same answer. On
+   * success the banner is gone — `showSelskap` has already removed it — so the
+   * confirmation is reported in the card that is still on screen.
+   */
+  async function attemptConfirm(company: Company, status: HTMLElement): Promise<void> {
+    setStatus(status, 'Spør Altinn om rollen din …', 'ok');
+    try {
+      const saved = await confirmEierskap(company);
+      setStatus(status, '');
+      setStatus(selskapStatus, `Eierskapet for ${saved.name} er bekreftet i Altinn.`, 'ok');
+      // Confirming re-reads the register on the server, so what is stored is
+      // now newer than what the page is showing. Read back rather than fetched
+      // again: Brønnøysund was asked a moment ago, on our behalf.
+      await loadStoredRegister(saved);
+    } catch (error: unknown) {
+      if (error instanceof ApiError && error.code === ALREADY_CLAIMED) {
+        setStatus(status, CLAIMED_MESSAGE);
+        return;
+      }
+      setStatus(
+        status,
+        error instanceof ApiError ? error.message : 'Vi fikk ikke bekreftet rollen din.',
+      );
+    }
+  }
+
   /** Whether these books are confirmed, and what the caller can do about it. */
   function showEierskap(): void {
     const block = el<HTMLDivElement>('#eierskap');
@@ -1059,7 +2020,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     const confirm = el<HTMLButtonElement>('#eierskap-bekreft');
     show(block, true);
     setStatus(eierskapStatus(), '');
-    show(el('#eierskap-nytt'), false);
     show(login, false);
     show(confirm, false);
 
@@ -1078,9 +2038,17 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
     text.dataset.tone = 'plain';
     text.textContent =
-      'Ubekreftet. Ingen har vist gjennom Altinn at de kan opptre for dette selskapet ennå. ' +
-      'Regnskapet virker som før — bekreftelsen avgjør hvem selskapet hører til, ikke om det ' +
-      'kan føres — men den bør på plass før første innsending.';
+      'Ingen har vist gjennom Altinn at de kan opptre for dette selskapet ennå. Regnskapet ' +
+      'virker som før. Bekreftelsen avgjør hvem selskapet hører til, ikke om det kan føres, ' +
+      'men den bør på plass før første innsending.';
+
+    // The fact is true for everyone in the organization; the remedy is not.
+    // Somebody who may not manage it gets the sentence without a button that
+    // would answer 403, and is told who can.
+    if (!mayAdmin()) {
+      text.textContent += ' Be en administrator for dette regnskapet om å gjøre det.';
+      return;
+    }
 
     // The state below is the deployment's and Altinn's answer, so it arrives a
     // moment later. The company is captured because the picker may have moved
@@ -1101,6 +2069,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           return;
         }
         login.href = governmentLoginStartUrl('/organisasjon/#selskap');
+        // Same errand as the banner's button, so the same note is left behind:
+        // whichever of the two took you to BankID, coming back finishes the job.
+        login.onclick = (): void => rememberConfirm(company.id);
         show(login, true);
       })
       // Silent, like the Altinn block below: this is an offer, and the books
@@ -1142,13 +2113,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       'selskaper du kan opptre for, og bekrefter regnskapet mot det. Regnskapet virker som ' +
       'før i mellomtiden.';
 
-    // The fact is true for everyone in the organization; the remedy is not.
-    // Somebody who may not manage the organization gets the sentence without a
-    // button that would answer 403, and is told who can.
-    if (!membership.permissions.includes('organization:manage')) {
+    if (!mayAdmin()) {
       el('#ubekreftet-tekst').textContent =
         'Ingen har bekreftet i Altinn at de kan opptre for dette selskapet. Be en administrator ' +
-        'i organisasjonen om å gjøre det. Regnskapet virker som før i mellomtiden.';
+        'for dette regnskapet om å gjøre det. Regnskapet virker som før i mellomtiden.';
       show(fix, false);
       return;
     }
@@ -1189,23 +2157,17 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             return undefined;
           }
           if (!state.logged_in) {
-            // Leaves the page, so the disabled button and the status line stay
-            // as they are until the browser navigates.
+            // Written down before leaving, because the trip through BankID ends
+            // on a fresh page load that would otherwise have no idea an errand
+            // was in progress. Leaves the page, so the disabled button and the
+            // status line stay as they are until the browser navigates.
+            rememberConfirm(company.id);
             window.location.href = governmentLoginStartUrl('/organisasjon/#selskap');
             return undefined;
           }
-          setStatus(status, 'Spør Altinn om rollen din …', 'ok');
-          return confirmEierskap(company).then(() => {
-            // showSelskap has already hidden the banner; nothing to say after it.
-            setStatus(status, '');
-          });
+          return attemptConfirm(company, status);
         })
         .catch((error: unknown) => {
-          if (error instanceof ApiError && error.code === ALREADY_CLAIMED) {
-            setStatus(status, CLAIMED_MESSAGE);
-            show(el('#varsel-nytt'), true);
-            return;
-          }
           setStatus(
             status,
             error instanceof ApiError ? error.message : 'Vi fikk ikke bekreftet rollen din.',
@@ -1225,14 +2187,40 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       confirm.disabled = true;
       setStatus(eierskapStatus(), 'Spør Altinn om rettighetene dine …', 'ok');
       void confirmEierskap(company)
-        .then((saved) => {
+        .then(async (saved) => {
           setStatus(eierskapStatus(), `Eierskapet for ${saved.name} er bekreftet.`, 'ok');
+          setStatus(selskapStatus, `Eierskapet for ${saved.name} er bekreftet i Altinn.`, 'ok');
+          await loadStoredRegister(saved);
         })
         .catch(reportEierskap)
         .finally(() => {
           confirm.disabled = false;
         });
     });
+  }
+
+  /**
+   * Finish a confirmation that went through ID-porten and came back.
+   *
+   * The callback returns the browser to this page with nothing on the URL to
+   * say it succeeded, which is right — a marker there would replay on reload.
+   * The note left in `sessionStorage` before leaving is what carries the
+   * errand, and this is where it is spent: once, for the company it names, and
+   * only while that company is still unconfirmed.
+   */
+  function resumeConfirm(): void {
+    const pending = takeConfirm();
+    if (pending === null || !mayAdmin()) return;
+    const company = companies.find((item) => item.id === pending);
+    if (company === undefined || company.verified) return;
+    // The picker may have settled on a different company than the one the
+    // errand was for. Confirming is about a named company, so it moves.
+    if (selskap?.id !== company.id) {
+      selskap = company;
+      setActiveCompany(company);
+      showSelskap();
+    }
+    void attemptConfirm(company, el('#ubekreftet-status'));
   }
 
   // --- Fra Enhetsregisteret ------------------------------------------------------
@@ -1242,19 +2230,69 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   // the rest is shown and thrown away, because it changes without telling us
   // and some of it is other people's personal data.
 
-  /** The register's answer for the company on screen, once it has been asked. */
-  let register: CompanyRefresh | null = null;
-
   const yesNo = (value: boolean): string => (value ? 'Ja' : 'Nei');
 
-  /** One `<dt>/<dd>` pair, skipped entirely when there is nothing to say. */
-  function field(list: HTMLElement, label: string, value: string | null): void {
-    if (value === null || value === '') return;
-    const term = document.createElement('dt');
-    term.textContent = label;
-    const detail = document.createElement('dd');
-    detail.textContent = value;
-    list.append(term, detail);
+  /** One person, and every role the register has them in. */
+  interface Rolleinnehaver {
+    name: string;
+    orgnr: string | null;
+    roles: string[];
+    notes: string[];
+    /** Whether they can open the books, and how sure we are. */
+    access: RegisterAccess;
+    /** The organization role they hold, or would hold on accepting. */
+    accessRole: string | null;
+    /** The Myntos-side name, when it is spelled differently from the register's. */
+    accessName: string | null;
+    /** Where a pending invitation went. */
+    accessEmail: string | null;
+  }
+
+  /**
+   * The register's roles, one row per person rather than one per role.
+   *
+   * The register answers per role, so a daglig leder who also chairs the board
+   * arrives twice and used to be listed twice — the same name on two rows, which
+   * reads as two people until you look twice. Grouping is the whole difference:
+   * the question the table answers is who is behind this company, and the answer
+   * is a list of people who each hold something.
+   *
+   * Keyed on the name together with the orgnr, because a revisor and a
+   * regnskapsfører are companies and it is the number that tells two of them
+   * apart. First appearance decides the order, which is the register's own.
+   */
+  function byPerson(roles: RegisteredRoleWithAccess[]): Rolleinnehaver[] {
+    const holders = new Map<string, Rolleinnehaver>();
+    for (const role of roles) {
+      const key = `${role.name}|${role.orgnr ?? ''}`;
+      let holder = holders.get(key);
+      if (holder === undefined) {
+        // The access mark is resolved per person, so every row for one holder
+        // carries the same one and the first is as good as the last.
+        holder = {
+          name: role.name,
+          orgnr: role.orgnr,
+          roles: [],
+          notes: [],
+          access: role.access,
+          accessRole: role.access_role,
+          accessName: role.access_name,
+          accessEmail: role.access_email,
+        };
+        holders.set(key, holder);
+      }
+      // The rollegruppe in parentheses only where it says something the role
+      // does not: «Styremedlem (Styre)» earns it, «Daglig leder» does not.
+      const label =
+        role.group === role.code
+          ? role.description
+          : `${role.description} (${role.group_description})`;
+      if (!holder.roles.includes(label)) holder.roles.push(label);
+      if (role.elected_by !== null && !holder.notes.includes(role.elected_by)) {
+        holder.notes.push(role.elected_by);
+      }
+    }
+    return [...holders.values()];
   }
 
   function showRegister(): void {
@@ -1263,6 +2301,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     list.replaceChildren();
     rows.replaceChildren();
     show(el('#register-roller'), false);
+    show(el('#register-mer'), register !== null);
+    show(el('#register-tomt'), register === null);
     if (register === null) return;
 
     const unit = register.unit;
@@ -1291,7 +2331,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     field(
       list,
       'Næringskode',
-      unit.industry_code === null ? null : `${unit.industry_code} ${unit.industry_description ?? ''}`.trim(),
+      unit.industry_code === null
+        ? null
+        : `${unit.industry_code} ${unit.industry_description ?? ''}`.trim(),
     );
     for (const [code, description] of unit.secondary_industries) {
       field(list, 'Binæring', `${code} ${description}`);
@@ -1308,16 +2350,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       unit.registered_on === null ? null : isoDate(unit.registered_on),
     );
     field(list, 'Registrert i Merverdiavgiftsregisteret', yesNo(unit.registered_in_vat_register));
-    field(
-      list,
-      'Registrert i Foretaksregisteret',
-      yesNo(unit.registered_in_foretaksregisteret),
-    );
-    field(
-      list,
-      'Siste innsendte årsregnskap',
-      unit.last_submitted_annual_accounts,
-    );
+    field(list, 'Registrert i Foretaksregisteret', yesNo(unit.registered_in_foretaksregisteret));
+    field(list, 'Siste innsendte årsregnskap', unit.last_submitted_annual_accounts);
     field(
       list,
       'Ansatte',
@@ -1337,7 +2371,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             : `${unit.capital.amount} ${unit.capital.currency}`) +
           (unit.capital.shares === null ? '' : ` · ${unit.capital.shares} aksjer`),
     );
-    field(list, 'Underenhet av', unit.parent_orgnr);
+    field(list, 'Underenhet av', unit.parent_orgnr === null ? null : orgnummer(unit.parent_orgnr));
     field(list, 'Målform', unit.language);
     field(list, 'Tidligere navn', unit.former_names.join(', ') || null);
     field(list, 'Vedtektsfestet formål', unit.purpose.join(' ') || null);
@@ -1348,19 +2382,164 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     if (unit.under_liquidation) field(list, 'Under avvikling', 'Ja');
     if (unit.under_forced_liquidation) field(list, 'Under tvangsavvikling', 'Ja');
 
-    for (const role of register.roles) {
+    for (const holder of byPerson(register.roles)) {
       const row = document.createElement('tr');
-      row.append(
-        cell(`${role.description}${role.group === role.code ? '' : ` (${role.group_description})`}`),
-        cell(role.orgnr === null ? role.name : `${role.name} (${role.orgnr})`),
-        cell(role.elected_by ?? ''),
-      );
+
+      const who = document.createElement('td');
+      const name = document.createElement('span');
+      name.className = 'org-roller-navn';
+      name.textContent = holder.name;
+      who.append(name);
+      // Only a revisor or a regnskapsfører has one, and then it is what tells
+      // two firms with near-identical names apart.
+      if (holder.orgnr !== null) {
+        const number = document.createElement('span');
+        number.className = 'org-roller-orgnr';
+        number.textContent = orgnummer(holder.orgnr);
+        who.append(number);
+      }
+
+      const what = document.createElement('td');
+      const badges = document.createElement('ul');
+      badges.className = 'org-rollemerker';
+      for (const role of holder.roles) {
+        const item = document.createElement('li');
+        item.textContent = role;
+        badges.append(item);
+      }
+      what.append(badges);
+
+      row.append(who, what, accessCell(holder));
       rows.append(row);
     }
     show(el('#register-roller'), register.roles.length > 0);
   }
 
-  /** Ask the register, and say what it moved. */
+  /**
+   * How each access mark reads, and what the reader should take from it.
+   *
+   * Four states for a person and one for a firm. The wording carries the
+   * certainty rather than the colour doing it alone: «har tilgang» and «har
+   * trolig tilgang» are different claims, and somebody scanning the column
+   * should not have to know the palette to tell them apart.
+   */
+  const ACCESS_WORDS: Record<RegisterAccess, string | null> = {
+    bekreftet: 'Har tilgang',
+    trolig: 'Har trolig tilgang',
+    invitert: 'Invitert',
+    ingen: 'Ingen tilgang',
+    // A revisor or regnskapsfører firm. «Ingen tilgang» on one answers a
+    // question nobody asked, so the cell stays empty.
+    selskap: null,
+  };
+
+  /** Why the mark says what it says, in one line, on hover and for a reader. */
+  const ACCESS_WHY: Record<RegisterAccess, string> = {
+    bekreftet:
+      'Navnet stemmer med en ID-porten-innlogging, altså med Folkeregisteret, samme kilde som registeret selv bruker.',
+    trolig:
+      'Navnet stemmer med navnet på en Myntos-konto, men ingen har vist gjennom ID-porten at det er samme person.',
+    invitert: 'Invitasjonen er sendt, men ikke tatt imot ennå.',
+    ingen: 'Ingen med tilgang til regnskapet går under dette navnet.',
+    selskap: 'Et selskap, ikke en person med innlogging her.',
+  };
+
+  const roleWord = (role: string | null): string | null =>
+    role === null ? null : (ROLES.find(([value]) => value === role)?.[1] ?? role);
+
+  /**
+   * The Merknad cell: what the register says about this person, and whether
+   * they can open the books.
+   *
+   * The «Inviter» button is the point of putting the mark here at all. Seeing
+   * that a board member has no access is only useful next to the one thing to
+   * do about it, and the alternative was to read the name, scroll up, and
+   * retype it into a form.
+   */
+  function accessCell(holder: Rolleinnehaver): HTMLTableCellElement {
+    const td = document.createElement('td');
+    const word = ACCESS_WORDS[holder.access];
+    if (word !== null) {
+      const mark = document.createElement('span');
+      mark.className = `org-tilgang org-tilgang-${holder.access}`;
+      mark.title = ACCESS_WHY[holder.access];
+      mark.textContent = word;
+      const role = roleWord(holder.accessRole);
+      if (role !== null) {
+        const suffix = document.createElement('span');
+        suffix.className = 'org-tilgang-rolle';
+        suffix.textContent = role;
+        mark.append(' ', suffix);
+      }
+      td.append(mark);
+    }
+
+    // Which name was matched, when it is not the one on this row. An
+    // administrator who knows their colleagues should be able to see the join
+    // and disagree with it.
+    const detail =
+      holder.access === 'invitert'
+        ? holder.accessEmail
+        : holder.accessName !== null
+          ? `som ${holder.accessName}`
+          : null;
+    if (detail !== null) {
+      const note = document.createElement('span');
+      note.className = 'org-tilgang-detalj';
+      note.textContent = detail;
+      td.append(note);
+    }
+
+    for (const elected of holder.notes) {
+      const note = document.createElement('span');
+      note.className = 'org-tilgang-detalj';
+      note.textContent = elected;
+      td.append(note);
+    }
+
+    if (mayManage() && holder.access === 'ingen') {
+      const invite = document.createElement('button');
+      invite.type = 'button';
+      invite.className = 'btn-link';
+      invite.textContent = 'Inviter';
+      invite.addEventListener('click', () => openInvite(holder.name));
+      td.append(invite);
+    }
+    return td;
+  }
+
+  /** Say how old the answer on screen is, and where it came from. */
+  function showRegisterAge(): void {
+    el('#register-synk').textContent =
+      register === null ? '' : `Hentet ${isoDate(register.fetched_at.slice(0, 10))}`;
+  }
+
+  /**
+   * Show what the register last said, without asking it again.
+   *
+   * This is the page-load path. The old one asked Brønnøysund on every single
+   * visit, which spent a round trip on an answer that changes a few times a
+   * year and made the panel go blank whenever somebody else's service was slow.
+   * Now the answer is stored when it is fetched, and a visit reads it back.
+   *
+   * A company with nothing stored — set up while the register was down — gets
+   * one quiet fetch, which then stores it for every visit after this one.
+   */
+  async function loadStoredRegister(company: Company): Promise<void> {
+    try {
+      const stored = await getCompanyRegister(company.id);
+      if (selskap?.id !== company.id) return;
+      register = stored;
+      showRegister();
+      showRegisterAge();
+      if (stored === null && mayAdmin()) await loadRegister(company, true);
+    } catch {
+      // Silent: the books do not depend on it, and the panel says plainly that
+      // nothing has been fetched.
+    }
+  }
+
+  /** Ask the register for a fresh answer, and say what it moved. */
   async function loadRegister(company: Company, quiet = false): Promise<void> {
     const status = el<HTMLParagraphElement>('#register-status');
     if (!quiet) setStatus(status, 'Henter fra Enhetsregisteret …', 'ok');
@@ -1373,6 +2552,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           showSelskap();
         }
         showRegister();
+        showRegisterAge();
         setStatus(
           status,
           answer.changed.length === 0
@@ -1382,8 +2562,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         );
       })
       .catch((error: unknown) => {
-        register = null;
-        showRegister();
+        // What is on screen stays on screen. It came from the register too,
+        // just earlier, and «Hentet 12. mars» beside it says as much — which is
+        // a better answer than blanking the panel because Brønnøysund is busy.
         // Quiet on the automatic pass: the register is a convenience, and a
         // banner about it on page load would sit on top of a page that works.
         if (quiet) return;
@@ -1394,8 +2575,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       });
   }
 
-  /** The stored fields, in the words the form above uses for them. */
-  function feltnavn(field: string): string {
+  /** The stored fields, in the words the card above uses for them. */
+  function feltnavn(name: string): string {
     const names: Record<string, string> = {
       address_line: 'adresse',
       postal_code: 'postnummer',
@@ -1410,7 +2591,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       email: 'e-post',
       parent_orgnr: 'hovedenhet',
     };
-    return names[field] ?? field;
+    return names[name] ?? name;
   }
 
   function wireRegister(): void {
@@ -1425,103 +2606,309 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     });
   }
 
-  function wireSelskapForm(): void {
-    const submit = el<HTMLButtonElement>('#selskap-submit');
+  // --- Tilgang til regnskapet ----------------------------------------------------
 
-    selskapPicker.addEventListener('change', () => {
-      const chosen = companies.find((company) => company.id === Number(selskapPicker.value));
-      if (chosen === undefined) return;
-      selskap = chosen;
-      // Picking a company here is picking it everywhere: the next page opens on
-      // the one whose details were just being looked at.
-      rememberCompany(chosen.id);
-      setStatus(selskapStatus, '');
-      // The register panel describes the company that *was* on screen. Cleared
-      // before the new one is drawn, so a board from the previous client cannot
-      // sit under the new client's name for as long as the fetch takes.
-      register = null;
-      showRegister();
-      setStatus(el('#register-status'), '');
-      showSelskap();
-      void loadRegister(chosen, true);
-    });
+  // Here lived showOrganization, deltNavn and navnHjelp: the Organisasjonen
+  // card, its name with a pencil, and the warning for a name the account shared
+  // with one of its own companies.
+  //
+  // All three are gone with the card. The account is not something a person
+  // looks at any more: its members, its invitations and its subscription are
+  // the company's (`selskapFelter` above, and the Tilgang section below), and
+  // its *name* was the thing that made this page read like a leak. An account
+  // is routinely called after the first company set up under it, so with two
+  // companies on one account the card said one company's name while the header
+  // said the other's, and there was nothing on screen to tell the two kinds of
+  // name apart. Warning about the collision was a plaster; not showing an
+  // account at all is the fix. See docs/company-isolation.md.
 
-    selskapForm.addEventListener('submit', (event) => {
-      event.preventDefault();
-      const current = selskap;
-      if (current === null) return;
-      submit.disabled = true;
-      setStatus(selskapStatus, '');
-      // The empty string is how the account number is cleared; `null` would mean
-      // "leave it alone", and then a wrong number could never be removed.
-      void updateCompany(current.id, {
-        name: (selskapField('name')?.value ?? '').trim(),
-        address_line: (selskapField('address_line')?.value ?? '').trim(),
-        postal_code: (selskapField('postal_code')?.value ?? '').trim(),
-        city: (selskapField('city')?.value ?? '').trim(),
-        bank_account: (selskapField('bank_account')?.value ?? '').trim(),
-        vat_registered: selskapField('vat_registered')?.checked ?? false,
-        in_foretaksregisteret: selskapField('in_foretaksregisteret')?.checked ?? false,
-      })
-        .then((saved) => {
-          companies = companies.map((company) => (company.id === saved.id ? saved : company));
-          selskap = saved;
-          showSelskap();
-          setStatus(selskapStatus, 'Selskapet er lagret.', 'ok');
-        })
-        .catch((error: unknown) => {
-          setStatus(
-            selskapStatus,
-            error instanceof ApiError ? error.message : 'Selskapet ble ikke lagret.',
-          );
-        })
-        .finally(() => {
-          submit.disabled = false;
+  function renderMembers(members: Member[]): void {
+    memberBody.replaceChildren();
+    for (const member of members) {
+      const row = document.createElement('tr');
+
+      const who = document.createElement('td');
+      who.textContent = member.full_name;
+      if (member.is_self) {
+        const you = document.createElement('span');
+        you.className = 'org-deg';
+        you.textContent = '(deg)';
+        who.append(' ', you);
+      }
+
+      const role = document.createElement('td');
+      if (mayManage()) {
+        const select = document.createElement('select');
+        select.className = 'role';
+        for (const [value, label] of ROLES) {
+          const node = document.createElement('option');
+          node.value = value;
+          node.textContent = label;
+          node.selected = value === member.role;
+          select.append(node);
+        }
+        select.addEventListener('change', () => {
+          void changeMemberRole(bokene().id, member.user_id, select.value)
+            .then(() => refresh())
+            .catch((error: unknown) => {
+              // The server refused: the last owner, or granting owner as an
+              // admin. Put the select back so it never shows a role that is
+              // not the one in force.
+              select.value = member.role;
+              report(error, 'Rollen kunne ikke endres.');
+            });
         });
-    });
+        role.append(select);
+      } else {
+        role.textContent = roleLabel(member.role);
+      }
+
+      const actions = document.createElement('td');
+      if (mayManage() || member.is_self) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn-link';
+        button.textContent = member.is_self ? 'Gi fra deg tilgangen' : 'Fjern';
+        button.addEventListener('click', () => {
+          void leave(member);
+        });
+        actions.append(button);
+      }
+
+      row.append(who, cell(member.email), role, governmentCell(member), actions);
+      memberBody.append(row);
+    }
   }
 
-  function wireRenameForm(): void {
-    const form = el<HTMLFormElement>('#rename-form');
-    const submit = el<HTMLButtonElement>('#rename-submit');
-    const status = el<HTMLParagraphElement>('#rename-status');
+  /**
+   * Whether this colleague has shown who they are, and the way to do it.
+   *
+   * Only for yourself is there a button: linking is a personal ID-porten login
+   * and nobody can do it on somebody else's behalf. For everybody else the
+   * cell is a statement, and the honest one for an unlinked colleague is that
+   * they have not, rather than a prompt to nag them from here.
+   *
+   * The name is shown when ID-porten gave one and it differs from the account's
+   * own, because that difference is exactly what makes the register's board
+   * list resolvable.
+   */
+  function governmentCell(member: Member): HTMLTableCellElement {
+    const td = document.createElement('td');
+    if (member.government_linked) {
+      const mark = document.createElement('span');
+      mark.className = 'org-tilgang org-tilgang-bekreftet';
+      mark.textContent = 'Bekreftet';
+      mark.title =
+        member.government_verified_at === null
+          ? 'Har logget inn med ID-porten.'
+          : `Sist bekreftet ${isoDate(member.government_verified_at.slice(0, 10))}.`;
+      td.append(mark);
+      if (member.government_name !== null && member.government_name !== member.full_name) {
+        const name = document.createElement('span');
+        name.className = 'org-tilgang-detalj';
+        name.textContent = member.government_name;
+        td.append(name);
+      }
+      return td;
+    }
 
-    form.addEventListener('submit', (event) => {
-      event.preventDefault();
-      const name = el<HTMLInputElement>('#rename-input').value.trim();
-      if (name === '') {
-        setStatus(status, 'Organisasjonen må ha et navn.');
+    if (!member.is_self) {
+      const nothing = document.createElement('span');
+      nothing.className = 'org-tilgang org-tilgang-ingen';
+      nothing.textContent = 'Ikke koblet';
+      td.append(nothing);
+      return td;
+    }
+
+    const link = document.createElement('a');
+    link.className = 'btn-link';
+    link.textContent = 'Koble til ID-porten';
+    link.href = governmentLoginStartUrl('/organisasjon/');
+    td.append(link);
+    const why = document.createElement('span');
+    why.className = 'org-tilgang-detalj';
+    why.textContent = 'Da vet vi hvem du er i styret.';
+    td.append(why);
+    return td;
+  }
+
+  async function leave(member: Member): Promise<void> {
+    const question = member.is_self
+      ? 'Gi fra deg tilgangen til dette regnskapet? Du kommer ikke inn i det igjen uten en ny invitasjon.'
+      : `Fjerne ${member.full_name} sin tilgang til dette regnskapet?`;
+    if (!window.confirm(question)) return;
+    try {
+      await removeMember(bokene().id, member.user_id);
+      if (member.is_self) {
+        window.location.href = '/';
         return;
       }
-      submit.disabled = true;
-      setStatus(status, '');
-      void renameOrganization(membership.organization_id, name)
-        .then(() => {
-          // Mutating the cached membership rather than refetching: the session
-          // is loaded once per page, and the header on *this* page is drawn from
-          // it. A stale name here would outlive the save that succeeded.
-          membership.organization_name = name;
-          membership.organization_name_is_placeholder = false;
-          showOrganization();
-          setStatus(status, 'Navnet er lagret.', 'ok');
-        })
-        .catch((error: unknown) => {
-          setStatus(
-            status,
-            error instanceof ApiError ? error.message : 'Navnet ble ikke lagret.',
-          );
-        })
-        .finally(() => {
-          submit.disabled = false;
-        });
-    });
+      await refresh();
+    } catch (error: unknown) {
+      report(error, 'Medlemmet kunne ikke fjernes.');
+    }
+  }
+
+  function renderInvitations(invitations: Invitation[]): void {
+    invitationBody.replaceChildren();
+    for (const invitation of invitations) {
+      const row = document.createElement('tr');
+
+      // Name over address when there is one: an invitation sent from the board
+      // list is about a person, and «Andreas Edvardsen Lindeman» is what an
+      // administrator recognises. The address stays, because it is what the
+      // invitation actually grants against.
+      const who = document.createElement('td');
+      if (invitation.full_name !== null) {
+        const name = document.createElement('span');
+        name.className = 'org-roller-navn';
+        name.textContent = invitation.full_name;
+        who.append(name);
+      }
+      const address = document.createElement('span');
+      address.className = invitation.full_name === null ? '' : 'org-roller-orgnr';
+      address.textContent = invitation.email;
+      who.append(address);
+
+      const actions = document.createElement('td');
+      // Sending again is the ordinary repair for a message that never arrived,
+      // and it was not possible before: only the token's hash is stored, so the
+      // link could not be looked up and the whole invitation had to be redone.
+      const again = document.createElement('button');
+      again.type = 'button';
+      again.className = 'btn-link';
+      again.textContent = 'Send på nytt';
+      again.addEventListener('click', () => {
+        again.disabled = true;
+        void resendInvitation(bokene().id, invitation.id)
+          .then(async (sent) => {
+            reportInvitationSend(sent, {
+              ok: `Invitasjonen er sendt på nytt til ${sent.email}.`,
+              failed: `Vi fikk ikke sendt e-posten til ${sent.email} på nytt.`,
+            });
+            await refresh();
+          })
+          .catch((error: unknown) => report(error, 'Invitasjonen kunne ikke sendes på nytt.'))
+          .finally(() => {
+            again.disabled = false;
+          });
+      });
+      const withdraw = document.createElement('button');
+      withdraw.type = 'button';
+      withdraw.className = 'btn-link';
+      withdraw.textContent = 'Trekk tilbake';
+      withdraw.addEventListener('click', () => {
+        void revokeInvitation(bokene().id, invitation.id)
+          .then(() => refresh())
+          .catch((error: unknown) => report(error, 'Invitasjonen kunne ikke trekkes tilbake.'));
+      });
+      actions.append(again, withdraw);
+
+      row.append(
+        who,
+        cell(roleLabel(invitation.role)),
+        cell(invitation.invited_by ?? 'Ukjent'),
+        cell(isoDate(invitation.expires_at.slice(0, 10))),
+        actions,
+      );
+      invitationBody.append(row);
+    }
+    // A heading with nothing under it is a question about something that is not
+    // happening. The card appears when there is an invitation to show.
+    show(el('#invitations-card'), invitations.length > 0);
+  }
+
+  async function refresh(): Promise<void> {
+    renderMembers(await listMembers(bokene().id));
+    if (mayManage()) renderInvitations(await listInvitations(bokene().id));
+    else show(el('#invitations-card'), false);
+    // The board list downstairs answers a question about the member list, so it
+    // goes stale for the same reasons. Inviting somebody, changing a role or
+    // removing a colleague all move a mark down there, and the register has
+    // said nothing new, which is exactly why the marks are resolved on read
+    // rather than stored. Re-read, quietly: this is a stored answer, not a
+    // round trip to Brønnøysund.
+    if (selskap !== null) await loadStoredRegister(selskap);
+  }
+
+  /**
+   * Open the invite panel, for a person the register named or for nobody yet.
+   *
+   * The form asks for an address and a role, and never for a name: the name is
+   * a label on the invitation, and asking for one turned "give my colleague
+   * access" into a form with something to fill in first.
+   *
+   * The board list is the one place a name exists before the invitation does,
+   * so it is the one place that carries one. It goes into the hidden field and
+   * onto the screen as `#invite-for`, and the cursor goes to the address,
+   * because that is the one thing the register cannot tell us. Opened from
+   * anywhere else the field is cleared, so a name from an abandoned invitation
+   * cannot ride along on the next one.
+   */
+  function openInvite(fullName?: string): void {
+    const form = el<HTMLFormElement>('#invite-form');
+    const nameField = form.querySelector<HTMLInputElement>('[name="full_name"]');
+    const emailField = form.querySelector<HTMLInputElement>('[name="email"]');
+    const forWhom = el<HTMLParagraphElement>('#invite-for');
+
+    setStatus(inviteStatus, '');
+    show(el('#invite-link-box'), false);
+    if (nameField !== null) nameField.value = fullName ?? '';
+    if (fullName !== undefined) {
+      forWhom.textContent = `Invitasjon til ${fullName}, fra styret i Enhetsregisteret.`;
+    }
+    show(forWhom, fullName !== undefined);
+    show(el('#invite'), true);
+    show(el('#invite-vis'), false);
+    emailField?.focus();
+    // The panel sits under the member table and the register list is further
+    // down the page, so an invitation started from a board row would otherwise
+    // open somewhere the reader is not looking.
+    el('#invite').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  /**
+   * Say whether the message went out, and offer the link only when it did not.
+   *
+   * Shared by the first send and by "send again", so the two cannot drift into
+   * saying different things about the same outcome. The link is a fallback, not
+   * the result: when the email arrived, showing it invites somebody to send a
+   * second copy of a message already sitting in an inbox.
+   */
+  function reportInvitationSend(
+    invitation: Invitation,
+    words: { ok: string; failed: string },
+  ): void {
+    const linkBox = el<HTMLDivElement>('#invite-link-box');
+    const link = el<HTMLInputElement>('#invite-link');
+    const sent = invitation.email_sent === true;
+    if (!sent && invitation.invite_url !== null) {
+      link.value = invitation.invite_url;
+      show(el('#invite'), true);
+      show(linkBox, true);
+    } else {
+      show(linkBox, false);
+    }
+    setStatus(inviteStatus, sent ? words.ok : words.failed, sent ? 'ok' : 'error');
   }
 
   function wireInviteForm(): void {
     const form = el<HTMLFormElement>('#invite-form');
     const submit = el<HTMLButtonElement>('#invite-submit');
+    const panel = el<HTMLDivElement>('#invite');
+    const open = el<HTMLButtonElement>('#invite-vis');
     const linkBox = el<HTMLDivElement>('#invite-link-box');
     const link = el<HTMLInputElement>('#invite-link');
+
+    open.addEventListener('click', () => openInvite());
+    el<HTMLButtonElement>('#invite-avbryt').addEventListener('click', () => {
+      form.reset();
+      show(linkBox, false);
+      show(el('#invite-for'), false);
+      setStatus(inviteStatus, '');
+      show(panel, false);
+      show(open, mayManage());
+    });
 
     el<HTMLButtonElement>('#copy-link').addEventListener('click', () => {
       void navigator.clipboard.writeText(link.value).then(
@@ -1534,20 +2921,23 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       const data = new FormData(form);
+      const email = String(data.get('email') ?? '').trim();
+      const fullName = String(data.get('full_name') ?? '').trim();
       submit.disabled = true;
       setStatus(inviteStatus, '');
       void inviteMember(
-        membership.organization_id,
-        String(data.get('email') ?? '').trim(),
+        bokene().id,
+        email,
         String(data.get('role') ?? 'member'),
+        fullName === '' ? null : fullName,
       )
         .then(async (invitation) => {
-          if (invitation.invite_url !== null) {
-            link.value = invitation.invite_url;
-            linkBox.hidden = false;
-          }
-          setStatus(inviteStatus, `Invitasjon opprettet for ${invitation.email}.`, 'ok');
+          reportInvitationSend(invitation, {
+            ok: `Invitasjonen er sendt til ${invitation.email}.`,
+            failed: `Invitasjonen for ${invitation.email} er opprettet, men e-posten gikk ikke ut.`,
+          });
           form.reset();
+          show(el('#invite-for'), false);
           await refresh();
         })
         .catch((error: unknown) => {
@@ -1562,484 +2952,114 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     });
   }
 
-  const digitsOf = (value: string): string => value.replace(/\D+/g, '');
-
-  /**
-   * The Altinn list: the companies this person may report for, as a picker.
-   *
-   * Three states, and which one shows is the deployment's and Altinn's answer
-   * rather than a preference:
-   *
-   * - **Absent.** No ID-porten client is configured, so nothing is offered.
-   *   `GET /skatt/status` says so before anything is drawn, because a login
-   *   that cannot be completed is worse than no button at all.
-   * - **A login button.** Configured, but this person has not logged in. The
-   *   round trip goes through BankID and back to `#nytt-selskap`, so the
-   *   section they started in is the section they come back to.
-   * - **The list.** Logged in, so the companies are shown, each one filling in
-   *   the form when clicked.
-   *
-   * Reading the list does not spend the ID-porten login, so coming back to this
-   * page twice does not cost a second BankID.
-   *
-   * Returns a function that redraws the list against the companies now set up.
-   */
-  function mountAltinn(choose: (orgnr: string, name: string) => void): () => void {
-    const block = el<HTMLDivElement>('#altinn');
-    const intro = el<HTMLParagraphElement>('#altinn-intro');
-    const altinnStatus = el<HTMLParagraphElement>('#altinn-status');
-    const loginLink = el<HTMLAnchorElement>('#altinn-login');
-    const list = el<HTMLUListElement>('#altinn-parter');
-    const anyway = el<HTMLButtonElement>('#altinn-nytt');
-
-    let parties: AuthorizedParty[] = [];
-    // The party the "opprett nytt likevel" button would act on. Held rather
-    // than closed over per row, so the button cannot end up wired to a company
-    // the list no longer shows.
-    let contested: AuthorizedParty | null = null;
-
-    anyway.addEventListener('click', () => {
-      const party = contested;
-      if (party === null) return;
-      show(anyway, false);
-      setStatus(altinnStatus, '');
-      choose(party.orgnr, party.name);
-    });
-
-    const draw = (): void => {
-      list.replaceChildren();
-      const already = new Set(companies.map((company) => company.orgnr));
-      for (const party of parties) {
-        const item = document.createElement('li');
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'altinn-part';
-
-        const name = document.createElement('span');
-        name.textContent = party.name;
-        const meta = document.createElement('span');
-        meta.className = 'altinn-part-meta';
-        // The orgnr always, because two companies in a group share a name more
-        // often than not. The roles because they are why this company is in
-        // the list, and they are Altinn's own words for it.
-        meta.textContent = [
-          party.orgnr,
-          party.unit_type,
-          party.parent_orgnr === null ? null : `underenhet av ${party.parent_orgnr}`,
-          party.roles.join(', ') || null,
-          already.has(party.orgnr) ? 'allerede satt opp' : null,
-          // Not the same thing as "allerede satt opp", which is about this
-          // account. This one is about somebody else's, and it is the reason a
-          // confirmation would be refused.
-          party.claimed && !already.has(party.orgnr) ? 'allerede registrert av en annen' : null,
-        ]
-          .filter((part): part is string => typeof part === 'string' && part !== '')
-          .join(' · ');
-
-        button.append(name, meta);
-        button.disabled = already.has(party.orgnr);
-        button.dataset.claimed = String(party.claimed);
-        button.addEventListener('click', () => {
-          // Said here, where the choice is made, rather than left for the
-          // confirmation to refuse after the books have been created. The
-          // button below is the one way forward we can actually offer; the
-          // other goes through an organization we will not name.
-          if (party.claimed) {
-            contested = party;
-            setStatus(altinnStatus, CLAIMED_MESSAGE);
-            anyway.textContent = `Opprett nytt regnskap for ${party.name}`;
-            show(anyway, true);
-            return;
-          }
-          contested = null;
-          show(anyway, false);
-          setStatus(altinnStatus, '');
-          choose(party.orgnr, party.name);
-        });
-        item.append(button);
-        list.append(item);
-      }
-      show(list, parties.length > 0);
-    };
-
-    const load = (): void => {
-      setStatus(altinnStatus, 'Henter selskapene fra Altinn …', 'ok');
-      void listAuthorizedParties()
-        .then((found) => {
-          parties = found;
-          setStatus(
-            altinnStatus,
-            found.length === 0
-              ? 'Altinn har ingen selskaper registrert på deg. Du kan skrive inn nummeret selv.'
-              : '',
-            'ok',
-          );
-          draw();
-        })
-        .catch((error: unknown) => {
-          // The login can lapse between the status call and this one, and the
-          // way out of that is the button, not an error message.
-          if (error instanceof ApiError && error.status === 409) {
-            show(loginLink, true);
-            setStatus(altinnStatus, 'Innloggingen i ID-porten har gått ut. Logg inn på nytt.');
-            return;
-          }
-          setStatus(
-            altinnStatus,
-            error instanceof ApiError
-              ? error.message
-              : 'Vi fikk ikke hentet selskapene fra Altinn. Du kan skrive inn nummeret selv.',
-          );
-        });
-    };
-
-    void loadGovernmentStatus()
-      .then((state) => {
-        if (!state.available) return;
-        show(block, true);
-        loginLink.href = governmentLoginStartUrl('/organisasjon/#nytt-selskap');
-        show(loginLink, !state.logged_in);
-        if (!state.logged_in) return;
-        intro.textContent =
-          'Selskapene du har rettigheter for i Altinn. Velg ett, så fyller vi ut skjemaet.';
-        load();
-      })
-      // Silent on purpose: this whole block is an offer to save typing, and an
-      // error banner about a convenience would sit on top of the form that
-      // still works perfectly well without it.
-      .catch(() => undefined);
-
-    return draw;
-  }
-
-  /** What the register says about a unit, in one line under the orgnr field. */
-  function describe(unit: RegisteredUnit): string {
-    const parts = [unit.organisation_form_description, unit.city].filter(
-      (part): part is string => typeof part === 'string' && part !== '',
-    );
-    // Worth saying plainly: someone outside Merverdiavgiftsregisteret should not
-    // start booking output VAT, and there is no other point at which we mention it.
-    if (!unit.registered_in_vat_register) parts.push('ikke mva-registrert');
-    if (unit.bankrupt) parts.push('registrert konkurs');
-    if (unit.under_liquidation) parts.push('under avvikling');
-    return parts.join(' · ');
-  }
-
-  /**
-   * Fill in the company name from its organisasjonsnummer.
-   *
-   * The registered name is what every filing has to carry, so letting the
-   * register supply it removes the one field a person can get subtly wrong,
-   * and the mismatch would otherwise stay invisible until a submission bounces.
-   *
-   * Advisory throughout. A register that is slow, unreachable or simply does not
-   * know the number must never be what stops someone setting up their books, so
-   * every failure here ends with a hint and a form the user can still fill in.
-   *
-   * Returns an accessor for the last unit found, for the address the caller
-   * sends along on submit, and the way to fill the form from elsewhere — the
-   * Altinn list below picks a company by writing into these same two fields.
-   */
-  function wireOrgnrLookup(form: HTMLFormElement): {
-    registered: () => RegisteredUnit | null;
-    choose: (orgnr: string, name: string) => void;
-  } {
-    const orgnrField = el<HTMLInputElement>('input[name="orgnr"]', form);
-    const nameField = el<HTMLInputElement>('input[name="name"]', form);
-    const hint = el('#orgnr-hint');
-
-    let found: RegisteredUnit | null = null;
-    let pending: ReturnType<typeof setTimeout> | undefined;
-    // Only the newest lookup may write to the form: typing nine digits, then
-    // correcting one, leaves two requests in flight and no guarantee of order.
-    let latest = 0;
-    // The last name *we* wrote, whether from the register or from Altinn.
-    // Tracked rather than compared against `found`, because a name can now
-    // arrive from either, and the register's answer must still be allowed to
-    // replace the one Altinn gave — those are the same registered name in
-    // practice, but only one of them is read fresh.
-    let ourName: string | null = null;
-
-    const setName = (value: string): void => {
-      // An empty field, or one still holding what we put there, is ours to
-      // fill. Anything else the user typed deliberately, so leave it alone.
-      if (nameField.value.trim() === '' || nameField.value === ourName) {
-        nameField.value = value;
-        ourName = value;
-      }
-    };
-
-    const lookup = (orgnr: string): void => {
-      const ticket = ++latest;
-      hint.textContent = 'Slår opp i Enhetsregisteret …';
-      void lookupUnit(orgnr)
-        .then((unit) => {
-          if (ticket !== latest) return;
-          setName(unit.name);
-          found = unit;
-          hint.textContent = describe(unit);
-        })
-        .catch((error: unknown) => {
-          if (ticket !== latest) return;
-          found = null;
-          hint.textContent =
-            error instanceof ApiError
-              ? `${error.message} Du kan skrive navnet selv.`
-              : 'Vi fikk ikke slått opp nummeret. Du kan skrive navnet selv.';
-        });
-    };
-
-    orgnrField.addEventListener('input', () => {
-      clearTimeout(pending);
-      const orgnr = digitsOf(orgnrField.value);
-      if (orgnr.length !== 9) {
-        // Nothing to say yet, and nothing worth contradicting mid-typing.
-        latest += 1;
-        hint.textContent = 'Vi henter navnet fra Enhetsregisteret.';
-        return;
-      }
-      // A brief pause, so pasting a number or fixing its last digit costs one
-      // request rather than one per keystroke.
-      pending = setTimeout(() => lookup(orgnr), 250);
-    });
-
-    return {
-      registered: () => found,
-      /**
-       * Fill the form from a company picked out of the Altinn list.
-       *
-       * The register is still asked, immediately rather than after the typing
-       * pause: the address, the mva-registration and the Foretaksregisteret
-       * marking all come from there and from nowhere else, and Altinn carries
-       * none of them. Altinn's name goes in meanwhile so the field is never
-       * blank, and is replaced by the register's the moment it answers.
-       */
-      choose: (orgnr: string, name: string) => {
-        clearTimeout(pending);
-        orgnrField.value = orgnr;
-        found = null;
-        ourName = null;
-        setName(name);
-        lookup(orgnr);
-      },
-    };
-  }
-
-  /**
-   * Set up a new set of books.
-   *
-   * The organisation is not asked for: the picker at the top of the page has
-   * already answered it, and a second control for the same fact could disagree
-   * with the first. That is also why the whole section is hidden for a
-   * membership that may not create one, rather than explaining itself.
-   */
-  function wireNyttSelskap(): void {
-    const form = el<HTMLFormElement>('#company-form');
-    const submit = el<HTMLButtonElement>('#company-submit');
-    const nyttStatus = el<HTMLParagraphElement>('#nytt-selskap-status');
-    const yearField = el<HTMLInputElement>('input[name="first_financial_year"]', form);
-    const thisYear = (): string => String(new Date().getFullYear());
-    yearField.value = thisYear();
-
-    const { registered, choose } = wireOrgnrLookup(form);
-    // The orgnr the Altinn list put in the form, if it was the list that did.
-    // A company picked there comes with the proof already in hand — the person
-    // is logged in with ID-porten and Altinn just said they may act for it — so
-    // the new books are confirmed straight away rather than left for a second
-    // trip through BankID. A number typed by hand carries no such proof and
-    // stays unconfirmed until somebody presses the button under Selskapet.
-    let fromAltinn: string | null = null;
-    // The companies Altinn says this person may report for. It fills this form
-    // and no other, and whether it is offered at all depends on the deployment
-    // being set up for ID-porten.
-    const refreshAltinn = mountAltinn((orgnr, name) => {
-      fromAltinn = orgnr;
-      choose(orgnr, name);
-    });
-
-    form.addEventListener('submit', (event) => {
-      event.preventDefault();
-      const data = new FormData(form);
-      const orgnr = digitsOf(String(data.get('orgnr') ?? ''));
-      submit.disabled = true;
-      setStatus(nyttStatus, '');
-      // What the register said rides along only when it belongs to the number
-      // actually being submitted, since the orgnr may have been edited after the
-      // lookup, and then none of it describes this company.
-      const unit = registered();
-      const fromRegister = unit?.orgnr === orgnr ? unit : null;
-      // Same guard as the register's answer, for the same reason: the number
-      // may have been edited after the list filled it in, and then Altinn said
-      // nothing about the company actually being created.
-      const provenInAltinn = fromAltinn === orgnr;
-      // The registration flags come from Enhetsregisteret and nowhere else. They
-      // decide what every future salgsdokument may claim: whether it may show
-      // merverdiavgift at all (§ 15-14), and whether it must carry the word
-      // "Foretaksregisteret" (§ 5-1-2), so a guess is not good enough.
-      void createCompany({
-        organization_id: membership.organization_id,
-        orgnr,
-        name: String(data.get('name') ?? '').trim(),
-        first_financial_year: Number(data.get('first_financial_year')),
-        address_line: fromRegister?.address_line ?? null,
-        postal_code: fromRegister?.postal_code ?? null,
-        city: fromRegister?.city ?? null,
-        vat_registered: fromRegister?.registered_in_vat_register ?? false,
-        in_foretaksregisteret: fromRegister?.registered_in_foretaksregisteret ?? false,
-        organisation_form: fromRegister?.organisation_form ?? null,
-        bank_account: String(data.get('bank_account') ?? '').trim() || null,
-      })
-        .then(async (company) => {
-          // Appended, not replacing: the companies already on the account are
-          // still there, and this is simply one more.
-          companies = [...companies, company];
-          fromAltinn = null;
-          // The new books are what the rest of the site should open, and what
-          // the Selskapet section above should now be editing. Without this the
-          // page would still be showing the previous company while claiming the
-          // new one was set up.
-          rememberCompany(company.id);
-          selskap = company;
-          showSelskap();
-          // A blank form again: the fields left over describe a different
-          // business, and an orgnr is not a thing to edit by one digit.
-          form.reset();
-          yearField.value = thisYear();
-          el('#orgnr-hint').textContent = 'Vi henter navnet fra Enhetsregisteret.';
-          // A company set up since the list was drawn is now one of ours, and
-          // the list has to say so rather than offer it a second time.
-          refreshAltinn();
-          submit.disabled = false;
-          setStatus(nyttStatus, `Regnskapet for ${company.name} er satt opp.`, 'ok');
-
-          if (!provenInAltinn) return;
-          try {
-            await confirmEierskap(company);
-            setStatus(
-              nyttStatus,
-              `Regnskapet for ${company.name} er satt opp, og eierskapet er bekreftet i Altinn.`,
-              'ok',
-            );
-          } catch (error: unknown) {
-            // The books exist and work either way, so this is a note and not a
-            // failure. Everything that can go wrong here is answerable from the
-            // Selskapet card above, which now shows the company as unconfirmed.
-            setStatus(
-              nyttStatus,
-              `Regnskapet for ${company.name} er satt opp, men eierskapet ble ikke bekreftet: ` +
-                (error instanceof ApiError && error.code === ALREADY_CLAIMED
-                  ? CLAIMED_MESSAGE
-                  : error instanceof ApiError
-                    ? error.message
-                    : 'vi fikk ikke kontakt med Altinn.'),
-            );
-          }
-        })
-        .catch((error: unknown) => {
-          setStatus(
-            nyttStatus,
-            error instanceof ApiError ? error.message : 'Vi fikk ikke satt opp regnskapet.',
-          );
-          submit.disabled = false;
-        });
-    });
-  }
+  // --- Oppstart -------------------------------------------------------------------
 
   void loadSession().then(async (session) => {
     if (session === null) {
       redirectToLogin();
       return;
     }
-    const first = session.memberships[0];
-    if (first === undefined) return;
-    membership = first;
+    if (session.memberships[0] === undefined) return;
 
-    picker.replaceChildren();
-    for (const item of session.memberships) {
-      const node = document.createElement('option');
-      node.value = String(item.organization_id);
-      node.textContent = item.organization_name;
-      picker.append(node);
-    }
-    picker.hidden = session.memberships.length < 2;
-
-    // Renaming needs organization:manage, inviting needs member:manage. Each
-    // section is shown on its own permission rather than on a role, so what a
-    // role carries stays defined in one place: the backend.
-    const applyPermissions = (): void => {
-      mayManage = membership.permissions.includes('member:manage');
-      show(el('#manage'), mayManage);
-      show(el('#rename'), membership.permissions.includes('organization:manage'));
-      // Editing the company needs organization:manage as well, because whether the
-      // business is VAT-registered is a statement about the entity that every
-      // future invoice repeats, not a bookkeeping entry. showSelskap() checks
-      // the same permission, so switching organization cannot reveal it.
-      // Creating a set of books is the same permission as editing one: whether
-      // the business is VAT-registered is a statement about the entity, and it
-      // is made here first.
-      show(el('#nytt-selskap'), membership.permissions.includes('organization:manage'));
-      showSelskap();
-    };
-
-    picker.addEventListener('change', () => {
-      const chosen = session.memberships.find(
-        (item) => item.organization_id === Number(picker.value),
-      );
-      if (chosen === undefined) return;
-      membership = chosen;
-      applyPermissions();
-      showOrganization();
-      void refresh().catch((error: unknown) => report(error, 'Vi fikk ikke hentet medlemmene.'));
-    });
-
-    // Before applyPermissions, which draws the Selskapet section from it. A
-    // failure here is reported and stepped over: the members list is the rest of
-    // the page and does not depend on it.
+    // The companies come first, because which organisation this page is about
+    // is decided by which company the rest of the site is showing.
+    //
+    // It used to open on `memberships[0]`, whichever membership happened to be
+    // oldest, and then filter the companies down to that one organisation. For
+    // an account with a single organisation the two answers are the same, which
+    // is why it stood. For an account with two, arriving here from a company in
+    // the second one silently swapped the page over to the first: another
+    // organisation's Selskapet card, another organisation's member list, and
+    // (through `setActiveCompany` in `showSelskap`) another company's name
+    // written into the header of the page you were reading. The rest of the
+    // site kept working in the company you had actually chosen, so the header
+    // and every other page disagreed until the next reload.
+    //
+    // Nothing crossed a tenant boundary: every organisation here is one the
+    // caller belongs to, and the API had already scoped each answer to it. But
+    // one company's name appearing on another company's page is precisely what
+    // a leak would look like from the outside, and there is no way to tell the
+    // two apart by looking. So the page follows the company, the way
+    // /index.astro does with its eyebrow.
+    //
+    // A failure is reported and stepped over: the members list is the rest of
+    // the page and does not depend on it. Landing on `memberships[0]` after one
+    // is the honest fallback, because with no company list there is nothing
+    // better to go on.
     try {
       companies = await loadCompanies();
     } catch (error: unknown) {
       report(error, 'Vi fikk ikke hentet selskapene.');
     }
 
-    applyPermissions();
-    showOrganization();
-    // Wired once, before any permission check: both handlers read the current
-    // `membership`, and their sections are hidden rather than removed, so
-    // switching to an organization where the caller *does* manage needs no
-    // rewiring, and one where they do not still cannot reach the form.
-    wireRenameForm();
+    // The account, for one question only: may this person set up a company at
+    // all? Somebody invited to a company has no account membership, so this is
+    // undefined for them, and the empty state says so instead of offering a
+    // form that ends in a 404.
+    konto = session.memberships.find((item) =>
+      item.permissions.includes('organization:manage'),
+    );
+
+    // What this caller may do with *these* books, from the company itself: the
+    // role travels with the company, so the same person can own their own books
+    // and merely read a client's. Each section is shown on its own permission
+    // rather than on a role, so what a role carries stays defined in one place:
+    // the backend.
+    const applyPermissions = (): void => {
+      // showSelskap settles which company the page is about, and it draws every
+      // section that asks what may be done with it, so it has to run first. It
+      // asks `mayAdmin()` while it draws rather than reading a value set here:
+      // see the note on those two, and the visit that opened read-only because
+      // this order was the other way round.
+      showSelskap();
+      show(el('#invite-vis'), mayManage());
+      show(el('#invite'), false);
+      show(el('#invite-for'), false);
+    };
+
+    // Wired once, before any permission check: every handler reads the current
+    // company, and their sections are hidden rather than removed, so a company
+    // the caller *does* manage needs no rewiring, and one they do not still
+    // cannot reach the form.
     wireInviteForm();
-    wireSelskapForm();
     wireEierskap();
     wireVarsel();
     wireRegister();
-    wireNyttSelskap();
-    // Quietly, on load: the panel fills itself in without anybody asking, which
-    // is the whole point of fetching rather than typing. A register that is
-    // down leaves the panel empty and says nothing — the page works without it.
-    if (selskap !== null) void loadRegister(selskap, true);
+
+    applyPermissions();
+    showRegister();
+    reportCallbackError();
+    // The register panel fills itself in without anybody asking, from what was
+    // stored the last time it was fetched. No round trip to Brønnøysund on an
+    // ordinary visit, and nothing to go blank when Brønnøysund is slow.
+    if (selskap !== null) void loadStoredRegister(selskap);
+    // And if the browser is here because it just came back from BankID, finish
+    // what it left. Without this the round trip ends on a page that is logged
+    // in, still unconfirmed, and still showing the warning that sent them.
+    resumeConfirm();
 
     try {
       await refresh();
       el('#loading').hidden = true;
       el('#content').hidden = false;
       // /faktura/ links here as #selskap when an invoice cannot be issued for
-      // want of a kontonummer. The browser resolves the fragment before any of
-      // this ran, against an element that was still hidden, so it never
-      // scrolled. Doing it here is the first moment the section exists on
-      // screen. Only for the one anchor we send people to: honouring an
-      // arbitrary hash would be a scroll nobody asked for.
+      // want of a kontonummer, and ID-porten comes back to it. The browser
+      // resolved the fragment before any of this ran, against an element that
+      // was still hidden, so it never scrolled. Doing it here is the first
+      // moment the section exists on screen. Only for the anchors we send
+      // people to: honouring an arbitrary hash would be a scroll nobody asked
+      // for.
       if (window.location.hash === '#selskap' && !el('#selskap').hidden) {
         el('#selskap').scrollIntoView({ block: 'start' });
-        selskapField('bank_account')?.focus();
-      }
-      // The same for the other anchor we send people to: the front page when
-      // the account keeps no books yet, and ID-porten on its way back from
-      // BankID. No focus, because the Altinn list above the form may be the
-      // reason they came, and taking the cursor into the form would scroll it
-      // off screen.
-      if (window.location.hash === '#nytt-selskap' && !el('#nytt-selskap').hidden) {
-        el('#nytt-selskap').scrollIntoView({ block: 'start' });
+        // The anchor is used for two different errands. The header's company
+        // name and its «Ubekreftet» pill both send people here to *look*, and
+        // /faktura/ sends them to add the kontonummer it could not issue
+        // without. Only the second wants a form open, and a company with no
+        // account at all is exactly what tells them apart — so it opens the
+        // add form rather than the whole card.
+        if (mayAdmin() && selskap !== null && selskap.bank_accounts.length === 0) {
+          nyKonto();
+        }
       }
     } catch (error: unknown) {
       el('#loading').hidden = true;

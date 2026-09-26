@@ -1,5 +1,22 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
+
+/*
+  How many placeholder rows the two tables hold while the figures are on their
+  way. They are markup rather than something JavaScript builds, so the page
+  arrives at its finished height instead of growing into it, and the render that
+  replaces them (`replaceChildren`) clears them without knowing they were there.
+
+  Six is what «Siste bevegelser» actually shows (RECENT_LIMIT below), so the
+  common case reserves exactly the right space. Four is a guess at «Største
+  poster», which has no limit worth calling typical.
+*/
+const RECENT_SKELETON_ROWS = 6;
+const TYPE_SKELETON_ROWS = 4;
+
+/* Widths that read as amounts and dates rather than as identical grey bars. */
+const RECENT_WIDTHS = ['6.5rem', '11rem', '7rem', '5.5rem'];
+const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
 ---
 
 <BaseLayout
@@ -109,15 +126,46 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   <!-- ------------------------------------------------------------------ -->
   <section data-auth-only="inn" id="dashboard">
     <header class="page-head">
-      <div>
-        <p class="eyebrow" data-session-organization></p>
-        <h1>Hei, <span data-session-name>der</span></h1>
+      <div class="page-head-id">
+        {/* Hilsenen er ikke det siden handler om.
+
+            Den sto som overskrift, og da var det ingenting i denne spalten som
+            svarte på hvilket regnskap tallene under gjelder. Navnet på den
+            innloggede står dessuten i toppen på hver side og endrer seg aldri;
+            selskapet endrer seg hver gang noen bytter klient. Så selskapet er
+            overskriften, og hilsenen den dempede linjen over den. */}
+        <p class="greeting">Hei, <span data-session-name>der</span></p>
+        <h1 class="company-title">
+          {/* Fylles fra den samme lagrede posten som selskapsnavnet i toppen og
+              som hver forespørsel bygges av, så de tre kan ikke komme i utakt.
+              Se lib/tenant.ts. «Oversikt» er bare det som står i filen før noen
+              vet hvem som spør. */}
+          <span id="dash-company" data-session-company>Oversikt</span>
+          {/* Samme mangel som prikken i toppen, med plass til ordet ved siden
+              av: ingen har bekreftet i Altinn at de kan opptre for selskapet.
+              Lenken går dit bekreftelsen gjøres. */}
+          <a class="company-unverified" href="/organisasjon/#selskap" data-session-unverified hidden>
+            <span class="dot" aria-hidden="true"></span>ubekreftet
+          </a>
+        </h1>
+        {/* Under navnet: organisasjonsnummeret, fordi to selskaper i samme
+            konsern deler navn oftere enn de deler nummer. Linjen holder høyden
+            sin også før tallene er hentet, så kortene under ikke flytter seg
+            når de kommer.
+
+            Ingen kontonavn her. Kontoen er ikke noe siden handler om, og et
+            kontonavn ved siden av et selskapsnavn leses som om det hørte til
+            selskapet. Se docs/company-isolation.md. */}
+        <p class="company-meta">
+          <span id="company-orgnr" hidden></span>
+          <button type="button" class="company-switch" id="company-switch" hidden>
+            Bytt selskap
+          </button>
+        </p>
       </div>
+      {/* Bare handlingen. Hvilket selskap oversikten gjelder, står nå i
+          overskriften ved siden av. */}
       <div class="page-head-actions" id="company-controls" hidden>
-        <label class="picker">
-          <span class="visually-hidden">Velg selskap</span>
-          <select id="company-picker"></select>
-        </label>
         <a class="btn btn-primary" href="/kontantstrom/">Registrer betaling</a>
       </div>
     </header>
@@ -126,10 +174,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
     <div id="loading" class="empty">Henter oversikten …</div>
 
-    {/* No books yet. Only the way to the form, not the form: adding a set of
-        books happens once, perhaps twice, and /organisasjon/ is where it
-        belongs, next to the organisation that owns it. This card is here
-        because a dashboard with nothing on it has to say what to do next. */}
+    {/* No books yet. Only the way to the form, not the form: setting up a set
+        of books happens once, perhaps twice, and it has a page of its own with
+        three questions and an Altinn login in it. This card is here because a
+        dashboard with nothing on it has to say what to do next. */}
     <div class="card no-company" id="no-company" hidden>
       <h2 class="card-title">Ingen regnskap ennå</h2>
       <p class="card-hint">
@@ -137,7 +185,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         selskaper i Altinn, henter vi dem derfra, så du slipper å skrive inn
         organisasjonsnummeret.
       </p>
-      <a class="btn btn-primary" id="no-company-add" href="/organisasjon/#nytt-selskap" hidden>
+      <a class="btn btn-primary" id="no-company-add" href="/nytt-selskap/" hidden>
         Legg til selskapet ditt
       </a>
       <p class="card-hint" id="no-permission" hidden>
@@ -146,26 +194,55 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       </p>
     </div>
 
-    <!-- The overview proper. -->
+    {/*
+        The overview proper.
+
+        Everything below ships at its finished size with placeholders where the
+        figures go, rather than appearing all at once when the last request
+        lands. Two reasons, and the second is the one that matters: the numbers
+        are the only part that is actually unknown, so they are the only part
+        worth showing as unknown; and a page that assembles itself under the
+        reader moves the thing they were about to click.
+
+        `aria-busy` is set alongside, and is what a screen reader is told. The
+        placeholders themselves say nothing: a dozen unlabelled boxes announced
+        one by one is noise, and «laster» once is the fact.
+    */}
     <div id="overview" hidden>
       <div class="grid stats">
         <div class="card stat">
           <p class="stat-label">Inn i år</p>
-          <p class="stat-value amount-in" id="stat-in">-</p>
+          <p class="stat-value amount-in" id="stat-in">
+            <span class="skeleton" style="--skeleton-width: 8rem"></span>
+          </p>
         </div>
         <div class="card stat">
           <p class="stat-label">Ut i år</p>
-          <p class="stat-value amount-out" id="stat-out">-</p>
+          <p class="stat-value amount-out" id="stat-out">
+            <span class="skeleton" style="--skeleton-width: 8rem"></span>
+          </p>
         </div>
         <div class="card stat">
           <p class="stat-label">Netto</p>
-          <p class="stat-value" id="stat-net">-</p>
-          <p class="stat-note" id="stat-count"></p>
+          <p class="stat-value" id="stat-net">
+            <span class="skeleton" style="--skeleton-width: 8rem"></span>
+          </p>
+          {/* The notes carry a placeholder too, and not for decoration: an
+              empty <p> is zero tall, so the two cards that have one were short
+              until the answer arrived and then grew, taking the whole row of
+              cards with them. */}
+          <p class="stat-note" id="stat-count">
+            <span class="skeleton" style="--skeleton-width: 7rem"></span>
+          </p>
         </div>
         <div class="card stat">
           <p class="stat-label">Merverdiavgift</p>
-          <p class="stat-value" id="stat-vat">-</p>
-          <p class="stat-note" id="stat-vat-note"></p>
+          <p class="stat-value" id="stat-vat">
+            <span class="skeleton" style="--skeleton-width: 8rem"></span>
+          </p>
+          <p class="stat-note" id="stat-vat-note">
+            <span class="skeleton" style="--skeleton-width: 7rem"></span>
+          </p>
         </div>
       </div>
 
@@ -181,7 +258,19 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 <th class="num">Beløp</th>
               </tr>
             </thead>
-            <tbody id="recent"></tbody>
+            <tbody id="recent">
+              {
+                Array.from({ length: RECENT_SKELETON_ROWS }, () => (
+                  <tr data-skeleton-row>
+                    {RECENT_WIDTHS.map((width, column) => (
+                      <td class={column === 3 ? 'num' : undefined}>
+                        <span class="skeleton" style={`--skeleton-width: ${width}`} />
+                      </td>
+                    ))}
+                  </tr>
+                ))
+              }
+            </tbody>
           </table>
         </div>
         <p class="empty" id="recent-empty" hidden>
@@ -203,7 +292,19 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 <th class="num">Sum</th>
               </tr>
             </thead>
-            <tbody id="by-type"></tbody>
+            <tbody id="by-type">
+              {
+                Array.from({ length: TYPE_SKELETON_ROWS }, () => (
+                  <tr data-skeleton-row>
+                    {TYPE_WIDTHS.map((width, column) => (
+                      <td class={column === 0 ? undefined : 'num'}>
+                        <span class="skeleton" style={`--skeleton-width: ${width}`} />
+                      </td>
+                    ))}
+                  </tr>
+                ))
+              }
+            </tbody>
           </table>
         </div>
         <p class="empty" id="by-type-empty" hidden>Ingen tall å vise for i år.</p>
@@ -215,6 +316,70 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       </p>
     </div>
   </section>
+
+  {/*
+      Enter the waiting state before the browser paints, not after.
+
+      `data-books` is what the head script read out of the hint: this browser was
+      signed in last time and the account had books, so the overview is what is
+      coming and it may as well be on screen, at full size, with the figures
+      pending. Everything here is a guess about *layout* only — the numbers are
+      still whatever the API says, and if the guess is wrong (books removed, a
+      different account) the script below hides the overview again, which is the
+      same correction the page has always made.
+
+      Inline, and here rather than in the module below, because a module is
+      deferred: it would run after the whole document is parsed, by which time
+      «Henter oversikten …» has already been painted and the point is lost.
+
+      Without the hint nothing happens and the page waits the way it always has.
+      That is the right answer for a first-ever visit: we do not know that there
+      are books to lay out, and an empty account would watch a skeleton turn
+      into «Ingen regnskap ennå».
+  */}
+  <script is:inline>
+    (function () {
+      const root = document.documentElement;
+      if (root.dataset.auth !== 'inn') return;
+      const hint = window.myntosHint;
+
+      // The greeting and the company name, painted here rather than by the
+      // script under the header, because they are on this page and that script
+      // ran before this page had been parsed. Same stored values, same rules:
+      // they say what was true last time, and the module below corrects them if
+      // it was not.
+      //
+      // The company comes out of `window.myntosCompany` and nowhere else. That
+      // record carries the id every request on this page will be built from, so
+      // the name in this heading and the figures under it cannot be about two
+      // different companies. See lib/tenant.ts.
+      if (hint) {
+        for (const node of document.querySelectorAll('[data-session-name]')) {
+          node.textContent = hint.user;
+        }
+      }
+      const company = window.myntosCompany;
+      if (company) {
+        for (const node of document.querySelectorAll('[data-session-company]')) {
+          node.textContent = company.name;
+        }
+        for (const node of document.querySelectorAll('[data-session-unverified]')) {
+          node.hidden = company.verified === true || company.name === '';
+        }
+      }
+
+      if (root.dataset.books !== 'ja') return;
+      const overview = document.getElementById('overview');
+      const loading = document.getElementById('loading');
+      const controls = document.getElementById('company-controls');
+      if (overview === null || loading === null || controls === null) return;
+
+      loading.hidden = true;
+      overview.hidden = false;
+      overview.setAttribute('aria-busy', 'true');
+      controls.hidden = false;
+    })();
+  </script>
 </BaseLayout>
 
 <style>
@@ -295,14 +460,85 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     margin: 0;
     font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
   }
+  .page-head-id {
+    min-width: 0;
+  }
+  /* Over overskriften og dempet: hyggelig å bli hilst på, ikke noe man leser
+     to ganger. */
+  .greeting {
+    margin: 0 0 0.15rem;
+    color: var(--muted);
+    font-size: 0.94rem;
+  }
+  .company-title {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+  }
+  /* Ordet, ikke bare prikken, fordi det er plass til det her: dette er stedet
+     man leser for å vite hvilket regnskap man står i, og «ubekreftet» hører
+     til svaret. Liten og rolig, for ingenting er i stykker. */
+  .company-unverified {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    color: var(--muted);
+    font-size: 0.8rem;
+    font-weight: 500;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .company-unverified:hover {
+    color: var(--fg-strong);
+    text-decoration: underline;
+    text-underline-offset: 0.2rem;
+  }
+  .company-unverified .dot {
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 999px;
+    background: var(--danger);
+  }
+  /* Høyden er reservert, ikke betinget: linjen står tom til
+     organisasjonsnummeret er hentet, og uten min-height ville hele raden med
+     kort under flyttet seg i det øyeblikket det kom. */
+  .company-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 1.4rem;
+    margin: 0.3rem 0 0;
+    color: var(--faint);
+    font-size: 0.88rem;
+  }
+  /* Skilletegn mellom det som faktisk står der. `[hidden]` er det linjen
+     skjuler ting med, så selektoren regner bare med synlige naboer: uten det
+     ville en skjult første del gitt en ledende prikk. */
+  .company-meta > *:not([hidden]) ~ *:not([hidden])::before {
+    content: '·';
+    margin-right: 0.5rem;
+  }
+  /* Bare synlig når det finnes noe å bytte til. Da er den også en opplysning i
+     seg selv: kontoen har flere regnskap, og dette er ett av dem. */
+  .company-switch {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent);
+    font: inherit;
+    cursor: pointer;
+  }
+  .company-switch:hover {
+    text-decoration: underline;
+    text-underline-offset: 0.2rem;
+  }
   .page-head-actions {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 0.6rem;
-  }
-  .picker select {
-    min-width: 12rem;
   }
   .visually-hidden {
     position: absolute;
@@ -351,36 +587,39 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     ApiError,
     getSummary,
     listCashFlow,
+    type CashFlowEntry,
     type Company,
     type Session,
     type Summary,
   } from '../lib/api';
-  import { currentCompany, fillCompanyPicker, loadCompanies } from '../lib/company';
+  import { openCompanyMenu } from '../lib/chrome';
+  import { currentCompany, loadCompanies } from '../lib/company';
   import { foldCorrections, foldNote } from '../lib/corrections';
   import { el, setStatus, show } from '../lib/dom';
-  import { isoDate, kroner } from '../lib/format';
-  import {
-    can,
-    loadSession,
-    organizationName,
-    rememberCompany,
-    setChromeOrganization,
-  } from '../lib/session';
+  import { isoDate, kroner, orgnummer } from '../lib/format';
+  import { can, loadSession, setActiveCompany } from '../lib/session';
 
   const RECENT_LIMIT = 6;
+
+  /*
+    The placeholder shapes the *markup* ships with are still there, above, and
+    they are what the first paint shows. The JavaScript copies of them lived
+    here for the one case that had to build them at runtime: switching company
+    on this page, which redrew in place and would otherwise have left the
+    previous company's totals sitting under the new company's name.
+
+    That switch now happens in the header and reloads the page, so the moment
+    it guarded against no longer exists. If in-place switching ever comes back,
+    these come back with it — see `skeletonInto` and `skeletonRows`.
+  */
 
   const status = el<HTMLParagraphElement>('#dash-status');
   const loading = el<HTMLDivElement>('#loading');
   const empty = el<HTMLDivElement>('#no-company');
   const overview = el<HTMLDivElement>('#overview');
   const controls = el<HTMLDivElement>('#company-controls');
-  const picker = el<HTMLSelectElement>('#company-picker');
 
-  /**
-   * Every company the caller can reach, kept here because the page changes it:
-   * adding one has to land in the picker without a reload, and the picker's
-   * change handler is wired once and reads this.
-   */
+  /** Every company the caller can reach. */
   let companies: Company[] = [];
 
   function text(value: string): Text {
@@ -425,7 +664,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     show(el('#by-type-empty'), summary.by_type.length === 0);
   }
 
-  async function renderRecent(companyId: number): Promise<void> {
+  function renderRecent(entries: CashFlowEntry[]): void {
     // Folded the same way as the register on /kontantstrom, and for a stronger
     // reason here: this list is short. Left unfolded, one corrected purchase
     // filled three of the eight rows and showed its reversal as money coming
@@ -434,7 +673,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     // Read-only, so no disclosure triangle: the older vouchers stay out of the
     // way entirely and the line says how many there are. Whoever wants to see
     // them is one link away, on the page that can also do something about them.
-    const rows = foldCorrections(await listCashFlow(companyId, RECENT_LIMIT));
+    const rows = foldCorrections(entries);
     const body = el<HTMLTableSectionElement>('#recent');
     body.replaceChildren();
     for (const { lead, history } of rows) {
@@ -466,16 +705,56 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     show(el('#recent-empty'), rows.length === 0);
   }
 
-  async function showCompany(company: Company, session: Session | null): Promise<void> {
-    rememberCompany(company.id);
-    // The eyebrow says which organization's books these are. With several it is
-    // the only thing on screen that distinguishes the firm from its client, so
-    // it follows the company rather than staying on the first membership.
-    setChromeOrganization(organizationName(session, company.organization_id));
-    const summary = await getSummary(company.id);
+  async function showCompany(company: Company): Promise<void> {
+    // The heading, the header at the top of every page, and the id the two
+    // requests below are built from: one call, one record. This is what makes
+    // «which company am I looking at» and «which company answered» the same
+    // question on this page. See lib/tenant.ts.
+    setActiveCompany(company);
+    // The orgnr under the name, because two companies in a group share a name
+    // more often than they share a number, and because a name alone is not
+    // something you can check against a letter from Skatteetaten.
+    const orgnr = el('#company-orgnr');
+    orgnr.textContent = orgnummer(company.orgnr);
+    orgnr.hidden = false;
+    // Together, not one after the other. Neither answer depends on the other,
+    // and asked in single file the second request could not even leave the
+    // browser until the first had crossed the country and come back.
+    const [summary, recent] = await Promise.all([
+      getSummary(company.id),
+      listCashFlow(company.id, RECENT_LIMIT),
+    ]);
     renderSummary(summary);
-    await renderRecent(company.id);
+    renderRecent(recent);
     overview.hidden = false;
+    settled();
+  }
+
+  /**
+   * Stop saying the page is loading.
+   *
+   * One place, called from both the answer and the failure, because a region
+   * left marked aria-busy is a region a screen reader keeps waiting on.
+   */
+  function settled(): void {
+    overview.removeAttribute('aria-busy');
+  }
+
+  /**
+   * Clear the placeholders when there will be no figures to put in them.
+   *
+   * Without this a failed request leaves the shapes shimmering under an error
+   * message, which reads as "still trying" when nothing is still trying.
+   */
+  function clearSkeletons(): void {
+    settled();
+    for (const value of overview.querySelectorAll<HTMLElement>('.stat-value')) {
+      if (value.querySelector('.skeleton') !== null) value.textContent = '-';
+    }
+    for (const note of overview.querySelectorAll<HTMLElement>('.stat-note')) {
+      if (note.querySelector('.skeleton') !== null) note.textContent = '';
+    }
+    for (const row of overview.querySelectorAll('tr[data-skeleton-row]')) row.remove();
   }
 
   void loadSession().then(async (session) => {
@@ -484,27 +763,36 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       companies = await loadCompanies();
       loading.hidden = true;
 
-      // Wired before anything is shown, and once: the list it reads is the
-      // module-level one, so a company added later needs no rewiring.
-      picker.addEventListener('change', () => {
-        const chosen = companies.find((c) => c.id === Number(picker.value));
-        if (chosen === undefined) return;
-        // Reported rather than swallowed: a failed switch would otherwise leave
-        // one company's figures on screen under another company's name.
-        void showCompany(chosen, session).catch((error: unknown) => {
-          setStatus(
-            status,
-            error instanceof ApiError ? error.message : 'Vi fikk ikke hentet oversikten.',
-          );
-        });
-      });
+      // «Bytt selskap» only where there is something to switch to. On an
+      // account with one set of books it would be a control that does nothing;
+      // on an account with four it is both the way over and a standing reminder
+      // that the name above is one of several.
+      const switcher = el<HTMLButtonElement>('#company-switch');
+      switcher.hidden = companies.length < 2;
+      switcher.addEventListener('click', openCompanyMenu);
 
       const current = currentCompany(companies);
       if (current === undefined) {
         // No books yet, so there is no overview to draw. The way to add a set
         // lives on /organisasjon/, next to the organisation that will own it,
         // and the only thing this page does about it is point there once.
+        //
+        // Reachable with the overview already laid out, when the hint said this
+        // account had books and it no longer does. Putting it away again is the
+        // correction, and it is why the hint is only ever allowed to decide
+        // layout.
+        overview.hidden = true;
+        settled();
+        controls.hidden = true;
         show(empty, true);
+        // Nothing is being looked at, so the heading says what the page is
+        // rather than naming a company. This heading only, and never through
+        // the shared slot: the header at the top of the page has its own answer
+        // for an account with no books (the account's name, from applyChrome),
+        // and «Oversikt» in the company slot up there would be a page title
+        // pretending to be a company. Nothing is stored either way.
+        el('#company-orgnr').hidden = true;
+        el('#dash-company').textContent = 'Oversikt';
         const mayAdd = session.memberships.some((m) =>
           can(session, m.organization_id, 'organization:manage'),
         );
@@ -514,10 +802,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       }
 
       controls.hidden = false;
-      fillCompanyPicker(picker, companies, current.id);
-      await showCompany(current, session);
+      await showCompany(current);
     } catch (error: unknown) {
       loading.hidden = true;
+      clearSkeletons();
       setStatus(
         status,
         error instanceof ApiError ? error.message : 'Vi fikk ikke hentet oversikten.',

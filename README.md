@@ -29,7 +29,7 @@ what it does.
 
 | Feature | Notes | Status |
 | --- | --- | --- |
-| Accounts and organizations | Email/password or Google sign-in; colleagues invited into an organization with roles; one account keeps books for as many companies as it likes, switched from any page, so a regnskapsfører holds one company per client; a subscription will attach to the organization, never to a person | Working |
+| Accounts and access | Email/password or Google sign-in; one account keeps books for as many companies as it likes, switched from any page, so a regnskapsfører holds one company per client. **Access is per company**: a colleague is invited to one set of books with a role, sees nothing of the account's other clients, and a subscription attaches to the books rather than to a person | Working |
 | Cash-flow register | Money in and out with a category that decides account and VAT code, gross-to-net split, immediate posting, corrections by reversal | Working |
 | Fakturering | Salgsdokument checked against bokføringsforskriften § 5-1 before it is issued, with each finding naming its paragraph; gapless machine numbering (a draft has no number, so discarding one leaves no hole); posted and archived on issue; corrected only by kreditnota | Working |
 | E-faktura (EHF / Peppol BIS Billing 3.0) | Generated and frozen at issue, ahead of the 2027-01-01 requirement in lov 19. juni 2026 nr. 39. **Transmission is not built** — that needs a Peppol access point; see [docs/integrations/efaktura.md](docs/integrations/efaktura.md) | Partly |
@@ -77,8 +77,9 @@ Myntos/
 ## Getting started
 
 Prerequisites: **Python ≥ 3.12**, **[uv](https://docs.astral.sh/uv/getting-started/installation/)**,
-**Node ≥ 22**, **[pnpm](https://pnpm.io/installation)**. Docker is optional
-(local PostgreSQL); the test suite runs without it.
+**Node ≥ 22**, **[pnpm](https://pnpm.io/installation)**. No Docker: the
+database is a managed PostgreSQL in an EEA region, named by `DATABASE_URL`, and
+the test suite runs against SQLite without any database at all.
 
 ```bash
 # 1. Configuration — copy the example env file and adjust as needed
@@ -95,8 +96,8 @@ cp .env.example .env                           # points the site at the API
 pnpm install
 pnpm dev                                       # http://localhost:4321
 
-# Local PostgreSQL — the backend needs a database to do anything
-docker compose up -d db
+# The backend needs a database to do anything. Point DATABASE_URL at one
+# (managed, EEA region) and bring the schema up to date.
 cd backend && uv run alembic upgrade head
 ```
 

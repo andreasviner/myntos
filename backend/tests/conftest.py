@@ -29,11 +29,13 @@ import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from myntos.api.deps import get_document_storage
+from myntos.api.deps import get_document_storage, get_mailer
 from myntos.core.config import get_settings
+from myntos.core.mail import Delivery, Mail
 from myntos.db.base import Base
 from myntos.db.session import get_session
 from myntos.domain.bilag import models as bilag_models  # noqa: F401  (registers tables)
+from myntos.domain.bilag import reading_cache
 from myntos.domain.faktura import models as faktura_models  # noqa: F401  (registers tables)
 from myntos.domain.identity import models as identity_models  # noqa: F401  (registers tables)
 from myntos.domain.ledger import models as ledger_models  # noqa: F401  (registers tables)
@@ -99,6 +101,23 @@ def test_settings() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def a_cold_reading_cache() -> Iterator[None]:
+    """Every test reads its documents for itself.
+
+    ``reading_cache.CACHE`` is process-wide and keyed by the bytes of the file,
+    which is exactly what makes it useful in production and exactly what makes
+    it leak here: two tests uploading the same fixture PDF are the same key, and
+    the second would be handed the first one's text no matter what it had
+    stubbed Løynd's extractor to say. Emptied on the way in and on the way out,
+    so neither the order tests run in nor a failure half-way through one can
+    decide what the next one reads.
+    """
+    reading_cache.CACHE.clear()
+    yield
+    reading_cache.CACHE.clear()
+
+
+@pytest.fixture(autouse=True)
 def no_exchange_rates() -> Iterator[None]:
     """No calls to Norges Bank, for the same reason there are no calls to Løynd.
 
@@ -146,6 +165,44 @@ def no_register_lookups(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     patcher.undo()
 
 
+class RecordingMailer:
+    """The mailer every test gets: keeps the messages, sends nothing.
+
+    Installed by default rather than opted into, for the reason
+    ``no_register_lookups`` is: this repository's own ``.env`` may hold working
+    SMTP credentials, and a suite that used them would mail real people from a
+    test run. Nothing here opens a socket.
+
+    ``configured`` and ``fails_with`` are what the tests set to describe a
+    deployment that never set up mail, and one whose relay refused the message.
+    """
+
+    def __init__(self) -> None:
+        self.sent: list[Mail] = []
+        self.configured = True
+        self.fails_with: str | None = None
+
+    async def send(self, mail: Mail) -> Delivery:
+        if not self.configured:
+            return Delivery(sent=False)
+        if self.fails_with is not None:
+            return Delivery(sent=False, error=self.fails_with)
+        self.sent.append(mail)
+        return Delivery(sent=True)
+
+    @property
+    def only(self) -> Mail:
+        """The single message sent, asserting that there was exactly one."""
+        assert len(self.sent) == 1, f"expected one message, got {len(self.sent)}"
+        return self.sent[0]
+
+
+@pytest.fixture
+def outbox() -> RecordingMailer:
+    """What the application sent, for the test to read afterwards."""
+    return RecordingMailer()
+
+
 @pytest.fixture
 def database_url(tmp_path: Path) -> str:
     """A fresh SQLite file per test, with the schema already created."""
@@ -157,7 +214,7 @@ def database_url(tmp_path: Path) -> str:
 
 
 @pytest.fixture
-def client(database_url: str, tmp_path: Path) -> Iterator[TestClient]:
+def client(database_url: str, tmp_path: Path, outbox: RecordingMailer) -> Iterator[TestClient]:
     engine = create_async_engine(database_url)
 
     # SQLite ignores foreign keys unless asked, and half of what the identity
@@ -186,6 +243,7 @@ def client(database_url: str, tmp_path: Path) -> Iterator[TestClient]:
     # directory also means one test's PDFs cannot be read by another's.
     storage = LocalDocumentStorage(tmp_path / "bilag")
     app.dependency_overrides[get_document_storage] = lambda: storage
+    app.dependency_overrides[get_mailer] = lambda: outbox
     with TestClient(app, base_url=TEST_ORIGIN) as test_client:
         yield test_client
     engine.sync_engine.dispose()
@@ -213,6 +271,58 @@ def register(
     assert response.status_code == 201, response.text
     body: dict[str, Any] = response.json()
     return body
+
+
+def invite_to_company(
+    client: TestClient,
+    company_id: int,
+    *,
+    email: str,
+    role: str = "member",
+    full_name: str | None = None,
+) -> str:
+    """Invite an address to one company's books and return the acceptance token.
+
+    Called as whoever is signed in, who therefore needs ``member:manage`` on
+    that company. Access is per company, so there is no way to invite somebody
+    to "the account": that is the whole point of
+    :class:`~myntos.domain.identity.models.CompanyMembership`.
+    """
+    payload: dict[str, Any] = {"email": email, "role": role}
+    if full_name is not None:
+        payload["full_name"] = full_name
+    response = write(client, "POST", f"/api/v1/companies/{company_id}/invitations", json=payload)
+    assert response.status_code == 201, response.text
+    url: str = response.json()["invite_url"]
+    return url.split("token=")[1]
+
+
+def join_company(
+    client: TestClient,
+    company_id: int,
+    *,
+    email: str,
+    role: str = "member",
+    full_name: str = "Ola Nordmann",
+) -> dict[str, Any]:
+    """Invite somebody to one company, then become them.
+
+    The whole round trip the product actually asks of a colleague: the person
+    signed in invites an address, signs out, that address registers an account
+    of its own, and accepts. Returns the invitee's session body, and leaves the
+    client signed in **as the invitee** — which is what every test using this
+    goes on to assert about.
+
+    Their new account has a set of books of its own (signup makes none, so it is
+    empty) and exactly one company they can open: the one they were invited to.
+    """
+    token = invite_to_company(client, company_id, email=email, role=role)
+    write(client, "POST", "/api/v1/auth/logout")
+    session = register(client, email, full_name=full_name)
+    accepted = write(client, "POST", "/api/v1/auth/invitations/accept", json={"token": token})
+    assert accepted.status_code == 200, accepted.text
+    body: dict[str, Any] = accepted.json()
+    return body or session
 
 
 def write(client: TestClient, method: str, url: str, **kwargs: Any) -> Any:

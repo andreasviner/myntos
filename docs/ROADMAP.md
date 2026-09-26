@@ -47,7 +47,8 @@ registration and access, which cannot be done from a repository.
       ID-porten login (`acr=idporten-loa-high`), which is what finally exercises
       the ID-porten `kid`
 - [x] Scopes on the **ID-porten** client (`5aa404aa`), which had only `openid`.
-      `altinn:enduser` fixed the Altinn token exchange and
+      `altinn:enduser` fixed the Altinn token exchange (any `altinn:*` scope
+      does - see maskinporten.md; production holds none of it) and
       `skatteetaten:formueinntekt/skattemelding` the person's own fetch, both
       verified 2026-08-24: the whole auth chain now completes for a machine and
       for a person, and the skattemelding API answers in Norwegian prose rather
@@ -219,12 +220,12 @@ and full digital bokføring from 2030-01-01. See docs/integrations/efaktura.md.
       the append-only bilag archive at issue so the document stays readable for
       the retention period — `myntos.domain.faktura.pdf`
 - [x] Company gains `vat_registered`, `in_foretaksregisteret`,
-      `organisation_form` and `bank_account` — what § 5-1-2 requires a
+      `organisation_form` and a bank account — what § 5-1-2 requires a
       salgsdokument to be able to state about the seller
 - [x] Frontend `/faktura/`: line editor, a review step that names the paragraph
       for every finding before anything is issued, PDF and EHF linked from the
       result rather than only from the list
-- [x] Frontend `/organisasjon/#selskap`: the company's own details — kontonummer,
+- [x] Frontend `/organisasjon/#selskap`: the company's own details — kontonumre,
       mva-registrering, Foretaksregisteret, address. Until it existed the fields
       § 5-1-2 requires could only be set at company creation, and were not set
       there either
@@ -232,6 +233,11 @@ and full digital bokføring from 2030-01-01. See docs/integrations/efaktura.md.
       mod-11 checked when it is entered (`domain/ledger/bankkonto.py`). Not a
       § 5-1 requirement — it blocks because the alternative is a numbered,
       posted, archived invoice with nowhere to pay it
+- [x] **Several kontonummer per company** (`CompanyBankAccount`), one of them
+      the primary, and a per-invoice choice between them
+      (`SalesDocument.bank_account_id`). The column it replaced could hold one
+      account, so a business keeping its skattetrekk apart — skattebetalingsloven
+      § 5-12 — had nowhere to put the second one
 - [ ] **Peppol access point.** Myntos produces the EHF file but does not send
       it. This is the remaining blocker for the 2027 requirement — everything
       else is in place. Either contract an access point or become one

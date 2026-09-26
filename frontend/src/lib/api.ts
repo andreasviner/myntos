@@ -9,7 +9,13 @@
  * The API answers errors as `{detail, code}`. `detail` is Norwegian prose meant
  * for the user; `code` is the stable identifier to branch on. Never branch on
  * `detail`.
+ *
+ * Every call goes through `request`, which is also where the wall between two
+ * companies is enforced on this side: see `assertCompanyScope` below and
+ * `lib/tenant.ts` for what it is defending against.
  */
+
+import { activeCompanyId } from './tenant';
 
 const configured = import.meta.env.PUBLIC_API_BASE_URL;
 
@@ -54,7 +60,87 @@ function messageFrom(status: number, body: unknown): string {
   return `Forespørselen feilet (${status}).`;
 }
 
+/**
+ * Refused because the data would have belonged to another company.
+ *
+ * An `ApiError` so that every page's existing error handling shows the message
+ * rather than falling back to "noe gikk galt"; its own class so a caller that
+ * genuinely means to reach across companies can tell this apart from a server
+ * that said no. `status` is 0 for the same reason a network failure is: no
+ * server ever answered this.
+ */
+export class WrongCompanyError extends ApiError {
+  /** The company the page is about, and the one that was asked for or answered. */
+  readonly expected: number | null;
+  readonly actual: number;
+
+  constructor(message: string, expected: number | null, actual: number) {
+    super(0, message, 'wrong-company');
+    this.name = 'WrongCompanyError';
+    this.expected = expected;
+    this.actual = actual;
+  }
+}
+
+/** `/api/v1/companies/12` and everything under it, which is most of the API. */
+const COMPANY_SCOPED = /^\/api\/v1\/companies\/(\d+)(?:[/?]|$)/;
+
+/**
+ * The company a path is about, or null for the account-wide endpoints.
+ *
+ * Read off the URL rather than passed in, so it cannot be omitted: a new
+ * endpoint under `/companies/{id}/` is walled the moment it is written, without
+ * its author having to know this exists.
+ */
+function companyInPath(path: string): number | null {
+  const match = COMPANY_SCOPED.exec(path);
+  return match === null ? null : Number(match[1]);
+}
+
+/**
+ * Refuse to ask for, or to hand back, another company's data.
+ *
+ * Two checks against the id in the URL. Outward: it must be the company the
+ * page is about (`lib/tenant.ts`), so a stale `Company` object held across a
+ * switch, or a list built from another account, fails here instead of quietly
+ * replacing the figures under a name that did not change. Inward: every
+ * company-scoped answer the API sends names its own company, so a mismatch is
+ * refused rather than rendered.
+ *
+ * The inward half has never caught anything, and the backend has two test files
+ * whose whole job is to keep it that way. The point is that it goes on looking
+ * without anybody remembering to.
+ */
+function assertCompanyScope(companyId: number, body: unknown): void {
+  const rows = Array.isArray(body) ? body : [body];
+  for (const row of rows) {
+    if (typeof row !== 'object' || row === null) continue;
+    const owner = (row as { company_id?: unknown }).company_id;
+    if (typeof owner !== 'number' || owner === companyId) continue;
+    throw new WrongCompanyError(
+      'Vi stoppet visningen: svaret fra serveren gjaldt et annet selskap.',
+      companyId,
+      owner,
+    );
+  }
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // Before the fetch, not after: a request for the wrong company must not be
+  // sent, let alone have its answer painted. Silent when no company has been
+  // chosen yet: a fresh browser has nothing for the request to contradict, and
+  // the first company-scoped call of a session is made on the way to settling
+  // the choice.
+  const scope = companyInPath(path);
+  const active = activeCompanyId();
+  if (scope !== null && active !== null && scope !== active) {
+    throw new WrongCompanyError(
+      'Vi stoppet en forespørsel som gjaldt et annet selskap enn det du ser på. Last siden på nytt.',
+      active,
+      scope,
+    );
+  }
+
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
@@ -79,6 +165,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
         : null;
     throw new ApiError(response.status, messageFrom(response.status, body), code);
   }
+  if (scope !== null) assertCompanyScope(scope, body);
   return body as T;
 }
 
@@ -92,17 +179,22 @@ function json<T>(path: string, method: string, payload: unknown): Promise<T> {
 
 // --- Accounts and organizations -------------------------------------------------
 
+/**
+ * The caller's standing on one account, which is now a thin thing.
+ *
+ * An account owns the companies set up under it and nothing else anybody looks
+ * at. What a person may do with a set of books, and what those books cost, come
+ * back with the books (`Company.role`, `Company.permissions`, `Company.plan`).
+ *
+ * There is no name here on purpose, and no page may print one. An account is
+ * routinely called after the first company set up under it, and a name like
+ * that shown anywhere near a *different* company reads as that company's data
+ * having crossed over. See docs/company-isolation.md.
+ */
 export interface Membership {
   organization_id: number;
-  organization_name: string;
-  organization_slug: string;
-  /**
-   * True while the name is one signup invented ("Ola Nordmann (privat)") rather
-   * than one anyone chose. Worth asking about; not worth presenting as settled.
-   */
-  organization_name_is_placeholder: boolean;
-  plan: string;
   role: string;
+  /** What this role may do on the account: only ever `organization:*` here. */
   permissions: string[];
 }
 
@@ -168,12 +260,60 @@ export const logout = (): Promise<void> => request<void>('/api/v1/auth/logout', 
 export const acceptInvitation = (token: string): Promise<Session> =>
   json<Session>('/api/v1/auth/invitations/accept', 'POST', { token });
 
+/** What an invitation says about itself, before anyone has signed in. */
+export interface InvitationLookup {
+  /** The books being shared. Never the account: that is not what is granted. */
+  company_name: string;
+  /** The address it was sent to. Any other account is refused the acceptance. */
+  email: string;
+  role: string;
+  expires_at: string;
+  /** Null when the account that sent it is gone. The invitation still works. */
+  inviter_name: string | null;
+  /**
+   * Who the inviter addressed it to, when they named somebody.
+   *
+   * Offered as the name on the account being created, so a person invited by
+   * name does not retype what the invitation already says.
+   */
+  full_name: string | null;
+}
+
+/**
+ * Read an invitation without accepting it, and without being signed in.
+ *
+ * This is what lets the page an invitation link opens say who is asking and
+ * into what, before it asks anybody to make an account. A 400
+ * `invalid_invitation` is the one answer for every unusable token: unknown,
+ * already used, or expired.
+ *
+ * POST, with the token in the body, for the reason the acceptance is a POST: a
+ * secret in a query string ends up in access logs and Referer headers.
+ */
+export const lookupInvitation = (token: string): Promise<InvitationLookup> =>
+  json<InvitationLookup>('/api/v1/auth/invitations/lookup', 'POST', { token });
+
 /** Where to send the browser to start a federated sign-in flow. */
 export const providerStartUrl = (code: string, redirectTo: string): string =>
   `${API_BASE_URL}/api/v1/auth/${encodeURIComponent(code)}/start` +
   `?redirect_to=${encodeURIComponent(redirectTo)}`;
 
 // --- Companies ------------------------------------------------------------------
+
+export interface BankAccount {
+  id: number;
+  /** Eleven digits, no separators. `kontonummer()` in `lib/format.ts` groups it. */
+  account: string;
+  /** What the owner calls it — «Drift», «Skattetrekk». Null when unnamed. */
+  label: string | null;
+  /**
+   * The account an invoice is paid into when it names none itself.
+   *
+   * Exactly one carries it for as long as the company has any account at all,
+   * which is why the list can be read as "the first one is where money goes".
+   */
+  is_primary: boolean;
+}
 
 export interface Company {
   id: number;
@@ -190,11 +330,15 @@ export interface Company {
   in_foretaksregisteret: boolean;
   organisation_form: string | null;
   /**
-   * Eleven digits, no separators. Null until someone fills it in, and an
-   * invoice cannot be issued while it is, because there would be nowhere to pay
-   * it (see the `seller_bank_account` violation).
+   * Every account the company is paid into, primary first.
+   *
+   * A list and not a field: a business with a driftskonto and a
+   * skattetrekkskonto has two, and which one an invoice names is a per-invoice
+   * choice with `is_primary` as its default. Empty until someone adds one, and
+   * an invoice cannot be issued while it is, because there would be nowhere to
+   * pay it (see the `seller_bank_account` violation).
    */
-  bank_account: string | null;
+  bank_accounts: BankAccount[];
   /**
    * Whether this company's bilag may be shown to a model at all.
    *
@@ -213,6 +357,27 @@ export interface Company {
   verified: boolean;
   /** When ownership was confirmed. ISO 8601, or null while unconfirmed. */
   verified_at: string | null;
+
+  /**
+   * What these books cost, and therefore what they may use.
+   *
+   * On the company and not on the account: a set of books is the thing that has
+   * a size, so a regnskapsfører with twenty clients is twenty subscriptions
+   * rather than one, and a private person with one company is not priced as
+   * though they might have twenty. Nothing enforces it yet.
+   */
+  plan: string;
+  /**
+   * What *this* caller may do with *these* books.
+   *
+   * Access is a row per person per company, so the role travels with the
+   * company rather than with the session: the same person can own their own
+   * books and merely read a client's. Decide what to offer from `permissions`
+   * and never from `role`, for the reason in docs/frontend-conventions.md: the
+   * role to permission table belongs to the backend.
+   */
+  role: string;
+  permissions: string[];
 
   // --- Copied from Enhetsregisteret ---
   // Refreshed by `refreshCompany`, and automatically when a company is created
@@ -244,10 +409,19 @@ export const createCompany = (payload: {
   bank_account?: string | null;
 }): Promise<Company> => json<Company>('/api/v1/companies', 'POST', payload);
 
-/** Correct the company's own details. Every omitted field is left alone. */
+/**
+ * Correct the company's own details. Every omitted field is left alone.
+ *
+ * `orgnr` is editable only while the company is unconfirmed, which is what
+ * makes a typo in nine digits a correction rather than a rebuild. Once somebody
+ * has confirmed ownership in Altinn the number is settled, and a changed one is
+ * refused with 409 `company_orgnr_locked`; 409 `duplicate_company` is the other
+ * refusal, for a number this organization already keeps books under.
+ */
 export const updateCompany = (
   companyId: number,
   payload: {
+    orgnr?: string;
     name?: string;
     address_line?: string | null;
     postal_code?: string | null;
@@ -255,10 +429,60 @@ export const updateCompany = (
     vat_registered?: boolean;
     in_foretaksregisteret?: boolean;
     organisation_form?: string | null;
-    bank_account?: string | null;
     ki_enabled?: boolean;
   },
 ): Promise<Company> => json<Company>(`/api/v1/companies/${companyId}`, 'PATCH', payload);
+
+/**
+ * Add an account the company is paid into.
+ *
+ * `account` may carry the separators people type (`1506.20.33158`) or a
+ * Norwegian IBAN; the backend normalises it and verifies the mod-11 check
+ * digit. Two refusals worth telling apart: 422 `invalid_bank_account` for a
+ * number that cannot be one, and 409 `duplicate_bank_account` for one this
+ * company already holds.
+ *
+ * The first account added is the primary whatever `is_primary` says: a company
+ * with accounts and no default has nowhere for its next invoice to be paid.
+ *
+ * Answers with the whole company, like the other two below, because promoting
+ * an account changes another account's row as well — "the account that changed"
+ * was never one row. Hand the answer to `setActiveCompany` the same way an
+ * `updateCompany` answer is handled.
+ */
+export const addBankAccount = (
+  companyId: number,
+  payload: { account: string; label?: string | null; is_primary?: boolean },
+): Promise<Company> =>
+  json<Company>(`/api/v1/companies/${companyId}/bankkontoer`, 'POST', payload);
+
+/**
+ * Correct a number, rename an account, or make it the one invoices default to.
+ *
+ * Every omitted field is left alone; an empty `label` clears the name.
+ * `is_primary: true` promotes this account and demotes whichever held it.
+ * `is_primary: false` is refused on the account that currently is primary, with
+ * 409 `primary_bank_account_required` — the way to move the marking is to
+ * promote the account it should move to.
+ */
+export const updateBankAccount = (
+  companyId: number,
+  bankAccountId: number,
+  payload: { account?: string; label?: string | null; is_primary?: boolean },
+): Promise<Company> =>
+  json<Company>(`/api/v1/companies/${companyId}/bankkontoer/${bankAccountId}`, 'PATCH', payload);
+
+/**
+ * Close an account. Nothing that has already been issued changes.
+ *
+ * An issued salgsdokument carries its own copy of the number it named, and a
+ * draft pointed here falls back to the primary the next time it is saved.
+ * Deleting the primary promotes the oldest account that remains.
+ */
+export const deleteBankAccount = (companyId: number, bankAccountId: number): Promise<Company> =>
+  request<Company>(`/api/v1/companies/${companyId}/bankkontoer/${bankAccountId}`, {
+    method: 'DELETE',
+  });
 
 /**
  * Confirm through Altinn that these books belong to the caller.
@@ -274,10 +498,15 @@ export const updateCompany = (
  *   or keep these books unconfirmed.
  */
 export const verifyCompany = (companyId: number): Promise<Company> =>
-  request<Company>(`/api/v1/companies/${companyId}/bekreft`, { method: 'POST' });
+  request<Company>(`/api/v1/companies/${companyId}/bekreft`, {
+    method: 'POST',
+  });
 
 /** The code a 409 from `verifyCompany` carries when somebody claimed it first. */
 export const ALREADY_CLAIMED = 'company_already_claimed';
+
+/** The code a 409 from `updateCompany` carries when the orgnr is settled. */
+export const ORGNR_LOCKED = 'company_orgnr_locked';
 
 // --- Enhetsregisteret --------------------------------------------------------------
 
@@ -372,6 +601,38 @@ export interface RegisteredRole {
 }
 
 /**
+ * Whether a registered role holder can open the books.
+ *
+ * The register gives a name and nothing else, so this is a name match and the
+ * value says how much that match is worth:
+ *
+ * - `bekreftet`: a member whose ID-porten login carries this name. Both names
+ *   come from Folkeregisteret, so it is the same person twice.
+ * - `trolig`: a member whose *account* name matches. Probably them; nobody
+ *   has proved it.
+ * - `invitert`: asked, not yet joined.
+ * - `ingen`: nobody in the organization goes by this name.
+ * - `selskap`: the holder is a revisor or regnskapsfører firm, so the
+ *   question does not apply.
+ *
+ * It grants nothing and enforces nothing. Only `/companies/{id}/register` and
+ * `/companies/{id}/hent` fill it in; the bare Enhetsregisteret lookup has no
+ * organization to resolve it against and leaves it at `ingen`.
+ */
+export type RegisterAccess = 'bekreftet' | 'trolig' | 'invitert' | 'ingen' | 'selskap';
+
+/** A registered role, plus what is known about that person's access. */
+export interface RegisteredRoleWithAccess extends RegisteredRole {
+  access: RegisterAccess;
+  /** The organization role they hold, or would hold on accepting. */
+  access_role: string | null;
+  /** The Myntos-side name, when it is not the register's own spelling. */
+  access_name: string | null;
+  /** Where a pending invitation went. */
+  access_email: string | null;
+}
+
+/**
  * Look up a company or party by organisasjonsnummer.
  *
  * Rejects with an `ApiError` whose `code` distinguishes the cases worth telling
@@ -393,14 +654,36 @@ export const lookupUnit = (orgnr: string): Promise<RegisteredUnit> =>
 export const lookupRoles = (orgnr: string): Promise<RegisteredRole[]> =>
   request<RegisteredRole[]>(`/api/v1/enhetsregisteret/${encodeURIComponent(orgnr)}/roller`);
 
+/**
+ * Everything Enhetsregisteret says about a company, and when it said it.
+ *
+ * The same shape whether it was just fetched or read back out of storage, so a
+ * page renders one exactly as it renders the other.
+ */
+export interface RegisterAnswer {
+  unit: RegisteredUnit;
+  roles: RegisteredRoleWithAccess[];
+  /** ISO 8601. Shown beside the data: a cached answer has to say how old it is. */
+  fetched_at: string;
+}
+
 /** A company after a register refresh, and everything the register knows. */
-export interface CompanyRefresh {
+export interface CompanyRefresh extends RegisterAnswer {
   company: Company;
   /** Which stored fields the register moved. Empty when it agreed with all. */
   changed: string[];
-  unit: RegisteredUnit;
-  roles: RegisteredRole[];
 }
+
+/**
+ * What the register last said, without asking it again.
+ *
+ * `null` when nothing has been stored yet — a company set up while Brønnøysund
+ * was down — or when everything stored describes an orgnr the company no longer
+ * has. This is what a page load should use; `refreshCompany` is how you ask for
+ * a fresh answer, and it needs the permission that editing the company needs.
+ */
+export const getCompanyRegister = (companyId: number): Promise<RegisterAnswer | null> =>
+  request<RegisterAnswer | null>(`/api/v1/companies/${companyId}/register`);
 
 /**
  * Re-read everything Enhetsregisteret says about this company.
@@ -413,7 +696,9 @@ export interface CompanyRefresh {
  * Also runs by itself when a company is created and when one is confirmed.
  */
 export const refreshCompany = (companyId: number): Promise<CompanyRefresh> =>
-  request<CompanyRefresh>(`/api/v1/companies/${companyId}/hent`, { method: 'POST' });
+  request<CompanyRefresh>(`/api/v1/companies/${companyId}/hent`, {
+    method: 'POST',
+  });
 
 // --- Altinn: the companies the person may report for -------------------------------
 
@@ -426,6 +711,17 @@ export interface GovernmentLoginStatus {
   pid: string | null;
   acr: string | null;
   expires_at: string | null;
+  /**
+   * Whether this account has ever proved who it belongs to.
+   *
+   * Outlives `logged_in`, which is about an authorization that expires within
+   * the hour. "Have you shown us who you are" and "can you file right now" are
+   * different questions and the interface asks both.
+   */
+  linked: boolean;
+  /** The name ID-porten gave. Null when the deployment lacks the `profile` scope. */
+  linked_name: string | null;
+  linked_at: string | null;
 }
 
 export const getGovernmentLoginStatus = (): Promise<GovernmentLoginStatus> =>
@@ -482,6 +778,16 @@ export interface Member {
   full_name: string;
   role: string;
   is_self: boolean;
+  /**
+   * Whether this colleague has proved through ID-porten who they are.
+   *
+   * The fact travels; the fødselsnummer behind it never leaves the server.
+   */
+  government_linked: boolean;
+  /** The name ID-porten gave, when there is one. */
+  government_name: string | null;
+  /** ISO 8601, when the link was last renewed by a login. */
+  government_verified_at: string | null;
 }
 
 export interface Invitation {
@@ -489,40 +795,87 @@ export interface Invitation {
   email: string;
   role: string;
   expires_at: string;
+  /** Who it was addressed to, when the inviter named somebody. */
+  full_name: string | null;
+  /** ISO 8601. Null only on responses that predate the field. */
+  created_at: string | null;
+  /** The colleague who sent it. Null once that account is gone. */
+  invited_by: string | null;
   /** Only ever populated on the response that created it, since the token is stored hashed. */
   invite_url: string | null;
+  /**
+   * Whether Myntos emailed the invitation.
+   *
+   * False covers both a deployment with no mail configured and a message the
+   * relay refused; either way the invitation exists and the link is the way
+   * round it. Null on the listing, which is not about a fresh invitation and
+   * where nobody is waiting to hear.
+   */
+  email_sent: boolean | null;
 }
 
-export const listMembers = (organizationId: number): Promise<Member[]> =>
-  request<Member[]>(`/api/v1/organizations/${organizationId}/members`);
+// Members and invitations belong to one company, not to the account. Inviting
+// somebody to help with one client used to hand them every client on the
+// account, and the form that did it sat under the account, where nothing said
+// so. See docs/company-isolation.md.
 
-export const listInvitations = (organizationId: number): Promise<Invitation[]> =>
-  request<Invitation[]>(`/api/v1/organizations/${organizationId}/invitations`);
+export const listMembers = (companyId: number): Promise<Member[]> =>
+  request<Member[]>(`/api/v1/companies/${companyId}/members`);
 
+export const listInvitations = (companyId: number): Promise<Invitation[]> =>
+  request<Invitation[]>(`/api/v1/companies/${companyId}/invitations`);
+
+/**
+ * Invite an address to one company's books, optionally naming the person.
+ *
+ * The name is a label and never a check: acceptance still requires signing in
+ * as the invited address. What it buys is an email that greets somebody and a
+ * register role list that can show a board member has been asked.
+ */
 export const inviteMember = (
-  organizationId: number,
+  companyId: number,
   email: string,
   role: string,
+  fullName?: string | null,
 ): Promise<Invitation> =>
-  json<Invitation>(`/api/v1/organizations/${organizationId}/invitations`, 'POST', { email, role });
+  json<Invitation>(`/api/v1/companies/${companyId}/invitations`, 'POST', {
+    email,
+    role,
+    full_name: fullName ?? null,
+  });
 
-export const revokeInvitation = (organizationId: number, invitationId: number): Promise<void> =>
-  request<void>(`/api/v1/organizations/${organizationId}/invitations/${invitationId}`, {
+/**
+ * Send a pending invitation again, with a new link.
+ *
+ * The previous link stops working, because only the token's hash is stored and
+ * there is no way to send the old one twice. The message says so. The row keeps
+ * its id, its role and its name, which is the difference from revoking and
+ * retyping the address.
+ */
+export const resendInvitation = (companyId: number, invitationId: number): Promise<Invitation> =>
+  json<Invitation>(
+    `/api/v1/companies/${companyId}/invitations/${invitationId}/send-again`,
+    'POST',
+    {},
+  );
+
+export const revokeInvitation = (companyId: number, invitationId: number): Promise<void> =>
+  request<void>(`/api/v1/companies/${companyId}/invitations/${invitationId}`, {
     method: 'DELETE',
   });
 
 export const changeMemberRole = (
-  organizationId: number,
+  companyId: number,
   userId: number,
   role: string,
 ): Promise<Member> =>
-  json<Member>(`/api/v1/organizations/${organizationId}/members/${userId}`, 'PATCH', { role });
+  json<Member>(`/api/v1/companies/${companyId}/members/${userId}`, 'PATCH', { role });
 
-export const removeMember = (organizationId: number, userId: number): Promise<void> =>
-  request<void>(`/api/v1/organizations/${organizationId}/members/${userId}`, { method: 'DELETE' });
-
-export const renameOrganization = (organizationId: number, name: string): Promise<unknown> =>
-  json<unknown>(`/api/v1/organizations/${organizationId}`, 'PATCH', { name });
+/** Take away someone's access to these books, or give up your own. */
+export const removeMember = (companyId: number, userId: number): Promise<void> =>
+  request<void>(`/api/v1/companies/${companyId}/members/${userId}`, {
+    method: 'DELETE',
+  });
 
 // --- Customers and suppliers -------------------------------------------------------
 
@@ -579,6 +932,16 @@ export interface CashFlowType {
   account_number: string;
   default_tax_code: string;
   note: string;
+  /**
+   * The category this one reverses, when it is a refund or a kreditnota.
+   *
+   * A reversal does not book where its own direction suggests: a refund is
+   * money in that goes back to the account the purchase came from, and a
+   * kreditnota is money out that goes back to the account the sale came from.
+   * Sixteen of the first and six of the second, so both are grouped apart in
+   * the list rather than left to bury the ordinary ways money moves.
+   */
+  reverses: string | null;
 }
 
 export interface TaxCode {
@@ -596,6 +959,8 @@ export interface Catalogue {
 export interface AttachmentInfo {
   id: number;
   filename: string;
+  /** Sniffed on upload, not taken from the browser. Decides the badge. */
+  content_type: string;
   byte_size: number;
   sha256: string;
 }
@@ -629,6 +994,20 @@ export interface CashFlowEntry {
    * payments made the same day.
    */
   corrects_id: number | null;
+  /**
+   * Who entered it, from the session that posted the voucher.
+   *
+   * `null` for an entry made before the backend recorded this, and for one
+   * whose author has since been erased: the entry outlives the account, which
+   * is bokføringsloven working as intended. Both cases read as «ukjent» — see
+   * `lib/authors.ts`, which is also where the rule about *when* to show the
+   * mark lives.
+   *
+   * The id comes along so two colleagues who share a name can still be told
+   * apart, and so grouping never matches on a string a person typed.
+   */
+  created_by_id: number | null;
+  created_by_name: string | null;
   attachments: AttachmentInfo[];
 }
 
@@ -708,18 +1087,202 @@ export interface InvoiceSuggestion {
   warnings: string[];
   /** Whether a model was actually consulted. False when KI is off, unconfigured, or down. */
   ki_used: boolean;
+  /**
+   * What the register still needs to know, phrased so it can be answered in the
+   * explanation box. Answering and reading again produces a better proposal.
+   */
+  questions: SuggestionQuestion[];
+  /** One row per uploaded file, in upload order. */
+  documents_read: DocumentRead[];
+  /**
+   * Whether anything besides the documents was put in front of the model: the
+   * company's registered formål and aktivitet, and the sentence the user typed.
+   */
+  context_used: boolean;
+}
+
+/** Something the documents did not settle. */
+export interface SuggestionQuestion {
+  text: string;
+  /** The form field the answer would fill, when it maps to one. */
+  field: string | null;
+  /** True for the one question the model composed rather than the register. */
+  asked_by_model: boolean;
+}
+
+/** One uploaded file, and how much text came out of it. */
+export interface DocumentRead {
+  filename: string;
+  content_type: string;
+  /** Zero means nothing was read from this one — a blurred photo, a blank page. */
+  chars: number;
 }
 
 export const getCatalogue = (): Promise<Catalogue> => request<Catalogue>('/api/v1/cashflow/types');
 
-/** Read a PDF and get the entry form filled in. Stores nothing. */
-export const interpretDocument = (companyId: number, file: File): Promise<InvoiceSuggestion> => {
+/**
+ * Read the uploaded bilag and get the entry form filled in. Stores nothing.
+ *
+ * Takes a list because a bilag is often not one file. A purchase from a private
+ * seller on FINN is documented by the advert, the chat where the price was
+ * agreed, the receipt and the line on the bank statement, and no one of the four
+ * is the bilag — together they are. There is deliberately no limit on how many.
+ *
+ * `forklaring` is the sentence the user typed about the payment, for the bilag
+ * the documents cannot settle on their own: three thousand kroner arriving from
+ * a private account is a deposit from the owner, a repaid loan or a sale, and
+ * the paperwork looks identical in all three cases. It is shown to the model and
+ * stored nowhere.
+ */
+/**
+ * Read a bilag and propose the entry, in one JSON answer.
+ *
+ * The register's own page uses `interpretDocumentStreaming` below, because the
+ * wait is worth showing. This is the same proposal without the frames, kept
+ * because the route is: a caller that only wants the answer should not have to
+ * parse a stream to get it.
+ */
+export const interpretDocument = (
+  companyId: number,
+  files: File[],
+  forklaring?: string,
+): Promise<InvoiceSuggestion> => {
   const form = new FormData();
-  form.append('file', file);
+  for (const file of files) form.append('files', file);
+  if (forklaring !== undefined && forklaring.trim() !== '') {
+    form.append('forklaring', forklaring.trim());
+  }
   return request<InvoiceSuggestion>(`/api/v1/companies/${companyId}/cashflow/forslag`, {
     method: 'POST',
     body: form,
   });
+};
+
+/** What the streaming reader reports on its way to a proposal. */
+export interface InterpretHandlers {
+  /** Which files were read, and how much text came out of each. Arrives first. */
+  onDocuments?: (documents: DocumentRead[]) => void;
+  /** The next piece of the description, as the model writes it. */
+  onDescription?: (piece: string) => void;
+}
+
+/**
+ * The same proposal as `interpretDocument`, reported as it is worked out.
+ *
+ * Reading a bilag is not a uniform wait: a PDF's text layer is milliseconds,
+ * and a photographed receipt is a vision model looking at a page — nine
+ * screenshots take about a minute and a half. Spending that on a spinner and
+ * then filling the whole form at once is the worst arrangement of the same
+ * time. So the file list arrives as soon as the text does, and the description
+ * is typed out as it is written.
+ *
+ * Resolves with the finished suggestion, which is exactly what the plain route
+ * returns — a caller that passes no handlers has simply chosen not to watch.
+ * Anything the server can refuse it refuses before the stream opens, so a bad
+ * upload is still an `ApiError` with a status rather than a frame.
+ */
+export const interpretDocumentStreaming = async (
+  companyId: number,
+  files: File[],
+  forklaring: string | undefined,
+  handlers: InterpretHandlers = {},
+): Promise<InvoiceSuggestion> => {
+  const path = `/api/v1/companies/${companyId}/cashflow/forslag/strom`;
+  // The same guard the plain path applies, and for the same reason: a request
+  // for the wrong company must not be sent, let alone have its answer painted.
+  const scope = companyInPath(path);
+  const active = activeCompanyId();
+  if (scope !== null && active !== null && scope !== active) {
+    throw new WrongCompanyError(
+      'Vi stoppet en forespørsel som gjaldt et annet selskap enn det du ser på. Last siden på nytt.',
+      active,
+      scope,
+    );
+  }
+
+  const form = new FormData();
+  for (const file of files) form.append('files', file);
+  if (forklaring !== undefined && forklaring.trim() !== '') {
+    form.append('forklaring', forklaring.trim());
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      method: 'POST',
+      credentials: 'include',
+      body: form,
+    });
+  } catch {
+    throw new ApiError(0, 'Fikk ikke kontakt med serveren.', 'network');
+  }
+
+  if (!response.ok) {
+    const text = await response.text();
+    const body: unknown = text ? JSON.parse(text) : null;
+    const code =
+      typeof body === 'object' && body !== null && typeof (body as { code?: unknown }).code === 'string'
+        ? (body as { code: string }).code
+        : null;
+    throw new ApiError(response.status, messageFrom(response.status, body), code);
+  }
+  if (response.body === null) {
+    throw new ApiError(0, 'Fikk ikke lest svaret fra serveren.', 'network');
+  }
+
+  let suggestion: InvoiceSuggestion | null = null;
+  let failure: string | null = null;
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  const handle = (frame: string): void => {
+    let name = '';
+    const data: string[] = [];
+    for (const line of frame.split('\n')) {
+      if (line.startsWith('event: ')) name = line.slice('event: '.length);
+      // Only ever one data line per frame here, but the format allows several
+      // and joining them with a newline is what the format says to do.
+      else if (line.startsWith('data: ')) data.push(line.slice('data: '.length));
+    }
+    if (data.length === 0) return;
+    let payload: unknown;
+    try {
+      payload = JSON.parse(data.join('\n'));
+    } catch {
+      // A frame we cannot read costs nothing. The proposal arrives in the last
+      // one, and that is the only frame anything depends on.
+      return;
+    }
+    if (name === 'dokumenter') handlers.onDocuments?.(payload as DocumentRead[]);
+    else if (name === 'beskrivelse') handlers.onDescription?.((payload as { tekst: string }).tekst);
+    else if (name === 'forslag') suggestion = payload as InvoiceSuggestion;
+    else if (name === 'feil') failure = (payload as { melding: string }).melding;
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    // Frames are separated by a blank line; a partial one stays in the buffer.
+    let split = buffer.indexOf('\n\n');
+    while (split !== -1) {
+      handle(buffer.slice(0, split));
+      buffer = buffer.slice(split + 2);
+      split = buffer.indexOf('\n\n');
+    }
+  }
+  if (buffer.trim() !== '') handle(buffer);
+
+  if (failure !== null) throw new ApiError(500, failure, 'stream');
+  if (suggestion === null) {
+    // The stream ended without a proposal: the connection dropped, or the
+    // server died mid-answer. Either way there is nothing to fill the form in
+    // with, and saying so is better than leaving a half-painted form.
+    throw new ApiError(0, 'Lesingen ble avbrutt før forslaget var ferdig.', 'network');
+  }
+  if (scope !== null) assertCompanyScope(scope, suggestion);
+  return suggestion;
 };
 
 export const listCashFlow = (companyId: number, limit = 100): Promise<CashFlowEntry[]> =>
@@ -883,7 +1446,17 @@ export interface Faktura {
   seller_orgnr: string;
   seller_vat_registered: boolean;
   seller_in_foretaksregisteret: boolean;
+  /** What the document *says*, snapshotted at issue. Eleven digits, or null. */
   seller_bank_account: string | null;
+  /**
+   * Which of the company's accounts this document is paid into.
+   *
+   * Null means "whichever is primary", which is the answer for a company with
+   * one account and for a draft nobody has picked for. On an issued document it
+   * can also mean the account has since been closed — the number above is what
+   * the customer was told, and it does not move.
+   */
+  bank_account_id: number | null;
 
   issue_date: string | null;
   delivery_date: string | null;
@@ -944,6 +1517,12 @@ export interface FakturaPayload {
    */
   payment_reference?: string | null;
   payment_reference_auto?: boolean;
+  /**
+   * Which account to be paid into. Omitted leaves it alone, and a draft that
+   * has never named one follows the company's primary — so the form only has to
+   * send this where there is more than one account to choose between.
+   */
+  bank_account_id?: number | null;
   note?: string | null;
   reverse_charge?: boolean;
   lines?: LinePayload[];
@@ -1024,7 +1603,9 @@ export const updateFaktura = (
   json<Faktura>(`/api/v1/companies/${companyId}/faktura/${documentId}`, 'PATCH', payload);
 
 export const deleteFaktura = (companyId: number, documentId: number): Promise<void> =>
-  request<void>(`/api/v1/companies/${companyId}/faktura/${documentId}`, { method: 'DELETE' });
+  request<void>(`/api/v1/companies/${companyId}/faktura/${documentId}`, {
+    method: 'DELETE',
+  });
 
 /**
  * What still stands between this draft and a lawful invoice.

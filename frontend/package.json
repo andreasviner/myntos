@@ -10,6 +10,7 @@
     "build": "astro build",
     "preview": "astro preview",
     "check": "astro check",
+    "test": "vitest run",
     "deploy": "astro build && wrangler deploy --config dist/client/wrangler.json",
     "favicons": "node scripts/generate-favicons.mjs"
   },
@@ -22,6 +23,7 @@
     "@astrojs/sitemap": "^3.7.3",
     "sharp": "^0.35.3",
     "typescript": "^5.6.0",
+    "vitest": "^4.1.11",
     "wrangler": "^4.83.0"
   },
   "pnpm": {

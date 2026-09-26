@@ -50,7 +50,7 @@ const underleverandorer = [
   },
   {
     navn: 'Løynd (Lindeman Technologies)',
-    rolle: 'KI-forslag: bilag du laster opp (selve PDF-filen, til tekstuthenting), og salgsbeskrivelsen du selv skriver i fakturaskjemaet. Kan slås helt av per selskap. Se avsnitt 3d2 og /ki',
+    rolle: 'KI-forslag: bilag du laster opp (selve filene: PDF-er til tekstuthenting, bilder leses av modellen), offentlige opplysninger om selskapet fra Enhetsregisteret, en frivillig setning du selv skriver om bilaget, og salgsbeskrivelsen du skriver i fakturaskjemaet. Kan slås helt av per selskap. Se avsnitt 3d2 og /ki',
     sted: 'Norge, med inferensservere på norsk jord og ingen lagring',
   },
   {
@@ -192,14 +192,37 @@ const underleverandorer = [
   </p>
   <ul>
     <li>
-      <strong>Når du laster opp et bilag:</strong> <em>selve PDF-filen</em>, til Løynds
-      tekstuthenting. Den åpner filen, gir teksten tilbake og lagrer den ikke. Deretter får
-      modellen to spørsmål om de første 2000 tegnene av den teksten, sammen med filens tittel:
-      hvilken kategori i kontantstrømregisteret passer, og hva står det på bilaget der vår egen
-      lesning kom tom tilbake? Kategorien svarer den med ett tall fra en fast liste. Det andre
-      svaret er fire linjer: dato, valuta, selger og én setning om hva som ble kjøpt. Datoen og
-      selgernavnet må være avskrevet ordrett fra det modellen fikk se, ellers kastes de, og datoen
-      leses uansett av oss. Beløp kommer aldri fra modellen.
+      <strong>Når du laster opp et bilag:</strong> <em>selve filene</em>, til Løynds
+      tekstuthenting. Det er én forespørsel per fil, og du kan laste opp så mange et bilag trenger.
+      PDF-er åpnes og teksten gis tilbake. <strong>Bilder leses av modellen selv</strong>, som
+      skriver av teksten den ser på bildet; det er den eneste måten et fotografert
+      kvitteringsbilde kan bli til tekst, og bildet sendes ikke noe annet sted. Ingenting av det
+      lagres hos Løynd.
+    </li>
+    <li>
+      <strong>Deretter to spørsmål om teksten</strong>, om de første 2000 tegnene, sammen med
+      filenes navn og titler: hvilken kategori i kontantstrømregisteret passer, og hva står det
+      på bilaget der vår egen lesning kom tom tilbake? Kategorien svarer modellen med ett tall
+      fra en fast liste. Det andre svaret er fem linjer: dato, valuta, selger, én setning om
+      hva som ble kjøpt, og eventuelt ett spørsmål tilbake til deg om noe dokumentene ikke
+      svarer på. Datoen og selgernavnet må være avskrevet ordrett fra selve dokumentet,
+      ellers kastes de, og datoen leses uansett av oss. Beløp kommer aldri fra modellen.
+    </li>
+    <li>
+      <strong>Med spørsmålene følger noen opplysninger om selskapet:</strong> vedtektsfestet
+      formål og registrert aktivitet slik de står i Enhetsregisteret, næringskoden, og om
+      selskapet er registrert i Merverdiavgiftsregisteret. Alt sammen er offentlige opplysninger
+      vi allerede har hentet fra Brønnøysundregistrene. De følger med fordi det samme bilaget
+      hører til ulike kontoer i ulike virksomheter.
+    </li>
+    <li>
+      <strong>Og beskrivelsen, hvis du skriver eller retter den</strong>, inntil 255 tegn. Modellen
+      foreslår en, og skriver du noe annet, leser vi bilaget på nytt med setningen din, slik
+      at resten av skjemaet kan fylles ut fra det du vet. Merk forskjellen fra alt annet på
+      denne listen: beskrivelsen er teksten på bilaget i hovedboken, så den
+      <strong>lagres og bokføres</strong>. Den kan likevel ikke fylle ut et felt på egen
+      hånd: navn, datoer og valuta godtar vi bare når de står i selve dokumentet, og det du
+      skriver er ikke dokumentet. Skriv ikke personopplysninger der du ikke trenger det.
     </li>
     <li>
       <strong>Når du ber om fakturalinjer:</strong> beskrivelsen du selv skrev i boksen, inntil
@@ -211,8 +234,11 @@ const underleverandorer = [
     <li>Ingen andre data følger med: ikke hovedboken, ikke partsregisteret, ikke kontoen din.</li>
     <li>Løynd lagrer ikke det som sendes inn, og bilagene dine trener ingen modell.</li>
     <li>
-      Er PDF-en skannet, er den bilder av ord og ikke tekst. Verken vi eller Løynd kjører OCR, så
-      da kommer det ingen tekst tilbake og skjemaet må fylles ut for hånd.
+      Laster du opp et bilde, er det modellen som leser det. Det er en avskrift og ikke en
+      innskanning: den kan lese feil, og derfor står tallene i skjemaet til kontroll hos deg som
+      alle andre forslag. Får vi ingen tekst ut av et bilde, sier vi hvilken fil det gjaldt og
+      skjemaet fylles ut for hånd. En skannet PDF uten tekstlag kommer fortsatt tom tilbake, så
+      last den heller opp som bilde.
     </li>
     <li>
       Er bilaget i utenlandsk valuta, slår vi opp dagskursen hos Norges Bank for å foreslå beløpet
@@ -222,7 +248,8 @@ const underleverandorer = [
     <li>
       <strong>Du kan slå det helt av.</strong> Bryteren står per selskap på
       <a href="/ki/">siden om KI</a>. Er den av, forlater ingen dokumenter programmet, heller ikke
-      til tekstuthenting, og skjemaene fylles ut av vår egen lesing av PDF-en.
+      til tekstuthenting, og heller ikke setningen du skrev. Skjemaene fylles da ut av vår egen
+      lesing av PDF-en, og bilder kan ikke leses. De lagres som bilag som før.
     </li>
     <li>
       Kjører du Myntos selv uten API-nøkkel, skjer dette ikke i det hele tatt. Hele funksjonen er
@@ -235,6 +262,13 @@ const underleverandorer = [
     Inviterer du en kollega, lagrer vi e-postadressen invitasjonen er sendt til, rollen den gir,
     hvem som sendte den og når den ble tatt i bruk. Invitasjonslenken lagres bare som hash og
     utløper etter sju dager.
+  </p>
+  <p>
+    Vi sender selve invitasjonen som e-post til adressen du oppgir. Meldingen inneholder navnet
+    ditt, navnet på organisasjonen, rollen og lenken, og svaradressen er din, slik at den som
+    lurer på om invitasjonen er ekte kan svare deg. E-posten går gjennom e-posttjeneren denne
+    installasjonen er satt opp med; kjører du Myntos selv uten en slik tjener, sendes ingenting,
+    og du får lenken til å sende selv.
   </p>
 
   <h3>f. Innlevering til Skatteetaten</h3>
@@ -278,8 +312,10 @@ const underleverandorer = [
     ingen samtykkebanner å klikke bort her.
   </p>
   <p>
-    I tillegg lagrer nettleseren din to små verdier lokalt (<code>localStorage</code>): valgt
-    lys/mørk visning og et hint om at du er innlogget, slik at riktig meny vises før siden er
+    I tillegg lagrer nettleseren din fire små verdier lokalt (<code>localStorage</code>): valgt
+    lys/mørk visning, et hint om at du er innlogget, navnet ditt og antall selskaper på kontoen,
+    og hvilket selskap du sist jobbet i. De tre siste er kopier av det som allerede sto på
+    skjermen, og finnes bare for at riktig meny og riktig selskapsnavn skal vises før siden er
     ferdig lastet. De sendes aldri til oss, og du kan tømme dem ved å slette nettleserdata.
   </p>
 

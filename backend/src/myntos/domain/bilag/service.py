@@ -21,10 +21,11 @@ from myntos.domain.bilag.errors import (
     UnsupportedDocumentError,
 )
 from myntos.domain.bilag.models import (
+    ACCEPTED_EXTENSIONS,
     MAX_ATTACHMENT_BYTES,
     PDF_CONTENT_TYPE,
-    PDF_MAGIC,
     Attachment,
+    sniff_content_type,
 )
 from myntos.domain.ledger.models import Company, Transaction
 from myntos.storage.base import DocumentStorage
@@ -36,21 +37,54 @@ _UNSAFE_FILENAME = re.compile(r"[^A-Za-z0-9æøåÆØÅ._ -]+")
 _FILENAME_MAX_LENGTH = 200
 
 
-def sanitise_filename(filename: str) -> str:
+#: Fallback name per format, for an upload that arrived with no usable one at
+#: all. Naming a PNG "bilag.pdf" would put a wrong extension on a row that an
+#: auditor downloads by it years later.
+_FALLBACK_NAME = {
+    "application/pdf": "bilag.pdf",
+    "image/png": "bilag.png",
+    "image/jpeg": "bilag.jpg",
+    "image/webp": "bilag.webp",
+    "image/gif": "bilag.gif",
+}
+
+
+def sanitise_filename(filename: str, *, content_type: str | None = None) -> str:
     """A display name that is safe to store and to echo back in a header."""
     stem = filename.replace("\\", "/").rsplit("/", maxsplit=1)[-1]
     cleaned = _UNSAFE_FILENAME.sub("_", stem).strip(" .")[:_FILENAME_MAX_LENGTH]
-    return cleaned or "bilag.pdf"
+    return cleaned or _FALLBACK_NAME.get(content_type or "", "bilag.pdf")
 
 
-def validate_pdf(content: bytes) -> None:
-    """Reject anything that is not a PDF of usable size."""
+def validate_document(content: bytes) -> str:
+    """Check one upload and return the content type its **bytes** say it is.
+
+    Returning the type rather than nothing is what makes this the single place
+    the format is decided. It used to be called ``validate_pdf`` and the answer
+    was always ``application/pdf``; now that a bilag may be a photograph, the
+    caller needs to know which, and letting it re-sniff or — worse — read the
+    upload's own ``Content-Type`` would put the decision back in the hands of
+    whoever is uploading.
+    """
     if not content:
         raise UnsupportedDocumentError("filen er tom")
     if len(content) > MAX_ATTACHMENT_BYTES:
         megabytes = MAX_ATTACHMENT_BYTES // (1024 * 1024)
         raise DocumentTooLargeError(f"filen er større enn {megabytes} MB")
-    if not content.startswith(PDF_MAGIC):
+    content_type = sniff_content_type(content)
+    if content_type is None:
+        raise UnsupportedDocumentError("vi tar imot " + ", ".join(ACCEPTED_EXTENSIONS))
+    return content_type
+
+
+def validate_pdf(content: bytes) -> None:
+    """A PDF, and only a PDF.
+
+    Kept for the places where the format is not the user's choice — an EHF
+    attachment, a generated salgsdokument — and where widening it would mean
+    accepting a JPEG as something that has to be a PDF by law.
+    """
+    if validate_document(content) != PDF_CONTENT_TYPE:
         raise UnsupportedDocumentError("bare PDF-filer kan lastes opp")
 
 
@@ -63,6 +97,7 @@ async def attach_document(
     content: bytes,
     filename: str,
     uploaded_by_user_id: int | None,
+    content_type: str | None = None,
 ) -> Attachment:
     """Store a document and link it to ``transaction``.
 
@@ -71,14 +106,21 @@ async def attach_document(
     failed transaction — is the harmless direction: it wastes bytes, where the
     other loses a legally required document.
     """
-    validate_pdf(content)
-    display_name = sanitise_filename(filename)
-    key = await storage.save(content=content, filename=display_name, content_type=PDF_CONTENT_TYPE)
+    # Validated here even when the caller already did it. Attaching is the step
+    # that makes a document part of an append-only legal archive, and a check the
+    # caller might have skipped is not a check.
+    sniffed = validate_document(content)
+    # A caller may narrow the answer but never widen it: passing PDF for a JPEG
+    # would put a lie in a column an auditor reads.
+    if content_type is not None and content_type != sniffed:
+        raise UnsupportedDocumentError("filtypen stemmer ikke med innholdet")
+    display_name = sanitise_filename(filename, content_type=sniffed)
+    key = await storage.save(content=content, filename=display_name, content_type=sniffed)
     attachment = Attachment(
         company_id=company.id,
         transaction_pk=transaction.id,
         filename=display_name,
-        content_type=PDF_CONTENT_TYPE,
+        content_type=sniffed,
         byte_size=len(content),
         sha256=hashlib.sha256(content).hexdigest(),
         storage_key=key,

@@ -116,12 +116,24 @@ async def exchange_token(token: str, *, plane: _Plane) -> AltinnToken:
             # The cause, confirmed 2026-08-24: an ID-porten token carrying
             # only `openid` has no Altinn scope and no audience, so there is
             # nothing for Altinn to authorize - and it says 403 without naming
-            # the scope. Adding altinn:enduser to the client fixed it with no
-            # other change, so this names one cause rather than a list.
+            # the scope.
+            #
+            # Narrowed 2026-09-03. What was added in test was altinn:enduser,
+            # and this message named it for a fortnight. It is not the rule:
+            # production exchanges tokens for a client that has never held it,
+            # requesting altinn:accessmanagement/authorizedparties as its only
+            # altinn:* scope. Any one of them gives the token an audience.
+            # altinn:enduser is an Altinn-2-era umbrella that Samarbeidsportalen
+            # no longer offers at all - the surviving altinn:enduser/* scopes
+            # are marked LEGACY there, pointing at the specific scope without
+            # the prefix - so naming it sends the reader looking for a checkbox
+            # that is not in the list.
             detail = (
-                " - the ID-porten client needs the altinn:enduser scope,"
+                " - the ID-porten client needs at least one altinn:* scope,"
                 " registered on it in Samarbeidsportalen and requested in"
-                " IDPORTEN_SCOPES. A token carrying only 'openid' has no"
+                " IDPORTEN_SCOPES: altinn:accessmanagement/authorizedparties is"
+                " enough on its own, and altinn:instances.read/.write is what a"
+                " submission needs anyway. A token carrying only 'openid' has no"
                 " audience Altinn recognises"
             )
         raise AltinnAuthError(

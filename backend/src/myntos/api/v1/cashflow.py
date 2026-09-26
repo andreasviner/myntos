@@ -25,19 +25,37 @@ user gets an edit and the ledger keeps its history.
 """
 
 import asyncio
+import json
+import logging
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from functools import partial
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, Query, Response, UploadFile, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from myntos.api.deps import CurrentCompany, CurrentUser, DbSession, Storage
 from myntos.core.clock import utc_now
-from myntos.domain.bilag import classification, extraction, interpretation
+from myntos.domain.bilag import (
+    classification,
+    extraction,
+    interpretation,
+    questions,
+    reading_cache,
+    vendor,
+)
+from myntos.domain.bilag import context as bilag_context
 from myntos.domain.bilag import service as bilag_service
-from myntos.domain.bilag.models import MAX_ATTACHMENT_BYTES, Attachment
+from myntos.domain.bilag.errors import UnsupportedDocumentError
+from myntos.domain.bilag.models import (
+    MAX_ATTACHMENT_BYTES,
+    PDF_CONTENT_TYPE,
+    Attachment,
+)
 from myntos.domain.bilag.text import extract_text
 from myntos.domain.identity.access import Permission, require_permission
 from myntos.domain.ledger import parties as party_service
@@ -45,13 +63,14 @@ from myntos.domain.ledger import service as ledger_service
 from myntos.domain.ledger.cashflow import (
     CASH_FLOW_TYPES,
     CashFlowDirection,
-    CashFlowType,
     types_for,
 )
 from myntos.domain.ledger.chart import STANDARD_TAX_CODES
-from myntos.domain.ledger.models import PartyType
+from myntos.domain.ledger.models import Company, PartyType
 from myntos.domain.ledger.service import CashFlowView, PaymentMethod
 from myntos.integrations import loynd, norgesbank
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["kontantstrøm"])
 
@@ -63,6 +82,9 @@ class CashFlowTypeResponse(BaseModel):
     account_number: str
     default_tax_code: str
     note: str
+    #: The category this one reverses, when it is a refund. Sent so the form can
+    #: group the sixteen refunds apart from the eight ways of earning money.
+    reverses: str | None = None
 
 
 class TaxCodeResponse(BaseModel):
@@ -83,6 +105,11 @@ class CatalogueResponse(BaseModel):
 class AttachmentResponse(BaseModel):
     id: int
     filename: str
+    #: What the file actually is, sniffed on upload rather than trusted from the
+    #: browser. The register labels each document with it, and every one of them
+    #: said "PDF" until it was sent: nine screenshots of an AliExpress order came
+    #: back as nine PDFs, which is the archive describing the bilag wrongly.
+    content_type: str
     byte_size: int
     sha256: str
 
@@ -112,6 +139,12 @@ class CashFlowResponse(BaseModel):
     # register folds that entry and its reversal into one line underneath this
     # one, so an edit reads as one event instead of three payments.
     corrects_id: int | None
+    # Who entered it. NULL for a voucher posted before the column existed, or
+    # whose author has since been erased; the register shows «ukjent» rather
+    # than dropping the line. The id comes along so the interface can tell two
+    # colleagues with the same name apart without asking the name to be unique.
+    created_by_id: int | None
+    created_by_name: str | None
     attachments: list[AttachmentResponse]
 
 
@@ -136,6 +169,36 @@ class SummaryResponse(BaseModel):
     vat_position: Decimal
     cash_position: Decimal
     by_type: list[TypeTotalResponse]
+
+
+class QuestionResponse(BaseModel):
+    """One thing the register would like answered before this is posted.
+
+    A question rather than a warning, because the answer has somewhere to go:
+    the explanation box feeds the model, and re-reading with it produces a
+    better proposal. `field` says which form field the answer would settle, so
+    the interface can put the question where the gap is.
+    """
+
+    text: str
+    field: str | None
+    # True for the one question the model composed, false for the ones the
+    # register derived from its own reading. The interface marks them apart for
+    # the reason it marks every other model output apart.
+    asked_by_model: bool
+
+
+class DocumentReadResponse(BaseModel):
+    """One uploaded file, and how much we got out of it.
+
+    Returned per file so the interface can mark a screenshot that produced
+    nothing next to the five that did, instead of showing one proposal and
+    leaving the user to guess which of their uploads it was built from.
+    """
+
+    filename: str
+    content_type: str
+    chars: int
 
 
 class SuggestionResponse(BaseModel):
@@ -180,6 +243,17 @@ class SuggestionResponse(BaseModel):
     # The form marks each one with where it came from.
     sources: dict[str, interpretation.FieldSource]
     warnings: list[str]
+    # What is still unclear, phrased so the user can answer it in the
+    # explanation box and read the bilag again. Empty when the documents settled
+    # everything that matters.
+    questions: list[QuestionResponse]
+    # One row per uploaded file, in upload order.
+    documents_read: list[DocumentReadResponse]
+    # Whether anything was put in front of the model besides the documents: the
+    # company's formål and aktivitet, and the sentence the user typed. The /ki
+    # page has to be able to say what was sent, and "the document" stopped being
+    # the whole answer.
+    context_used: bool
     # Whether a model was actually consulted for this document. False covers
     # three different situations that used to be indistinguishable from the
     # outside: the company has turned KI off, the deployment has no key, and
@@ -204,9 +278,14 @@ class CreateCashFlowRequest(BaseModel):
 
 
 async def _ask_for_category(
-    document_text: str, *, allowed: CashFlowDirection | None, title: str | None
-) -> CashFlowType | None:
-    """Which category Løynd puts the document in, or nothing if it did not say.
+    document_text: str,
+    *,
+    allowed: CashFlowDirection | None,
+    title: str | None,
+    context: "bilag_context.BilagContext | None" = None,
+    returning: bool = False,
+) -> classification.Classification:
+    """Which category Løynd puts the document in, and which it nearly chose.
 
     An unavailable model is not an error for the user: the reading we did
     ourselves stands on its own, and a register that stops working because a
@@ -214,18 +293,43 @@ async def _ask_for_category(
     """
     try:
         return await classification.classify(
-            document_text, ask=loynd.complete, allowed=allowed, title=title
+            document_text,
+            ask=loynd.complete,
+            allowed=allowed,
+            title=title,
+            context=context,
+            returning=returning,
         )
     except loynd.LoyndError:
-        return None
+        return classification.Classification()
 
 
 async def _ask_for_fields(
-    document_text: str, *, today: date, title: str | None
+    document_text: str,
+    *,
+    today: date,
+    title: str | None,
+    on_description: Callable[[str], Awaitable[None]],
+    context: "bilag_context.BilagContext | None" = None,
 ) -> extraction.Extraction:
-    """What Løynd reads in the places our own parser came up empty."""
+    """What Løynd reads in the places our own parser came up empty.
+
+    Always the streaming call, whether or not the caller is streaming to a
+    browser. One path to the model rather than two: a second way of asking the
+    same question is a second thing to keep in step, and the day they drift the
+    difference shows up as a proposal that is subtly worse on whichever route
+    nobody watched. A caller that does not care passes an ``on_description``
+    that discards.
+    """
     try:
-        return await extraction.extract(document_text, ask=loynd.complete, today=today, title=title)
+        return await extraction.extract_streaming(
+            document_text,
+            ask=loynd.stream,
+            today=today,
+            title=title,
+            on_description=on_description,
+            context=context,
+        )
     except loynd.LoyndError:
         return extraction.Extraction()
 
@@ -238,10 +342,115 @@ class _Document:
     title: str | None = None
     encrypted: bool = False
     unreadable: bool = False
+    #: What the bytes turned out to be. Decides whether the file went to Løynd's
+    #: vision model or to a PDF parser, and whether an empty result is worth a
+    #: sentence to the user.
+    content_type: str = PDF_CONTENT_TYPE
+    #: The name the file was uploaded under, sanitised. Shown as the heading
+    #: above this document's text when there is more than one.
+    label: str = ""
 
 
-async def _read_document(content: bytes, *, filename: str, use_loynd: bool) -> _Document:
-    """The text of an uploaded PDF, from Løynd when possible and locally when not.
+#: How many documents are read from Løynd at once.
+#:
+#: Not a limit on how many may be uploaded — the user may attach as many as the
+#: bilag needs, and a FINN purchase documented by an advert, a chat, a receipt
+#: and a bank line is four. It is a limit on how many are *in flight*, because
+#: transcribing an image occupies a GPU slot and the deployment has about three.
+#: Asking for more would not go faster; it would queue on Løynd's side instead of
+#: ours, where the timeout is less forgiving.
+_READ_CONCURRENCY = 3
+
+
+async def _read_documents(
+    uploads: list[tuple[bytes, str, str]], *, use_loynd: bool
+) -> list[_Document]:
+    """Read every uploaded file, concurrently but not unboundedly.
+
+    Order is preserved regardless of which finishes first: the documents are
+    concatenated into one reading and a bilag whose pages arrive shuffled reads
+    like a different bilag.
+    """
+    limiter = asyncio.Semaphore(_READ_CONCURRENCY)
+
+    async def one(item: tuple[bytes, str, str]) -> _Document:
+        content, filename, content_type = item
+        label = bilag_service.sanitise_filename(filename, content_type=content_type)
+        # The text is remembered by the bytes it came from, so editing the
+        # description and having the register read the bilag again costs a
+        # prompt rather than another ninety seconds of transcription. A miss is
+        # not an error and not a special case: it costs the reading, which is
+        # what would have happened anyway.
+        cache_key = reading_cache.key(
+            content, filename=filename, content_type=content_type, use_loynd=use_loynd
+        )
+        remembered = reading_cache.CACHE.get(cache_key)
+        if remembered is not None:
+            return _Document(
+                text=remembered.text,
+                title=remembered.title,
+                encrypted=remembered.encrypted,
+                unreadable=remembered.unreadable,
+                content_type=content_type,
+                label=label,
+            )
+        async with limiter:
+            document = await _read_document(
+                content,
+                filename=filename,
+                content_type=content_type,
+                use_loynd=use_loynd,
+            )
+        reading_cache.CACHE.put(
+            cache_key,
+            reading_cache.Reading(
+                text=document.text,
+                title=document.title,
+                encrypted=document.encrypted,
+                unreadable=document.unreadable,
+            ),
+        )
+        return document
+
+    return list(await asyncio.gather(*(one(item) for item in uploads)))
+
+
+#: What each document's heading starts with. A constant because two places need
+#: it: the one that writes the headings, and the one that strips them back out
+#: before a model's quote is checked against the text.
+# Named in the reader, which splits the combined text back into documents to
+# work out the total of each. One constant, or the two drift apart silently.
+_HEADING_PREFIX = interpretation.DOCUMENT_HEADING_PREFIX
+
+
+def _joined(documents: list[_Document]) -> str:
+    """The documents as one text, each under a heading naming its file.
+
+    Headings rather than a bare concatenation, and they earn their cost twice
+    over. They tell the model that a screenshot of a FINN advert and a screenshot
+    of a bank statement are two documents and not one confused page — without
+    them the advert's asking price and the bank's actual charge become two
+    numbers on the same receipt, and there is no reason to prefer either. And
+    they survive into the text that every model answer is checked against, so a
+    quote is still verified against the document it came from.
+
+    A single document keeps the plain text it always had, so the one-file case
+    sends exactly the prompt it sent before and nothing about it has to be
+    re-measured.
+    """
+    readable = [document for document in documents if document.text.strip()]
+    if len(readable) <= 1:
+        return readable[0].text if readable else ""
+    return "\n\n".join(
+        f"{_HEADING_PREFIX}{index}: {document.label or 'uten navn'} ---\n{document.text}"
+        for index, document in enumerate(readable, start=1)
+    )
+
+
+async def _read_document(
+    content: bytes, *, filename: str, content_type: str, use_loynd: bool
+) -> _Document:
+    """The text of one uploaded file, from Løynd when possible and locally when not.
 
     **Løynd first, on purpose.** Handing the file over rather than a string we
     extracted ourselves is what makes this pipeline improvable without touching
@@ -256,22 +465,46 @@ async def _read_document(content: bytes, *, filename: str, use_loynd: bool) -> _
     all of them get the register they had before: the local text layer, read the
     way it has always been read.
 
-    Neither side runs OCR, so a scanned receipt comes back empty either way.
-    That is said plainly to the user rather than dressed up as a failure.
+    **An image has no second reader.** pypdf cannot open a PNG, so a photograph
+    is either transcribed by Løynd or it is not read at all — there is no local
+    fallback to drop to, and pretending otherwise by running the PDF parser over
+    pixels would turn a clear "we could not read this" into a corrupt-file
+    error. A company with KI switched off can still *file* a photographed
+    receipt, which is what the archive is for; what it cannot do is have the
+    form fill itself in from one, and that is said plainly.
     """
+    label = bilag_service.sanitise_filename(filename, content_type=content_type)
+    is_image = content_type in loynd.IMAGE_CONTENT_TYPES
+
     if use_loynd:
         try:
-            document = await loynd.extract_file(content=content, filename=filename)
+            document = await loynd.extract_file(
+                content=content, filename=filename, content_type=content_type
+            )
         except loynd.LoyndError:
             pass
         else:
             if not document.empty:
                 return _Document(
-                    text=document.text, title=document.title or _from_filename(filename)
+                    text=document.text,
+                    title=document.title or _from_filename(filename),
+                    content_type=content_type,
+                    label=label,
                 )
             # An empty answer is a real answer about a scanned document, but it
             # is also what a extractor that dislikes this particular file
             # returns, so pypdf still gets its turn before we conclude anything.
+
+    if is_image:
+        # Nothing local to try. `unreadable` rather than a silent empty string,
+        # so the user is told why the form did not fill itself in.
+        return _Document(
+            text="",
+            title=_from_filename(filename),
+            unreadable=True,
+            content_type=content_type,
+            label=label,
+        )
 
     local = await asyncio.to_thread(extract_text, content)
     return _Document(
@@ -279,6 +512,86 @@ async def _read_document(content: bytes, *, filename: str, use_loynd: bool) -> _
         title=local.title or _from_filename(filename),
         encrypted=local.encrypted,
         unreadable=local.unreadable,
+        content_type=content_type,
+        label=label,
+    )
+
+
+def _combined(documents: list[_Document]) -> _Document:
+    """Every uploaded file as one reading.
+
+    The flags are folded rather than picked: if any file was password-protected
+    the user needs to be told, and if *every* file came back unreadable that is a
+    different sentence from one of six being a blank screenshot. The title is
+    the first one offered, because that is the document the rest hang off — an
+    eBay order confirmation followed by three bank screenshots is still an eBay
+    bilag.
+    """
+    return _Document(
+        text=_joined(documents),
+        title=next((document.title for document in documents if document.title), None),
+        encrypted=any(document.encrypted for document in documents),
+        unreadable=bool(documents)
+        and all(document.unreadable or not document.text.strip() for document in documents),
+        content_type=documents[0].content_type if documents else PDF_CONTENT_TYPE,
+    )
+
+
+def _has_letterhead(documents: list[_Document]) -> bool:
+    """Whether the top of the combined text is where a name would be printed.
+
+    The first readable file decides, because that is the one whose top the
+    positional rules read: `_joined` concatenates in upload order and
+    `interpretation.read` looks at the first eight lines and at the first
+    title on offer. A PDF has a letterhead there. A screenshot has a clock, a
+    back arrow and a search box.
+    """
+    readable = [document for document in documents if document.text.strip()]
+    if not readable:
+        return True
+    return readable[0].content_type not in loynd.IMAGE_CONTENT_TYPES
+
+
+async def _company_context(
+    db: DbSession,
+    *,
+    company: Company,
+    note: str | None,
+    use_loynd: bool,
+) -> bilag_context.BilagContext:
+    """What the model is told about this company, assembled from what we hold.
+
+    The formål and the aktivitet come from the stored Enhetsregisteret answer,
+    which Myntos already fetches for every confirmed company — so this costs a
+    single indexed row and never a round trip to Brønnøysund. A company with no
+    snapshot yet contributes nothing and the model is asked the question it was
+    asked before.
+
+    Built only when a model is actually going to be consulted. Assembling it
+    otherwise would be work whose result is discarded, and, more to the point,
+    the user's note would be read out of the request for no purpose at all.
+    """
+    if not use_loynd:
+        return bilag_context.NO_CONTEXT
+
+    snapshot = await ledger_service.get_register_snapshot(db, company=company)
+    unit = snapshot.unit if snapshot is not None else {}
+    unit = unit if isinstance(unit, dict) else {}
+
+    def lines(key: str) -> list[str]:
+        value = unit.get(key)
+        return [str(item) for item in value] if isinstance(value, list) else []
+
+    return bilag_context.BilagContext.build(
+        purpose=lines("purpose"),
+        activity=lines("activity"),
+        industry_code=company.industry_code,
+        industry_description=company.industry_description,
+        # The company row, not the register snapshot: this is the flag the rest
+        # of Myntos posts VAT by, and telling the model something the ledger
+        # disagrees with would be worse than telling it nothing.
+        vat_registered=company.vat_registered,
+        note=note,
     )
 
 
@@ -328,6 +641,7 @@ def _attachment_response(attachment: Attachment) -> AttachmentResponse:
     return AttachmentResponse(
         id=attachment.id,
         filename=attachment.filename,
+        content_type=attachment.content_type,
         byte_size=attachment.byte_size,
         sha256=attachment.sha256,
     )
@@ -356,6 +670,8 @@ def _cash_flow_response(
         is_reversal=view.is_reversal,
         reversed_by_id=view.reversed_by_id,
         corrects_id=view.corrects_id,
+        created_by_id=view.created_by_id,
+        created_by_name=view.created_by_name,
         attachments=[_attachment_response(a) for a in attachments or []],
     )
 
@@ -377,6 +693,7 @@ async def catalogue(user: CurrentUser) -> CatalogueResponse:
                 account_number=entry.account_number,
                 default_tax_code=entry.default_tax_code,
                 note=entry.note,
+                reverses=entry.reverses,
             )
             for entry in types_for()
         ],
@@ -392,37 +709,86 @@ async def catalogue(user: CurrentUser) -> CatalogueResponse:
     )
 
 
-@router.post("/companies/{company_id}/cashflow/forslag")
-async def suggest_from_document(
+#: The names the pipeline reports progress under. Norwegian, like every other
+#: name on the wire in this API, and stable: a browser matches on them.
+_EVENT_DOCUMENTS = "dokumenter"
+_EVENT_DESCRIPTION = "beskrivelse"
+_EVENT_SUGGESTION = "forslag"
+_EVENT_ERROR = "feil"
+
+
+async def _uploaded(files: list[UploadFile]) -> list[tuple[bytes, str, str]]:
+    """The uploaded bytes, with each file's real type established.
+
+    Separate from the pipeline, and called before a stream is opened, because
+    everything it can refuse deserves a status code. Once the first byte of a
+    streamed response has gone out the status line is spent, and "that is not a
+    document we can read" would arrive as a frame inside a 200 — which is a
+    worse way to say it and a harder one to handle.
+    """
+    uploads: list[tuple[bytes, str, str]] = []
+    for upload in files:
+        content = await upload.read()
+        # The same validation the archive applies, so a file that could never be
+        # attached is refused here rather than after the user has confirmed a
+        # form. It also answers what the bytes actually are, which decides
+        # whether this one goes to a PDF parser or to the vision model.
+        content_type = bilag_service.validate_document(content)
+        uploads.append((content, upload.filename or "", content_type))
+    return uploads
+
+
+async def _propose(
     context: CurrentCompany,
     db: DbSession,
-    file: Annotated[UploadFile, File()],
-) -> SuggestionResponse:
-    """Read an uploaded faktura and propose what the entry form should hold.
+    *,
+    uploads: list[tuple[bytes, str, str]],
+    forklaring: str | None,
+) -> AsyncIterator[tuple[str, object]]:
+    """Read the bilag and build the proposal, reporting progress as it goes.
 
-    Nothing is posted and nothing is stored: the bytes are read, interpreted and
-    dropped. The document is archived only when the user goes on to register the
-    payment, which is the point at which there is a voucher for it to belong to
-    — so a user who uploads the wrong file, or changes their mind, leaves nothing
-    behind in an archive that has no delete path.
+    One pipeline, two endpoints. The JSON route below drains this and keeps the
+    last event; the streaming route forwards every event as it arrives. They
+    cannot drift, because there is nothing to keep in step — a difference between
+    "what the form gets" and "what the user watched being written" would be the
+    kind of bug that only shows up on the route nobody instrumented.
 
-    It still needs ``LEDGER_WRITE``. Reading a document is not a change to the
-    books, but it is a step in making one, and a viewer has no business feeding
-    files to the register.
+    The events, in the order they can occur:
+
+    ``dokumenter``
+        Which files were read, and how much text came out of each. First,
+        because a photograph that came back blank is worth knowing about before
+        the rest of the proposal exists.
+    ``beskrivelse``
+        The next piece of the description, as the model writes it. Zero or more,
+        and none at all when there is no model.
+    ``forslag``
+        The finished :class:`SuggestionResponse`. Exactly one, last.
     """
-    require_permission(context.membership.role, Permission.LEDGER_WRITE)
-    content = await file.read()
-    # The same validation the archive applies, so a file that could never be
-    # attached is refused here rather than after the user has confirmed a form.
-    bilag_service.validate_pdf(content)
-
-    # Whether a model may see this document at all, decided once and honoured by
-    # everything below. A company that has switched KI off gets the parser and
+    # Whether a model may see these documents at all, decided once and honoured
+    # by everything below. A company that has switched KI off gets the parser and
     # nothing else, including no upload to Løynd's extractor: "off" has to mean
-    # the document does not leave the building, or it means nothing.
+    # the documents do not leave the building, or it means nothing.
     use_loynd = context.company.ki_enabled and loynd.is_configured()
 
-    extracted = await _read_document(content, filename=file.filename or "", use_loynd=use_loynd)
+    documents = await _read_documents(uploads, use_loynd=use_loynd)
+    read_report = [
+        DocumentReadResponse(
+            filename=document.label,
+            content_type=document.content_type,
+            chars=len(document.text),
+        )
+        for document in documents
+    ]
+    # Said as soon as it is known rather than with everything else at the end.
+    # Which files were readable is the one thing a user may need to act on
+    # immediately — a photograph that came back blank is worth re-taking now,
+    # not after the rest of the proposal has finished arriving.
+    yield _EVENT_DOCUMENTS, read_report
+    extracted = _combined(documents)
+    bilag_ctx = await _company_context(
+        db, company=context.company, note=forklaring, use_loynd=use_loynd
+    )
     parties = await party_service.list_parties(db, company=context.company)
     today = utc_now().date()
     hints = [
@@ -451,7 +817,21 @@ async def suggest_from_document(
     # The heuristics are CPU-bound and operate on text from outside; off the
     # event loop they cannot stall other requests.
     reading = await asyncio.to_thread(
-        interpretation.read, extracted.text, today=today, title=extracted.title
+        partial(
+            interpretation.read,
+            extracted.text,
+            today=today,
+            title=extracted.title,
+            # Which organisasjonsnummer on the page is the *other* party's is
+            # not answerable without knowing who we are, and reading the sender
+            # off our own reference block is how a purchase came back as a sale.
+            own_orgnr=context.company.orgnr,
+            # Whether the top of this text is a letterhead or a status bar. The
+            # positional rules for a sender's name are sound on a document and
+            # wrong on a phone, and the first file decides, because it is the
+            # one whose top they read. See interpretation.read.
+            has_letterhead=_has_letterhead(documents),
+        )
     )
     suggestion = await asyncio.to_thread(propose, reading)
 
@@ -461,31 +841,68 @@ async def suggest_from_document(
     # restricted to the direction when a registered party settled that question,
     # so a recognised customer cannot come back as an expense.
     if use_loynd:
-        chosen, model_reading = await asyncio.gather(
-            _ask_for_category(
-                extracted.text,
-                # Always narrowed, not only when a registered party settled it.
-                #
-                # The direction is a *reading*: interpretation.suggest decides
-                # it from whether the document names us as its sender, and
-                # everything else is a purchase. The category is the question.
-                # Handing the model the full catalogue lets a category answer
-                # silently redecide the direction, because apply_type takes the
-                # direction from whichever category comes back — and that is not
-                # a small error. Løynd files this eBay receipt under "Salg til
-                # utlandet" given all 26 choices, which would book a Mac Studio
-                # the company bought as export revenue it earned.
-                #
-                # If the reading is wrong, the user flips the radio and picks
-                # again, which is a visible correction. A direction quietly
-                # reversed by a category is not.
-                allowed=suggestion.direction,
-                title=extracted.title,
-            ),
-            _ask_for_fields(extracted.text, today=today, title=extracted.title),
-        )
+        # The description is handed over while it is still being written, and
+        # that is why this is a queue rather than a straight await: the sentence
+        # arrives inside a callback, and a generator cannot yield from one. The
+        # two questions are still asked at the same time — the category answer
+        # comes back while the sentence is being typed on screen.
+        pieces: asyncio.Queue[str | None] = asyncio.Queue()
+
+        async def on_description(piece: str) -> None:
+            await pieces.put(piece)
+
+        async def ask_the_model() -> tuple[classification.Classification, extraction.Extraction]:
+            try:
+                return await asyncio.gather(
+                    _ask_for_category(
+                        extracted.text,
+                        # Always narrowed, not only when a registered party settled it.
+                        #
+                        # The direction is a *reading*: interpretation.suggest decides
+                        # it from whether the document names us as its sender, and
+                        # everything else is a purchase. The category is the question.
+                        # Handing the model the full catalogue lets a category answer
+                        # silently redecide the direction, because apply_type takes the
+                        # direction from whichever category comes back — and that is not
+                        # a small error. Løynd files this eBay receipt under "Salg til
+                        # utlandet" given all 26 choices, which would book a Mac Studio
+                        # the company bought as export revenue it earned.
+                        #
+                        # If the reading is wrong, the user flips the radio and picks
+                        # again, which is a visible correction. A direction quietly
+                        # reversed by a category is not.
+                        allowed=suggestion.direction,
+                        title=extracted.title,
+                        context=bilag_ctx,
+                        # Both legs are printed on the page, so the question is
+                        # not whether this is a refund but a refund of what.
+                        returning=reading.shows_a_return,
+                    ),
+                    _ask_for_fields(
+                        extracted.text,
+                        today=today,
+                        title=extracted.title,
+                        on_description=on_description,
+                        context=bilag_ctx,
+                    ),
+                )
+            finally:
+                # Whatever happened, the loop below has to stop waiting.
+                await pieces.put(None)
+
+        asking = asyncio.create_task(ask_the_model())
+        try:
+            while (piece := await pieces.get()) is not None:
+                yield _EVENT_DESCRIPTION, piece
+            category, model_reading = await asking
+        finally:
+            # A caller that walks away — a closed browser tab, most often —
+            # closes this generator at the yield above, and the model would
+            # otherwise keep generating into nothing.
+            if not asking.done():
+                asking.cancel()
     else:
-        chosen, model_reading = None, extraction.Extraction()
+        category, model_reading = classification.Classification(), extraction.Extraction()
 
     # What the model read changes what the document is taken to say, so the
     # proposal is built again from the merged reading rather than patched in
@@ -496,14 +913,38 @@ async def suggest_from_document(
     if model_fields:
         reading = merged
         suggestion = await asyncio.to_thread(propose, reading, model_fields)
-    if chosen is not None:
+    if category.chosen is not None:
         interpretation.apply_type(
             suggestion,
             reading=reading,
-            type_code=chosen.code,
+            type_code=category.chosen.code,
             source=interpretation.FieldSource.MODEL,
         )
     extraction.apply_description(suggestion, model_reading, item_text=reading.item_text)
+
+    # Nobody named the counterparty: not the party register, not an
+    # organisasjonsnummer, not a "Selger" line, and not the model reading the
+    # transcription. On a bilag made of screenshots that is the normal outcome
+    # and not a failure, because an app prints its name as a logo and a logo
+    # does not survive being turned into text.
+    #
+    # So the last question goes back to the pixels, which are still here. It
+    # costs one request per image and about three seconds, and it is asked only
+    # in the case where the alternative is an empty field the user has to fill
+    # in themselves. See myntos.domain.bilag.vendor.
+    if use_loynd and suggestion.party_id is None and suggestion.counterparty_name is None:
+        pictures = [
+            (content, content_type)
+            for content, _, content_type in uploads
+            if content_type in loynd.IMAGE_CONTENT_TYPES
+        ]
+        if pictures:
+            named = await vendor.named_by(
+                pictures, look=loynd.ask_about_image, at_a_time=_READ_CONCURRENCY
+            )
+            if named is not None and interpretation.offerable(named):
+                suggestion.counterparty_name = named
+                suggestion.mark("party_id", interpretation.FieldSource.MODEL)
 
     # Last, because it needs the final currency: a code the model supplied is
     # what turns a total that looked like kroner into 2 137,00 GBP, and there is
@@ -517,31 +958,220 @@ async def suggest_from_document(
     if extracted.encrypted:
         warnings.insert(0, "PDF-en er passordbeskyttet, så vi fikk ikke lest innholdet.")
     elif extracted.unreadable:
-        warnings.insert(0, "Vi klarte ikke å lese PDF-en. Den kan være skadet.")
+        # Which sentence depends on what was uploaded, because the two failures
+        # have different fixes. A damaged PDF is worth re-exporting; an image
+        # that came back blank means the model could not read it, and telling
+        # somebody their photograph "may be damaged" sends them looking for a
+        # problem with a file that is fine.
+        images = sum(1 for document in documents if document.content_type != PDF_CONTENT_TYPE)
+        if images == len(documents):
+            warnings.insert(
+                0,
+                "Vi fikk ikke lest tekst ut av bildene. Prøv et skarpere bilde, "
+                "eller fyll inn feltene selv.",
+            )
+        else:
+            warnings.insert(0, "Vi klarte ikke å lese dokumentet. Det kan være skadet.")
+    else:
+        unread = [
+            document.label or "et av dokumentene"
+            for document in documents
+            if not document.text.strip()
+        ]
+        if unread:
+            # Named, not counted. "Vi fikk ikke lest 2 av 6" leaves the user
+            # checking all six against a form to work out which two are missing.
+            warnings.insert(
+                0,
+                "Vi fikk ikke lest: " + ", ".join(unread) + ". Resten er med i forslaget.",
+            )
 
-    return SuggestionResponse(
-        direction=suggestion.direction,
-        type_code=suggestion.type_code,
-        type_label=_label_for(suggestion.type_code),
-        type_source=suggestion.type_source,
-        tax_code=suggestion.tax_code,
-        occurred_on=suggestion.occurred_on,
-        gross_amount=suggestion.gross_amount,
-        vat_amount=suggestion.vat_amount,
-        description=suggestion.description,
-        party_id=suggestion.party_id,
-        counterparty_name=suggestion.counterparty_name,
-        counterparty_orgnr=suggestion.counterparty_orgnr,
-        invoice_number=suggestion.invoice_number,
-        currency_code=suggestion.currency_code,
-        foreign_amount=suggestion.foreign_amount,
-        exchange_rate=suggestion.exchange_rate,
-        rate_quoted_on=suggestion.rate_quoted_on,
-        filled=suggestion.filled,
-        sources=suggestion.sources,
-        warnings=warnings,
-        ki_used=use_loynd,
+    asked = questions.compose(
+        suggestion,
+        reading,
+        model_question=model_reading.question,
+        # Only when the category it was torn about is the one on the form. A
+        # runner-up to a choice that lost to our own keyword reading is a doubt
+        # about a proposal nobody is looking at, and asking about it would be
+        # asking the user to arbitrate between two things we did not propose.
+        alternative=category.alternative if category.in_doubt else None,
+        has_note=bilag_ctx.note is not None,
     )
+
+    yield (
+        _EVENT_SUGGESTION,
+        SuggestionResponse(
+            direction=suggestion.direction,
+            type_code=suggestion.type_code,
+            type_label=_label_for(suggestion.type_code),
+            type_source=suggestion.type_source,
+            tax_code=suggestion.tax_code,
+            occurred_on=suggestion.occurred_on,
+            gross_amount=suggestion.gross_amount,
+            vat_amount=suggestion.vat_amount,
+            description=suggestion.description,
+            party_id=suggestion.party_id,
+            counterparty_name=suggestion.counterparty_name,
+            counterparty_orgnr=suggestion.counterparty_orgnr,
+            invoice_number=suggestion.invoice_number,
+            currency_code=suggestion.currency_code,
+            foreign_amount=suggestion.foreign_amount,
+            exchange_rate=suggestion.exchange_rate,
+            rate_quoted_on=suggestion.rate_quoted_on,
+            filled=suggestion.filled,
+            sources=suggestion.sources,
+            warnings=warnings,
+            questions=[
+                QuestionResponse(
+                    text=question.text,
+                    field=question.field,
+                    asked_by_model=question.asked_by_model,
+                )
+                for question in asked
+            ],
+            ki_used=use_loynd,
+            documents_read=read_report,
+            context_used=not bilag_ctx.is_empty,
+        ),
+    )
+
+
+@router.post("/companies/{company_id}/cashflow/forslag")
+async def suggest_from_document(
+    context: CurrentCompany,
+    db: DbSession,
+    files: Annotated[list[UploadFile], File()],
+    forklaring: Annotated[str | None, Form()] = None,
+) -> SuggestionResponse:
+    """Read the uploaded bilag and propose what the entry form should hold.
+
+    **A bilag is not always one file.** A purchase from a private seller on FINN
+    is documented by the advert, the chat where the price was agreed, the
+    payment receipt and the line on the bank statement, and no one of those four
+    is the bilag — together they are. So this takes a list, the list has no
+    length limit, and the documents are read into one text under one heading
+    each. Uploading a single invoice still sends exactly the prompt it always
+    did; see :func:`_joined`.
+
+    **``forklaring`` is what the user typed.** Some bilag cannot be decided from
+    the paper at all: three thousand kroner arriving from a private account is a
+    deposit from the owner, a repaid loan or a sale, and the documents say the
+    same thing in all three cases. A sentence from the person who made the
+    payment settles it. It is shown to the model and goes nowhere else — it is
+    not stored, not posted, and cannot fill a field, because every quoted answer
+    is still checked against the *documents* and the note is not one of them.
+    See :mod:`myntos.domain.bilag.context`.
+
+    Nothing is posted and nothing is stored on disk: the bytes are read,
+    interpreted and dropped. What survives the request is the *text*, held in
+    memory for a few minutes and keyed by the bytes it came from
+    (:mod:`myntos.domain.bilag.reading_cache`), so that editing the description
+    and having the bilag read again costs a prompt rather than another ninety
+    seconds of transcribing screenshots.
+
+    The documents themselves are archived only when the user goes on to register
+    the payment, which is the point at which there is a voucher for them to
+    belong to — so a user who uploads the wrong file, or changes their mind,
+    leaves nothing behind in an archive that has no delete path.
+
+    It still needs ``LEDGER_WRITE``. Reading a document is not a change to the
+    books, but it is a step in making one, and a viewer has no business feeding
+    files to the register.
+    """
+    require_permission(context.membership.role, Permission.LEDGER_WRITE)
+    if not files:
+        raise UnsupportedDocumentError("last opp minst én fil")
+
+    proposal: SuggestionResponse | None = None
+    async for name, payload in _propose(
+        context, db, uploads=await _uploaded(files), forklaring=forklaring
+    ):
+        if name == _EVENT_SUGGESTION and isinstance(payload, SuggestionResponse):
+            proposal = payload
+    if proposal is None:  # pragma: no cover - the pipeline always ends with one
+        raise UnsupportedDocumentError("fikk ikke lest bilaget")
+    return proposal
+
+
+@router.post("/companies/{company_id}/cashflow/forslag/strom")
+async def stream_suggestion_from_document(
+    context: CurrentCompany,
+    db: DbSession,
+    files: Annotated[list[UploadFile], File()],
+    forklaring: Annotated[str | None, Form()] = None,
+) -> Response:
+    """The same proposal as ``/forslag``, reported as it is worked out.
+
+    Server-sent events, because the wait is real and unevenly distributed. The
+    parser finishes in milliseconds; a photographed receipt is a vision model
+    looking at a page, and nine screenshots take a minute and a half. What used
+    to happen in that minute was nothing at all — a spinner, and then a form
+    that filled itself in all at once. Now the file list arrives as soon as the
+    text does and the description is typed out as the model writes it, which is
+    the same wait spent watching something true.
+
+    The frames are ``event:`` / ``data:`` pairs with a JSON object in the data,
+    and the last one is the whole proposal — so a client that ignores every
+    frame but ``forslag`` gets exactly what the JSON route returns.
+
+    Everything that can be refused is refused before the stream opens (see
+    :func:`_uploaded`). A failure after that arrives as a ``feil`` frame, because
+    by then the status line has already said 200.
+    """
+    require_permission(context.membership.role, Permission.LEDGER_WRITE)
+    if not files:
+        raise UnsupportedDocumentError("last opp minst én fil")
+    uploads = await _uploaded(files)
+
+    async def frames() -> AsyncIterator[str]:
+        try:
+            async for name, payload in _propose(
+                context, db, uploads=uploads, forklaring=forklaring
+            ):
+                yield _frame(name, payload)
+        except Exception:
+            # Logged without the document: a traceback from this pipeline can
+            # quote the bilag, and the bilag is the user's business.
+            logger.exception("the proposal pipeline failed mid-stream")
+            yield _frame(
+                _EVENT_ERROR,
+                {"melding": "Vi fikk ikke lest bilaget. Fyll ut skjemaet selv."},
+            )
+
+    return StreamingResponse(
+        frames(),
+        media_type="text/event-stream",
+        headers={
+            # Both of these are about intermediaries. Caddy streams as it is,
+            # but a proxy that buffers would collect the whole response and
+            # deliver it at once, which is precisely the behaviour this route
+            # exists to avoid — and it would look like a bug here.
+            "Cache-Control": "no-store",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _frame(name: str, payload: object) -> str:
+    """One server-sent event.
+
+    The payload is always JSON, never a bare string: a description piece is
+    arbitrary text from a model, and text that goes out raw is text that can
+    contain a newline and end the frame early.
+    """
+    body: object
+    if isinstance(payload, BaseModel):
+        body = payload.model_dump(mode="json")
+    elif isinstance(payload, list):
+        body = [
+            item.model_dump(mode="json") if isinstance(item, BaseModel) else item
+            for item in payload
+        ]
+    elif isinstance(payload, str):
+        body = {"tekst": payload}
+    else:
+        body = payload
+    return f"event: {name}\ndata: {json.dumps(body, ensure_ascii=False)}\n\n"
 
 
 @router.get("/companies/{company_id}/cashflow")
@@ -568,7 +1198,7 @@ async def list_entries(
 
 @router.post("/companies/{company_id}/cashflow", status_code=status.HTTP_201_CREATED)
 async def record_entry(
-    payload: CreateCashFlowRequest, context: CurrentCompany, db: DbSession
+    payload: CreateCashFlowRequest, context: CurrentCompany, db: DbSession, user: CurrentUser
 ) -> CashFlowResponse:
     """Register one payment in or out."""
     require_permission(context.membership.role, Permission.LEDGER_WRITE)
@@ -582,8 +1212,12 @@ async def record_entry(
         tax_code=payload.tax_code,
         payment_method=payload.payment_method,
         party_pk=payload.party_id,
+        # Who is entering it. Taken from the session and never from the payload:
+        # a client-supplied author is a client-supplied answer to "who booked
+        # this", which is the one question the field exists to answer.
+        created_by_user_id=user.id,
     )
-    view = ledger_service.describe(transaction)
+    view = ledger_service.describe(transaction, created_by_name=user.full_name)
     # describe() only returns None for a voucher with no payment line, which
     # the function above cannot produce.
     assert view is not None  # noqa: S101
@@ -599,6 +1233,7 @@ async def edit_entry(
     payload: CreateCashFlowRequest,
     context: CurrentCompany,
     db: DbSession,
+    user: CurrentUser,
 ) -> CashFlowResponse:
     """Change a registered payment.
 
@@ -626,7 +1261,11 @@ async def edit_entry(
     auditor follow a number in a report back to a document.
     """
     require_permission(context.membership.role, Permission.LEDGER_WRITE)
-    await ledger_service.reverse_cash_flow(db, company=context.company, voucher_pk=voucher_id)
+    # Both new vouchers are this person's work, the reversal included: they are
+    # the one correcting the entry, whoever made it.
+    await ledger_service.reverse_cash_flow(
+        db, company=context.company, voucher_pk=voucher_id, created_by_user_id=user.id
+    )
     transaction = await ledger_service.record_cash_flow(
         db,
         company=context.company,
@@ -641,8 +1280,9 @@ async def edit_entry(
         # as three unrelated payments. Set here and nowhere else: an ordinary
         # entry replaces nothing.
         corrects_pk=voucher_id,
+        created_by_user_id=user.id,
     )
-    view = ledger_service.describe(transaction)
+    view = ledger_service.describe(transaction, created_by_name=user.full_name)
     assert view is not None  # noqa: S101
     return _cash_flow_response(view)
 
@@ -682,7 +1322,9 @@ async def summary(
     "/companies/{company_id}/cashflow/{voucher_id}/reversal",
     status_code=status.HTTP_201_CREATED,
 )
-async def reverse(voucher_id: int, context: CurrentCompany, db: DbSession) -> CashFlowResponse:
+async def reverse(
+    voucher_id: int, context: CurrentCompany, db: DbSession, user: CurrentUser
+) -> CashFlowResponse:
     """Undo an entry by posting its mirror image.
 
     There is no edit and no delete. A posted entry is history, and the record
@@ -691,9 +1333,9 @@ async def reverse(voucher_id: int, context: CurrentCompany, db: DbSession) -> Ca
     """
     require_permission(context.membership.role, Permission.LEDGER_WRITE)
     reversal = await ledger_service.reverse_cash_flow(
-        db, company=context.company, voucher_pk=voucher_id
+        db, company=context.company, voucher_pk=voucher_id, created_by_user_id=user.id
     )
-    view = ledger_service.describe(reversal)
+    view = ledger_service.describe(reversal, created_by_name=user.full_name)
     assert view is not None  # noqa: S101
     return _cash_flow_response(view)
 

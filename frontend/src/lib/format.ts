@@ -49,6 +49,20 @@ export function kontonummer(value: string): string {
   return `${digits.slice(0, 4)}.${digits.slice(4, 6)}.${digits.slice(6)}`;
 }
 
+/**
+ * An organisasjonsnummer as it is read and printed: `938 193 045`.
+ *
+ * Nine bare digits everywhere else — that is what is stored, sent and filed —
+ * so this is presentation only, and it is the grouping Enhetsregisteret and
+ * Altinn both use. Anything that is not nine digits comes back untouched
+ * rather than cut into a shape it does not have.
+ */
+export function orgnummer(value: string): string {
+  const digits = value.replace(/\D+/g, '');
+  if (digits.length !== 9) return value;
+  return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`;
+}
+
 export function fileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} kB`;

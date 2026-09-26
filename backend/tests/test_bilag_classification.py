@@ -51,7 +51,10 @@ def test_the_prompt_holds_the_document_and_the_numbered_choices() -> None:
 
     assert "Nettleie mars 2026" in prompt
     assert "1. Salg med 25 % mva (penger inn)" in prompt
-    assert prompt.rstrip().endswith("Svar med kun tallet til kategorien som passer best.")
+    assert "Svar med tallet til kategorien som passer best." in prompt
+    # The instruction about doubt comes last, because the last line is the one a
+    # small model attends to most closely.
+    assert prompt.rstrip().endswith("skriv begge tallene med skråstrek mellom, som 9/20.")
 
 
 def test_only_the_top_of_a_long_document_is_sent() -> None:
@@ -83,23 +86,86 @@ def test_anything_that_is_not_a_number_in_range_is_no_answer(reply: str) -> None
 
 async def test_the_chosen_number_comes_back_as_a_category() -> None:
     strom = next(item for item in classification.build_menu() if item.type_code == "strom")
-    chosen = await classification.classify(DOCUMENT, ask=Answering(str(strom.number)))
+    answered = await classification.classify(DOCUMENT, ask=Answering(str(strom.number)))
 
-    assert chosen is not None
-    assert chosen.code == "strom"
-    assert chosen.account_number == "6340"
+    assert answered.chosen is not None
+    assert answered.chosen.code == "strom"
+    assert answered.chosen.account_number == "6340"
+    # One number is not doubt, and must not produce a question.
+    assert answered.alternative is None
+    assert not answered.in_doubt
 
 
 async def test_an_empty_document_is_not_worth_asking_about() -> None:
     model = Answering("1")
+    answered = await classification.classify("   \n", ask=model)
 
-    assert await classification.classify("   \n", ask=model) is None
+    assert answered.chosen is None
     assert model.prompts == []
 
 
 async def test_an_answer_outside_the_menu_is_discarded() -> None:
     model = Answering("Jeg er en språkmodell og kan ikke svare på dette.")
-    assert await classification.classify(DOCUMENT, ask=model) is None
+    answered = await classification.classify(DOCUMENT, ask=model)
+
+    assert answered.chosen is None
+    assert not answered.in_doubt
+
+
+# --- Two numbers, meaning the model was torn ----------------------------------------
+
+
+async def test_two_numbers_come_back_as_a_doubt() -> None:
+    """The battery case: one word on an item line, two defensible accounts.
+
+    "Batteri" was filed under Drivstoff og bilkostnad with no way for the model
+    to say it was guessing, because one slot gets filled and a filled slot reads
+    as certainty. Two slots let it say so, and the saying is what turns a silent
+    misposting into a question.
+    """
+    menu = classification.build_menu(CashFlowDirection.UT)
+    varekjop = next(item for item in menu if item.type_code == "varekjop")
+    bilkostnad = next(item for item in menu if item.type_code == "bilkostnad")
+
+    answered = await classification.classify(
+        "Batteri 1 152,00",
+        ask=Answering(f"{varekjop.number}/{bilkostnad.number}"),
+        allowed=CashFlowDirection.UT,
+    )
+
+    assert answered.chosen is not None
+    assert answered.chosen.code == "varekjop"
+    assert answered.alternative is not None
+    assert answered.alternative.code == "bilkostnad"
+    assert answered.in_doubt
+
+
+async def test_the_first_number_is_the_answer_even_when_the_second_is_nonsense() -> None:
+    """A runner-up outside the menu is dropped without taking the answer down."""
+    strom = next(item for item in classification.build_menu() if item.type_code == "strom")
+    answered = await classification.classify(DOCUMENT, ask=Answering(f"{strom.number}/999"))
+
+    assert answered.chosen is not None
+    assert answered.chosen.code == "strom"
+    assert answered.alternative is None
+
+
+async def test_the_same_number_twice_is_one_answer() -> None:
+    strom = next(item for item in classification.build_menu() if item.type_code == "strom")
+    answered = await classification.classify(
+        DOCUMENT, ask=Answering(f"{strom.number}/{strom.number}")
+    )
+
+    assert answered.alternative is None
+    assert not answered.in_doubt
+
+
+def test_only_two_numbers_are_read_out_of_a_reply() -> None:
+    """Three is a shrug, not a doubt, and the third is not read."""
+    menu = classification.build_menu()
+    picked = classification.parse_choices("9/20/3/4", menu)
+
+    assert [item.number for item in picked] == [9, 20]
 
 
 async def test_a_restricted_menu_is_the_one_the_model_is_shown() -> None:
@@ -109,3 +175,42 @@ async def test_a_restricted_menu_is_the_one_the_model_is_shown() -> None:
 
     assert "Varekjøp" not in model.prompts[0]
     assert "Salg med 25 % mva" in model.prompts[0]
+
+
+# --- A bilag that shows both legs is asking a narrower question ------------------
+
+
+def test_a_return_is_offered_the_refunds_and_not_the_sales() -> None:
+    """Both legs are printed on the page, so the question is a refund of what.
+
+    On the full money-in menu the model answered "Salg med 25 % mva" for an eBay
+    refund, which reports output VAT on a purchase that was cancelled.
+    """
+    menu = classification.build_menu(CashFlowDirection.INN, returning=True)
+
+    assert menu
+    assert all(code.startswith("refusjon_") for code in (item.type_code for item in menu))
+    assert "refusjon_varekjop" in {item.type_code for item in menu}
+    # Numbered from one over the narrowed list, so an answer of "1" means the
+    # first refund and not the first sale.
+    assert [item.number for item in menu] == list(range(1, len(menu) + 1))
+
+
+def test_the_money_out_leg_of_a_return_keeps_its_own_menu() -> None:
+    """The inference that works one way round does not work the other.
+
+    Narrowing money out to the six kreditnotaer is the obvious mirror and it is
+    wrong. Measured against the real eBay bilag, whose two legs are the same GBP
+    2 137,00 and whose net 1 584,41 went out because the rate moved, that menu
+    got "Kreditnota: annen inntekt" out of the model: a currency loss filed as
+    revenue given back. Money in with a matching outgoing leg cannot be a sale;
+    money out with a matching incoming leg can be almost anything, so the whole
+    menu stays on offer and `valutatap` stays reachable.
+    """
+    menu = classification.build_menu(CashFlowDirection.UT, returning=True)
+
+    assert {item.type_code for item in menu} == {
+        item.type_code for item in classification.build_menu(CashFlowDirection.UT)
+    }
+    assert "valutatap" in {item.type_code for item in menu}
+    assert "kreditnota_salg_hoy_sats" in {item.type_code for item in menu}

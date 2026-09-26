@@ -13,6 +13,15 @@ import { maybe, setStatus } from './dom';
 /** Messages for the markers a failed callback redirects back with. */
 export const CALLBACK_ERRORS: Record<string, string> = {
   innlogging_avbrutt: 'Innloggingen ble avbrutt.',
+  // Not the same thing as a cancelled login, and the difference matters: this
+  // one is our setup, not anything the person did, so it must not tell them to
+  // try again. The detail ID-porten sent is in the server log.
+  innlogging_ikke_mulig:
+    'Innloggingen kunne ikke starte. Det er en feil hos oss, ikke hos deg. ' +
+    'Vi har fått beskjed.',
+  for_lav_sikkerhet:
+    'Innloggingen ga ikke høyt nok sikkerhetsnivå. Logg inn med BankID, ' +
+    'Buypass eller Commfides i stedet for MinID.',
   innlogging_utlopt: 'Innloggingen tok for lang tid. Prøv en gang til.',
   innlogging_feilet: 'Vi fikk ikke bekreftet kontoen din hos leverandøren. Prøv en gang til.',
   unverified_provider_email:

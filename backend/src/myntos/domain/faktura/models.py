@@ -185,7 +185,24 @@ class SalesDocument(Base):
     # document silently missing a mandatory word. See
     # myntos.domain.faktura.compliance.FORETAKSREGISTERET_FORMS.
     seller_organisation_form: Mapped[str | None] = mapped_column(String(16))
+    # What the document *says* the account is: eleven digits, copied from the
+    # company at issue and never read back through the key below. A closed
+    # account, or one corrected after the fact, must not change what an issued
+    # invoice claimed — that is the same rule the seller's name and address
+    # follow.
     seller_bank_account: Mapped[str | None] = mapped_column(String(34))
+    # Which of the company's accounts this document is paid into — the *choice*,
+    # as opposed to the snapshot above. NULL means "whichever is primary", which
+    # is what a draft nobody picked for follows, and what an invoice issued
+    # before the company had a second account will always have said.
+    #
+    # SET NULL and not RESTRICT: closing a bank account is an ordinary thing to
+    # do, and it must not be blocked by a draft from March. The draft falls back
+    # to the primary the next time it is saved; the issued document beside it
+    # keeps its snapshot and notices nothing.
+    bank_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("company_bank_account.id", ondelete="SET NULL")
+    )
 
     # --- When and what for ------------------------------------------------------
     # § 5-1-1 nr. 1. NULL until issued, then the dokumentasjonsdato.

@@ -10,8 +10,11 @@
 flowchart LR
     subgraph Cloudflare
         FE[Astro frontend<br/>Workers + static assets]
-        BE[FastAPI backend<br/>Cloudflare Container, EU jurisdiction]
         R2[(R2 bucket<br/>jurisdiction=eu<br/>bilag PDFs)]
+    end
+    subgraph "Self-hosted, Norway"
+        CADDY[Caddy<br/>TLS for api.myntos.no]
+        BE[FastAPI backend<br/>uvicorn under systemd]
     end
     PG[(PostgreSQL<br/>EEA region)]
     MP[Maskinporten]
@@ -19,7 +22,8 @@ flowchart LR
     ALT[Altinn 3<br/>instance APIs]
     SKE[Skatteetaten APIs]
 
-    FE -->|/api/*| BE
+    FE -->|/api/*| CADDY
+    CADDY --> BE
     BE --> PG
     BE --> R2
     BE -->|JWT grant, m2m| MP
@@ -34,34 +38,66 @@ Myntos has its own accounts, entirely separate from the government auth below.
 A user signs in with **email and password** or with **Google** ("logg inn med
 Gmail"); both land in the same account model.
 
-### The organization is the tenant
+### The company is the tenant; the account only owns companies
 
 ```
-Organization ─┬─ OrganizationMembership ── User ─┬─ password hash
-   (billing)  │        (role)                    └─ UserIdentity (google)
-              └─ Company (orgnr) ── ledger, bilag, MVA
+Organization ─── OrganizationMembership ── User ─┬─ password hash
+  (an account)      (may add companies)          ├─ UserIdentity (google)
+        │                                        │
+        └─ Company (orgnr) ─┬─ CompanyMembership ┘  (role, access, per company)
+              (plan)        └─ ledger, bilag, MVA
 ```
 
-- **`Organization`** is the Myntos account: it owns the members and it is what a
-  subscription will attach to. A plan bought by one person therefore covers
-  every colleague invited into it and every company kept under it — adding a
-  user never multiplies the bill.
-- **`Company`** is a bookkeeping-obligated entity with an orgnr. A regnskapsfører
-  is one organization with many companies; a single AS is one organization with
-  one. `orgnr` is unique *per organization*, not globally, so two accounting
-  firms can each keep a set of books for the same client. A **confirmed** claim
-  on an orgnr is the one thing that is globally unique — see below. Everything
-  the row says about the entity itself comes from Enhetsregisteret rather than
-  from a form.
-- **`OrganizationMembership`** carries the role. Roles are `owner`, `admin`,
-  `member`, `viewer`, and the role → permission table lives in exactly one place
+**This changed on 2026-09-03, and the shape above is the point.** Access used to
+be account-wide: one membership row let a person into every set of books on the
+account. That is right for a sole trader with one company and wrong for
+everybody else. A regnskapsfører keeps one company per client, and "help me with
+this client" was not expressible; worse, the invitation form sat under the
+account, so what it actually granted was invisible. See
+[company-isolation.md](company-isolation.md).
+
+- **`Company`** is a bookkeeping-obligated entity with an orgnr, and it is the
+  unit of access, of billing (`plan`) and of everything a person looks at. A
+  regnskapsfører is one account with many companies and a different set of
+  colleagues on each; a single AS is one account with one company. `orgnr` is
+  unique *per organization*, not globally, so two accounting firms can each keep
+  a set of books for the same client. A **confirmed** claim on an orgnr is the
+  one thing that is globally unique (see below). Everything the row says about
+  the entity itself comes from Enhetsregisteret rather than from a form.
+- **`CompanyMembership`** is what grants access: one row per person per company,
+  carrying the role. Roles are `owner`, `admin`, `member`, `viewer`, and the
+  role → permission table lives in exactly one place
   (`domain/identity/access.py`) — no endpoint compares roles itself. Two rules
   are load-bearing: only an owner may create, demote or remove an owner (else
-  the owner/admin split is decorative), and the last owner may not leave (an
-  organization without one cannot be billed, staffed or deleted).
-- Colleagues join through an **invitation** addressed to an email address. Only
+  the owner/admin split is decorative), and the last owner may not leave (books
+  nobody owns can be neither billed nor shared). The same person can own their
+  own books and merely read a client's.
+- **`Organization`** is the account somebody signs up for. It answers two
+  questions and no others: which companies were set up together, and who may add
+  another one (`organization:manage` on `OrganizationMembership`). **Nothing
+  displays its name**, and no rule may ever copy a company's name onto it: an
+  account is routinely called after its first company, and such a name printed
+  near a *different* company is indistinguishable from a leak. It was reported
+  as one. See migration `c4d7e81f2a90`.
+- Somebody invited to a company gets **that company and nothing else**: no
+  membership of the sender's account, no sight of its other clients, and no way
+  to add companies to it.
+- Colleagues join through an **invitation** addressed to an email address, which
+  names the company it is for. Only
   the token's hash is stored, it is single-use, and the accepting account's
   address must match the invited one — a forwarded link is not a ticket in.
+  An invitation may also carry the **name** of the person it is meant for, which
+  is a label and never a check: it greets them in the email and lets the
+  company's board list show that they have been asked. Because the token cannot
+  be recovered, re-sending issues a new one on the same row and kills the old
+  link, rather than making the inviter revoke and retype the address.
+- **`UserGovernmentIdentity`** records which person is behind an account, as
+  ID-porten asserted it. Written by the ID-porten callback and by nothing else,
+  after the assurance-level check. Deliberately not the same row as the
+  short-lived `GovernmentLoginAttempt`: an authorization expires within the
+  hour, and who somebody is does not. It is what lets the board list in
+  Enhetsregisteret say which registered role holders can open the books. See
+  [register-access.md](register-access.md).
 
 ### Confirmed ownership
 
@@ -164,16 +200,25 @@ That flag is stored rather than recomputed, because it cannot be recomputed: the
 user may have changed their own name since, and comparing the current name
 against the generated string would guess wrong for exactly those people.
 
-The rule it buys is one line in `POST /api/v1/companies`
-(`identity.service.adopt_name_if_placeholder`): **setting up the first set of
-books renames a placeholder organization to the company's name, and clears the
-flag.** The company name came from Enhetsregisteret, so it is both correct and
-the name its owner would have typed — and leaving "Kari Nordmann (privat)" in the
-header next to it reads as though the lookup had failed. Two limits keep it from
-being magic: only a placeholder is ever taken over, and it happens at most once,
-so a regnskapsfører adding their second client company does not get the firm
-renamed out from under them. `PATCH /api/v1/organizations/{id}` clears the flag
-too — a name someone typed is never overwritten.
+**An account is never named after one of its companies.** It was, until
+2026-09-03: `POST /api/v1/companies` called
+`identity.service.adopt_name_if_placeholder`, so setting up the first set of
+books renamed a placeholder organization to that company's name. The intent was
+a header that did not say "Kari Nordmann (privat)" next to an orgnr looked up
+from Enhetsregisteret.
+
+The header stopped showing the organization's name long before that mattered,
+and the cost outlived the benefit: an account called after one of its own
+companies is indistinguishable, on screen, from one company's data appearing
+under another company's name. With two companies on the account, the settings
+page said `Lindeman Technologies` on the account card while the header said
+`DIALGA AS`, and it was reported as a leak. The function is gone, migration
+`c4d7e81f2a90` gave the borrowed names back, and
+[company-isolation.md](company-isolation.md#accounts-are-never-named-after-companies)
+is the rule not to reintroduce it.
+
+So a placeholder name stays until somebody chooses one. `PATCH
+/api/v1/organizations/{id}` is the only thing that clears the flag.
 
 Both `GET /auth/me` (as `organization_name_is_placeholder`) and the organization
 endpoints (as `name_is_placeholder`) expose it, so the frontend can offer a
@@ -201,9 +246,28 @@ rename instead of presenting a made-up name as settled fact.
   allow-list, as a second layer behind `SameSite`. Bearer-authenticated requests
   skip the check — the header has to be attached deliberately.
 
-Not yet built, and deliberately: no email delivery (so verification mails and
-invitation mails do not go out — the invite link is returned to the inviter
-once, to pass on) and no password reset.
+**Email** is one message and two transports: the invitation, composed in
+`domain/identity/invitation_mail.py` and sent inline by the endpoint that
+creates the invitation, so the response can say whether it went. The Myntos mark
+travels inside the message as a related MIME part (`core/brand.py`), never as a
+URL: a remote logo is a blocked image in most clients and a read receipt in the
+rest, and the word "Myntos" sits beside it as text so a blocked one still names
+the sender. `core/mail.py`
+holds both transports, SMTP (`SMTP_HOST`) and Cloudflare Email Sending
+(`CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_EMAIL_TOKEN`), and `MAIL_FROM` decides
+the sender for either. Both put the same bytes on the wire: `build_message`
+composes the MIME message once and Cloudflare's `send_raw` endpoint takes it as
+composed, so the transport never changes what a recipient reads. A deployment
+that configures neither is a supported deployment: nothing is sent, the
+interface says so, and the invite link is returned to the inviter once, to pass
+on by hand. A refused relay, an unreachable API and a permanent bounce are all
+reported the same way and never roll back the invitation, which already exists.
+
+This deployment sends through Cloudflare, on `myntos.no`, whose SPF, DKIM and
+DMARC records `wrangler email sending enable` wrote and maintains.
+
+Not yet built, and deliberately: no address-verification mail and no password
+reset.
 
 ### Federated providers
 
@@ -277,6 +341,21 @@ Salg 1 250 kr, 25 % mva                 Kontorrekvisita 625 kr, 25 % mva
   provisional about it — and are therefore immutable. A mistake is undone by
   reversal, and `gl_transaction.reverses_transaction_pk` records which entry
   was undone so an auditor can see both, and so nothing is reversed twice.
+- **Every voucher records who entered it**
+  (`gl_transaction.created_by_user_id`), because access is a row per person per
+  company and a journal is therefore frequently written by more than one hand.
+  `system_entry_date` said when the system recorded an entry and nothing about
+  by whom, which is fine for a sole trader and useless the moment a
+  regnskapsfører and the owner are posting into the same journal. A reversal
+  and a correction record **whoever performed them**, not whoever made the
+  entry being fixed: those are different people often enough that copying would
+  misattribute the one action a reader most wants attributed.
+  The column is nullable and stays that way — rows predating it, GDPR erasure
+  taking the person and leaving the record (`ondelete="SET NULL"`, since a
+  posted voucher outlives every account), and any future job that posts with
+  nobody logged in. Not a SAF-T field: the standard's `Transaction` has no user
+  element, so it does not reach the export. The register shows the mark only
+  when a set of books has more than one author (`frontend/src/lib/authors.ts`).
 - Creating a company **seeds** a starter kontoplan, the VAT codes with
   date-effective rates, the first financial year and its per-year account
   groupings. Without that, a new user's first action would be building a chart
@@ -314,8 +393,8 @@ by both, so a document moved between them keeps its key. The key is generated
 supplies takes part in building a path, and a key that cannot express a
 traversal cannot be talked into one.
 
-- **local** — filesystem, development only. A Cloudflare Container's disk is
-  ephemeral.
+- **local** — filesystem, development only. The production host writes only to
+  the unit's `ReadWritePaths`, and nothing is backed up from there.
 - **r2** — Cloudflare R2 over its S3 API, signed with SigV4. The
   **jurisdiction is part of the endpoint hostname**
   (`<account>.eu.r2.cloudflarestorage.com`), fixed when the bucket is created
@@ -368,11 +447,11 @@ present everywhere is no easier to find than one present where you are.
 | Page | Purpose |
 | --- | --- |
 | `/` | Marketing when signed out; overview, totals and recent entries when signed in |
-| `/kontantstrom/` | The register: entry form, listing, reversal, PDF upload |
+| `/kontantstrom/` | The register: entry form, listing, reversal, bilag upload (several files at once, PDF or photograph, with a box for what the documents do not say) |
 | `/faktura/` | Salgsdokument: line editor, a review step that shows the § 5-1 findings before anything is issued, kreditnota, PDF and EHF download |
 | `/logg-inn/`, `/registrer/` | Password and Google sign-in; the Google button hides itself when the deployment has no Google client |
 | `/invitasjon/` | Accepts an invitation token, sending the recipient to sign in first if needed |
-| `/organisasjon/` | Name, members, roles and invitations for the organization — and **Selskapet**, the only place the company's own details are edited: kontonummer, VAT registration, Foretaksregisteret, address, the Altinn confirmation of who the company belongs to, and everything Enhetsregisteret holds about it including the board and the revisor |
+| `/organisasjon/` | Everything about **one company**: its own details (the only place its bank accounts, VAT registration, Foretaksregisteret and the address are edited), its subscription, who may open it and who has been invited to it, the Altinn confirmation of who it belongs to, and everything Enhetsregisteret holds about it including the board and the revisor. The board list marks who can open the books and offers to invite whoever cannot: [register-access.md](register-access.md). No account is shown here: see [company-isolation.md](company-isolation.md#the-account-is-not-a-company) |
 
 `/faktura/` is three cards and one of them at a time — the form, the review,
 and what came out. Issuing is irreversible, so the step between the form and a
@@ -463,7 +542,7 @@ determine itself. What the second one means in practice is below.
 ### Where a model is allowed to answer
 
 Uploading a bilag fills the entry form in. Almost all of that is deterministic.
-The PDF goes to Løynd's extraction route (`POST /v1/files/extract`) for its
+Each file goes to Løynd's extraction route (`POST /v1/files/extract`) for its
 text, with `domain/bilag/text.py` and pypdf as the local fallback for a
 deployment with no key or a company that has switched KI off. **The file is
 handed over rather than a string we extracted from it**, and that is a deliberate
@@ -472,6 +551,293 @@ of reading its text layer, better text starts arriving and nothing in Myntos
 changes. A pipeline that extracts locally and posts the result has thrown the
 pixels away before the request is made, and no improvement on the far side can
 undo that.
+
+That seam paid out on 2026-09-06. Løynd's model gained sight, its extractor
+started transcribing PNG, JPEG, WebP and GIF, and Myntos could read a
+photographed receipt — the only change on this side was sending the real content
+type instead of a hardcoded `application/pdf`. Images are now accepted by the
+archive too (`domain/bilag/models.py`, sniffed from the bytes and never from the
+upload's own `Content-Type`), because most of a small company's purchases are
+documented by a phone camera and PDF-only meant serving the third of them that
+came from a supplier with an invoicing system.
+
+**A bilag is a list of files, not a file.** A purchase from a private seller on
+FINN is the advert, the chat where the price was agreed, the receipt and the
+line on the bank statement, and no one of the four is the bilag. `POST
+.../cashflow/forslag` therefore takes `files` and has no ceiling on how many —
+a ceiling there would be a ceiling on what may be documented, and
+bokføringsloven has an opinion about that which our convenience does not
+outrank. They are read concurrently, three at a time, because transcribing an
+image occupies a GPU slot; they are joined in upload order under one heading
+each, since a shuffled bilag reads as a different bilag; and one file that
+comes back blank is named in a warning rather than counted.
+
+**One description field, and it is the form's own.** There were two: a box at
+the top for what the user could tell the model, and a field further down for the
+text that goes in the ledger. They are the same sentence. "Kjøpt strømforsyning,
+la ut 3000 privat" is both the thing the model is missing and a perfectly good
+bilagstekst, and two fields for one sentence are two places to write it — one of
+which stays empty. So the field is both: the model writes a proposal into it, the
+user corrects it, and a correction re-reads the bilag with the sentence as
+context. That is why there is no "read it again" button any more; a button asks
+the user to know that answering the question was only half of it, and the half
+that fills in the form was behind a control they had to notice.
+
+It has one consequence worth stating plainly, because it is a promise that
+changed: the description **is stored and is posted**, unlike everything else sent
+to the model. `/ki` and `frontend/src/pages/personvern.astro` say so.
+
+It sits **above** the uploader, which is an argument about order rather than
+layout. "Hva gjaldt det?" is the one thing the user knows without looking
+anything up, and if they answer it first, that sentence is what the bilag is
+read with. If they leave it alone, the model fills it in. Both routes work, and
+the label says "(valgfritt)" because a required-looking field at the top of a
+page reads as a gate. It is optional in fact and not only in wording: the field
+carries no `required`, and a form submitted with the box empty is described by
+the category the user did choose ("Varekjøp"), since a voucher still has to say
+what it concerns. While the
+model is on its way to writing there, the field is locked and shows three
+waiting dots: typing into a box that is about to be overwritten loses what you
+typed, and an empty editable box that just sits there looks like one nothing is
+going to happen to. A field the user filled in themselves is never locked, since
+nothing is going to overwrite it.
+
+**A refund is money in that is not income.** Every money-in category used to be
+a revenue one, so a supplier sending money back had nowhere honest to go: filed
+as a sale, the eBay refund of 26 266,40 would have reported 5 253 kroner of
+output VAT on a purchase that was cancelled, and inflated turnover by the rest.
+So the catalogue now carries sixteen refunds, one per cost category, and each is
+**derived** from the purchase it reverses rather than written out. A refund
+takes its account and its VAT code from that purchase, because a refund booked
+to a different account leaves both the cost and the deduction overstated with
+nothing in the books saying so.
+
+The posting is the purchase backwards. Bank is debited, the cost account is
+credited, and the VAT goes to **2710 as a credit** rather than 2700: it is the
+deduction returning, not tax owed. `input_vat` in the summary is `debit -
+credit` on 2710, so the deduction falls away by itself. On an import code both
+extra lines flip as well, since the calculated VAT is no longer owed and the
+deduction against it is no longer due. `refusjon_driftsmiddel` credits **1250**,
+taking the asset back off the balance sheet instead of inventing revenue, which
+is the one case where money coming in lands on an asset account.
+
+Some cost categories have no refund on purpose. `lonn`, `arbeidsgiveravgift` and
+`forskuddstrekk`, because money back on payroll is almost always refusjon av
+sykepenger, which belongs on its own income account: a category crediting 5000
+would understate salaries in both the a-melding and the næringsspesifikasjon.
+`privatuttak`, which already has its money-in twin in `egenkapitalinnskudd`. And
+`avdrag_lan`, `mva_oppgjor` and `valutatap`, each of which has a hand-written
+opposite below rather than a derived reversal, because none of the three is one:
+money borrowed is not a refund of an instalment, and a krone gained on the
+exchange rate is not a krone given back.
+
+**A kreditnota is money out that is not a cost**, and it is the same argument
+mirrored. Every money-out category was a cost, so paying a customer back for a
+cancelled sale left the turnover standing and the output VAT owed on it. Six
+kreditnotaer are derived from the sales categories the same way the refunds are
+derived from the costs, and they debit the account the sale credited.
+
+Which VAT account a reversal reaches cannot come from the direction the bank
+moved, because on both families those disagree. `CashFlowType.books_as` is the
+distinction, stated once: it returns the entry's own direction, flipped when the
+entry is a reversal. The old rule was `is_incoming and not is_refund`, which was
+correct while only a purchase could be reversed and put a kreditnota's VAT on
+**2710** the moment a sale could be. It claimed a deduction on goods the company
+had sold, while leaving the tax it charged the customer standing as owed. Both
+halves wrong by the same amount, which is why the test asserts the summary.
+
+The classifier's menu narrows to the reversals when the bilag shows both legs
+for one counterparty, so the question it answers is "a reversal of what" rather
+than "is this a sale". Which family that is follows from the direction and needs
+no second flag: the sixteen refunds on the money-in menu, the six kreditnotaer
+on the money-out one. The form groups each under one heading for the same
+reason: sixteen refunds would otherwise bury the twelve ways of earning money.
+
+**Money can move without anything being earned or spent**, and until 2026-09-08
+the catalogue could not say so. Five payments every VAT-registered business
+makes had no honest category, and every one of them would have been filed as a
+cost:
+
+| Category | Account | Why it is not a cost |
+| --- | --- | --- |
+| `mva_oppgjor` / `mva_tilgode` | 2740 | The tax was booked to 2700 and 2710 when the trade was; this settles the filed melding |
+| `forskuddstrekk` | 2600 | Withheld tax was never the company's money, and the cost was booked with the salary |
+| `avdrag_lan` / `laneopptak` | 2220 | Principal. Deducting it would deduct the same money twice, once when the loan bought something |
+| `valutatap` / `valutagevinst` | 8160 / 8060 | A finance line. `Annen driftskostnad` put an exchange-rate movement among the running expenses, at 25 % input VAT on a deduction nobody was charged |
+| `salg_driftsmiddel` | 1250 | Used equipment sold is the asset leaving, not turnover. Output VAT is real and does apply |
+
+`valutatap` and `valutagevinst` are what the eBay bilag's 1 584,41 actually is:
+27 850,81 out and 26 266,40 back for the same GBP 2 137,00. The warning about a
+netted bilag now names whichever of the two the sign implies.
+
+Because the chart is seeded **per company at creation**, adding an account to
+`STANDARD_ACCOUNTS` reaches nobody who already has books. Migration
+`a2c7f31b9d64` backfills the five new accounts and their per-year grouping rows,
+the way `d4e1a83b62c7` did for 1250. Without it the new categories would appear
+in the form and 500 on the account lookup when chosen.
+
+**A rate printed in a column counts as a printed rate.** The VAT rate is
+proposed only when the document states one, and stating one does not have to
+mean a line that says "mva". On an invoice with a real item table the rate is
+the last column of the row, and the only thing naming it is the heading above.
+Brønnøysundregistrene's registreringsgebyr comes out of the text layer as
+`NOKARTIKKEL ENH ANTALL PRIS BELØP IMVA` over
+`0411011 Aksjeselskap STK 1,0 6 825,00 6 825,000%`, the rate welded onto the
+amount before it. Read only for labelled lines it says nothing about VAT, so
+the form fell back to the category's default of 25 % and proposed a deduction
+of 1 365 kroner on a public fee that carries none.
+
+So a heading naming four or more columns, the last of them the VAT one, makes
+the trailing percentage on every row carrying amounts a printed rate. Four
+columns is what keeps a lone "Mva" over a total from turning a discount
+percentage into a VAT rate, and the rule is a fallback: a document that states
+"Sum mva 25 %" outright is answering directly, and a column is a weaker way of
+being told the same thing.
+
+**Nothing is a rate too.** A printed 0 % used to end in a warning and no code,
+which is not the same as no VAT: with the field left empty the form took the
+category's default. On a purchase the code is now set to 0 and marked "Fra
+bilaget", because what the bilag says beats what the category assumes, the same
+way it does at 25 %. Sales are left to the user: a sale without VAT is export,
+outside the VAT area, or exempt with credit, and which one decides what the
+mva-melding reports.
+
+**An unregistered counterparty is offered as a choice, not explained in a
+sentence.** Most counterparties a small company meets are met once: a private
+seller on FINN, a foreign webshop, the state. The field used to read "ingen
+valgt" under a line saying the sender was not a registered party, which is a
+wordy way of showing the one thing the field is for and then not showing it.
+Instead the name off the bilag is an option of its own, under the heading
+"Ikke registrert", selected and marked with where the name came from like any
+other proposal. Posting with it selected registers the party with nothing but
+the name: the number is generated and the organisasjonsnummer stays empty,
+because the name is what the bilag actually said, and a party with only a name
+is still one the next bilag can be matched against. "Ingen valgt" is still in
+the list, and the entry still posts without a party.
+
+**A screenshot has no letterhead, so nothing is read out of its position.** The
+last resort for a sender with no organisasjonsnummer used to be the first
+name-shaped line near the top of the page, and after that the file's own title.
+Both are sound on a document, where the top of page one is where a company
+prints its name. Neither survives contact with an app. One AliExpress purchase
+put four different things in the motpart field this way, in the order they were
+patched: `Add receipt` (a bank app's button), `Order ID, product or sto...` (a
+search box), `IMG 9362` (the camera roll), and `Returns/re` (a tab). Each fix
+produced the next one, because a list of words that are not company names
+cannot keep up with an interface that may print anything anywhere.
+
+So both positional rules are off when the first readable file is an image. What
+stays on is everything that reads a *statement*: a name printed beside an
+organisasjonsnummer, one written after "Selger" or "Sold by", and a match
+against the party register. What is left otherwise is an empty field, which is
+the honest answer.
+
+**The name then comes from the model, while it still has the pixels.** An app
+draws its name as a logo, and a logo does not survive being turned into text:
+the transcription of those nine screenshots names two shops and never
+AliExpress. So when nobody has named the counterparty, one more question goes
+back to the images, one per file, in upload order, three at a time, stopping at
+the first answer: *"Hvilken app eller nettbutikk er dette skjermbildet fra?"*
+
+Asking about the **app** rather than the seller is what makes it work. "Who is
+the seller" returns the shop inside the marketplace, and on a bank screenshot it
+returns the account holder, which is us. Measured on the AliExpress bilag:
+`AliExpress` for both order pages, `UKJENT` for the bank transaction whose
+merchant is collapsed behind "Show more", about 2.6 seconds each. It runs only
+where the alternative is an empty field, and it is marked "Foreslått av KI",
+because it is the one name on the bilag that was not read off it.
+
+A name is only offered when the proposal is marked, and marking applies the
+clause rules a second time, to the parser's name as well as the model's: at most
+six words, and lowercase plus more than one word is a sentence fragment ("en har
+sendt pakken", off a FINN status page). A name good enough for the bilagstekst
+is read once and forgiven; one offered here can become a row that outlives the
+voucher.
+
+**The proposal is streamed** (`POST .../cashflow/forslag/strom`). The wait is
+real and unevenly distributed — a PDF's text layer is milliseconds, nine
+screenshots are ninety seconds of a vision model looking at pages — and spending
+it on a spinner and then filling the whole form at once is the worst arrangement
+of the same time. So the file list goes out as soon as the text exists, and the
+description is typed onto the page as the model writes it, token by token, about
+seventy milliseconds apart. Measured on the Elektra invoice: file list at 0.1 s,
+first character of the sentence at 3.1 s, sentence finished at 3.6 s, whole
+proposal at 5.1 s.
+
+Both routes drain **one** generator (`_propose`), and that is not tidiness. A
+second implementation of the proposal for the streaming client would be a second
+thing to keep in step, and the day they drifted the difference would show up as a
+worse answer on whichever route nobody instrumented. The extraction question
+therefore goes through `loynd.stream` even when the caller is the plain JSON
+route, and the equivalence is asserted: the same reply read in one piece and in
+twenty produces the same `Extraction`.
+
+Only the description is forwarded, not every token. The model answers in five
+labelled lines and the description is the fourth; the first three are a date, a
+currency and a name, each of which has a box of its own and none of which anybody
+wants to watch cross the description field on the way past.
+`extraction.DescriptionStream` pulls the one line out of the accumulating answer
+— tolerating a label split down the middle by a chunk boundary, which happens —
+and the finished value still comes from `apply_description` on the complete
+answer. Streaming is for the wait, not for the answer.
+
+**And the reading is remembered** (`domain/bilag/reading_cache.py`), because
+re-reading on every edit would otherwise cost another ninety seconds of GPU. The
+text is cached in memory, keyed by a SHA-256 of the file's own bytes plus its
+name, type and whether KI was allowed to see it. Content-addressed is what makes
+it safe to share between callers: the only way to get an entry out is to present
+exactly the bytes that put it in, and whoever can do that already has the
+document. Measured on the three-screenshot `utlegg` bilag: 26.5 s the first time,
+5.8 s the second. Bounded, expiring, in memory only, and never a source of truth
+— every entry may vanish between two requests, and a miss costs the reading,
+which is what would have happened anyway.
+
+**The company, and what the user typed, go with them** (`domain/bilag/context.py`).
+The registered vedtektsfestet formål and aktivitet come from the
+`company_register_snapshot` we already hold, alongside the næringskode and
+whether the company is in Merverdiavgiftsregisteret; a receipt for a graphics
+card is *varekjøp* at a company that builds computers, *datakostnad* at one that
+writes software, and a *privatuttak* at a hairdresser's, and the document says
+none of that. The user may add a sentence — three thousand kroner arriving from
+a private account is an owner's deposit, a repaid loan or a sale, and only the
+person who made the payment knows which.
+
+That block sits **above** the document and is never folded into it. The
+distinction is the one the whole design rests on: quoted answers are accepted
+only when they appear in the *documents*, so a note in the box cannot set the
+counterparty or the date. It is shown to the model and stored nowhere.
+
+**And the register asks back** (`domain/bilag/questions.py`). A field with no
+prompt gets left as it was, so a proposal comes with up to three questions whose
+answers would settle it: what was actually charged when no total was found,
+whether money in from a private person is a deposit or a sale, which rate
+governs when a bilag prints two, and — the `utlegg` case — whether 25 278 kroner
+is one asset over the threshold or two under it. Answer in the description, and
+the bilag is read again with the answer; that loop is the whole point of the
+field, and it now closes by itself.
+
+Almost all of those are conditions in code, not questions put to a model, because
+they are facts about our own reading and asking a model to notice them would
+break the rule in the paragraph above. The model contributes two, and writes
+neither.
+
+The first is a **choice between two categories**, and it exists because of a
+battery. An invoice whose item line reads "Batteri" and nothing else came back
+filed under *Drivstoff og bilkostnad* — a car battery is a fair reading of that
+word, the page says nothing to rule it out, and a model with one slot to fill
+fills it and looks certain. So the classifier may answer with two menu numbers
+instead of one, meaning it was torn; both are checked against the menu exactly as
+one would be, and the sentence the user reads names the two categories from their
+own dropdown. A wrong category proposed confidently is the error a user is least
+likely to catch, because a filled field reads as a reading rather than as a
+guess.
+
+The second is prose, on the same round trip as everything else the model is asked
+(a fifth line on the extraction answer, not a second call), for the case no
+condition could anticipate. It is checked for shape — one sentence, ends in a
+question mark — and marked in the interface as the model's. A question is the one
+model output that cannot be wrong expensively: nothing follows from it until a
+person replies.
 
 Whatever the text came from, `domain/bilag/interpretation.py` reads the date,
 the total, the VAT, the organisasjonsnummer, the item line and the counterparty
@@ -482,13 +848,39 @@ Two questions are put to a model there, and they are the two the page does not
 answer. The first is *which category is this?* — the thing an invoice never
 states, and the thing that decides the account and through it the
 næringsspesifikasjon post. `domain/bilag/classification.py` renders the
-cash-flow catalogue as a **numbered menu** and accepts one number back; anything
-else is discarded and the keyword reading stands. The menu is narrowed to one
-direction when a registered party has already settled that question. The second
-is `domain/bilag/extraction.py`, for the documents that print none of the words
-the parser looks for: the date, currency and seller must be **quoted verbatim**
-and are thrown out when the quote is not in what the model was shown, and only
-the one-sentence description is composed.
+cash-flow catalogue as a **numbered menu** and accepts one number back, or two
+when the model is in doubt (above); anything else is discarded and the keyword
+reading stands. The menu is narrowed to one direction when a registered party has
+already settled that question. The second is `domain/bilag/extraction.py`, for
+the documents that print none of the words the parser looks for: the date,
+currency and seller must be **quoted verbatim** and are thrown out when the quote
+is not in what the model was shown, and only the one-sentence description is
+composed.
+
+That description is held to a rule of its own, since there is no document to
+check it against. It has to name what was bought: a sentence that is only the
+seller's name, or only "Faktura 1075", is refused, because each of those already
+has a field on the form and repeating one answers "hva gjaldt det" with silence.
+The fallback is the item line the parser read off the table, which names the
+thing — and a composed sentence only wins over that line when it contains every
+word of it, which is the difference between "Batteri til verkstedet" and
+something written instead of the item.
+
+Reading that item line off a table is worth a paragraph of its own, because it
+is what the description rests on and it is harder than it looks. The anchor is
+the column heading ("Beskrivelse", "Item name"), and the row can sit eight lines
+below one, since a two-line header over six columns fills the gap with fragments
+like "(inkl. mva)". So the search reaches a dozen lines down — and then has to
+tell an item row from everything else down there. A row of a table **has a price
+on it**, and that is the discriminator: "Batteri 1 1 152,00 1 152,00 288,00
+1 440,00" is a row, while "Ordredato", "Fakturanummer" and "Selger" are header
+fields that happen to be the right length and all letters, and every one of them
+has reached the ledger as what a purchase was for. The figure columns are
+stripped off the end one at a time to leave the name, an unpriced line is still
+accepted as a fallback (a web receipt lists what it sold above its totals), and
+a bare field label is refused whether the label list knows the word or not — a
+single word ending in -dato, -nummer, -nr or -kode is a label whose value has
+just been stripped away.
 
 A third thing an invoice in a foreign currency does not state is what it cost in
 kroner, and that one goes nowhere near a model. An exchange rate is a published
@@ -562,19 +954,37 @@ buyer, not the company, not the ledger. The question does not need them.
   change mid-year (e.g. water/wastewater 25% → 15% on 2025-07-01, on the
   same SAF-T code as food).
 - **Money is exact decimals.** Floating point never touches amounts.
+- **A company is paid into many accounts, and a document says which.**
+  `CompanyBankAccount` is a table with exactly one `is_primary` row per company
+  (partial unique index), because a business keeps its skattetrekk apart from
+  its operating money — skattebetalingsloven § 5-12 — and one column could hold
+  only the first of them. `SalesDocument.bank_account_id` is the choice and is
+  `ON DELETE SET NULL`; `SalesDocument.seller_bank_account` is the snapshot the
+  PDF and the EHF read, so closing an account never rewrites what an issued
+  invoice said. See [integrations/efaktura.md](integrations/efaktura.md).
 
 ## Deployment (decided July 2026)
 
 - **Frontend:** Astro 7 + `@astrojs/cloudflare` v14 on **Cloudflare Workers**
   with static assets. Pages is in maintenance mode; the adapter no longer
   supports it.
-- **Backend:** FastAPI in a **Cloudflare Container** (GA since 2026-04),
-  pinned `jurisdiction: "eu"`. Python Workers were rejected: still beta and —
-  decisively — no native TCP sockets, so SQLAlchemy/asyncpg cannot reach
-  Postgres. The container image (`backend/Dockerfile`) is plain Docker, so
-  the backend can move to any EEA host unchanged if a regulator or customer
-  ever requires it. Containers are stateless: disk is ephemeral, instances
-  sleep — all state lives in Postgres and R2.
+- **Backend:** FastAPI under **uvicorn on a self-hosted machine in Norway**,
+  as the systemd unit `myntos-backend.service`, bound to `127.0.0.1:8001` with
+  **Caddy** terminating TLS for `api.myntos.no` in front of it. `api.myntos.no`
+  resolves to that machine; only `myntos.no` is on Cloudflare.
+
+  This replaced a Cloudflare Container (revised August 2026). The original
+  reasoning against Python Workers still holds and is why a container was
+  chosen first: no native TCP sockets, so SQLAlchemy/asyncpg cannot reach
+  Postgres. Self-hosting keeps that property and drops a layer.
+
+  The process is stateless, so it stays movable: all durable state is in
+  Postgres and R2. What changed is where configuration comes from. There is no
+  secret injection and no allow-list; pydantic-settings reads `<repo>/.env`
+  directly, which means **an edited `.env` does nothing until the unit is
+  restarted**, because `get_settings()` is `@lru_cache`d. Deploy with
+  `./update.sh`, which restarts and verifies rather than leaving that to
+  memory.
 - **Database:** managed PostgreSQL in an **EEA region** (e.g. Supabase
   Stockholm `eu-north-1`, Neon Frankfurt; Aiven (EEA-owned) is the hedge
   against US CLOUD-Act concerns). Connect directly with asyncpg — Hyperdrive

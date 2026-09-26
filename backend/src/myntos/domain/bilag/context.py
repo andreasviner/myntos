@@ -1,0 +1,176 @@
+"""What the model is told about the company, and what the user typed.
+
+Two questions are put to Løynd about an uploaded bilag — which category it
+belongs to (:mod:`~myntos.domain.bilag.classification`) and what the document
+says (:mod:`~myntos.domain.bilag.extraction`) — and until now both were asked in
+a vacuum. The model saw a receipt and a menu of twenty-six categories, and
+nothing at all about whose books it was filing them in.
+
+That vacuum is expensive, and the expense is one-directional. A receipt for a
+graphics card is *varekjøp* at a company that builds computers, *datakostnad* at
+one that writes software, and a *privatuttak* at a hairdresser's; the document is
+identical in all three cases and says nothing that would separate them. The
+model was being asked a question it could not answer from the evidence it had,
+and answering anyway is what a language model does.
+
+So three things are put in front of it, all of them already known:
+
+**Vedtektsfestet formål and aktivitet.** Enhetsregisteret holds both, Myntos
+already fetches and stores them (see
+:class:`~myntos.domain.ledger.models.CompanyRegisterSnapshot`), and between them
+they are a description of what this business legitimately buys, written by the
+business itself and filed with the state. Nothing else available to us describes
+a company's costs so directly.
+
+**Whether it is registered in Merverdiavgiftsregisteret.** Decides whether input
+VAT is deductible at all, and therefore whether a proposed VAT code means
+anything. A company outside the register that gets handed code 1 on a purchase
+is being told it may reclaim VAT it may not.
+
+**What the user typed.** A free-text note on the upload, and the only one of the
+three the model could not have got any other way. It exists because some bilag
+are genuinely undecidable from the paper: a bank transfer of 3 000 kroner from a
+private account into the company's is an owner's deposit, a loan repayment or a
+sale, and only the person who made it knows which. A sentence resolves it.
+
+Three rules govern all of it:
+
+**It is context, never an answer.** The note is shown to the model and reaches
+no other part of the system: it is not stored, not posted, and cannot set a
+field. Everything that comes back is checked against the document exactly as
+before — :func:`myntos.domain.bilag.extraction.parse_answer` still discards a
+date the document does not contain, and the note is not part of the document.
+That is the difference between helping the model read and letting the user
+dictate the reading.
+
+**It is bounded.** Each part is truncated, because this text is prepended to a
+document excerpt that already has a ceiling, and a formål paragraph long enough
+to push the invoice out of the model's window would make the feature actively
+harmful.
+
+**It is optional, in every combination.** A company with no register snapshot, a
+user with nothing to add, and a deployment with the model switched off all
+produce an empty context and the behaviour Myntos had before this module
+existed.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+#: Ceilings per part. Small on purpose: this text competes with the bilag for
+#: room in the model's window, and the bilag is the thing being read.
+MAX_PURPOSE_CHARS = 400
+MAX_ACTIVITY_CHARS = 300
+MAX_NOTE_CHARS = 500
+
+#: Longest the whole rendered block may be. A second ceiling rather than a sum
+#: of the first three, so adding a fourth field later cannot quietly widen the
+#: total that :func:`myntos.domain.bilag.classification.excerpt` has to share a
+#: window with.
+MAX_CONTEXT_CHARS = 1200
+
+
+def _clip(value: str | None, limit: int) -> str | None:
+    """One field, whitespace collapsed and cut to ``limit``. ``None`` if empty."""
+    if value is None:
+        return None
+    cleaned = " ".join(value.split())
+    return cleaned[:limit] or None
+
+
+def _joined(lines: tuple[str, ...] | list[str] | None, limit: int) -> str | None:
+    """Register free-text, which arrives as a list of lines, as one sentence."""
+    if not lines:
+        return None
+    return _clip(" ".join(str(line) for line in lines if line), limit)
+
+
+@dataclass(frozen=True)
+class BilagContext:
+    """Everything the model is told that is not the document itself.
+
+    Built by the API layer from the company row, its register snapshot and the
+    upload form. The domain never reads a database or a request, so this arrives
+    already assembled — the same arrangement as
+    :class:`~myntos.domain.bilag.interpretation.PartyHint`.
+    """
+
+    #: Vedtektsfestet formål, as filed with Enhetsregisteret.
+    purpose: str | None = None
+    #: Registered aktivitet. Often more concrete than the formål, which tends to
+    #: be drafted broadly enough to cover anything the company might ever do.
+    activity: str | None = None
+    #: Næringskode with its description, e.g. "62.010 Programmeringstjenester".
+    industry: str | None = None
+    #: Registered in Merverdiavgiftsregisteret. ``None`` means we do not know,
+    #: which is said as "ukjent" rather than guessed at — an unregistered
+    #: company and one we have no answer for want different proposals.
+    vat_registered: bool | None = None
+    #: What the user typed on the upload form.
+    note: str | None = None
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        purpose: tuple[str, ...] | list[str] | None = None,
+        activity: tuple[str, ...] | list[str] | None = None,
+        industry_code: str | None = None,
+        industry_description: str | None = None,
+        vat_registered: bool | None = None,
+        note: str | None = None,
+    ) -> BilagContext:
+        """Assemble one, clipping every part on the way in.
+
+        A constructor rather than raw field assignment so the ceilings cannot be
+        skipped by a caller that builds the dataclass directly — every path that
+        matters goes through here.
+        """
+        industry = " ".join(part for part in (industry_code, industry_description) if part)
+        return cls(
+            purpose=_joined(purpose, MAX_PURPOSE_CHARS),
+            activity=_joined(activity, MAX_ACTIVITY_CHARS),
+            industry=_clip(industry or None, 120),
+            vat_registered=vat_registered,
+            note=_clip(note, MAX_NOTE_CHARS),
+        )
+
+    @property
+    def is_empty(self) -> bool:
+        """Nothing to say. The prompt then reads exactly as it did before."""
+        return not self.render()
+
+    def render(self) -> str:
+        """The block that goes above the document, in Norwegian.
+
+        Labelled lines rather than prose, and the user's note last under a label
+        that says who wrote it. Both choices are about keeping the model able to
+        tell the three sources apart: what the state's register says about this
+        company, and what the person uploading claims about this particular
+        payment, do not carry the same weight, and a model handed one
+        undifferentiated paragraph cannot weigh them differently.
+        """
+        lines: list[str] = []
+        if self.purpose is not None:
+            lines.append(f"Vedtektsfestet formål: {self.purpose}")
+        if self.activity is not None:
+            lines.append(f"Registrert aktivitet: {self.activity}")
+        if self.industry is not None:
+            lines.append(f"Næringskode: {self.industry}")
+        if self.vat_registered is not None:
+            lines.append(
+                "Mva-registrert: "
+                + ("ja" if self.vat_registered else "nei, ikke i Merverdiavgiftsregisteret")
+            )
+        if self.note is not None:
+            lines.append(f"Brukerens egen forklaring på bilaget: {self.note}")
+        if not lines:
+            return ""
+        return "\n".join(lines)[:MAX_CONTEXT_CHARS]
+
+
+#: The empty context. Passing this is exactly equivalent to passing nothing, and
+#: having a named value for it keeps callers from having to spell `or
+#: BilagContext()` at four call sites.
+NO_CONTEXT = BilagContext()

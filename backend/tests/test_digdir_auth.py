@@ -613,54 +613,6 @@ def test_a_half_configured_idporten_is_absent_rather_than_broken() -> None:
     )
 
 
-def test_a_key_path_pointing_at_nothing_is_not_a_credential(tmp_path: Path) -> None:
-    """A configured path and a readable key are different facts.
-
-    This is the ordinary shape of a half-finished deployment: the variable is
-    copied out of the template, and the key file is copied afterwards, or
-    forgotten. Answering "configured" from the path alone offers a login button
-    that fails later inside build_client with an unreadable-key error, which is
-    the exact outcome this check exists to prevent.
-    """
-    missing = tmp_path / "not-copied-yet.pem"
-    settings = _settings(
-        idporten_client_id=IDPORTEN_CLIENT_ID,
-        idporten_redirect_uri=REDIRECT_URI,
-        idporten_jwk_path=missing,
-    )
-    assert not idporten.is_configured(settings)
-
-    # A directory is not a key either, and it is what a path with a typo in the
-    # filename half of it tends to resolve to.
-    settings = _settings(
-        idporten_client_id=IDPORTEN_CLIENT_ID,
-        idporten_redirect_uri=REDIRECT_URI,
-        idporten_jwk_path=tmp_path,
-    )
-    assert not idporten.is_configured(settings)
-
-
-def test_a_key_file_that_is_there_is_a_credential(
-    tmp_path: Path, rsa_key: rsa.RSAPrivateKey
-) -> None:
-    """The other half of the rule: a real file needs no client secret."""
-    path = tmp_path / "idporten.pem"
-    path.write_bytes(
-        rsa_key.private_bytes(
-            encoding=Encoding.PEM,
-            format=PrivateFormat.PKCS8,
-            encryption_algorithm=NoEncryption(),
-        )
-    )
-    settings = _settings(
-        idporten_client_id=IDPORTEN_CLIENT_ID,
-        idporten_redirect_uri=REDIRECT_URI,
-        idporten_jwk_path=path,
-        idporten_kid="a-kid",
-    )
-    assert idporten.is_configured(settings)
-
-
 def test_a_blank_credential_does_not_count_as_a_credential() -> None:
     """``.env.example`` ships these empty, and an empty line is not a secret.
 

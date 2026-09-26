@@ -14,12 +14,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     </div>
     <div class="head-actions">
       {/* Kunder og leverandører hører til ett selskap: de er reskontroen dets,
-          og SAF-T eksporterer dem per selskap. Med flere selskaper på kontoen
-          må det derfor gå an å bytte her og ikke bare på forsiden. */}
-      <label class="picker">
-        <span class="visually-hidden">Velg selskap</span>
-        <select id="company-picker" hidden></select>
-      </label>
+          og SAF-T eksporterer dem per selskap. Hvilket selskap det er, svarer
+          selskapsvelgeren i toppen på — ett sted, ikke ett per side. */}
       <a class="btn btn-ghost" href="/kontantstrom/">Til kontantstrømmen</a>
     </div>
   </header>
@@ -197,7 +193,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     type Company,
     type Party,
   } from '../lib/api';
-  import { currentCompany, loadCompanies, mountCompanyPicker } from '../lib/company';
+  import { currentCompany, loadCompanies } from '../lib/company';
   import { el, setStatus, show } from '../lib/dom';
   import { can, loadSession, redirectToLogin } from '../lib/session';
 
@@ -319,7 +315,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       company = current;
       // Switching reloads: the list below, the form's party type and the
       // permission check all belong to the company that was showing.
-      mountCompanyPicker(el<HTMLSelectElement>('#company-picker'), companies, company);
 
       el('#company-name').textContent = company.name;
       mayWrite = can(session, company.organization_id, 'ledger:write');

@@ -42,6 +42,62 @@ PDF_CONTENT_TYPE = "application/pdf"
 # mean the type we store is chosen by the uploader.
 PDF_MAGIC = b"%PDF-"
 
+# --- What may be a bilag -----------------------------------------------------
+#
+# Bokføringsforskriften § 5-1 says what documentation has to *contain*, never
+# what file format it arrives in, and in practice most of a small company's
+# purchases are documented by a photograph: a receipt from a shop, a Vipps
+# confirmation, a FINN purchase that exists only as a screen. Accepting PDF
+# alone meant the register could file the third of a company's bilag that came
+# from a supplier with an invoicing system, and told everyone else to go and
+# find a printer.
+#
+# Sniffed from the bytes, never from the upload's Content-Type or its extension,
+# for the same reason the PDF check always was: both of those are chosen by
+# whoever is uploading, and neither is evidence. The magic numbers below are the
+# first bytes of each format's own header.
+#
+# The list is the intersection of two other lists, and it has to stay that way:
+# what Løynd can read (see myntos.integrations.loynd.IMAGE_CONTENT_TYPES) and
+# what this archive will keep. A format accepted here and refused there is a
+# bilag that can be filed and never read; the test suite asserts they match.
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+JPEG_MAGIC = b"\xff\xd8\xff"
+GIF_MAGIC = (b"GIF87a", b"GIF89a")
+# WebP is a RIFF container: "RIFF", four bytes of length, then "WEBP".
+RIFF_MAGIC = b"RIFF"
+WEBP_TAG = b"WEBP"
+
+ACCEPTED_CONTENT_TYPES = frozenset(
+    {PDF_CONTENT_TYPE, "image/png", "image/jpeg", "image/webp", "image/gif"}
+)
+
+#: What the file dialog should offer, and what the /ki page quotes. Derived from
+#: the same set, so an added format cannot be accepted by the backend while the
+#: browser still refuses to let anyone pick it.
+ACCEPTED_EXTENSIONS = (".pdf", ".png", ".jpg", ".jpeg", ".webp", ".gif")
+
+
+def sniff_content_type(content: bytes) -> str | None:
+    """The format these bytes actually are, or ``None`` if it is not one we take.
+
+    Header inspection only — no decoding, no parsing, and certainly no handing
+    the bytes to an image library to see whether it copes. Deciding "is this a
+    thing we accept" must not itself be the attack surface; the decoding happens
+    later, at Løynd, behind the guards in ``app/images.py``.
+    """
+    if content.startswith(PDF_MAGIC):
+        return PDF_CONTENT_TYPE
+    if content.startswith(PNG_MAGIC):
+        return "image/png"
+    if content.startswith(JPEG_MAGIC):
+        return "image/jpeg"
+    if content.startswith(GIF_MAGIC):
+        return "image/gif"
+    if content.startswith(RIFF_MAGIC) and content[8:12] == WEBP_TAG:
+        return "image/webp"
+    return None
+
 
 class Attachment(Base):
     """A stored document belonging to one voucher."""

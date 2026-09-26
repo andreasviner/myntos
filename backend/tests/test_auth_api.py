@@ -18,15 +18,22 @@ def test_register_creates_user_organization_and_session(client: TestClient) -> N
     assert body["user"]["email_verified"] is False
     assert body["user"]["has_password"] is True
 
-    # Signup always lands the user in an organization — there is nowhere to keep
-    # books otherwise.
+    # Signup always lands the user on an account: it is what a company is
+    # created under, and there is nowhere to keep books otherwise.
     assert len(body["memberships"]) == 1
     membership = body["memberships"][0]
-    assert membership["organization_name"] == "Nordmann Regnskap AS"
-    assert membership["organization_slug"] == "nordmann-regnskap-as"
     assert membership["role"] == "owner"
-    # Billing lives on the organization, not on the user.
-    assert membership["plan"] == "free"
+    # And that is very nearly all the session says about it. The account's name
+    # is deliberately not here: nothing displays it, because an account is
+    # routinely called after a company and a name like that shown next to a
+    # different company reads as a leak. What a person may do with a set of
+    # books, and what it costs, come back with the books.
+    assert set(membership) == {"organization_id", "role", "permissions"}
+
+    account = client.get("/api/v1/organizations").json()[0]
+    assert account["name"] == "Nordmann Regnskap AS"
+    assert account["slug"] == "nordmann-regnskap-as"
+    assert "plan" not in account
 
     # The token is in an httpOnly cookie, not in the body.
     assert body["session_token"] is None
@@ -36,13 +43,14 @@ def test_register_creates_user_organization_and_session(client: TestClient) -> N
 def test_register_without_organization_name_still_gets_one(client: TestClient) -> None:
     body = register(client)
     assert len(body["memberships"]) == 1
-    assert body["memberships"][0]["organization_slug"]
+    assert client.get("/api/v1/organizations").json()[0]["slug"]
 
 
 def test_norwegian_letters_survive_slug_generation(client: TestClient) -> None:
-    body = register(client, organization_name="Håkon Bærum Ølsen AS")
+    register(client, organization_name="Håkon Bærum Ølsen AS")
+    account = client.get("/api/v1/organizations").json()[0]
     # "å" transliterates to "aa" rather than being stripped to "a".
-    assert body["memberships"][0]["organization_slug"] == "haakon-baerum-oelsen-as"
+    assert account["slug"] == "haakon-baerum-oelsen-as"
 
 
 def test_duplicate_email_is_rejected(client: TestClient) -> None:

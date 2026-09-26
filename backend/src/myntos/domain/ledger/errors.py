@@ -31,6 +31,17 @@ class DuplicateCompanyError(LedgerError):
     """This organization already keeps books for that orgnr."""
 
 
+class CompanyOrgnrLockedError(LedgerError):
+    """The orgnr cannot be changed, because ownership has been confirmed.
+
+    A typed orgnr is a claim nobody has checked, and correcting a typo in one is
+    an ordinary thing to want. A confirmed one is different: somebody proved
+    through Altinn that they may act for exactly that number, and the proof
+    belongs to the number rather than to the row. Letting it move would carry
+    the confirmation across to a company nobody has shown any right to.
+    """
+
+
 class CompanyAlreadyClaimedError(LedgerError):
     """Somebody else has already confirmed ownership of this orgnr.
 
@@ -57,6 +68,35 @@ class InvalidBankAccountError(LedgerError):
     Refused rather than stored as typed because the number reaches the outside
     world on every invoice, and an issued invoice cannot be corrected — see
     :mod:`myntos.domain.ledger.bankkonto`.
+    """
+
+
+class BankAccountNotFoundError(LedgerError):
+    """No such bank account on this company.
+
+    The same answer for an account that does not exist and one belonging to a
+    company next door, for the reason :class:`CompanyNotFoundError` gives: these
+    ids are sequential, and a 403 would say which of them are real.
+    """
+
+
+class DuplicateBankAccountError(LedgerError):
+    """The company already has that kontonummer.
+
+    Per company, not globally — two sets of books may name the same account, and
+    the ENK that became an AS is the ordinary case. What is refused here is the
+    same number twice on one company, which is never a second account: it is a
+    second row that makes «which one is this» unanswerable.
+    """
+
+
+class PrimaryBankAccountRequiredError(LedgerError):
+    """The primary account cannot simply be un-marked.
+
+    A company that has accounts at all has one an invoice is paid to by default,
+    and clearing the flag would leave "where does this get paid" with no answer
+    while every account on screen still looks fine. Moving it is a promotion:
+    mark another account primary and this one stops being it.
     """
 
 

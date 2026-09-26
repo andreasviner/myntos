@@ -81,8 +81,10 @@ every year, so Tenor's `harSkattemeldingUtkast` evidently means the row exists
 rather than that the API will serve it. The org path is unaffected.
 
 No portal login per person is needed. That was a theory from Altinn's issue
-tracker; it was tried and changed nothing. The cause was a missing
-`altinn:enduser` scope.
+tracker; it was tried and changed nothing. The cause was that the ID-porten
+client carried no `altinn:*` scope at all, so its token had no audience Altinn
+recognised. `altinn:enduser` is what was ticked on to fix it here, and it read
+as the rule until production turned out to exchange tokens without it.
 
 ## Still missing
 

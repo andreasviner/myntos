@@ -20,9 +20,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from myntos.auth.sessions import resolve_session
 from myntos.core.config import get_settings
+from myntos.core.mail import Mailer, build_mailer
 from myntos.db.session import get_session
 from myntos.domain.identity import service
-from myntos.domain.identity.models import OrganizationMembership, User, UserSession
+from myntos.domain.identity.models import (
+    CompanyMembership,
+    OrganizationMembership,
+    User,
+    UserSession,
+)
 from myntos.domain.ledger import service as ledger_service
 from myntos.domain.ledger.models import Company
 from myntos.storage import DocumentStorage, get_storage
@@ -131,18 +137,24 @@ class CompanyContext:
     The two always travel together: no endpoint should be able to load a
     company without having also resolved what the caller is allowed to do with
     it, because that is exactly the pair a missing check separates.
+
+    ``membership`` is a :class:`CompanyMembership`, one row per person per
+    company. Access is not account-wide: somebody invited to help with one
+    client's books has a row for that company and nothing for the twenty next
+    to it, and can hold a different role on each.
     """
 
     company: Company
-    membership: OrganizationMembership
+    membership: CompanyMembership
 
 
 async def get_company_context(company_id: int, user: CurrentUser, db: DbSession) -> CompanyContext:
-    """Resolve the path's company through the caller's memberships.
+    """Resolve the path's company through the caller's company memberships.
 
     Raises :class:`~myntos.domain.ledger.errors.CompanyNotFoundError` — 404 —
-    both when the company does not exist and when it belongs to an organization
-    the caller is not in.
+    both when the company does not exist and when the caller has no membership
+    on it. The same answer for both, so the API cannot be used to find out
+    which company ids are real.
     """
     company, membership = await ledger_service.get_company_for_user(
         db, company_id=company_id, user_id=user.id
@@ -159,6 +171,19 @@ def get_document_storage() -> DocumentStorage:
 
 
 Storage = Annotated[DocumentStorage, Depends(get_document_storage)]
+
+
+def get_mailer() -> Mailer:
+    """Where outgoing mail goes, as a dependency for the same reason storage is.
+
+    A test that asserts what an invitation says must not need an SMTP server,
+    and a test that asserts what happens when sending *fails* must be able to
+    make it fail on purpose.
+    """
+    return build_mailer()
+
+
+OutgoingMail = Annotated[Mailer, Depends(get_mailer)]
 
 
 def set_session_cookie(response: Response, token: str) -> None:

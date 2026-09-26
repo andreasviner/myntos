@@ -63,6 +63,73 @@ class Settings(BaseSettings):
     login_lockout_minutes: int = 15
     invitation_lifetime_days: int = 7
 
+    # --- Outgoing email (optional; nothing below is required to run) ---
+    #
+    # Two transports, and a deployment picks one by configuring it. Left unset,
+    # Myntos sends nothing at all and says so: an invitation still produces a
+    # link for the inviter to pass on by hand, which is what happened before
+    # there was any mail at all. A half-configured deployment is treated as
+    # unconfigured rather than as one that fails on the first invitation.
+    #
+    # `mail_from` belongs to both, because the sender is a fact about the
+    # product rather than about the wire.
+    #
+    # SMTP, first, because every provider speaks it and none of them have to be
+    # trusted with the message before it leaves.
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    # STARTTLS on the submission port is the ordinary case. Set SMTP_TLS_MODE to
+    # "ssl" for implicit TLS (port 465), or to "none" for a local relay on
+    # 127.0.0.1 that does not offer TLS at all. Never "none" over a network.
+    smtp_tls_mode: Literal["starttls", "ssl", "none"] = "starttls"
+    smtp_timeout_seconds: float = 15.0
+    # The envelope sender and what a recipient sees. `mail_from` must be an
+    # address the SMTP host is allowed to send as, or the message is rejected
+    # (or, worse, delivered to spam) however correct everything else is.
+    mail_from: str | None = None
+    mail_from_name: str = "Myntos"
+    # Where a reply goes. Unset, replies go to `mail_from`, which may be a
+    # no-reply mailbox nobody reads.
+    mail_reply_to: str | None = None
+
+    # Cloudflare Email Sending, second, for a deployment whose domain is on
+    # Cloudflare already: the DNS the deliverability of an invitation actually
+    # rests on (SPF, DKIM, DMARC) is then written by the same party that accepts
+    # the message, so there is no set of records to keep in step by hand.
+    #
+    # The account is the one R2 uses; it is named separately rather than read
+    # from `r2_account_id` because storage and mail are configured
+    # independently, and a deployment that moves one should not silently move
+    # the other. The token wants the "Send email" permission and nothing else.
+    cloudflare_account_id: str | None = None
+    cloudflare_email_token: SecretStr | None = None
+
+    @property
+    def smtp_configured(self) -> bool:
+        """Whether SMTP has both halves it needs: somewhere to send, and as whom."""
+        return bool(self.smtp_host) and bool(self.mail_from)
+
+    @property
+    def cloudflare_mail_configured(self) -> bool:
+        """Whether Cloudflare Email Sending has an account, a token and a sender."""
+        return (
+            bool(self.cloudflare_account_id)
+            and self.cloudflare_email_token is not None
+            and bool(self.mail_from)
+        )
+
+    @property
+    def mail_configured(self) -> bool:
+        """Whether outgoing mail can actually be sent, by any transport.
+
+        Never a partial answer: either one alone is a deployment that would fail
+        at the first send. Everything that offers to send email asks this first
+        and says plainly when the answer is no.
+        """
+        return self.smtp_configured or self.cloudflare_mail_configured
+
     # --- Federated sign-in (all optional; password login works without any) ---
     # A provider appears in the interface only when its three values are set,
     # so a half-configured one is absent rather than a button that fails.
@@ -107,6 +174,10 @@ class Settings(BaseSettings):
     # (``{"kty":"RSA",...}``, possibly wrapped in a ``{"keys":[...]}`` set) or a
     # PEM private key. See myntos.auth.maskinporten.keys.
     maskinporten_jwk_path: Path | None = None
+    # The same key inline, for a deployment whose credentials arrive as secret
+    # bindings rather than as files. Takes precedence over the path when both
+    # are set, because a container with an injected secret has no file to read.
+    maskinporten_jwk: SecretStr | None = None
     # The key id registered in Samarbeidsportalen. Only needed when the key file
     # is a PEM, which carries no ``kid`` of its own — a JWK's own ``kid`` wins.
     # Maskinporten looks the signing key up by this value, so a mismatch is an
@@ -131,6 +202,8 @@ class Settings(BaseSettings):
     # key because it is a separate client. A ``client_secret`` client works too;
     # set the secret instead and leave these unset.
     idporten_jwk_path: Path | None = None
+    # The ID-porten key inline. See ``maskinporten_jwk``.
+    idporten_jwk: SecretStr | None = None
     idporten_kid: str | None = None
     idporten_client_secret: SecretStr | None = None
     # Level of assurance demanded of the login. ``idporten-loa-high`` means
@@ -229,6 +302,16 @@ class Settings(BaseSettings):
         return _repo_relative(self.maskinporten_jwk_path)
 
     @property
+    def maskinporten_key_material(self) -> bytes | None:
+        """The Maskinporten key given inline, or ``None``."""
+        return _key_material(self.maskinporten_jwk)
+
+    @property
+    def idporten_key_material(self) -> bytes | None:
+        """The ID-porten key given inline, or ``None``."""
+        return _key_material(self.idporten_jwk)
+
+    @property
     def idporten_key_file(self) -> Path | None:
         """The ID-porten key file as an absolute path, or ``None``."""
         return _repo_relative(self.idporten_jwk_path)
@@ -241,6 +324,22 @@ class Settings(BaseSettings):
         secure cookies is a deployment where someone will forget.
         """
         return self.environment != "development"
+
+
+def _key_material(secret: SecretStr | None) -> bytes | None:
+    """Signing-key bytes from an inline setting, or ``None`` when it is blank.
+
+    Newlines survive a secret binding badly, so a PEM pasted as a single line
+    with ``\n`` escapes is accepted as well as a real multi-line one.
+    """
+    if secret is None:
+        return None
+    raw = secret.get_secret_value().strip()
+    if not raw:
+        return None
+    if "\\n" in raw and "\n" not in raw:
+        raw = raw.replace("\\n", "\n")
+    return raw.encode("utf-8")
 
 
 def _repo_relative(path: Path | None) -> Path | None:

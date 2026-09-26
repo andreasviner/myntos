@@ -9,6 +9,7 @@ from myntos.api.v1 import (
     enhetsregisteret,
     faktura,
     health,
+    members,
     organizations,
     parties,
     skatt,
@@ -19,6 +20,7 @@ api_router.include_router(health.router)
 api_router.include_router(auth.router)
 api_router.include_router(organizations.router)
 api_router.include_router(companies.router)
+api_router.include_router(members.router)
 api_router.include_router(parties.router)
 api_router.include_router(cashflow.router)
 api_router.include_router(faktura.router)

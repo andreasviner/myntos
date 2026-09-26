@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from myntos.core.clock import utc_now
 from myntos.domain.faktura import kid
 from myntos.integrations import loynd
-from tests.conftest import register, write
+from tests.conftest import join_company, register, write
 
 ORGNR = "910000004"
 CUSTOMER_ORGNR = "910000012"
@@ -321,11 +321,11 @@ def test_adding_the_account_number_clears_the_finding_on_an_existing_draft(
     assert (
         write(
             client,
-            "PATCH",
-            f"/api/v1/companies/{company['id']}",
-            json={"bank_account": "1506.20.33158"},
+            "POST",
+            f"/api/v1/companies/{company['id']}/bankkontoer",
+            json={"account": "1506.20.33158"},
         ).status_code
-        == 200
+        == 201
     )
 
     # Saving the draft is what the form does before it shows the review, and it
@@ -353,6 +353,97 @@ def test_an_account_number_with_a_bad_check_digit_is_refused(client: TestClient)
     )
     assert response.status_code == 422
     assert "feil kontrollsiffer" in response.json()["detail"]
+
+
+def _add_account(client: TestClient, company_id: int, account: str) -> int:
+    """A second kontonummer, and its id. Companies here are made with one already."""
+    response = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company_id}/bankkontoer",
+        json={"account": account, "label": "Skattetrekk"},
+    )
+    assert response.status_code == 201, response.text
+    added = next(a for a in response.json()["bank_accounts"] if a["account"] == account)
+    return int(added["id"])
+
+
+def test_an_invoice_is_paid_into_the_primary_account_unless_it_says_otherwise(
+    client: TestClient,
+) -> None:
+    """The answer for every company with one account, and the default for the rest."""
+    company = signed_in_company(client)
+    _add_account(client, company["id"], "98765432103")
+    draft = create_draft(client, company["id"])
+
+    assert draft["bank_account_id"] is None
+    assert draft["seller_bank_account"] == "15062033158"
+
+
+def test_an_invoice_can_name_which_account_it_is_paid_into(client: TestClient) -> None:
+    """What multiple accounts actually asks of an invoice: a choice."""
+    company = signed_in_company(client)
+    skattetrekk = _add_account(client, company["id"], "98765432103")
+    draft = create_draft(client, company["id"], bank_account_id=skattetrekk)
+
+    assert draft["bank_account_id"] == skattetrekk
+    assert draft["seller_bank_account"] == "98765432103"
+
+    issued = issue(client, company["id"], draft["id"])
+    assert issued.status_code == 201, issued.text
+    assert issued.json()["seller_bank_account"] == "98765432103"
+
+
+def test_closing_an_account_does_not_change_an_issued_invoice(client: TestClient) -> None:
+    """A posted document is history: it keeps saying what it said when it was issued."""
+    company = signed_in_company(client)
+    skattetrekk = _add_account(client, company["id"], "98765432103")
+    draft = create_draft(client, company["id"], bank_account_id=skattetrekk)
+    issued = issue(client, company["id"], draft["id"]).json()
+
+    closed = write(client, "DELETE", f"/api/v1/companies/{company['id']}/bankkontoer/{skattetrekk}")
+    assert closed.status_code == 200, closed.text
+
+    after = client.get(f"/api/v1/companies/{company['id']}/faktura/{issued['id']}").json()
+    assert after["seller_bank_account"] == "98765432103"
+    # The key is gone, because the account is; the number the customer was told
+    # to pay into is not, because it was told.
+    assert after["bank_account_id"] is None
+
+
+def test_a_draft_falls_back_to_the_primary_when_its_account_is_closed(
+    client: TestClient,
+) -> None:
+    """Closing a bank account must not be blocked by a draft from March."""
+    company = signed_in_company(client)
+    skattetrekk = _add_account(client, company["id"], "98765432103")
+    draft = create_draft(client, company["id"], bank_account_id=skattetrekk)
+
+    write(client, "DELETE", f"/api/v1/companies/{company['id']}/bankkontoer/{skattetrekk}")
+
+    saved = patch(client, company["id"], draft["id"], note="uendret").json()
+    assert saved["seller_bank_account"] == "15062033158"
+    # Back to naming none, which is the same state as a draft that never chose:
+    # it follows the primary from here on rather than holding a dead id.
+    assert saved["bank_account_id"] is None
+    assert [v["field"] for v in saved["violations"] if v["severity"] == "blokkerende"] == []
+
+
+def test_a_draft_cannot_be_pointed_at_another_companys_account(client: TestClient) -> None:
+    """The company filter, on a field in the body rather than in the path."""
+    session = register(client)
+    organization_id = session["memberships"][0]["organization_id"]
+    mine = make_company(client, organization_id)
+    theirs = make_company(client, organization_id, orgnr=CUSTOMER_ORGNR, name="Naboen AS")
+    smuggled = theirs["bank_accounts"][0]["id"]
+
+    response = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{mine['id']}/faktura",
+        json=draft_payload(bank_account_id=smuggled),
+    )
+    assert response.status_code == 404
 
 
 def test_a_company_that_is_not_vat_registered_cannot_invoice_vat(client: TestClient) -> None:
@@ -531,17 +622,7 @@ def test_a_viewer_may_read_but_not_issue(client: TestClient, role: str) -> None:
     company = make_company(client, organization_id)
     draft = create_draft(client, company["id"])
 
-    invitation = write(
-        client,
-        "POST",
-        f"/api/v1/organizations/{organization_id}/invitations",
-        json={"email": "revisor@example.no", "role": role},
-    ).json()
-    token = invitation["invite_url"].rsplit("=", maxsplit=1)[1]
-    write(client, "POST", "/api/v1/auth/logout")
-
-    register(client, "revisor@example.no", organization_name=None)
-    write(client, "POST", "/api/v1/auth/invitations/accept", json={"token": token})
+    join_company(client, company["id"], email="revisor@example.no", role=role)
 
     assert client.get(f"/api/v1/companies/{company['id']}/faktura/{draft['id']}").status_code == 200
     assert issue(client, company["id"], draft["id"]).status_code == 403

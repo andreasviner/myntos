@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from myntos.integrations import brreg
-from tests.conftest import register, write
+from tests.conftest import join_company, register, write
 
 # Equinor's, because it is real and its check digit is therefore correct.
 ORGNR = "923609016"
@@ -629,19 +629,144 @@ def test_refreshing_needs_the_permission_that_editing_needs(
     session = register(client)
     company = _company(client, session)
 
-    invitation = write(
-        client,
-        "POST",
-        f"/api/v1/organizations/{session['memberships'][0]['organization_id']}/invitations",
-        json={"email": "leser@example.no", "role": "viewer"},
+    join_company(
+        client, company["id"], email="leser@example.no", role="viewer", full_name="Lise Leser"
     )
-    assert invitation.status_code == 201, invitation.text
-    token = invitation.json()["invite_url"].rsplit("=", 1)[1]
-
-    register(client, "leser@example.no", full_name="Lise Leser")
-    accepted = write(client, "POST", "/api/v1/auth/invitations/accept", json={"token": token})
-    assert accepted.status_code == 200, accepted.text
 
     refused = write(client, "POST", f"/api/v1/companies/{company['id']}/hent")
     assert refused.status_code == 403
     assert refused.json()["code"] == "permission_denied"
+
+
+# --- What is kept ----------------------------------------------------------------
+#
+# The columns on `company` are the handful the system reads by name. Everything
+# else the register answers with is kept whole in a snapshot, so that wanting
+# the styret or the aksjekapital later is a question to the database rather than
+# another round trip to Brønnøysund.
+
+
+def _register(client: TestClient, company_id: int) -> Any:
+    return client.get(f"/api/v1/companies/{company_id}/register")
+
+
+def test_the_stored_answer_is_served_without_asking_the_register(
+    client: TestClient, brreg_answers: Callable[[Handler], list[str]]
+) -> None:
+    """A page load should not spend a round trip on an answer we already have.
+
+    The company is created — which fetches once — and then the whole register
+    picture is readable without Brønnøysund being asked a second time.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/roller"):
+            return httpx.Response(200, json=ROLES)
+        return httpx.Response(200, json=FULL_UNIT)
+
+    requested = brreg_answers(handler)
+    session = register(client)
+    company = _company(client, session)
+    asked = len(requested)
+
+    body = _register(client, company["id"]).json()
+
+    assert len(requested) == asked, "reading the stored answer must not call the register"
+    assert body["unit"]["capital"]["shares"] == 2390749040
+    assert body["unit"]["former_names"] == ["STATOIL ASA"]
+    assert body["fetched_at"] is not None
+    assert [role["name"] for role in body["roles"]] != []
+
+
+def test_nothing_stored_is_null_rather_than_an_error(
+    client: TestClient, brreg_answers: Callable[[Handler], list[str]]
+) -> None:
+    """A register that was down when the books were set up leaves no snapshot.
+
+    The page has to be able to tell that apart from a company with no roles, and
+    `null` is how it does.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("nede", request=request)
+
+    brreg_answers(handler)
+    session = register(client)
+    company = _company(client, session)
+
+    response = _register(client, company["id"])
+    assert response.status_code == 200
+    assert response.json() is None
+
+
+def test_a_failed_role_lookup_keeps_the_board_we_already_had(
+    client: TestClient, brreg_answers: Callable[[Handler], list[str]]
+) -> None:
+    """An old board is a better answer than no board.
+
+    The roles are a second request and fail on their own, so a refresh whose
+    unit lookup succeeded must not empty out what the last one stored.
+    """
+    roles_answer = [httpx.Response(200, json=ROLES)]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/roller"):
+            return roles_answer[-1]
+        return httpx.Response(200, json=FULL_UNIT)
+
+    brreg_answers(handler)
+    session = register(client)
+    company = _company(client, session)
+    before = _register(client, company["id"]).json()["roles"]
+    assert before != []
+
+    roles_answer.append(httpx.Response(503))
+    body = write(client, "POST", f"/api/v1/companies/{company['id']}/hent").json()
+
+    assert body["roles"] == before
+    assert _register(client, company["id"]).json()["roles"] == before
+
+
+def test_a_corrected_orgnr_does_not_inherit_the_previous_company_s_answer(
+    client: TestClient, brreg_answers: Callable[[Handler], list[str]]
+) -> None:
+    """The snapshot describes a number, not a row.
+
+    Correcting an unconfirmed orgnr makes everything stored under the old one an
+    accurate answer about a different company, which is worse than none.
+    """
+    brreg_answers(lambda _request: httpx.Response(200, json=FULL_UNIT))
+    session = register(client)
+    company = _company(client, session)
+    assert _register(client, company["id"]).json() is not None
+
+    # Another real orgnr, so the check digit holds. The stub answers for it with
+    # Equinor's entry either way; what matters is that the *old* snapshot is not
+    # what comes back.
+    moved = write(
+        client, "PATCH", f"/api/v1/companies/{company['id']}", json={"orgnr": "914778271"}
+    )
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["orgnr"] == "914778271"
+    assert _register(client, company["id"]).json()["unit"]["orgnr"] == ORGNR
+
+
+def test_reading_the_stored_answer_is_open_to_everyone_on_the_books(
+    client: TestClient, brreg_answers: Callable[[Handler], list[str]]
+) -> None:
+    """Unlike the refresh, which can change what an invoice claims.
+
+    This one writes nothing, so a viewer invited to these books can still see
+    who the company is.
+    """
+    brreg_answers(lambda _request: httpx.Response(200, json=FULL_UNIT))
+    session = register(client)
+    company = _company(client, session)
+
+    join_company(
+        client, company["id"], email="leser@example.no", role="viewer", full_name="Lise Leser"
+    )
+
+    response = _register(client, company["id"])
+    assert response.status_code == 200
+    assert response.json()["unit"]["name"] == "EQUINOR ASA"

@@ -75,12 +75,34 @@ rather than asking for. All three are editable afterwards at
 
 ### Kontonummer — not in § 5-1, and blocking anyway
 
-`company.bank_account` is not something the regulation asks for. It blocks an
-issue regardless (`compliance._check_payment_account`), because an invoice
+A kontonummer is not something the regulation asks for. Having **none** blocks
+an issue regardless (`compliance._check_payment_account`), because an invoice
 without it is a demand for money with no account on it: the PDF omits the line,
 and `cac:PaymentMeans` is left out of the XML **entirely** rather than emitted
 incomplete — an empty one fails BR-49 — so the KID goes with it. There is no
 edit path afterwards; the only correction is a kreditnota and a second invoice.
+
+**A company has as many accounts as its bank gave it**, so this is a table
+(`CompanyBankAccount`) and not a column: a driftskonto to invoice against, a
+skattetrekkskonto that skattebetalingsloven § 5-12 requires be kept apart from
+the operating money, a currency account. It used to be `company.bank_account`,
+one column, and everyone with two put the second one nowhere.
+
+Three consequences worth keeping straight, because they are the ones an invoice
+depends on:
+
+- **Exactly one account is `is_primary`** for as long as the company has any,
+  enforced by a partial unique index and not only by the service. It is where an
+  invoice is paid when it names no account itself.
+- **A document names its own account** (`SalesDocument.bank_account_id`), and
+  that is the choice. `/faktura/` offers the picker **only** when the company has
+  more than one account — a select with one option is a question nobody was
+  asked — so a one-account company behaves exactly as it did before.
+- **`seller_bank_account` on the document is still the snapshot**, and it is what
+  the PDF and the XML read. The key is `ON DELETE SET NULL`, so closing a bank
+  account cannot change what an issued invoice said, and cannot be blocked by a
+  draft from March: the draft falls back to the primary the next time it is
+  saved, the issued document beside it notices nothing.
 
 The number is eleven digits with a mod-11 check digit over the first ten,
 weighted 2, 3, 4, 5, 6, 7 from the right — the same arithmetic as a MOD11 KID,

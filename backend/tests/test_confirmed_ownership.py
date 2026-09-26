@@ -319,3 +319,83 @@ def test_another_organization_s_company_is_a_404(client: TestClient, parties: St
 
     _second_account(client)
     assert _confirm(client, company["id"]).status_code == 404
+
+
+# --- Correcting the number --------------------------------------------------------
+
+
+def _patch(client: TestClient, company_id: int, **fields: Any) -> Any:
+    return write(client, "PATCH", f"/api/v1/companies/{company_id}", json=fields)
+
+
+def test_an_unconfirmed_orgnr_can_be_corrected(client: TestClient, parties: StubAltinn) -> None:
+    """Nine digits typed into a form is exactly the thing that gets typed wrong.
+
+    Nothing rests on the number until somebody confirms it, and rebuilding a set
+    of books is a steep price for one wrong digit.
+    """
+    session = register(client)
+    company = _create(client, session, NOT_MINE)
+
+    corrected = _patch(client, company["id"], orgnr=MINE)
+    assert corrected.status_code == 200, corrected.text
+    assert corrected.json()["orgnr"] == MINE
+
+
+def test_a_confirmed_orgnr_is_locked(client: TestClient, parties: StubAltinn) -> None:
+    """The confirmation is Altinn's word about *that number*.
+
+    Letting the number move afterwards would carry the evidence over to an
+    entity nobody has shown any right to act for, which is precisely what the
+    confirmation exists to establish.
+    """
+    session = register(client)
+    _sign_in_to_the_government(client)
+    company = _create(client, session, MINE)
+    assert _confirm(client, company["id"]).status_code == 200
+
+    refused = _patch(client, company["id"], orgnr=SUBUNIT)
+    assert refused.status_code == 409
+    assert refused.json()["code"] == "company_orgnr_locked"
+    assert client.get(f"/api/v1/companies/{company['id']}").json()["orgnr"] == MINE
+
+
+def test_a_confirmed_company_still_accepts_its_own_orgnr(
+    client: TestClient, parties: StubAltinn
+) -> None:
+    """A form that submits every field it shows submits the orgnr too.
+
+    Only a *changed* number is refused; resubmitting the one already stored is
+    not an edit, and refusing it would make the rest of the card unsavable.
+    """
+    session = register(client)
+    _sign_in_to_the_government(client)
+    company = _create(client, session, MINE)
+    assert _confirm(client, company["id"]).status_code == 200
+
+    saved = _patch(client, company["id"], orgnr=MINE, name="Nordmann Consulting AS")
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["orgnr"] == MINE
+
+
+def test_correcting_onto_a_number_the_organization_already_keeps_is_refused(
+    client: TestClient, parties: StubAltinn
+) -> None:
+    """The same collision as creating the second set of books, and the same answer."""
+    session = register(client)
+    _create(client, session, MINE)
+    other = _create(client, session, NOT_MINE)
+
+    refused = _patch(client, other["id"], orgnr=MINE)
+    assert refused.status_code == 409
+    assert refused.json()["code"] == "duplicate_company"
+
+
+def test_a_correction_has_to_be_a_real_orgnr(client: TestClient, parties: StubAltinn) -> None:
+    """The check digit is checked here as it is on the way in."""
+    session = register(client)
+    company = _create(client, session, MINE)
+
+    refused = _patch(client, company["id"], orgnr="123456789")
+    assert refused.status_code == 422
+    assert client.get(f"/api/v1/companies/{company['id']}").json()["orgnr"] == MINE

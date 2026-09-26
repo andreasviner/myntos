@@ -50,13 +50,55 @@ class CashFlowType:
     code: str
     label: str
     direction: CashFlowDirection
-    # The account the net amount is booked to. Usually a P&L account; for the
-    # two equity types it is a balance-sheet account, because an owner's
-    # deposit or withdrawal is not income or cost and must not reach the
+    # The account the net amount is booked to. Usually a P&L account, and a
+    # balance-sheet one wherever money moves without anything being earned or
+    # spent: an owner's deposit or withdrawal, a driftsmiddel bought or sold, a
+    # loan drawn or repaid, a filed mva-melding settled, withheld tax paid on.
+    # None of those is income or cost, and none may reach the
     # næringsspesifikasjon as either.
     account_number: str
     default_tax_code: str
     note: str
+    #: The category this one reverses, when it is a refund or a kreditnota.
+    #:
+    #: A refund is money in that is not income: the supplier sent back what was
+    #: paid, so the cost goes down and the VAT deduction on it goes back with it.
+    #: A kreditnota is the mirror, money out that is not a cost: the customer got
+    #: their money back, so the turnover goes down and the output VAT charged on
+    #: it goes back with it.
+    #:
+    #: Naming the category it reverses is what lets the posting land on the same
+    #: account the original did, and what ``books_as`` reads to pick 2700 over
+    #: 2710. Between them that is the difference between reducing a deduction and
+    #: owing tax on a sale that never happened.
+    reverses: str | None = None
+
+    @property
+    def is_refund(self) -> bool:
+        """Money moving back rather than money earned or spent."""
+        return self.reverses is not None
+
+    @property
+    def books_as(self) -> CashFlowDirection:
+        """The direction the *trade* went, which a reversal flips back.
+
+        A refund is money in on a purchase and a kreditnota is money out on a
+        sale, so on both of them ``direction`` says which way the bank moved and
+        nothing about which side of the books the amount belongs to. This says
+        that, and it is what picks 2700 over 2710.
+
+        Getting it from the direction alone was right only while a sale could
+        not be reversed: ``is_incoming and not is_refund`` put a kreditnota's
+        VAT on 2710, which claims a deduction on a sale that was cancelled
+        rather than giving back the tax that was charged on it.
+        """
+        if not self.is_refund:
+            return self.direction
+        return (
+            CashFlowDirection.UT
+            if self.direction is CashFlowDirection.INN
+            else CashFlowDirection.INN
+        )
 
     @property
     def is_income_statement(self) -> bool:
@@ -72,7 +114,10 @@ class CashFlowType:
         return not self.account_number.startswith(("1", "2"))
 
 
-_TYPES: tuple[CashFlowType, ...] = (
+#: The categories written out by hand. The reversals below are derived from
+#: these, and never from each other: a refund of a kreditnota is a sale, which
+#: the catalogue already has.
+_BASE: tuple[CashFlowType, ...] = (
     # --- Money in ---
     CashFlowType(
         code="salg_hoy_sats",
@@ -118,6 +163,23 @@ _TYPES: tuple[CashFlowType, ...] = (
         note="Avgiftsfri utførsel av varer og tjenester. Skal rapporteres i mva-meldingen.",
     ),
     CashFlowType(
+        code="salg_driftsmiddel",
+        label="Salg av driftsmiddel",
+        direction=CashFlowDirection.INN,
+        # The same balance-sheet account the purchase went to. Selling used
+        # equipment is not turnover: the money in is the asset leaving, and
+        # booked to 3000 it would count as revenue while the thing sold stayed
+        # on the balance sheet being depreciated.
+        account_number="1250",
+        default_tax_code="3",
+        note=(
+            "Salg av utstyr du har aktivert. Beløpet føres mot samme balansekonto (1250), "
+            "så saldoen du avskriver går ned. Er salgssummen større enn det som står igjen "
+            "på driftsmidlet, er differansen en gevinst som skal inntektsføres ved "
+            "årsoppgjøret."
+        ),
+    ),
+    CashFlowType(
         code="annen_inntekt",
         label="Annen inntekt",
         direction=CashFlowDirection.INN,
@@ -132,6 +194,42 @@ _TYPES: tuple[CashFlowType, ...] = (
         account_number="8050",
         default_tax_code=NO_VAT_CODE,
         note="Finansielle tjenester er unntatt merverdiavgift.",
+    ),
+    CashFlowType(
+        code="valutagevinst",
+        label="Valutagevinst",
+        direction=CashFlowDirection.INN,
+        account_number="8060",
+        default_tax_code=NO_VAT_CODE,
+        note=(
+            "Differansen når betalingen i kroner ble mindre enn fakturaen i utenlandsk "
+            "valuta tilsa, fordi kursen endret seg. Dette er en finansinntekt og ikke et "
+            "salg, så det skal ikke inn i mva-meldingen."
+        ),
+    ),
+    CashFlowType(
+        code="mva_tilgode",
+        # Named for the melding rather than for the money, the same way its
+        # money-out twin is, and for the same reason.
+        label="Utbetaling av mva-melding fra Skatteetaten",
+        direction=CashFlowDirection.INN,
+        account_number="2740",
+        default_tax_code=NO_VAT_CODE,
+        note=(
+            "Utbetaling fra Skatteetaten når inngående mva var større enn utgående. Dette "
+            "er ikke inntekt: meldingen er alt ført, og dette gjør bare opp den."
+        ),
+    ),
+    CashFlowType(
+        code="laneopptak",
+        label="Nytt lån",
+        direction=CashFlowDirection.INN,
+        account_number="2220",
+        default_tax_code=NO_VAT_CODE,
+        note=(
+            "Lånte penger inn på konto. Dette er ikke inntekt og skattlegges ikke: beløpet "
+            "står som gjeld til det er nedbetalt. Avdragene føres som «Avdrag på lån»."
+        ),
     ),
     CashFlowType(
         code="egenkapitalinnskudd",
@@ -304,6 +402,63 @@ _TYPES: tuple[CashFlowType, ...] = (
         note="Rentedelen av et avdrag. Selve avdraget er nedbetaling av gjeld, ikke kostnad.",
     ),
     CashFlowType(
+        code="valutatap",
+        label="Valutatap",
+        direction=CashFlowDirection.UT,
+        account_number="8160",
+        default_tax_code=NO_VAT_CODE,
+        note=(
+            "Differansen når betalingen i kroner ble større enn fakturaen i utenlandsk "
+            "valuta tilsa, fordi kursen endret seg. Dette er en finanskostnad og ikke et "
+            "kjøp: det gir ingen fradragsrett for mva og skal ikke inn i mva-meldingen."
+        ),
+    ),
+    CashFlowType(
+        code="avdrag_lan",
+        label="Avdrag på lån",
+        direction=CashFlowDirection.UT,
+        # Gjeld, not kostnad. The money left, but nothing was consumed: the debt
+        # went down. Booked as a cost it would deduct the same money twice, once
+        # when the loan bought something and again when it was repaid.
+        account_number="2220",
+        default_tax_code=NO_VAT_CODE,
+        note=(
+            "Nedbetaling av selve lånet. Dette er ikke en kostnad og gir ikke fradrag: "
+            "gjelden går ned og resultatet er uberørt. Rentedelen av terminbeløpet føres "
+            "for seg som «Renter og lånekostnad»."
+        ),
+    ),
+    CashFlowType(
+        code="mva_oppgjor",
+        # "Betalt merverdiavgift" was the first label and it was a trap. The
+        # classifier is shown labels and nothing else, and that one reads as
+        # "VAT that was paid", which describes every purchase invoice in the
+        # catalogue. Brønnøysundregistrene's registreringsgebyr came back as
+        # this category three runs out of three: a government body, 0 % mva on
+        # the face of it, and a label that seemed to fit. Booked here the 6 825
+        # kroner would land on 2740 and leave the income statement entirely.
+        label="Oppgjør av mva-melding til Skatteetaten",
+        direction=CashFlowDirection.UT,
+        account_number="2740",
+        default_tax_code=NO_VAT_CODE,
+        note=(
+            "Innbetaling av en mva-melding til Skatteetaten. Beløpet er avgift som alt er "
+            "ført på 2700 og 2710, ikke en ny kostnad, og skal ikke med i en ny melding."
+        ),
+    ),
+    CashFlowType(
+        code="forskuddstrekk",
+        label="Innbetalt forskuddstrekk",
+        direction=CashFlowDirection.UT,
+        account_number="2600",
+        default_tax_code=NO_VAT_CODE,
+        note=(
+            "Skattetrekket du holdt tilbake fra lønnen og nå betaler videre. Kostnaden ble "
+            "ført med lønnen, så dette gjør bare opp gjelden. Arbeidsgiveravgiften har sin "
+            "egen type."
+        ),
+    ),
+    CashFlowType(
         code="annen_kostnad",
         label="Annen driftskostnad",
         direction=CashFlowDirection.UT,
@@ -324,6 +479,126 @@ _TYPES: tuple[CashFlowType, ...] = (
     ),
 )
 
+#: Money-out categories that get no refund counterpart, and why.
+#:
+#: ``privatuttak`` is equity and already has its own money-in twin
+#: (``egenkapitalinnskudd``): an owner putting money back in is a deposit, not a
+#: refund of a withdrawal. ``avdrag_lan``, ``mva_oppgjor`` and ``valutatap`` are
+#: out for the same reason — ``laneopptak``, ``mva_tilgode`` and
+#: ``valutagevinst`` are the other side of each of them, written out by hand
+#: because none of the three is a *reversal*: money borrowed is not a refund of
+#: an instalment, and a krone gained on the exchange rate is not a krone given
+#: back.
+#:
+#: ``lonn``, ``arbeidsgiveravgift`` and ``forskuddstrekk`` are left out on
+#: purpose. Money coming back on payroll is almost never a reversal of the cost:
+#: refusjon av sykepenger and feriepenger belong on their own income account,
+#: and a category that credited 5000 would quietly understate salaries in the
+#: a-melding and the næringsspesifikasjon. A real reversal of a wrongly paid
+#: salary is a correction of the voucher, which the register already does
+#: properly.
+_NO_REFUND = frozenset(
+    {
+        "privatuttak",
+        "lonn",
+        "arbeidsgiveravgift",
+        "forskuddstrekk",
+        "avdrag_lan",
+        "mva_oppgjor",
+        "valutatap",
+    }
+)
+
+#: Money-in categories that get no kreditnota counterpart, and why.
+#:
+#: A kreditnota reverses a *sale*, so only the sales rows have one. The rest of
+#: the money-in catalogue is either not a sale at all — ``renteinntekt``,
+#: ``valutagevinst``, ``egenkapitalinnskudd``, ``laneopptak``, ``mva_tilgode`` —
+#: or is one whose reversal already exists under another name:
+#: ``salg_driftsmiddel`` cancelled is the asset coming back, which is
+#: ``refusjon_driftsmiddel``, and pointing a second category at 1250 would let
+#: the same event be booked two ways.
+_NO_CREDIT_NOTE = frozenset(
+    {
+        "renteinntekt",
+        "valutagevinst",
+        "egenkapitalinnskudd",
+        "laneopptak",
+        "mva_tilgode",
+        "salg_driftsmiddel",
+    }
+)
+
+
+def _refund_of(cost: CashFlowType) -> CashFlowType:
+    """The money-in twin of one cost category.
+
+    Derived rather than written out, so the account and the VAT code cannot
+    drift from the purchase the refund reverses. That drift is the whole risk
+    here: a refund booked to a different account than its purchase leaves both
+    the cost and the deduction overstated, and nothing in the books says so.
+    """
+    reverses_vat = cost.default_tax_code != NO_VAT_CODE
+    deduction = " Fradraget for inngående mva reverseres i samme føring." if reverses_vat else ""
+    return CashFlowType(
+        code=f"refusjon_{cost.code}",
+        label=f"Refusjon: {cost.label.lower()}",
+        direction=CashFlowDirection.INN,
+        # The same account the purchase went to, which is what makes this a
+        # reduction of that cost rather than income of its own.
+        account_number=cost.account_number,
+        default_tax_code=cost.default_tax_code,
+        note=(
+            f"Penger tilbake på noe som ble ført som «{cost.label}». Beløpet føres mot "
+            f"samme konto ({cost.account_number}), så kostnaden går ned."
+            f"{deduction}"
+        ),
+        reverses=cost.code,
+    )
+
+
+def _credit_note_of(sale: CashFlowType) -> CashFlowType:
+    """The money-out twin of one sales category: a kreditnota to a customer.
+
+    The mirror of :func:`_refund_of`, and derived for the same reason. What it
+    adds is the other half of a rule the register could not express: bokføringsloven
+    forbids editing a posted sales document, so a cancelled sale is a kreditnota
+    that reverses it (see :mod:`myntos.domain.faktura`). Paying the customer back
+    had to be recorded here as *something*, and every money-out category on offer
+    was a cost — filing a returned sale under "Annen driftskostnad" leaves the
+    turnover standing and the output VAT owed on it with it.
+    """
+    reverses_vat = sale.default_tax_code != NO_VAT_CODE
+    tax = " Den utgående mvaen på salget reverseres i samme føring." if reverses_vat else ""
+    return CashFlowType(
+        code=f"kreditnota_{sale.code}",
+        label=f"Kreditnota: {sale.label.lower()}",
+        direction=CashFlowDirection.UT,
+        account_number=sale.account_number,
+        default_tax_code=sale.default_tax_code,
+        note=(
+            f"Penger tilbake til en kunde på noe som ble ført som «{sale.label}». Beløpet "
+            f"føres mot samme konto ({sale.account_number}), så inntekten går ned."
+            f"{tax}"
+        ),
+        reverses=sale.code,
+    )
+
+
+_TYPES: tuple[CashFlowType, ...] = (
+    _BASE
+    + tuple(
+        _refund_of(entry)
+        for entry in _BASE
+        if entry.direction is CashFlowDirection.UT and entry.code not in _NO_REFUND
+    )
+    + tuple(
+        _credit_note_of(entry)
+        for entry in _BASE
+        if entry.direction is CashFlowDirection.INN and entry.code not in _NO_CREDIT_NOTE
+    )
+)
+
 CASH_FLOW_TYPES: dict[str, CashFlowType] = {entry.code: entry for entry in _TYPES}
 
 
@@ -341,16 +616,38 @@ def types_for(direction: CashFlowDirection | None = None) -> list[CashFlowType]:
 
 
 def _validate_catalogue() -> None:
-    """Fail at import if a type points at an account or VAT code we never seed.
+    """Fail at import if a type points at an account, a code or a twin we lack.
 
     A typo here would otherwise surface as a 500 the first time a user picks
     that particular category — long after the deployment that introduced it.
+
+    The reversal checks are the part worth having. Both families are derived, so
+    they hold today by construction; what these refuse is the shortcut of
+    hand-writing one later. A reversal that has drifted from what it reverses,
+    or that goes the same way as it, posts VAT to the wrong side and reads as an
+    ordinary entry while doing it.
     """
     for entry in _TYPES:
         if entry.account_number not in ACCOUNTS_BY_NUMBER:
             raise AssertionError(f"{entry.code}: konto {entry.account_number} finnes ikke i chart")
         if entry.default_tax_code not in TAX_CODES_BY_CODE:
             raise AssertionError(f"{entry.code}: mva-kode {entry.default_tax_code} finnes ikke")
+
+    by_code = {entry.code: entry for entry in _TYPES}
+    for entry in _TYPES:
+        if entry.reverses is None:
+            continue
+        original = by_code.get(entry.reverses)
+        if original is None:
+            raise AssertionError(f"{entry.code}: reverserer ukjent type {entry.reverses}")
+        if original.reverses is not None:
+            raise AssertionError(f"{entry.code}: reverserer en reversering ({original.code})")
+        if original.direction is entry.direction:
+            raise AssertionError(f"{entry.code}: går samme vei som {original.code}")
+        if entry.account_number != original.account_number:
+            raise AssertionError(f"{entry.code}: annen konto enn {original.code}")
+        if entry.default_tax_code != original.default_tax_code:
+            raise AssertionError(f"{entry.code}: annen mva-kode enn {original.code}")
 
 
 _validate_catalogue()

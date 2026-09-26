@@ -244,6 +244,86 @@ def test_the_backfill_migration_reaches_a_company_that_already_exists() -> None:
     engine.dispose()
 
 
+def test_the_settlement_accounts_reach_a_company_that_already_exists() -> None:
+    """2220, 2600, 2740, 8060 and 8160 on books that predate the categories.
+
+    The same vacuous-check trap as the migration above: a freshly built database
+    has no companies, so the loop body never runs. What makes this one worth
+    testing separately is the grouping rows. A P&L account added after a year is
+    open needs one per open year or the SAF-T export has an account it cannot
+    place, and the two new P&L accounts have real næringsspesifikasjon posts
+    rather than "NA" while the three balance-sheet ones do not.
+    """
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as connection:
+        config = Config(str(BACKEND_ROOT / "alembic.ini"))
+        config.set_main_option("script_location", str(BACKEND_ROOT / "migrations"))
+        script = ScriptDirectory.from_config(config)
+        context = MigrationContext.configure(connection, opts={"target_metadata": Base.metadata})
+        revisions = list(reversed(list(script.walk_revisions())))
+        backfill = next(item for item in revisions if item.revision == "a2c7f31b9d64")
+
+        with Operations.context(context):
+            for revision in revisions:
+                if revision is backfill:
+                    connection.execute(
+                        sa.text(
+                            "INSERT INTO organization (id, name, slug, "
+                            "created_at, name_is_placeholder) VALUES (2, 'Sen AS', "
+                            "'sen-as', '2026-01-01', 0)"
+                        )
+                    )
+                    connection.execute(
+                        sa.text(
+                            "INSERT INTO company (id, organization_id, orgnr, name, "
+                            "country, currency_code, vat_registered, "
+                            "in_foretaksregisteret, plan, ki_enabled) VALUES (2, 2, "
+                            "'910000004', 'Sen AS', 'NO', 'NOK', 1, 0, 'gratis', 1)"
+                        )
+                    )
+                    connection.execute(
+                        sa.text(
+                            "INSERT INTO financial_year (id, company_id, year, "
+                            "start_date, end_date) VALUES (2, 2, 2026, '2026-01-01', "
+                            "'2026-12-31')"
+                        )
+                    )
+                revision.module.upgrade()
+
+        rows = connection.execute(
+            sa.text(
+                "SELECT account_number, account_type, is_active, created_date FROM account "
+                "WHERE company_id = 2 AND account_number IN "
+                "('2220', '2600', '2740', '8060', '8160') ORDER BY account_number"
+            )
+        ).fetchall()
+        assert [row[0] for row in rows] == ["2220", "2600", "2740", "8060", "8160"]
+        assert [row[1] for row in rows] == ["gjeld", "gjeld", "gjeld", "inntekt", "kostnad"]
+        # is_active has a Python-side default only, so a migration that forgot
+        # it would violate NOT NULL rather than quietly default.
+        assert all(row[2] for row in rows)
+        # Stamped from the year the books open, not from today.
+        assert all(str(row[3]).startswith("2026-01-01") for row in rows)
+
+        grouping = dict(
+            connection.execute(
+                sa.text(
+                    "SELECT a.account_number, g.grouping_category FROM account_grouping g "
+                    "JOIN account a ON a.id = g.account_id "
+                    "WHERE a.company_id = 2 AND g.financial_year = 2026 "
+                    "AND a.account_number IN ('2740', '8060', '8160')"
+                )
+            ).fetchall()
+        )
+        assert grouping == {
+            "2740": "NA",
+            "8060": "finansinntekt",
+            "8160": "finanskostnad",
+        }
+
+    engine.dispose()
+
+
 def test_the_correction_link_is_recovered_for_edits_that_predate_it() -> None:
     """Three vouchers posted before the link existed, joined back together.
 
@@ -341,4 +421,174 @@ def _seed_vouchers_from_before_the_link(connection: sa.Connection) -> None:
                 ":stamped, 'Test', :reverses)"
             ),
             {"pk": pk, "voucher_no": voucher_no, "stamped": stamped, "reverses": reverses},
+        )
+
+
+def test_an_account_wearing_a_company_name_is_given_it_back() -> None:
+    """The account that had been renamed after its first company.
+
+    Vacuous against a fresh database, like the backfill above: no organizations,
+    so the loop body never runs. Three accounts are therefore inserted just
+    before the first of the two revisions that deal with this, one for each
+    answer they have to get between them.
+
+    - Account 1 is the case that was reported as a leak, in the shape it
+      actually had: the account is called "Lindeman Technologies" and the
+      company is "LINDEMAN TECHNOLOGIES AS". ``c4d7e81f2a90`` compared the two
+      strings exactly and therefore missed it, which is how it survived a
+      migration written for it. ``d1a7f2c6b483`` ignores case and the trailing
+      organisasjonsform, and catches it.
+    - Account 2 holds one company and shares its name exactly. Given back too,
+      by the second revision: no screen shows an account name any more, so
+      matching is hygiene rather than a judgement about what somebody reads,
+      and an account that is not named after a company is the simpler
+      invariant to state.
+    - Account 3 holds two companies under a name of its own. Left alone,
+      because renaming a firm out from under a regnskapsfører is its own bug.
+    """
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as connection:
+        config = Config(str(BACKEND_ROOT / "alembic.ini"))
+        config.set_main_option("script_location", str(BACKEND_ROOT / "migrations"))
+        script = ScriptDirectory.from_config(config)
+        context = MigrationContext.configure(connection, opts={"target_metadata": Base.metadata})
+        revisions = list(reversed(list(script.walk_revisions())))
+        giveback = next(item for item in revisions if item.revision == "c4d7e81f2a90")
+
+        with Operations.context(context):
+            for revision in revisions:
+                if revision is giveback:
+                    _accounts_with_borrowed_names(connection)
+                revision.module.upgrade()
+
+        rows = connection.execute(
+            sa.text("SELECT id, name, name_is_placeholder FROM organization")
+        ).all()
+        names = {row[0]: row[1] for row in rows}
+        flags = {row[0]: bool(row[2]) for row in rows}
+
+        # Back to what signup would have invented, from the owner's own name,
+        # and marked as a question rather than as a settled fact.
+        assert names[1] == "Kari Nordmann (privat)"
+        assert flags[1]
+
+        assert names[2] == "Ola Nordmann (privat)"
+        assert flags[2]
+
+        # A name somebody chose, matching none of its companies.
+        assert names[3] == "Fjord Regnskap AS"
+        assert not flags[3]
+
+
+def test_the_access_backfill_leaves_everyone_where_they_were() -> None:
+    """Per-company access, given accounts whose members predate it.
+
+    The dangerous half of ``d1a7f2c6b483``: after it runs, a
+    ``company_membership`` row is the *only* thing that opens a set of books, so
+    a member it fails to copy across is a person locked out of books they were
+    keeping an hour ago.
+
+    Account 1 has two companies and two people (an owner and a viewer), which is
+    the case that has to produce four rows with the roles unchanged.
+    """
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as connection:
+        config = Config(str(BACKEND_ROOT / "alembic.ini"))
+        config.set_main_option("script_location", str(BACKEND_ROOT / "migrations"))
+        script = ScriptDirectory.from_config(config)
+        context = MigrationContext.configure(connection, opts={"target_metadata": Base.metadata})
+        revisions = list(reversed(list(script.walk_revisions())))
+        move = next(item for item in revisions if item.revision == "d1a7f2c6b483")
+
+        with Operations.context(context):
+            for revision in revisions:
+                if revision is move:
+                    _accounts_with_borrowed_names(connection)
+                    # A second person on account 1, who could read both its
+                    # companies the moment before this revision ran.
+                    connection.execute(
+                        sa.text(
+                            "INSERT INTO organization_membership (id, organization_id, "
+                            "user_id, role, created_at) VALUES (4, 1, 3, 'viewer', "
+                            "'2026-01-01')"
+                        )
+                    )
+                revision.module.upgrade()
+
+        granted = connection.execute(
+            sa.text("SELECT company_id, user_id, role FROM company_membership ORDER BY 1, 2")
+        ).all()
+        assert [tuple(row) for row in granted] == [
+            # Account 1's two companies, its owner and its viewer, roles intact.
+            (1, 1, "owner"),
+            (1, 3, "viewer"),
+            (2, 1, "owner"),
+            (2, 3, "viewer"),
+            # Account 2 and account 3, each with their own owner.
+            (3, 2, "owner"),
+            (4, 3, "owner"),
+            (5, 3, "owner"),
+        ]
+
+        # And the subscription came down with them.
+        plans = connection.execute(sa.text("SELECT id, plan FROM company ORDER BY id")).all()
+        assert {row[1] for row in plans} == {"free"}
+
+
+def _accounts_with_borrowed_names(connection: sa.Connection) -> None:
+    """Three accounts as they stood before the giveback revision ran."""
+    accounts = (
+        (1, "Lindeman Technologies", "lindeman-technologies"),
+        (2, "Ola Sole AS", "ola-sole-as"),
+        (3, "Fjord Regnskap AS", "fjord-regnskap-as"),
+    )
+    for pk, name, slug in accounts:
+        connection.execute(
+            sa.text(
+                "INSERT INTO organization (id, name, slug, plan, created_at, "
+                "name_is_placeholder) VALUES (:pk, :name, :slug, 'free', "
+                "'2026-01-01', 0)"
+            ),
+            {"pk": pk, "name": name, "slug": slug},
+        )
+
+    users = (
+        (1, "Kari Nordmann", "kari@example.no"),
+        (2, "Ola Nordmann", "ola@example.no"),
+        (3, "Frida Fjord", "frida@example.no"),
+    )
+    for pk, full_name, email in users:
+        connection.execute(
+            sa.text(
+                "INSERT INTO app_user (id, email, full_name, is_active, "
+                "failed_login_attempts, created_at) VALUES (:pk, :email, "
+                ":full_name, 1, 0, '2026-01-01')"
+            ),
+            {"pk": pk, "email": email, "full_name": full_name},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO organization_membership (id, organization_id, user_id, "
+                "role, created_at) VALUES (:pk, :pk, :pk, 'owner', '2026-01-01')"
+            ),
+            {"pk": pk},
+        )
+
+    companies = (
+        # The account borrowed this name before the company took its
+        # registered form, which is why an exact comparison missed it.
+        (1, 1, "910000004", "LINDEMAN TECHNOLOGIES AS"),
+        (2, 1, "910000012", "DIALGA AS"),
+        (3, 2, "915933149", "Ola Sole AS"),
+        (4, 3, "910000020", "Klient En AS"),
+        (5, 3, "910000039", "Klient To AS"),
+    )
+    for pk, organization_id, orgnr, name in companies:
+        connection.execute(
+            sa.text(
+                "INSERT INTO company (id, organization_id, orgnr, name, country, "
+                "currency_code, vat_registered, in_foretaksregisteret, ki_enabled) "
+                "VALUES (:pk, :organization_id, :orgnr, :name, 'NO', 'NOK', 0, 0, 1)"
+            ),
+            {"pk": pk, "organization_id": organization_id, "orgnr": orgnr, "name": name},
         )

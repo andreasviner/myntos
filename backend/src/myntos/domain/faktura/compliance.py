@@ -325,8 +325,11 @@ def _check_payment_account(document: SalesDocument) -> list[Violation]:
     A kreditnota is exempt: it pays nothing out, it reverses something that was
     charged, and it is filtered out by the caller before this runs.
 
-    The number is snapshotted from the company at issue, never typed per invoice,
-    so the fix is always the same one place — which is what the message says.
+    The number is snapshotted from one of the company's accounts at issue and
+    never typed per invoice: what an invoice may choose is *which* account
+    (``SalesDocument.bank_account_id``), and a company with none to choose from
+    is the case this finding is about. So the fix is always the same one place,
+    which is what the message says.
     """
     if document.seller_bank_account:
         return []
@@ -336,7 +339,7 @@ def _check_payment_account(document: SalesDocument) -> list[Violation]:
             field="seller_bank_account",
             message=(
                 "selskapet har ikke noe kontonummer, så fakturaen ville blitt sendt uten "
-                "å si hvor den skal betales. Legg det inn under Organisasjon → Selskapet"
+                "å si hvor den skal betales. Legg inn en konto under Organisasjon → Selskapet"
             ),
         )
     ]

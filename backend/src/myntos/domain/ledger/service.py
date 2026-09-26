@@ -28,9 +28,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
 from myntos.core.clock import utc_now
-from myntos.domain.identity.models import Organization, OrganizationMembership
+from myntos.domain.identity.models import (
+    CompanyMembership,
+    Organization,
+    OrganizationRole,
+    User,
+)
 from myntos.domain.ledger import cashflow, parties, posting
-from myntos.domain.ledger.bankkonto import validate_bank_account
+from myntos.domain.ledger.bankkonto import format_bank_account, validate_bank_account
 from myntos.domain.ledger.cashflow import CashFlowDirection
 from myntos.domain.ledger.chart import (
     BANK_ACCOUNT,
@@ -46,13 +51,17 @@ from myntos.domain.ledger.chart import (
 )
 from myntos.domain.ledger.errors import (
     AlreadyReversedError,
+    BankAccountNotFoundError,
     ClosedFinancialYearError,
     CompanyAlreadyClaimedError,
     CompanyNotFoundError,
+    CompanyOrgnrLockedError,
+    DuplicateBankAccountError,
     DuplicateCompanyError,
     InvalidAmountError,
     NotAuthorizedForPartyError,
     PeriodOutsideBooksError,
+    PrimaryBankAccountRequiredError,
     UnknownTaxCodeError,
     VoucherNotFoundError,
 )
@@ -60,6 +69,8 @@ from myntos.domain.ledger.models import (
     Account,
     AccountGrouping,
     Company,
+    CompanyBankAccount,
+    CompanyRegisterSnapshot,
     FinancialYear,
     Journal,
     TaxCode,
@@ -96,6 +107,7 @@ async def create_company(
     db: AsyncSession,
     *,
     organization: Organization,
+    created_by_user_id: int,
     orgnr: str,
     name: str,
     first_financial_year: int,
@@ -121,8 +133,21 @@ async def create_company(
     safe default for both is "not registered": an unregistered business that
     invoices VAT by accident still owes it to Skatteetaten. The signup flow fills
     them in from Enhetsregisteret, which is evidence rather than a guess.
+
+    **Only the creator gets access**, as its owner. Nobody else on the account
+    is added, not even another account owner: a new set of books is private
+    until somebody is invited to it, and sharing is a thing you do rather than a
+    thing that happens. That is the whole point of access being per company, and
+    it is why colleagues are invited to *this* company rather than to the
+    account.
     """
     normalised = validate_orgnr(orgnr)
+    # Checked here rather than after the insert, so a transposed pair is a 422
+    # about the account number and not a company that half exists. The signup
+    # form asks for one account; the rest are added afterwards through
+    # :func:`add_bank_account`, and this one is the primary because it is the
+    # only one.
+    account_number = validate_bank_account(bank_account) if bank_account else None
     company = Company(
         organization_id=organization.id,
         orgnr=normalised,
@@ -133,7 +158,17 @@ async def create_company(
         vat_registered=vat_registered,
         in_foretaksregisteret=in_foretaksregisteret,
         organisation_form=organisation_form,
-        bank_account=None if not bank_account else validate_bank_account(bank_account),
+        # Through the relationship and before the flush, unlike the kontoplan
+        # below, which is added row by row. Setting a collection on an object
+        # that is still transient is what marks it *loaded*: the caller reads
+        # ``company.bank_accounts`` to build its response, and on a persistent
+        # object an unloaded collection is a lazy load — which under asyncio is
+        # not a slow query, it is a MissingGreenlet.
+        bank_accounts=(
+            []
+            if account_number is None
+            else [CompanyBankAccount(account=account_number, is_primary=True)]
+        ),
     )
     db.add(company)
     try:
@@ -154,6 +189,13 @@ async def create_company(
         )
     )
     await _open_financial_year(db, company, first_financial_year)
+    db.add(
+        CompanyMembership(
+            company_id=company.id,
+            user_id=created_by_user_id,
+            role=OrganizationRole.OWNER,
+        )
+    )
     await db.flush()
     return company
 
@@ -198,6 +240,7 @@ async def update_company_profile(
     db: AsyncSession,
     *,
     company: Company,
+    orgnr: str | None = None,
     name: str | None = None,
     address_line: str | None = None,
     postal_code: str | None = None,
@@ -205,21 +248,48 @@ async def update_company_profile(
     vat_registered: bool | None = None,
     in_foretaksregisteret: bool | None = None,
     organisation_form: str | None = None,
-    bank_account: str | None = None,
     ki_enabled: bool | None = None,
 ) -> Company:
     """Correct the company's own details.
 
-    The orgnr is not editable. It keys every filing this system will ever
-    produce, and a set of books whose orgnr changed would silently claim that
-    past periods belonged to a different entity; a new orgnr is a new company.
+    The orgnr is editable exactly as long as nobody has confirmed the company.
+    It is nine digits somebody typed, and one of them being wrong is both easy
+    to do and, once the books are set up, expensive to discover — the whole set
+    would have to be built again. Correcting it before anything rests on it is
+    the cheap moment.
 
-    Everything else here can legitimately change — a business moves, opens a bank
-    account, or crosses the VAT registration threshold. Note that the flags only
-    affect documents issued **after** the change: an issued salgsdokument carries
-    its own snapshot of all of this, on purpose (see
-    :mod:`myntos.domain.faktura.models`).
+    A confirmed company is the other case, and :class:`CompanyOrgnrLockedError`
+    is what says so. The confirmation is Altinn's word that this person may act
+    for *that number*, so moving the number would carry evidence across to an
+    entity nobody has shown any right to. A different orgnr is then a different
+    company, and the way to it is a new set of books.
+
+    Everything else here can legitimately change — a business moves or crosses
+    the VAT registration threshold. Note that the flags only affect documents
+    issued **after** the change: an issued salgsdokument carries its own snapshot
+    of all of this, on purpose (see :mod:`myntos.domain.faktura.models`).
+
+    Bank accounts are **not** here. They are a collection rather than a field —
+    see :class:`~myntos.domain.ledger.models.CompanyBankAccount` — and a PATCH
+    that took one number would only ever be able to describe the first of them.
+    :func:`add_bank_account` and its neighbours below own that.
     """
+    # Held in a local, because the message below is built after a failed flush,
+    # and reading it off the instance there would send SQLAlchemy to a
+    # connection the IntegrityError has already broken.
+    number = company.orgnr
+    if orgnr is not None:
+        number = validate_orgnr(orgnr)
+        # Only a real change is refused. Sending the orgnr back unchanged is what
+        # a form that submits every field it shows does, and that must go on
+        # working against a confirmed company.
+        if number != company.orgnr:
+            if company.is_verified:
+                raise CompanyOrgnrLockedError(
+                    "organisasjonsnummeret kan ikke endres etter at eierskapet er bekreftet "
+                    "i Altinn. Et annet nummer er et annet selskap, og trenger sitt eget regnskap"
+                )
+            company.orgnr = number
     if name is not None:
         company.name = name.strip()
     if address_line is not None:
@@ -236,14 +306,175 @@ async def update_company_profile(
         company.ki_enabled = ki_enabled
     if organisation_form is not None:
         company.organisation_form = organisation_form or None
-    if bank_account is not None:
-        # Stored without the separators people type; the renderer puts them back.
-        # The empty string is how the field is cleared — anything else has to be
-        # a real account number, because this one ends up on invoices that cannot
-        # be corrected once issued.
-        company.bank_account = validate_bank_account(bank_account) if bank_account else None
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as error:
+        # The only constraint an edit can reach: this organization already keeps
+        # a second set of books under the orgnr just typed. Same answer as
+        # creating one, because it is the same collision.
+        raise DuplicateCompanyError(
+            f"organisasjonen fører allerede regnskap for {number}"
+        ) from error
     return company
+
+
+# --- Bank accounts --------------------------------------------------------------
+#
+# A company is paid into as many accounts as its bank gave it, and which one an
+# invoice names is a per-invoice choice with a per-company default. Everything
+# here filters on ``company.id`` for the reason docs/company-isolation.md gives:
+# passing the membership check says the caller may open *a* set of books, and
+# two companies in the same account both pass it.
+
+
+async def get_bank_account(
+    db: AsyncSession, *, company: Company, bank_account_pk: int
+) -> CompanyBankAccount:
+    """One of this company's accounts, or :class:`BankAccountNotFoundError`.
+
+    ``WHERE id = :id AND company_id = :company``, never ``db.get``: the id is
+    sequential and belongs to the whole installation, so a lookup by primary key
+    alone would answer with the company next door's account number.
+    """
+    account = await db.scalar(
+        select(CompanyBankAccount).where(
+            CompanyBankAccount.id == bank_account_pk,
+            CompanyBankAccount.company_id == company.id,
+        )
+    )
+    if account is None:
+        raise BankAccountNotFoundError("kontonummeret finnes ikke på dette selskapet")
+    return account
+
+
+def _held_by(company: Company, number: str, *, except_pk: int | None = None) -> bool:
+    return any(held.account == number and held.id != except_pk for held in company.bank_accounts)
+
+
+async def _make_primary(db: AsyncSession, company: Company, account: CompanyBankAccount) -> None:
+    """Promote one account and demote the rest — demotion first, in its own flush.
+
+    Two flushes and not one, and that is the whole point. The partial unique
+    index is checked statement by statement, so an instant where two rows carry
+    the flag is a violation even though the same flush would have cleared it a
+    statement later. The unit of work orders UPDATEs by primary key, so a single
+    flush is free to write the promotion before the demotion — which is exactly
+    what happens when the marking moves *back* to an older account, and it is
+    what this used to do.
+
+    The index stays the backstop for two requests racing. This is what keeps the
+    ordinary case from meeting it.
+    """
+    for held in company.bank_accounts:
+        if held is not account:
+            held.is_primary = False
+    await db.flush()
+    account.is_primary = True
+    await db.flush()
+
+
+async def add_bank_account(
+    db: AsyncSession,
+    *,
+    company: Company,
+    account: str,
+    label: str | None = None,
+    is_primary: bool = False,
+) -> CompanyBankAccount:
+    """Add a kontonummer to the company.
+
+    The first account added is always the primary whatever the caller asked for:
+    a company with accounts and no default is a company whose next invoice has
+    nowhere to be paid, and nobody would have chosen that on purpose.
+
+    The number is checked before it is stored, because it leaves the building on
+    every invoice and an issued salgsdokument can only be corrected with a
+    kreditnota — see :mod:`myntos.domain.ledger.bankkonto`.
+    """
+    number = validate_bank_account(account)
+    if _held_by(company, number):
+        raise DuplicateBankAccountError(
+            f"selskapet har allerede kontonummer {format_bank_account(number)}"
+        )
+    # Read before the append, so it counts the accounts as they were.
+    wants_primary = is_primary or not company.bank_accounts
+    # Inserted unmarked whatever the answer, and promoted afterwards. Carrying
+    # the flag into the INSERT would put a second marked row in the table for
+    # the length of one statement, because the unit of work writes inserts
+    # before updates — and the index does not care that the update was coming.
+    added = CompanyBankAccount(
+        account=number, label=(label or "").strip() or None, is_primary=False
+    )
+    company.bank_accounts.append(added)
+    await db.flush()
+    if wants_primary:
+        await _make_primary(db, company, added)
+    return added
+
+
+async def update_bank_account(
+    db: AsyncSession,
+    *,
+    company: Company,
+    bank_account_pk: int,
+    account: str | None = None,
+    label: str | None = None,
+    is_primary: bool | None = None,
+) -> CompanyBankAccount:
+    """Correct an account, rename it, or make it the one invoices default to.
+
+    Every field omitted is left alone, as everywhere else in this module. An
+    empty ``label`` is how a name is removed; an empty ``account`` is not
+    accepted, because an account row with no number is not a thing that can
+    exist — deleting it is.
+
+    ``is_primary=False`` is refused on the account that currently is primary,
+    and accepted everywhere else. That asymmetry is not a nicety: a form
+    resubmitting every field it shows must go on working, and the only way to
+    move the marking is to promote the account it should move *to*.
+    """
+    held = await get_bank_account(db, company=company, bank_account_pk=bank_account_pk)
+    if account is not None:
+        number = validate_bank_account(account)
+        if _held_by(company, number, except_pk=held.id):
+            raise DuplicateBankAccountError(
+                f"selskapet har allerede kontonummer {format_bank_account(number)}"
+            )
+        held.account = number
+    if label is not None:
+        held.label = label.strip() or None
+    if is_primary is not None:
+        if is_primary:
+            await _make_primary(db, company, held)
+        elif held.is_primary:
+            raise PrimaryBankAccountRequiredError(
+                "et selskap med kontoer har alltid én hovedkonto. Gjør en annen konto til "
+                "hovedkonto i stedet, så flytter merkingen seg dit"
+            )
+    await db.flush()
+    return held
+
+
+async def delete_bank_account(db: AsyncSession, *, company: Company, bank_account_pk: int) -> None:
+    """Remove an account. Issued documents keep theirs.
+
+    Nothing is archived and nothing is refused, because nothing is lost: a
+    salgsdokument snapshots the number it was issued with
+    (``SalesDocument.seller_bank_account``), and the key a *draft* holds is
+    ``ON DELETE SET NULL``, so a draft pointed at a closed account falls back to
+    the primary the next time it is saved rather than breaking.
+
+    Deleting the primary promotes the oldest account that is left. A company can
+    end up with no accounts at all — that is the state it was created in — but it
+    must never end up with several and no default.
+    """
+    held = await get_bank_account(db, company=company, bank_account_pk=bank_account_pk)
+    was_primary = held.is_primary
+    company.bank_accounts.remove(held)
+    await db.flush()
+    if was_primary and company.bank_accounts:
+        oldest = min(company.bank_accounts, key=lambda account: account.id)
+        await _make_primary(db, company, oldest)
 
 
 # --- What the register says ------------------------------------------------------
@@ -322,6 +553,66 @@ async def refresh_company_from_register(
     return changed
 
 
+async def store_register_snapshot(
+    db: AsyncSession,
+    *,
+    company: Company,
+    unit: dict[str, object],
+    roles: list[dict[str, object]] | None,
+) -> CompanyRegisterSnapshot:
+    """Keep the register's whole answer, not just the fields we read by name.
+
+    The columns on :class:`Company` are what the system uses; this is everything
+    else it said — styre, revisor, kapital, formål, tidligere navn — so that
+    wanting one of them later is a question to the database rather than a second
+    round trip to Brønnøysund.
+
+    ``unit`` and ``roles`` arrive already reduced to JSON by the API layer, in
+    exactly the shape the API serves them in. That is deliberate: the stored
+    answer and the freshly fetched one are then the same document, and the page
+    that renders one renders the other without knowing which it got.
+
+    Replaced, never appended. This is the current picture of a business, and a
+    superseded register answer describes our fetching rather than the company.
+
+    ``roles`` of ``None`` means the role lookup did not answer — a separate
+    request from the unit's, and one that fails on its own. The roles already
+    stored are kept then, because an old board is a better answer than no board,
+    and the ``fetched_at`` beside it says how old.
+    """
+    snapshot = await db.scalar(
+        select(CompanyRegisterSnapshot).where(CompanyRegisterSnapshot.company_id == company.id)
+    )
+    if snapshot is None:
+        snapshot = CompanyRegisterSnapshot(company_id=company.id, orgnr=company.orgnr, roles=[])
+        db.add(snapshot)
+    snapshot.orgnr = company.orgnr
+    snapshot.unit = unit
+    if roles is not None:
+        snapshot.roles = roles
+    snapshot.fetched_at = utc_now()
+    await db.flush()
+    return snapshot
+
+
+async def get_register_snapshot(
+    db: AsyncSession, *, company: Company
+) -> CompanyRegisterSnapshot | None:
+    """The stored register answer for this company, if one has been kept.
+
+    Returns nothing for a snapshot taken under a different orgnr. An unconfirmed
+    company's number can still be corrected, and the board of the company that
+    was there before is not a stale answer about this one — it is an answer
+    about somebody else.
+    """
+    snapshot = await db.scalar(
+        select(CompanyRegisterSnapshot).where(CompanyRegisterSnapshot.company_id == company.id)
+    )
+    if snapshot is None or snapshot.orgnr != company.orgnr:
+        return None
+    return snapshot
+
+
 # --- Confirmed ownership ---------------------------------------------------------
 #
 # Anyone can type nine digits into a form, so a freshly created set of books says
@@ -340,25 +631,25 @@ async def claimed_elsewhere(db: AsyncSession, orgnrs: Sequence[str], *, user_id:
 
     Used to mark the Altinn list before the person picks from it, so the
     conflict is visible where the choice is made rather than after a save that
-    fails. A claim held by one of the caller's *own* organizations is not
-    "elsewhere" and is left out: those books are already theirs.
+    fails. A claim held by books the caller can already open is not "elsewhere"
+    and is left out: those are theirs.
 
     It answers only for orgnrs the caller has already proved rights for in
     Altinn, so it discloses nothing they could not learn by confirming and
-    reading the refusal. The organization holding the claim is never named.
+    reading the refusal. Whoever holds the claim is never named.
     """
     if not orgnrs:
         return set()
     mine = (
-        select(OrganizationMembership.organization_id)
-        .where(OrganizationMembership.user_id == user_id)
+        select(CompanyMembership.company_id)
+        .where(CompanyMembership.user_id == user_id)
         .scalar_subquery()
     )
     rows = await db.scalars(
         select(Company.orgnr).where(
             Company.orgnr.in_(list(orgnrs)),
             Company.verified_at.is_not(None),
-            Company.organization_id.not_in(mine),
+            Company.id.not_in(mine),
         )
     )
     return set(rows)
@@ -424,38 +715,47 @@ async def confirm_company_ownership(
     return company
 
 
-async def list_companies(db: AsyncSession, *, user_id: int) -> list[Company]:
-    """Every company the user can reach through any of their organizations."""
-    result = await db.scalars(
-        select(Company)
-        .join(
-            OrganizationMembership,
-            OrganizationMembership.organization_id == Company.organization_id,
-        )
-        .where(OrganizationMembership.user_id == user_id)
+async def list_companies(
+    db: AsyncSession, *, user_id: int
+) -> list[tuple[Company, CompanyMembership]]:
+    """Every set of books the user has been given access to, with their role.
+
+    Through :class:`CompanyMembership`, one row per person per company, and not
+    through the account: somebody invited to help with one client sees that
+    client and not the twenty next to it.
+
+    The role comes back with the company because every caller needs both. The
+    frontend decides what to offer from the role it holds over the company on
+    screen, and a list of companies with no roles in it would send it back for
+    one request per company.
+    """
+    rows = await db.execute(
+        select(Company, CompanyMembership)
+        .join(CompanyMembership, CompanyMembership.company_id == Company.id)
+        .where(CompanyMembership.user_id == user_id)
         .order_by(Company.name)
     )
-    return list(result)
+    return [(company, membership) for company, membership in rows]
 
 
 async def get_company_for_user(
     db: AsyncSession, *, company_id: int, user_id: int
-) -> tuple[Company, OrganizationMembership]:
-    """The company and the caller's membership in the organization that owns it.
+) -> tuple[Company, CompanyMembership]:
+    """The company and what this caller may do with it.
 
-    A company belonging to someone else's organization raises
-    :class:`CompanyNotFoundError`, the same error as one that does not exist —
+    The pair every company-scoped endpoint runs on: no route resolves a company
+    without also learning the role held over *that* company, because that is
+    exactly the pair a missing check separates.
+
+    A company the caller has no membership on raises
+    :class:`CompanyNotFoundError`, the same error as one that does not exist:
     the API must not become a way to discover which ids are in use.
     """
     row = (
         await db.execute(
-            select(Company, OrganizationMembership)
-            .join(
-                OrganizationMembership,
-                OrganizationMembership.organization_id == Company.organization_id,
-            )
-            .where(Company.id == company_id, OrganizationMembership.user_id == user_id)
-            .options(selectinload(OrganizationMembership.organization))
+            select(Company, CompanyMembership)
+            .join(CompanyMembership, CompanyMembership.company_id == Company.id)
+            .where(Company.id == company_id, CompanyMembership.user_id == user_id)
         )
     ).first()
     if row is None:
@@ -607,6 +907,7 @@ async def record_cash_flow(
     payment_method: PaymentMethod = PaymentMethod.BANK,
     party_pk: int | None = None,
     corrects_pk: int | None = None,
+    created_by_user_id: int | None = None,
 ) -> Transaction:
     """Record one payment in or out as a posted voucher.
 
@@ -630,6 +931,14 @@ async def record_cash_flow(
     and record which is which. Without it the replacement is indistinguishable
     from an unrelated payment made the same day, and the three vouchers a
     correction leaves behind cannot be read back as one event.
+
+    ``created_by_user_id`` is the person doing the entering, and every caller
+    with a session should pass it: on books with two people on them it is the
+    only thing that says which of them booked this. It defaults to ``None``
+    rather than being required because the column is honestly nullable — see
+    :class:`~myntos.domain.ledger.models.Transaction` — and a required argument
+    would tempt a caller without a user into passing a placeholder id, which is
+    worse than an empty field.
     """
     entry_type = cashflow.get_type(type_code)
     gross = _check_gross(gross_amount)
@@ -694,13 +1003,22 @@ async def record_cash_flow(
         # entry costs nothing extra — but both still have to be posted, because
         # the MVA-melding reports the amount twice and a single net-zero line
         # would report it nowhere.
+        #
+        # On a refund both sides go back the other way. The import was undone,
+        # so the calculated VAT is no longer owed and the deduction taken
+        # against it is no longer due.
+        #
+        # A refund *of an import*, which is the money-in half of the reversals.
+        # A kreditnota is a reversal too and goes the other way, and reverse
+        # charge is a purchase-side treatment, so it must not reach this flip.
+        undone = entry_type.is_refund and is_incoming
         lines.append(
             TransactionLine(
                 record_id="3",
                 account=accounts[OUTPUT_VAT_ACCOUNT],
                 description=f"Beregnet mva ved innførsel, kode {code}",
-                debit=ZERO,
-                credit=vat,
+                debit=vat if undone else ZERO,
+                credit=ZERO if undone else vat,
             )
         )
         if seed is not None and seed.deductible:
@@ -709,28 +1027,41 @@ async def record_cash_flow(
                     record_id="4",
                     account=accounts[INPUT_VAT_ACCOUNT],
                     description=f"Fradrag innførselsmva, kode {code}",
-                    debit=vat,
-                    credit=ZERO,
+                    debit=ZERO if undone else vat,
+                    credit=vat if undone else ZERO,
                 )
             )
         else:
             # Not deductible, so the amount is a real cost rather than a wash.
-            # It belongs on the same account as the purchase it arose from.
+            # It belongs on the same account as the purchase it arose from, and
+            # on a refund it leaves that account again with the purchase.
             lines.append(
                 TransactionLine(
                     record_id="4",
                     account=accounts[entry_type.account_number],
                     description=f"Ikke fradragsberettiget innførselsmva, kode {code}",
-                    debit=vat,
-                    credit=ZERO,
+                    debit=ZERO if undone else vat,
+                    credit=vat if undone else ZERO,
                 )
             )
     elif vat > ZERO:
-        vat_account = OUTPUT_VAT_ACCOUNT if is_incoming else INPUT_VAT_ACCOUNT
+        # Which side of the VAT accounts this belongs to is the trade's
+        # direction, not the bank's, and on the two reversal families those
+        # differ. A refund is money in on a purchase: its VAT is the deduction
+        # going back the way it came, so credited to 2710 it reduces the input
+        # VAT for the period, while credited to 2700 it would report tax owed on
+        # a sale that never happened — for the eBay refund, 5 253 kroner of tax
+        # on a cancelled purchase. A kreditnota is money out on a sale, and it
+        # is the same mistake in the other direction: debited to 2710 it claims
+        # a deduction on goods the company sold, when what it should do is give
+        # back the output VAT it charged the customer, on 2700.
+        #
+        # ``books_as`` is that distinction, stated once in the catalogue.
+        owed_on_a_sale = entry_type.books_as is CashFlowDirection.INN
         lines.append(
             TransactionLine(
                 record_id="3",
-                account=accounts[vat_account],
+                account=accounts[OUTPUT_VAT_ACCOUNT if owed_on_a_sale else INPUT_VAT_ACCOUNT],
                 description=f"Mva {code}",
                 debit=ZERO if is_incoming else vat,
                 credit=vat if is_incoming else ZERO,
@@ -750,6 +1081,7 @@ async def record_cash_flow(
         # parallel table that could disagree with the postings.
         voucher_type=entry_type.code,
         corrects_transaction_pk=corrects_pk,
+        created_by_user_id=created_by_user_id,
     )
     transaction.lines = lines
     posting.post(transaction)
@@ -781,13 +1113,25 @@ def _voucher_query() -> Select[tuple[Transaction]]:
     )
 
 
-async def reverse_cash_flow(db: AsyncSession, *, company: Company, voucher_pk: int) -> Transaction:
+async def reverse_cash_flow(
+    db: AsyncSession,
+    *,
+    company: Company,
+    voucher_pk: int,
+    created_by_user_id: int | None = None,
+) -> Transaction:
     """Reverse a posted entry.
 
     The reversal lands in the **original's** period, so the year's figures net
     to zero rather than leaving a hole in one month and a bump in another. If
     that year is already closed the correction cannot go there, and the caller
     is told so instead of having it silently moved.
+
+    ``created_by_user_id`` is whoever is undoing the entry, not whoever made it.
+    The reversal is a voucher of its own and the two are frequently different
+    people — the entry a colleague got wrong is exactly the one somebody else
+    reverses — so copying the original's author would name the wrong person for
+    the one action a reader most wants attributed.
     """
     original = await get_voucher(db, company=company, voucher_pk=voucher_pk)
     already = await db.scalar(
@@ -805,6 +1149,10 @@ async def reverse_cash_flow(db: AsyncSession, *, company: Company, voucher_pk: i
         financial_year=financial_year.year,
     )
     reversal.reverses_transaction_pk = original.id
+    # Set here rather than in posting.build_reversal, for the same reason the
+    # link above is: build_reversal mirrors the voucher's *contents*, and who
+    # pressed the button is not one of them.
+    reversal.created_by_user_id = created_by_user_id
     posting.post(reversal)
     db.add(reversal)
     await db.flush()
@@ -838,15 +1186,34 @@ class CashFlowView:
     # The entry this one replaced, when it was posted as a correction. Lets the
     # register show a correction as one line instead of three.
     corrects_id: int | None
+    # Who entered it. Both are ``None`` for a voucher with no recorded author —
+    # see :class:`~myntos.domain.ledger.models.Transaction` on the three ways
+    # that happens. The id travels alongside the name so the register can group
+    # by person without matching on a string two colleagues may share.
+    created_by_id: int | None
+    created_by_name: str | None
 
 
-def describe(transaction: Transaction, *, reversed_by_id: int | None = None) -> CashFlowView | None:
+def describe(
+    transaction: Transaction,
+    *,
+    reversed_by_id: int | None = None,
+    created_by_name: str | None = None,
+) -> CashFlowView | None:
     """Project a voucher onto the cash-flow shape, or ``None`` if it has none.
 
     Only vouchers with a payment-account line can be shown as a payment. Every
     entry the register creates has one; a voucher posted by some future feature
     into the same journal might not, and dropping it from this listing is
     better than misreporting its amount as a cash movement.
+
+    ``created_by_name`` is passed in rather than read through a relationship on
+    the voucher. This function is synchronous and is called on freshly flushed
+    objects, so touching a lazy relationship here would raise ``MissingGreenlet``
+    inside whatever request happened to be reading — the same reason
+    ``reversed_by_id`` is a parameter. :func:`list_cash_flows` resolves the
+    whole page's names in one query; a caller that just posted the voucher
+    already knows the name, because it is the caller's own.
     """
     payment = next(
         (line for line in transaction.lines if line.account.account_number in PAYMENT_ACCOUNTS),
@@ -899,6 +1266,11 @@ def describe(transaction: Transaction, *, reversed_by_id: int | None = None) -> 
         # A plain column on the voucher, so no second query: the correction
         # knows what it replaced, and the register reads it straight off.
         corrects_id=transaction.corrects_transaction_pk,
+        created_by_id=transaction.created_by_user_id,
+        # Never a fallback name. A voucher with an author whose name the caller
+        # did not resolve, and a voucher with no author at all, are different
+        # facts, and the interface says «ukjent» for the second one only.
+        created_by_name=created_by_name,
     )
 
 
@@ -922,7 +1294,17 @@ async def list_cash_flows(
         )
     )
     reversals = await _reversal_map(db, [t.id for t in transactions])
-    views = [describe(t, reversed_by_id=reversals.get(t.id)) for t in transactions]
+    authors = await _author_names(db, [t.created_by_user_id for t in transactions])
+    views = [
+        describe(
+            t,
+            reversed_by_id=reversals.get(t.id),
+            created_by_name=(
+                None if t.created_by_user_id is None else authors.get(t.created_by_user_id)
+            ),
+        )
+        for t in transactions
+    ]
     return [view for view in views if view is not None]
 
 
@@ -936,6 +1318,28 @@ async def _reversal_map(db: AsyncSession, voucher_pks: Sequence[int]) -> dict[in
         )
     )
     return {original: reversal for original, reversal in rows if original is not None}
+
+
+async def _author_names(db: AsyncSession, user_ids: Sequence[int | None]) -> dict[int, str]:
+    """``{user id: full name}`` for the people who entered a page of vouchers.
+
+    One query for the whole page, and by id rather than through a relationship
+    on the voucher: a ``selectinload`` would work for the listing and be a
+    ``MissingGreenlet`` waiting to happen everywhere else :func:`describe` is
+    called on a freshly built object.
+
+    Not filtered by company, and it does not need to be. The ids come off this
+    company's own vouchers, so the only names this can return are of people who
+    were entering them — including somebody since removed from the books, which
+    is the answer that is true: they did make the entry. Nothing here reaches a
+    user the caller could not already name, so it is not a way around the
+    company wall (docs/company-isolation.md).
+    """
+    wanted = {user_id for user_id in user_ids if user_id is not None}
+    if not wanted:
+        return {}
+    rows = await db.execute(select(User.id, User.full_name).where(User.id.in_(wanted)))
+    return {row.id: row.full_name for row in rows}
 
 
 # --- Summary --------------------------------------------------------------------

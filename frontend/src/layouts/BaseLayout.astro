@@ -176,9 +176,15 @@ const gettingStarted = [
     <link rel="apple-touch-icon" href="/favicon-192.png" />
     <title>{title}</title>
     <script is:inline>
-      // Runs before first paint: both the auth hint and the theme, so a
-      // returning visitor never sees the wrong shell or a flash of the wrong
-      // palette. Light is the default, so only an explicit "dark" is applied.
+      // Runs before first paint: the auth hint, the theme, and what the header
+      // said last time, so a returning visitor never sees the wrong shell, a
+      // flash of the wrong palette, or somebody else's company. Light is the
+      // default, so only an explicit "dark" is applied.
+      //
+      // None of this is trusted for anything. Every one of these values is a
+      // copy of something that was already on this screen, kept so it can be on
+      // screen again a third of a second sooner; lib/session.ts replaces all of
+      // it the moment the API answers, and disagrees with it freely.
       try {
         const store = window.localStorage;
         if (store.getItem('myntos.signed-in') === '1') {
@@ -187,8 +193,32 @@ const gettingStarted = [
         if (store.getItem('myntos.theme') === 'dark') {
           document.documentElement.dataset.theme = 'dark';
         }
+        const raw = store.getItem('myntos.chrome');
+        const hint = raw === null ? null : JSON.parse(raw);
+        if (hint !== null && typeof hint === 'object' && typeof hint.user === 'string') {
+          window.myntosHint = hint;
+          // Read by the pages, not by the header: it is what lets the overview
+          // lay itself out at its finished size straight away rather than grow
+          // into it. "nei" is a real answer, meaning an account with no books
+          // yet, and the absence of the attribute means we do not know.
+          document.documentElement.dataset.books = hint.companies > 0 ? 'ja' : 'nei';
+        }
+        // The company being worked on, read from its own record and kept apart
+        // from the account hint above on purpose. Name, confirmation mark and
+        // id are one value here, so the name painted below and the id every
+        // request is built from cannot be about two different companies. A
+        // record from before that rule is a bare id and paints no name at all,
+        // which is the right way to be out of date. See lib/tenant.ts.
+        const stored = store.getItem('myntos.company');
+        const company = stored === null ? null : JSON.parse(stored);
+        if (company !== null && typeof company === 'object' && typeof company.name === 'string') {
+          window.myntosCompany = company;
+          document.documentElement.dataset.company = String(company.id);
+        }
       } catch (error) {
-        // No storage available; the signed-out light view is the safe default.
+        // No storage, or nonsense in it. The signed-out light view with an
+        // empty header is the safe default, and it is one request away from
+        // being filled in properly anyway.
       }
     </script>
   </head>
@@ -295,8 +325,16 @@ const gettingStarted = [
               og fra kontantstrømmen, der man faktisk trenger dem. En lenke
               som står overalt er ikke lettere å finne enn én som står der
               man er. */}
+          {/* Rekkefølgen er arbeidsdagen: oversikten først, så det man gjør
+              oftest. En betaling føres når den skjer, en faktura skrives når
+              det passer, og KI er hjelpen man ber om underveis.
+
+              «Betaling» og ikke «Kontantstrøm»: det er ordet på knappen folk
+              allerede trykker på fra forsiden, og det navner det man skal
+              gjøre framfor rapporten det ender i. */}
           <div class="nav-group nav-primary" data-auth-only="inn">
             <a class="nav-link" href="/">Oversikt</a>
+            <a class="nav-link" href="/kontantstrom/">Betaling</a>
             <a class="nav-link" href="/faktura/">Faktura</a>
             <a class="nav-link" href="/ki/">KI</a>
           </div>
@@ -333,9 +371,12 @@ const gettingStarted = [
                 blikk, mens ens eget navn aldri endrer seg. Derfor er navnet på
                 selskapet det store og innloggingen det lille.
 
-                Hele selskapsnavnet er lenken til innstillingene. Det er der man
-                bytter selskap, retter adressen og bekrefter eierskapet, og det
-                er det man peker på når man tenker «dette selskapet». */}
+                Navnet er samtidig velgeren. Det man peker på når man tenker
+                «dette selskapet» er det man klikker på for å bytte det, og en
+                regnskapsfører med tolv klienter skal ikke innom en
+                innstillingsside for å komme til den trettende. Innstillingene
+                og «Legg til selskap» ligger nederst i den samme menyen, der de
+                er ett klikk unna uten å ta plassen fra byttet. */}
             <span class="nav-group" data-auth-only="inn">
               <a
                 class="icon-btn"
@@ -358,30 +399,143 @@ const gettingStarted = [
                 </svg>
               </a>
 
-              <a class="nav-identity" href="/organisasjon/#selskap">
-                <span class="nav-company">
-                  <span class="nav-company-name" data-session-company></span>
-                  {/* En prikk, ikke et ord. At eierskapet ikke er bekreftet er
-                      verdt å vite og ikke verdt å lese hver gang: den fulle
-                      setningen står i det gule varselet på siden prikken
-                      lenker til. */}
-                  <span
-                    class="nav-dot"
-                    data-session-unverified
-                    hidden
-                    role="img"
-                    aria-label="Ikke bekreftet"
-                    title="Ingen har bekreftet i Altinn at de kan opptre for dette selskapet ennå."
-                  ></span>
-                </span>
-                <span class="nav-user" data-session-name></span>
-              </a>
+              <div class="nav-dropdown nav-selskap" data-menu>
+                <button
+                  type="button"
+                  class="nav-identity nav-trigger"
+                  data-menu-trigger
+                  data-company-trigger
+                  aria-controls="meny-selskap"
+                  aria-expanded="false"
+                >
+                  <span class="visually-hidden">Bytt selskap</span>
+                  <span class="nav-identity-tekst">
+                    <span class="nav-company">
+                      <span class="nav-company-name" data-session-company></span>
+                      {/* En prikk, ikke et ord. At eierskapet ikke er bekreftet
+                          er verdt å vite og ikke verdt å lese hver gang: den
+                          fulle setningen står i det gule varselet på siden
+                          prikken lenker til. */}
+                      <span
+                        class="nav-dot"
+                        data-session-unverified
+                        hidden
+                        role="img"
+                        aria-label="Ikke bekreftet"
+                        title="Ingen har bekreftet i Altinn at de kan opptre for dette selskapet ennå."
+                      ></span>
+                    </span>
+                    <span class="nav-user" data-session-name></span>
+                  </span>
+                  <svg class="chevron" viewBox="0 0 12 8" aria-hidden="true" focusable="false">
+                    <path
+                      d="M1 1.5 6 6.5l5-5"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"></path>
+                  </svg>
+                </button>
+
+                {/* Selskapene fylles inn av company.ts når kontoen er kjent.
+                    Listen står tom i filen som sendes ut, fordi siden er
+                    forhåndsbygget og ikke vet hvem som spør. «Henter …» er det
+                    sanne svaret i mellomtiden. */}
+                <div class="nav-menu nav-menu-selskap" id="meny-selskap" hidden>
+                  <p class="nav-menu-etikett">Selskaper</p>
+                  <div class="nav-selskap-liste" data-company-list>
+                    <p class="nav-menu-tom">Henter …</p>
+                  </div>
+                  <div class="nav-menu-bunn">
+                    {/* «Legg til selskap» og ikke «opprett»: selskapet finnes
+                        allerede i Enhetsregisteret, det er regnskapet som
+                        settes opp. Skjult for den som ikke kan gjøre det:
+                        organization:manage er det samme kravet siden selv
+                        stiller. */}
+                    <a
+                      class="nav-menu-handling"
+                      href="/nytt-selskap/"
+                      data-company-add
+                      hidden
+                    >
+                      <span class="nav-menu-pluss" aria-hidden="true">+</span>
+                      Legg til selskap
+                    </a>
+                    <a class="nav-menu-handling" href="/organisasjon/#selskap">
+                      Innstillinger for selskapet
+                    </a>
+                  </div>
+                </div>
+              </div>
               <button type="button" class="btn btn-ghost btn-small" data-sign-out>Logg ut</button>
             </span>
           </div>
         </nav>
       </div>
     </header>
+
+    {/*
+      The header, painted from the hint the head script read.
+
+      Inline and here rather than in the module script at the end of the body,
+      because a module is deferred: it runs after the document is parsed, which
+      is after the header has been on screen blank for a beat. This runs while
+      the parser is still on this line, so the name is in place for the first
+      paint. Its whole job is to say the same thing the page said last time; the
+      API is what settles it.
+
+      It reaches the header and nothing below it, for the same reason: the page
+      has not been parsed yet. A page that carries its own data-session-* slots
+      paints them from `window.myntosHint` and `window.myntosCompany` itself,
+      right after its own markup. /index.astro is the one that does.
+    */}
+    <script is:inline>
+      (function () {
+        if (document.documentElement.dataset.auth !== 'inn') return;
+        const hint = window.myntosHint;
+        if (hint) {
+          for (const node of document.querySelectorAll('[data-session-name]')) {
+            node.textContent = hint.user;
+          }
+        }
+        // The company and the mark that goes with it come from the company
+        // record and never from the account hint, so a name here always belongs
+        // to the id the page's requests will carry.
+        const company = window.myntosCompany;
+        if (company) {
+          for (const node of document.querySelectorAll('[data-session-company]')) {
+            node.textContent = company.name;
+          }
+          for (const node of document.querySelectorAll('[data-session-unverified]')) {
+            node.hidden = company.name === '' || company.verified === true;
+          }
+        }
+      })();
+    </script>
+
+    {/*
+      Den ene tingen to faner kan komme i utakt om.
+
+      Bytter man selskap i én fane, flytter valget seg for hele nettleseren.
+      Denne fanen følger *ikke* etter: alt som står på skjermen ble hentet for
+      selskapet den åpnet, og halve siden av ett selskaps tall under et annet
+      selskaps navn er nettopp det som ikke får skje (lib/tenant.ts fryser
+      valget per sidevisning). Men «selskapet du ser på» er ikke lenger «det
+      nettstedet står på», og det er verdt å si i stedet for å skjule.
+
+      Skjult til `storage`-hendelsen sier noe annet, og den kommer bare i de
+      *andre* fanene, som er akkurat de som trenger beskjeden.
+    */}
+    <div class="selskap-byttet" data-company-switched hidden role="status">
+      <p>
+        Du byttet selskap i en annen fane. Denne siden viser fortsatt
+        <strong data-session-company></strong>.
+      </p>
+      <button type="button" class="btn btn-ghost btn-small" data-company-reload>
+        Last siden på nytt
+      </button>
+    </div>
 
     <main
       id="innhold"
@@ -448,13 +602,19 @@ const gettingStarted = [
 
     <script>
       import { initNav, initThemeToggle } from '../lib/chrome';
-      import { bootstrapHeaderCompany } from '../lib/company';
+      import { bootstrapHeaderCompany, prefetchCompanies } from '../lib/company';
       import { bootstrapChrome } from '../lib/session';
 
+      // First, and before anything is awaited: /companies needs the session
+      // cookie, which the browser attaches by itself, so there is nothing to
+      // wait for. Asking after /auth/me answered put two full round trips in
+      // single file at the top of every signed-in page, and the page under the
+      // header could not ask for a figure until both were done. The promise is
+      // shared, so the header and the page still make one request between them.
+      prefetchCompanies();
       bootstrapChrome();
-      // After bootstrapChrome, which puts the organization name in the header
-      // as a stand-in; this replaces it with the company once the books are
-      // known, and shares the one /companies request with the page below.
+      // Fills the header with the company once the books are known, replacing
+      // whatever the hint or the organization name was standing in with.
       bootstrapHeaderCompany();
       initThemeToggle();
       initNav();
@@ -770,15 +930,25 @@ const gettingStarted = [
   }
 
   /* Selskapet over, personen under: to linjer i én kolonne, slik at høyden
-     holder seg innenfor headeren og navnet ikke dytter knappene. */
+     holder seg innenfor headeren og navnet ikke dytter knappene. Chevronen
+     står ved siden av begge linjene, ikke under den ene, så knappen leses som
+     én ting man kan åpne. */
   .nav-identity {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.15rem 0;
+    min-width: 0;
+    text-decoration: none;
+  }
+
+  .nav-identity-tekst {
     display: flex;
     flex-direction: column;
     align-items: flex-end;
     gap: 0.05rem;
     line-height: 1.25;
     min-width: 0;
-    text-decoration: none;
   }
 
   .nav-company {
@@ -797,7 +967,8 @@ const gettingStarted = [
     white-space: nowrap;
   }
 
-  .nav-identity:hover .nav-company-name {
+  .nav-identity:hover .nav-company-name,
+  .nav-identity[aria-expanded='true'] .nav-company-name {
     text-decoration: underline;
     text-underline-offset: 0.2rem;
   }
@@ -896,6 +1067,164 @@ const gettingStarted = [
     color: var(--muted);
     line-height: 1.45;
     margin-top: 0.1rem;
+  }
+
+  /* --- Selskapsmenyen ---------------------------------------------------------
+
+     Den generelle .nav-menu er to spalter og henger fra venstre kant, fordi
+     Funksjoner har korte oppføringer med undertekst. Selskapslisten er én
+     smal spalte i høyre ytterkant: navnene er lange, de leses nedover, og en
+     meny som hang fra venstre her ville stukket ut av vinduet. */
+
+  .nav-menu-selskap {
+    left: auto;
+    right: -0.5rem;
+    width: min(20rem, calc(100vw - 2.5rem));
+    grid-template-columns: 1fr;
+    max-height: min(28rem, calc(100vh - 6rem));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .nav-menu-etikett {
+    margin: 0.15rem 0.7rem 0.35rem;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--faint);
+    font-weight: 700;
+  }
+
+  .nav-selskap-liste {
+    display: grid;
+    gap: 0.1rem;
+  }
+
+  /* Hele raden er knappen, og den fyller menyens bredde: et treffområde man
+     ikke kan bomme på med tommelen. */
+  .nav-selskap-rad {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    width: 100%;
+    padding: 0.5rem 0.7rem;
+    border: none;
+    border-radius: var(--radius-small);
+    background: none;
+    font: inherit;
+    text-align: start;
+    color: var(--fg);
+    cursor: pointer;
+    transition: background-color 120ms ease;
+  }
+
+  .nav-selskap-rad:hover {
+    background: var(--surface-2);
+  }
+
+  /* Det selskapet man allerede står i er ikke et valg, men det skal stå i
+     listen: uten det måtte man lete etter det som ikke er der for å vite hvor
+     man er. Haken sier hvor man er, og markøren sier at raden ikke fører noe
+     nytt sted. */
+  .nav-selskap-rad[aria-current='true'] {
+    background: var(--surface-2);
+    cursor: default;
+  }
+
+  .nav-selskap-tekst {
+    display: flex;
+    flex-direction: column;
+    gap: 0.05rem;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .nav-selskap-navn {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    /* Uten denne kan ikke navnet krympe, og et langt firmanavn dytter prikken
+       ut av menyen i stedet for å bli forkortet. */
+    min-width: 0;
+    font-weight: 600;
+    font-size: 0.92rem;
+    color: var(--fg-strong);
+    line-height: 1.3;
+  }
+
+  .nav-selskap-navn span:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Organisasjonsnummeret alltid, fordi to selskaper i samme konsern deler
+     navn oftere enn ikke. */
+  .nav-selskap-orgnr {
+    font-size: 0.78rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .nav-selskap-hake {
+    flex: none;
+    width: 0.85rem;
+    height: 0.85rem;
+    color: var(--accent);
+  }
+
+  .nav-menu-tom {
+    margin: 0;
+    padding: 0.5rem 0.7rem;
+    font-size: 0.86rem;
+    color: var(--muted);
+  }
+
+  /* En strek mellom det som bytter selskap og det som gjør noe annet. Uten
+     den ville «Legg til selskap» sett ut som enda et selskap i listen. */
+  .nav-menu-bunn {
+    display: grid;
+    gap: 0.1rem;
+    margin-top: 0.4rem;
+    padding-top: 0.4rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .nav-menu-handling {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.7rem;
+    border-radius: var(--radius-small);
+    font-size: 0.9rem;
+    font-weight: 550;
+    color: var(--fg);
+    text-decoration: none;
+    transition: background-color 120ms ease;
+  }
+
+  .nav-menu-handling:hover {
+    background: var(--surface-2);
+    color: var(--fg-strong);
+  }
+
+  .nav-menu-pluss {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.15rem;
+    height: 1.15rem;
+    flex: none;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-small);
+    color: var(--muted);
+    font-size: 0.9rem;
+    line-height: 1;
+  }
+
+  .nav-menu-handling:hover .nav-menu-pluss {
+    border-color: var(--accent);
+    color: var(--accent);
   }
 
   /* --- Icon button and theme toggle ------------------------------------------ */
@@ -1038,6 +1367,7 @@ const gettingStarted = [
 
     .nav-actions .nav-group {
       flex-direction: row;
+      flex-wrap: wrap;
       gap: 0.5rem;
     }
 
@@ -1059,6 +1389,52 @@ const gettingStarted = [
       background: var(--surface-2);
       margin-bottom: 0.4rem;
     }
+
+    /* I mobilpanelet står selskapet på en linje for seg øverst, med
+       tannhjulet og «Logg ut» under: selskapsnavn er det lengste i menyen, og
+       klemt inntil to knapper ville det blitt kuttet til ordet «Nordmann».
+       `order` og ikke ny rekkefølge i malen, fordi det bare er her det
+       gjelder. */
+    .nav-selskap {
+      order: -1;
+      flex: 1 0 100%;
+    }
+
+    .nav-identity,
+    .nav-identity-tekst {
+      align-items: flex-start;
+    }
+
+    .nav-identity {
+      justify-content: space-between;
+      width: 100%;
+    }
+
+    .nav-menu-selskap {
+      max-height: none;
+    }
+  }
+
+  /* Gult og ikke rødt, som varselet på /organisasjon/: ingenting er galt, to
+     faner er bare uenige om hvor man er. Står over innholdet fordi det er
+     innholdet den sier noe om. */
+  .selskap-byttet {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    max-width: 72rem;
+    margin: 1rem auto 0;
+    padding: 0.7rem 1rem;
+    border: 1px solid var(--gold);
+    border-radius: var(--radius-small);
+    background: var(--gold-soft);
+    font-size: 0.92rem;
+  }
+
+  .selskap-byttet p {
+    margin: 0;
   }
 
   /* --- Page and footer --------------------------------------------------------- */
@@ -1263,6 +1639,10 @@ const gettingStarted = [
     font-weight: 700;
     color: var(--muted);
     margin: 0 0 0.9rem;
+    /* Filled in from the API, so it starts empty — and an empty inline-flex is
+       zero tall, which pushed the heading under it down the moment the name
+       arrived. One line is reserved from the start instead. */
+    min-height: 1.2em;
   }
 
   .pill {
@@ -1462,6 +1842,18 @@ const gettingStarted = [
     text-decoration: none;
   }
 
+  /* Hvem som førte føringen. Står bare der når registeret har mer enn én
+     fører — se lib/authors.ts — så plassen den tar er plass som betyr noe.
+     Aldri gjennomstreket, selv på en motpostert føring: et navn med strek
+     over leses som at personen er strøket, og det er noe helt annet enn at
+     føringen er det. */
+  table.data .entry-author {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--faint);
+    text-decoration: none;
+  }
+
   /* Bilagene som ligger under en sammenslått rad. */
   table.data tr[data-member] > td {
     color: var(--faint);
@@ -1582,6 +1974,52 @@ const gettingStarted = [
     text-align: center;
     color: var(--muted);
     padding: 2.5rem 1rem;
+  }
+
+  /* --- Waiting for figures --------------------------------------------------
+     A page that is loading should be the page, at its finished size, with the
+     numbers not filled in yet — not a smaller page that grows into the real one
+     when the answer lands. Everything below is about holding the layout still.
+
+     .skeleton is a shape standing where a value will be. It takes the width of
+     the value it replaces so the column does not jump, and it is inert to a
+     screen reader: the region it lives in carries aria-busy, which is the
+     honest announcement, and a dozen unlabelled boxes are not.
+  --------------------------------------------------------------------------- */
+
+  .skeleton {
+    display: inline-block;
+    vertical-align: middle;
+    width: var(--skeleton-width, 100%);
+    height: 1em;
+    border-radius: calc(var(--radius) / 2);
+    background: linear-gradient(
+      90deg,
+      var(--surface-2) 0%,
+      var(--surface-3) 40%,
+      var(--surface-2) 80%
+    );
+    background-size: 300% 100%;
+    animation: skeleton-sweep 1.4s ease-in-out infinite;
+  }
+
+  @keyframes skeleton-sweep {
+    from {
+      background-position: 150% 0;
+    }
+    to {
+      background-position: -50% 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    /* The blanket rule above collapses every animation to 0.01ms, which would
+       turn this sweep into a strobe rather than stop it. A flat tint says the
+       same thing without moving at all. */
+    .skeleton {
+      animation: none !important;
+      background: var(--surface-3);
+    }
   }
 
   .visually-hidden {

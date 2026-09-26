@@ -757,10 +757,14 @@ async def test_a_refused_person_exchange_names_the_likely_cause(
 
     An ID-porten client with no Altinn scope issues a token carrying only
     ``openid`` and no audience, so Altinn has nothing to authorize and answers
-    403. The error names ``altinn:enduser`` because the status code names
-    nothing, and a reader who does not know that spends an afternoon on the
-    token instead of on the client registration.
+    403. The error says so, and names a scope that will fix it, because the
+    status code names nothing and a reader who does not know that spends an
+    afternoon on the token instead of on the client registration.
+
+    Asserted on the shape of the fix rather than on one scope name: the message
+    used to name ``altinn:enduser``, which production has since disproved as a
+    requirement and Samarbeidsportalen no longer offers.
     """
     altinn.exchange_status = httpx.codes.FORBIDDEN
-    with pytest.raises(AltinnAuthError, match="altinn:enduser"):
+    with pytest.raises(AltinnAuthError, match="at least one altinn"):
         await exchange_id_porten_token("person-token")

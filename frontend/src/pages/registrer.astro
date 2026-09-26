@@ -24,6 +24,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         <label class="field">
           <span>E-postadresse</span>
           <input type="email" name="email" autocomplete="username" required />
+          {/* Tomt til vanlig. En invitasjon fyller det ut, fordi kontoen da må
+              ha nettopp den adressen for at invitasjonen skal kunne brukes. */}
+          <span class="field-hint" id="email-hint"></span>
         </label>
         <label class="field">
           <span>Passord</span>
@@ -77,16 +80,41 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   import { ApiError, getProviders, registerAccount } from '../lib/api';
   import { renderProviderButtons } from '../lib/providers';
   import { el, setStatus } from '../lib/dom';
-  import { rememberAuth } from '../lib/session';
+  import { rememberAuth, safeNext } from '../lib/session';
 
   const status = el<HTMLParagraphElement>('#status');
   const form = el<HTMLFormElement>('#register-form');
   const submit = el<HTMLButtonElement>('#submit');
   const passwordField = el<HTMLInputElement>('input[name="password"]');
+  const emailField = el<HTMLInputElement>('input[name="email"]');
+
+  // Where to go once the account exists. Usually the front page; an invitation
+  // sends people here with `?neste=` pointing back at itself, and dropping that
+  // would mean signing up and then losing the invitation that asked you to.
+  const params = new URLSearchParams(window.location.search);
+  const next = safeNext(params.get('neste'));
+
+  // An invitation also passes the address it was sent to, because that is the
+  // only address the acceptance will take. Filling it in is the difference
+  // between a form and a form with a trap in it.
+  const invited = params.get('epost');
+  if (invited !== null && invited !== '') {
+    emailField.value = invited;
+    el('#email-hint').textContent = 'Invitasjonen gjelder denne adressen.';
+  }
+
+  // And the name, when the invitation was addressed to a person: somebody
+  // invited from a company's own styreliste, typically. Unlike the address this
+  // is only a suggestion: the field stays editable, because the name on the
+  // invitation is what a colleague typed and the account is the reader's.
+  const invitedName = params.get('navn');
+  if (invitedName !== null && invitedName !== '') {
+    el<HTMLInputElement>('[name="full_name"]').value = invitedName;
+  }
 
   // Signing up and signing in are the same call for every provider; the
   // backend creates the account the first time it sees a subject.
-  void renderProviderButtons('/');
+  void renderProviderButtons(next);
 
   // The minimum length comes from the backend that enforces it, so the hint
   // cannot end up promising a rule the server does not apply. Both requests hit
@@ -117,7 +145,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     })
       .then(() => {
         rememberAuth('inn');
-        window.location.href = '/';
+        window.location.href = next;
       })
       .catch((error: unknown) => {
         setStatus(

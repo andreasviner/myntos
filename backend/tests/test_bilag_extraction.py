@@ -10,6 +10,7 @@ reason.
 """
 
 from datetime import date
+from typing import Any
 
 import pytest
 
@@ -298,7 +299,12 @@ async def test_only_the_first_part_of_a_long_document_is_sent() -> None:
 
     await extraction.extract("Faktura\n" + "x" * 50_000, ask=model, today=TODAY)
 
-    assert len(model.prompts[0]) < classification.MAX_DOCUMENT_CHARS + 1_000
+    # Measured on the document rather than on the whole prompt: the instructions
+    # are ours and their length is a decision, while the document is the user's
+    # business and how much of it leaves the building is the promise.
+    prompt = model.prompts[0]
+    assert "x" * (classification.MAX_DOCUMENT_CHARS - len("Faktura\n")) in prompt
+    assert "x" * classification.MAX_DOCUMENT_CHARS not in prompt
 
 
 def test_a_printed_item_line_beats_the_models_sentence() -> None:
@@ -331,3 +337,235 @@ def test_the_model_still_writes_the_description_when_nothing_was_printed() -> No
 
     assert suggestion.description == "Faktura 104588, Mobilabonnement for mars"
     assert suggestion.sources["description"] is interpretation.FieldSource.MODEL
+
+
+def test_a_marketplace_handle_is_a_perfectly_good_counterparty() -> None:
+    """Lowercase is not disqualifying, and nearly caught us out.
+
+    A rule that refused lowercase answers to catch "en har sendt pakken" would
+    also refuse "daisyaus-0", "solon" and "NikoVisioN" — which are most of the
+    counterparties a small company actually buys from. The word count is what
+    separates a handle from a clause.
+    """
+    document = "Items bought from daisyaus-0\nSelgeren har sendt pakken 31.08.2026"
+    reply = "DATO: 31.08.2026\nVALUTA: UKJENT\nMOTPART: daisyaus-0\nBESKRIVELSE: en ting"
+    found = extraction.parse_answer(reply, document_text=document, today=date(2026, 9, 6))
+    assert found.counterparty_name == "daisyaus-0"
+
+
+def test_a_clause_lifted_out_of_a_screenshot_is_not_a_counterparty() -> None:
+    """Genuinely on the page, correctly transcribed, and still not a party."""
+    document = "Frakt\nSelgeren har sendt pakken 31.08.2026"
+    reply = "DATO: UKJENT\nVALUTA: UKJENT\nMOTPART: en har sendt pakken\nBESKRIVELSE: noe"
+    found = extraction.parse_answer(reply, document_text=document, today=date(2026, 9, 6))
+    assert found.counterparty_name is None
+
+
+def test_the_chrome_of_a_banking_app_is_not_a_counterparty() -> None:
+    """ "Amount", "Details", "Add receipt" — the labels around the numbers."""
+    document = "Details\nAmount NOK -7 500,00\nStatus\nLevering"
+    for label in ("Amount", "Details", "Status", "Levering"):
+        reply = f"DATO: UKJENT\nVALUTA: UKJENT\nMOTPART: {label}\nBESKRIVELSE: noe"
+        found = extraction.parse_answer(reply, document_text=document, today=date(2026, 9, 6))
+        assert found.counterparty_name is None, label
+
+
+def test_our_own_document_headings_are_not_part_of_the_document() -> None:
+    """A bilag of several files gets a heading per file, written by us.
+
+    They are in the text a quote is checked against only because we put them
+    there, so a model that answers with one must not have it accepted — the
+    same rule that keeps the user's own note out of the evidence.
+    """
+    document = "--- Dokument 1: IMG_9362.png ---\nFEARLESS PC Accessories Store\n948,35 kr"
+    reply = "DATO: UKJENT\nVALUTA: UKJENT\nMOTPART: Dokument 1: IMG_9362.png\nBESKRIVELSE: noe"
+    found = extraction.parse_answer(reply, document_text=document, today=date(2026, 9, 6))
+    assert found.counterparty_name is None
+
+
+# --- A description has to say what was bought -------------------------------------
+
+
+def test_the_sellers_name_is_not_a_description() -> None:
+    """The answer that occasioned the rule.
+
+    An invoice for a battery came back as "Faktura 1075, LINJEFORENINGEN
+    ELEKTRA": a document type, a number, and the sender. All three have fields
+    of their own on the form, and the one question a description exists to
+    answer — hva gjaldt det — is left unanswered by every one of them.
+    """
+    document = "LINJEFORENINGEN ELEKTRA\nFakturanr.: 1075\nBatteri 1 152,00"
+    reply = (
+        "DATO: UKJENT\nVALUTA: UKJENT\nMOTPART: LINJEFORENINGEN ELEKTRA\n"
+        "BESKRIVELSE: LINJEFORENINGEN ELEKTRA"
+    )
+    found = extraction.parse_answer(reply, document_text=document, today=date(2026, 9, 6))
+
+    assert found.counterparty_name == "LINJEFORENINGEN ELEKTRA"
+    assert found.description is None
+
+
+@pytest.mark.parametrize(
+    "sentence", ["Faktura 1075", "Ordrenr 79", "Betaling", "Invoice 1075", "Kvittering nr 4"]
+)
+def test_naming_the_document_is_not_a_description(sentence: str) -> None:
+    """The reference is already the front half of the line in the ledger."""
+    assert extraction._description(sentence) is None
+
+
+def test_a_sentence_that_names_the_thing_survives_the_sellers_name_in_it() -> None:
+    """Refusing the seller's name is not refusing to mention it."""
+    assert (
+        extraction._description("Batteri fra Elektra Verksted", counterparty="Elektra Verksted")
+        == "Batteri fra Elektra Verksted"
+    )
+
+
+def test_a_sentence_containing_the_item_line_beats_it() -> None:
+    """The exception that makes the item-line rule worth having.
+
+    "Batteri" is what the table prints and it is not competing with "Batteri
+    til verkstedet" — that is the same item plus the context that makes one
+    word mean something. Every word of the item line has to be in the sentence,
+    which is a check and not a judgement.
+    """
+    suggestion = interpretation.InvoiceSuggestion(reference="Faktura 1075")
+    found = extraction.Extraction(description="Batteri til verkstedet")
+
+    extraction.apply_description(suggestion, found, item_text="Batteri")
+
+    assert suggestion.description == "Faktura 1075, Batteri til verkstedet"
+    assert suggestion.sources["description"] is interpretation.FieldSource.MODEL
+
+
+def test_a_sentence_that_drops_the_item_loses_to_it() -> None:
+    suggestion = interpretation.InvoiceSuggestion(reference="Faktura 1075")
+    suggestion.description = "Faktura 1075, Batteri"
+    found = extraction.Extraction(description="Kjøp hos Elektra Verksted")
+
+    extraction.apply_description(suggestion, found, item_text="Batteri")
+
+    assert suggestion.description == "Faktura 1075, Batteri"
+    assert "description" not in suggestion.sources
+
+
+def test_a_foreign_code_loses_to_the_kroner_on_the_same_bilag() -> None:
+    """The rule the parser already follows, applied to the model's answer.
+
+    A bilag of screenshots where one is a Norwegian bank line and another is
+    the eBay order it paid for genuinely contains "GBP", and the total is
+    genuinely kroner. Accepting the quote turned a 27 850,81-krone refund into
+    353 295,88 by multiplying it with an exchange rate that had nothing to do
+    with it.
+    """
+    document = "Ebay O:10-15068-4\nExchange rate GBP\n-27 850,81 kr"
+    reply = "DATO: UKJENT\nVALUTA: GBP\nMOTPART: UKJENT\nBESKRIVELSE: Mac Studio"
+    found = extraction.parse_answer(reply, document_text=document, today=date(2026, 9, 6))
+
+    assert found.currency_code is None
+
+
+def test_a_foreign_code_still_stands_where_the_bilag_names_no_kroner() -> None:
+    """And the eBay receipt, which is the reason the field exists at all."""
+    document = "eBay\nOrder total GBP 2,137.00"
+    reply = "DATO: UKJENT\nVALUTA: GBP\nMOTPART: eBay\nBESKRIVELSE: Mac Studio"
+    found = extraction.parse_answer(reply, document_text=document, today=date(2026, 9, 6))
+
+    assert found.currency_code == "GBP"
+
+
+# --- watching the description being written ---------------------------------------
+
+
+def test_only_the_description_is_handed_out_while_it_is_written() -> None:
+    """The first three lines have fields of their own and nobody wants to watch them.
+
+    A date, a currency code and a name each go in a box; forwarding every token
+    would type them across the description field on the way past.
+    """
+    pieces = extraction.DescriptionStream()
+    answer = (
+        "DATO: 2026-09-06\nVALUTA: UKJENT\nMOTPART: Elektra\n"
+        "BESKRIVELSE: Kjøp av ett batteri.\nSPØRSMÅL: Hvilken type?"
+    )
+    shown = "".join(pieces.feed(answer[at : at + 5]) for at in range(0, len(answer), 5))
+
+    assert shown == "Kjøp av ett batteri."
+    assert pieces.shown == "Kjøp av ett batteri."
+    # And the whole answer is still there for parse_answer to read.
+    assert pieces.answer == answer
+
+
+def test_the_label_may_arrive_split_down_the_middle() -> None:
+    """Chunk boundaries fall wherever the model's tokeniser put them."""
+    pieces = extraction.DescriptionStream()
+    shown = "".join(
+        pieces.feed(piece) for piece in ["MOTPART: X\nBESKRI", "VELSE:", " Batteri", " til lager"]
+    )
+
+    assert shown == "Batteri til lager"
+
+
+def test_nothing_after_the_line_is_handed_out() -> None:
+    """The question on the next line is not part of the sentence."""
+    pieces = extraction.DescriptionStream()
+    pieces.feed("BESKRIVELSE: Batteri\n")
+    assert pieces.feed("SPØRSMÅL: Hvilken type batteri?") == ""
+    assert pieces.shown == "Batteri"
+
+
+@pytest.mark.asyncio
+async def test_a_stream_that_dies_half_way_keeps_what_arrived() -> None:
+    """Four good lines are not thrown away because a fifth never came.
+
+    The same thing the non-streaming path does with a reply the model cut short:
+    what is complete holds up, what is truncated fails its own check.
+    """
+
+    async def dies(*, system: str, prompt: str, max_tokens: int) -> Any:
+        del system, prompt, max_tokens
+        yield "DATO: 06.09.2026\nVALUTA: UKJENT\nMOTPART: Elektra\n"
+        yield "BESKRIVELSE: Kjøp av batteri\n"
+        raise RuntimeError("the engine died")
+
+    seen: list[str] = []
+
+    async def note(piece: str) -> None:
+        seen.append(piece)
+
+    found = await extraction.extract_streaming(
+        "Elektra\n06.09.2026\nBatteri",
+        ask=dies,
+        today=date(2026, 9, 6),
+        on_description=note,
+    )
+
+    assert "".join(seen) == "Kjøp av batteri"
+    assert found.occurred_on == date(2026, 9, 6)
+    assert found.counterparty_name == "Elektra"
+    assert found.description == "Kjøp av batteri"
+
+
+@pytest.mark.asyncio
+async def test_the_streamed_answer_is_the_answer() -> None:
+    """The equivalence the whole design rests on.
+
+    Streaming is for the wait, not for the answer: the same reply read in one
+    piece and in twenty has to produce the same Extraction, or the route the
+    browser uses is quietly a different product from the route the tests use.
+    """
+
+    async def in_pieces(*, system: str, prompt: str, max_tokens: int) -> Any:
+        del system, prompt, max_tokens
+        for at in range(0, len(ANSWER), 3):
+            yield ANSWER[at : at + 3]
+
+    async def nothing(piece: str) -> None:
+        del piece
+
+    at_once = extraction.parse_answer(ANSWER, document_text=RECEIPT, today=TODAY)
+    streamed = await extraction.extract_streaming(
+        RECEIPT, ask=in_pieces, today=TODAY, on_description=nothing
+    )
+
+    assert streamed == at_once

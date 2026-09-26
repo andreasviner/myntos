@@ -53,6 +53,71 @@ export function initThemeToggle(): void {
   }
 }
 
+function triggers(): HTMLButtonElement[] {
+  return [...document.querySelectorAll<HTMLButtonElement>('[data-menu-trigger]')];
+}
+
+function menuFor(trigger: HTMLButtonElement): HTMLElement | null {
+  return document.getElementById(trigger.getAttribute('aria-controls') ?? '');
+}
+
+function setOpen(trigger: HTMLButtonElement, open: boolean): void {
+  const menu = menuFor(trigger);
+  trigger.setAttribute('aria-expanded', String(open));
+  if (menu === null) return;
+  // A panel marked data-collapse is only collapsible at narrow widths, and the
+  // header nav is one. Using the `hidden` attribute on it would hide the
+  // whole navigation from screen readers on desktop, where it is plainly
+  // visible; a data attribute lets CSS decide per breakpoint instead.
+  if (menu.dataset.collapse === undefined) menu.hidden = !open;
+  else menu.dataset.open = String(open);
+}
+
+/**
+ * Shut every dropdown.
+ *
+ * Exported because a menu whose contents are built elsewhere still has to close
+ * the way the ones in the markup do. The company switcher fills itself in from
+ * the API, and its one row that acts without navigating away (the company
+ * already on screen) would otherwise leave the panel hanging open.
+ */
+export function closeMenus(): void {
+  for (const trigger of triggers()) setOpen(trigger, false);
+}
+
+/**
+ * Open the company switcher in the header from somewhere else on the page.
+ *
+ * The switcher is one control in one place, which is the whole reason the five
+ * per-page pickers were removed. A page that has its own reason to offer the
+ * switch (the dashboard says which company it is showing, and «Bytt selskap»
+ * belongs next to that) therefore points at the real control rather than
+ * growing a second one, and the trigger is focused so the keyboard lands in the
+ * menu it just opened.
+ *
+ * The event has to stop here, and that is not a detail: the caller is a button
+ * *outside* the menu, so the click that opens the panel goes on to reach the
+ * dismiss-on-click-outside listener below, which closes it again in the same
+ * tick. The menu opened and shut so fast that the button looked dead.
+ */
+export function openCompanyMenu(event?: Event): void {
+  event?.stopPropagation();
+  const trigger = document.querySelector<HTMLButtonElement>('[data-company-trigger]');
+  if (trigger === null) return;
+  closeMenus();
+  // On a narrow screen the switcher itself is inside the collapsed navigation
+  // panel, so opening its dropdown alone would reveal nothing at all. Open
+  // whatever contains it first, from the markup rather than by name, so this
+  // keeps working if the header is rearranged.
+  const panel = trigger.closest<HTMLElement>('[data-collapse]');
+  if (panel !== null) {
+    const opener = triggers().find((item) => item.getAttribute('aria-controls') === panel.id);
+    if (opener !== undefined) setOpen(opener, true);
+  }
+  setOpen(trigger, true);
+  trigger.focus();
+}
+
 /**
  * The header menus: one dropdown per trigger, plus the mobile panel.
  *
@@ -61,33 +126,12 @@ export function initThemeToggle(): void {
  * lands outside: the two things people expect and libraries usually forget.
  */
 export function initNav(): void {
-  const triggers = [...document.querySelectorAll<HTMLButtonElement>('[data-menu-trigger]')];
-
-  const menuFor = (trigger: HTMLButtonElement): HTMLElement | null =>
-    document.getElementById(trigger.getAttribute('aria-controls') ?? '');
-
-  const setOpen = (trigger: HTMLButtonElement, open: boolean): void => {
-    const menu = menuFor(trigger);
-    trigger.setAttribute('aria-expanded', String(open));
-    if (menu === null) return;
-    // A panel marked data-collapse is only collapsible at narrow widths, and the
-    // header nav is one. Using the `hidden` attribute on it would hide the
-    // whole navigation from screen readers on desktop, where it is plainly
-    // visible; a data attribute lets CSS decide per breakpoint instead.
-    if (menu.dataset.collapse === undefined) menu.hidden = !open;
-    else menu.dataset.open = String(open);
-  };
-
-  const closeAll = (): void => {
-    for (const trigger of triggers) setOpen(trigger, false);
-  };
-
-  for (const trigger of triggers) {
+  for (const trigger of triggers()) {
     setOpen(trigger, false);
     trigger.addEventListener('click', (event) => {
       event.stopPropagation();
       const willOpen = trigger.getAttribute('aria-expanded') !== 'true';
-      for (const other of triggers) {
+      for (const other of triggers()) {
         if (other === trigger) continue;
         // Never close a panel that contains the trigger being used: on mobile
         // the Funksjoner dropdown lives inside the nav panel, and closing its
@@ -109,14 +153,14 @@ export function initNav(): void {
       );
       if (insideMenu) return;
     }
-    closeAll();
+    closeMenus();
   });
 
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
-    const open = triggers.find((trigger) => trigger.getAttribute('aria-expanded') === 'true');
+    const open = triggers().find((trigger) => trigger.getAttribute('aria-expanded') === 'true');
     if (open === undefined) return;
-    closeAll();
+    closeMenus();
     open.focus();
   });
 }

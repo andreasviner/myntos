@@ -54,7 +54,12 @@ from typing import Any, Protocol
 import httpx
 import jwt
 
-from myntos.auth.signing_keys import SigningKey, SigningKeyError, load_signing_key
+from myntos.auth.signing_keys import (
+    SigningKey,
+    SigningKeyError,
+    load_signing_key,
+    load_signing_key_material,
+)
 from myntos.core.clock import utc_now
 from myntos.core.config import Settings, get_settings
 
@@ -425,12 +430,22 @@ def build_token_provider(settings: Settings) -> TokenProvider:
     missing variables.
     """
     client_id = (settings.maskinporten_client_id or "").strip()
+    material = settings.maskinporten_key_material
     key_path = settings.maskinporten_key_file
-    if not client_id or key_path is None:
+    if not client_id:
         return NotConfiguredTokenProvider()
 
     try:
-        signing_key = load_signing_key(key_path, kid=settings.maskinporten_kid)
+        # Inline wins over the path: a deployment whose credentials arrive as
+        # secret bindings has the key material and no file to point at.
+        if material is not None:
+            signing_key = load_signing_key_material(
+                material, kid=settings.maskinporten_kid, source="MASKINPORTEN_JWK"
+            )
+        elif key_path is not None:
+            signing_key = load_signing_key(key_path, kid=settings.maskinporten_kid)
+        else:
+            return NotConfiguredTokenProvider()
     except SigningKeyError as error:
         # Configured but unusable is a different situation from not configured,
         # and it must not be silently downgraded into "the feature is off".

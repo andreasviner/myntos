@@ -78,14 +78,25 @@ def load_signing_key(path: Path, *, kid: str | None = None) -> SigningKey:
         raw = path.read_bytes()
     except OSError as error:
         raise SigningKeyError(f"could not read the client key at {path}: {error}") from error
+    return load_signing_key_material(raw, kid=kid, source=str(path))
 
-    document = _as_jwk_document(raw, path=path)
+
+def load_signing_key_material(
+    raw: bytes, *, kid: str | None = None, source: str = "the configured client key"
+) -> SigningKey:
+    """The same key, read from memory rather than from a file.
+
+    A secret binding is a string, not a path, so a container that has its
+    credentials injected holds the key material with nowhere on disk to put it.
+    ``source`` only names the origin in error messages.
+    """
+    document = _as_jwk_document(raw, source=source)
     if document is not None:
-        return _from_jwk(document, fallback_kid=kid, path=path)
-    return _from_pem(raw, kid=kid, path=path)
+        return _from_jwk(document, fallback_kid=kid, source=source)
+    return _from_pem(raw, kid=kid, source=source)
 
 
-def _as_jwk_document(raw: bytes, *, path: Path) -> dict[str, Any] | None:
+def _as_jwk_document(raw: bytes, *, source: str) -> dict[str, Any] | None:
     """The file parsed as a single JWK, or ``None`` if it is not JSON at all.
 
     A JWK *set* is accepted with exactly one key in it: that is what several
@@ -97,70 +108,71 @@ def _as_jwk_document(raw: bytes, *, path: Path) -> dict[str, Any] | None:
     except ValueError:
         return None
     if not isinstance(parsed, dict):
-        raise SigningKeyError(f"{path} is JSON, but not a JWK")
+        raise SigningKeyError(f"{source} is JSON, but not a JWK")
 
     keys = parsed.get("keys")
     if isinstance(keys, list):
         if len(keys) != 1:
             raise SigningKeyError(
-                f"{path} is a JWK set with {len(keys)} keys - point the setting "
+                f"{source} is a JWK set with {len(keys)} keys - point the setting "
                 "at a single key, so which one signs is not a guess"
             )
         only = keys[0]
         if not isinstance(only, dict):
-            raise SigningKeyError(f"{path} is a JWK set with an unreadable key in it")
+            raise SigningKeyError(f"{source} is a JWK set with an unreadable key in it")
         return only
     return parsed
 
 
-def _from_jwk(document: dict[str, Any], *, fallback_kid: str | None, path: Path) -> SigningKey:
+def _from_jwk(document: dict[str, Any], *, fallback_kid: str | None, source: str) -> SigningKey:
     if "d" not in document:
         raise SigningKeyError(
-            f"{path} holds a public key - the JWK that signs the grant is the "
+            f"{source} holds a public key - the JWK that signs the grant is the "
             "private one; the public half is what gets registered with Digdir"
         )
     try:
         key = jwt.PyJWK(document, algorithm=ALGORITHM).key
     except Exception as error:  # PyJWT raises several unrelated types here
-        raise SigningKeyError(f"{path} is not a usable RSA JWK: {error}") from error
+        raise SigningKeyError(f"{source} is not a usable RSA JWK: {error}") from error
 
     kid = document.get("kid") or fallback_kid
     if not isinstance(kid, str) or not kid.strip():
         raise SigningKeyError(
-            f"{path} carries no 'kid' - set the key id this client was "
+            f"{source} carries no 'kid' - set the key id this client was "
             "registered with in Samarbeidsportalen"
         )
-    return _checked(key, kid.strip(), path)
+    return _checked(key, kid.strip(), source)
 
 
-def _from_pem(raw: bytes, *, kid: str | None, path: Path) -> SigningKey:
+def _from_pem(raw: bytes, *, kid: str | None, source: str) -> SigningKey:
     try:
         key = load_pem_private_key(raw, password=None)
     except (ValueError, TypeError) as error:
         raise SigningKeyError(
-            f"{path} is neither a JWK document nor an unencrypted PEM private key"
+            f"{source} is neither a JWK document nor an unencrypted PEM private key"
         ) from error
 
     if kid is None or not kid.strip():
         raise SigningKeyError(
-            f"{path} is a PEM, which carries no key id. Set the matching *_KID "
+            f"{source} is a PEM, which carries no key id. Set the matching *_KID "
             "variable to the key id this client was registered with - run "
             "'python -m myntos.auth.digdir_key' to see this key's thumbprint "
             "and the public JWK to register in Samarbeidsportalen"
         )
-    return _checked(key, kid.strip(), path)
+    return _checked(key, kid.strip(), source)
 
 
-def _checked(key: object, kid: str, path: Path) -> SigningKey:
+def _checked(key: object, kid: str, source: str) -> SigningKey:
     """Refuse anything that is not an RSA private key of a usable size."""
     if not isinstance(key, RSAPrivateKey):
         raise SigningKeyError(
-            f"{path} is not an RSA private key - Digdir's JWT grant is signed "
+            f"{source} is not an RSA private key - Digdir's JWT grant is signed "
             f"with RSA ({ALGORITHM})"
         )
     if key.key_size < _MINIMUM_KEY_SIZE:
         raise SigningKeyError(
-            f"{path} is a {key.key_size}-bit key; Digdir requires at least {_MINIMUM_KEY_SIZE} bits"
+            f"{source} is a {key.key_size}-bit key; Digdir requires at least "
+            f"{_MINIMUM_KEY_SIZE} bits"
         )
     return SigningKey(key=key, kid=kid)
 

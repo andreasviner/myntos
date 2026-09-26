@@ -123,9 +123,19 @@ STANDARD_ACCOUNTS: tuple[SeedAccount, ...] = (
     SeedAccount("1920", "Bankinnskudd", AccountType.EIENDEL),
     SeedAccount("2050", "Annen egenkapital", AccountType.EGENKAPITAL),
     SeedAccount("2060", "Privatkonto", AccountType.EGENKAPITAL),
+    SeedAccount("2220", "Gjeld til kredittinstitusjoner", AccountType.GJELD),
     SeedAccount("2400", "Leverandørgjeld", AccountType.GJELD),
+    # Withheld tax is not the employer's money and never was. It sits here from
+    # the day the salary is booked until it is paid on, which is what makes the
+    # payment a settlement of a debt rather than a second payroll cost.
+    SeedAccount("2600", "Forskuddstrekk", AccountType.GJELD),
     SeedAccount("2700", "Utgående merverdiavgift", AccountType.GJELD),
     SeedAccount("2710", "Inngående merverdiavgift", AccountType.EIENDEL),
+    # Where a filed MVA-melding goes to be paid or refunded. Without it the
+    # register had nowhere to put the payment, and the only categories that fit
+    # were a cost (inventing a deduction on tax already deducted) or a private
+    # withdrawal (making the company's VAT the owner's spending money).
+    SeedAccount("2740", "Oppgjørskonto merverdiavgift", AccountType.GJELD),
     # --- Income ---
     SeedAccount(
         "3000", "Salgsinntekt, avgiftspliktig høy sats", AccountType.INNTEKT, "salgsinntekt", "3000"
@@ -152,6 +162,11 @@ STANDARD_ACCOUNTS: tuple[SeedAccount, ...] = (
     ),
     SeedAccount("3900", "Annen driftsinntekt", AccountType.INNTEKT, "annenDriftsinntekt", "3900"),
     SeedAccount("8050", "Renteinntekt", AccountType.INNTEKT, "finansinntekt", "8050"),
+    # Grouped with 8050 rather than under a post of its own, the same way 3010
+    # and 3020 group under 3000: næringsspesifikasjonen asks for finansinntekt
+    # in one figure, and inventing a post number Skatteetaten's year-versioned
+    # list does not carry would fail validation on export.
+    SeedAccount("8060", "Valutagevinst", AccountType.INNTEKT, "finansinntekt", "8050"),
     # --- Expenses ---
     SeedAccount("4000", "Varekjøp", AccountType.KOSTNAD, "varekostnad", "4000"),
     SeedAccount("5000", "Lønn til ansatte", AccountType.KOSTNAD, "lonnskostnad", "5000"),
@@ -182,6 +197,7 @@ STANDARD_ACCOUNTS: tuple[SeedAccount, ...] = (
     SeedAccount("7770", "Bank- og kortgebyr", AccountType.KOSTNAD, "annenDriftskostnad", "7770"),
     SeedAccount("7790", "Annen driftskostnad", AccountType.KOSTNAD, "annenDriftskostnad", "7790"),
     SeedAccount("8150", "Rentekostnad", AccountType.KOSTNAD, "finanskostnad", "8150"),
+    SeedAccount("8160", "Valutatap", AccountType.KOSTNAD, "finanskostnad", "8150"),
 )
 
 ACCOUNTS_BY_NUMBER: dict[str, SeedAccount] = {a.number: a for a in STANDARD_ACCOUNTS}
