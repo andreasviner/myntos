@@ -512,6 +512,11 @@ _KNOWN_RATES = (Decimal("0.25"), Decimal("0.15"), Decimal("0.12"))
 #: forwarder's or Tolletaten's bill. A bilag in foreign currency filed under
 #: them is that bill, and its own code is the right one.
 _IMPORT_VAT_CODES = frozenset({"14", "15"})
+#: A seller in VOEC, the simplified scheme for foreign web shops, has to print
+#: its VOEC number on what it sends ("VOEC ID: 2034638" on AliExpress). The word
+#: appears on nothing else a business is billed with, so it is read as the
+#: statement it is rather than inferred from the seller's name or the rate.
+_VOEC = re.compile(r"(?i)\bvoec\b")
 
 _TAX_CODE_BY_RATE: dict[CashFlowDirection, dict[Decimal, str]] = {
     CashFlowDirection.UT: {Decimal("0.25"): "1", Decimal("0.15"): "11", Decimal("0.12"): "13"},
@@ -754,6 +759,10 @@ class InvoiceReading:
     buyer_name: str | None = None
     currency_code: str | None = None
     is_credit_note: bool = False
+    #: Whether any document in the bilag is a VOEC invoice: VAT charged to a
+    #: consumer by a foreign web shop, which no business may deduct. See
+    #: :func:`apply_type`.
+    under_voec: bool = False
     #: Whether the total was printed with a minus in front, and ``None`` when no
     #: total on the page carried a sign. An invoice never signs its total: it
     #: states what is owed and leaves the direction to whoever reads it. A bank
@@ -1745,6 +1754,7 @@ def read(
         buyer_name=_buyer_name(lines),
         currency_code=_currency(text),
         is_credit_note="kreditnota" in low or "credit note" in low,
+        under_voec=_VOEC.search(text) is not None,
         total_is_negative=gross_is_negative,
         shows_a_return=_shows_a_return(_document_totals(lines)),
         item_text=item_text,
@@ -2023,6 +2033,55 @@ def _written_rate(value: Decimal) -> str:
     return f"{value:,.4f}".replace(",", "\u00a0").replace(".", ",")
 
 
+#: Words with which a document says the *buyer* wrote it on the seller's behalf:
+#: self-billing, which bokføringsforskriften § 5-2-1 allows and EHF carries as
+#: Selvfakturering from 2027. On such a document the name at the top is the
+#: customer, and every rule below that reads "issued by somebody else" as a
+#: purchase would read it backwards.
+_SELF_BILLED = (
+    "selvfaktura",
+    "selvfakturering",
+    "self-billing",
+    "self billing",
+    "utstedt av kjøper",
+    "utstedt av kjøperen",
+)
+
+#: What a farm's buyers call the settlement they write: Tine's melkeoppgjør,
+#: Nortura's slakteoppgjør, the mill's kornoppgjør, the timber buyer's
+#: tømmeroppgjør. The same paper as self-billing, under the names the trade
+#: uses (bokføringsforskriften § 5-2-1 tredje ledd lets cooperatives and
+#: approved buyers issue it). Read only in books with the farming add-on,
+#: because "oppgjør" alone is also the word on a power company's bill.
+_FARM_SETTLEMENTS = (
+    "melkeoppgjør",
+    "melkeavregning",
+    "slakteoppgjør",
+    "slakteavregning",
+    "kornoppgjør",
+    "kornavregning",
+    "tømmeroppgjør",
+    "tømmeravregning",
+    "produsentoppgjør",
+    "leverandøroppgjør",
+    "leveranseoppgjør",
+    "avregning levert melk",
+    "avregning for levert",
+    "oppgjør for levert",
+)
+
+
+def issued_by_buyer(text: str, *, farm: bool = False) -> bool:
+    """Whether the document says it was written by the buyer, for the seller.
+
+    ``farm`` adds the settlement names a farm's buyers use, which mean that in a
+    farm's books and could mean something else in anyone else's.
+    """
+    lowered = " ".join(text.lower().split())
+    words = _SELF_BILLED + (_FARM_SETTLEMENTS if farm else ())
+    return any(word in lowered for word in words)
+
+
 def _normalise_name(name: str) -> str:
     """A company name reduced to what is worth comparing."""
     words = [word for word in re.split(r"[^0-9a-zæøå]+", name.lower()) if word]
@@ -2102,6 +2161,42 @@ def apply_type(
             "Vi fant ikke ut hva dette gjelder. Velg type selv. Den bestemmer hvilken konto "
             "beløpet havner på, og dermed hva Skatteetaten får se."
         )
+
+    if reading.under_voec and suggestion.direction is CashFlowDirection.UT:
+        # VAT a foreign web shop charged under VOEC is a consumer's VAT. The
+        # scheme covers sales to consumers only (Skatteetaten: "VOEC-ordningen
+        # er kun for salg til forbrukere (B2C)"); a business buying there should
+        # give its organisasjonsnummer and have the import VAT charged at the
+        # border instead, which is the VAT that can be deducted. What a VOEC
+        # seller charged can only be refunded by that seller, never deducted.
+        #
+        # Printed in kroner at 25 %, it looked exactly like Norwegian input VAT,
+        # and the parser proposed nothing either way. AliExpress's bilag of nine
+        # orders on one card charge (9 771,76) came back with no code, so the
+        # form fell back to the category: 0 for an unregistered company, without
+        # a word about the 25 % on the invoices, which read as a mistake; and
+        # 25 % for a registered one, deducting 1 954 kroner of VAT when 333 was
+        # charged and none of it was deductible. The 5 908,81 spot welder in
+        # that charge was over the VOEC limit and carried no VAT at all.
+        #
+        # Before the currency, because a VOEC invoice prints its own currency
+        # beside the kroner, and "ingen norsk mva" would be untrue of it.
+        suggestion.tax_code = NO_VAT_CODE
+        suggestion.mark("tax_code")
+        # "Betalt" first, because code 0 was read as "no VAT was paid", which
+        # the invoices contradict. And the advice is for any business, not only
+        # a registered one: VOEC leaves out every næringsdrivende, and the import
+        # VAT an unregistered company pays instead is what it can claim in
+        # tilbakegående avgiftsoppgjør (§ 8-6) once it registers.
+        warn(
+            "Mvaen på bilaget er betalt etter VOEC-ordningen, som bare gjelder salg til "
+            "forbrukere. Den mvaen gir ikke fradrag, så mva-koden er satt til 0 og hele beløpet "
+            "føres som kostnad. Oppgi organisasjonsnummeret når selskapet handler, også før det "
+            "er mva-registrert: da beregnes mvaen i stedet ved innførselen, og den gir fradrag "
+            "når selskapet er registrert. Varer over 3 000 kr er utenfor ordningen, og mvaen på "
+            "dem kan komme som en egen regning fra transportøren."
+        )
+        return
 
     if reading.currency_code is not None:
         # Whatever tax the seller charged in GBP, it is not norsk inngående mva
@@ -2238,6 +2333,7 @@ def suggest(
     reading: InvoiceReading | None = None,
     model_fields: frozenset[str] = frozenset(),
     direction: CashFlowDirection | None = None,
+    farm: bool = False,
 ) -> InvoiceSuggestion:
     """Propose form values for the invoice in ``text``.
 
@@ -2256,6 +2352,10 @@ def suggest(
     document suggests, the sign on a bank line included, because the person who
     made the payment knows which way it went and every rule here is inference.
     It is not marked as a proposal: the user chose it, and the form keeps it.
+
+    ``farm`` is whether the books have the farming add-on, which makes a
+    melkeoppgjør or a slakteoppgjør read as what it is: a sale the buyer wrote
+    up (:func:`issued_by_buyer`).
     """
     hints = parties or []
 
@@ -2315,6 +2415,24 @@ def suggest(
     elif we_issued_it:
         suggestion.direction = CashFlowDirection.INN
         suggestion.mark("direction")
+
+    # A settlement the buyer wrote for us. It outranks the register's word on
+    # the party, because Felleskjøpet is a supplier of feed and the buyer of the
+    # grain on the same orgnr, and the document says which of the two this is.
+    # The name at the top is the customer's, so the counterparty is that name.
+    #
+    # Without this a melkeoppgjør from Tine came back as a purchase from Tine,
+    # and since the category menu is narrowed by direction, the model was never
+    # even offered «Melkeoppgjør».
+    by_buyer = issued_by_buyer(text, farm=farm)
+    if by_buyer:
+        suggestion.direction = CashFlowDirection.INN
+        suggestion.mark("direction")
+        suggestion.warnings.append(
+            "Dette ser ut som et oppgjør kjøperen har skrevet ut for deg. Det er "
+            "salgsdokumentet ditt, ikke en regning. Har oppgjøret trekk (avgifter, andel, "
+            "fôr), før det som et sammensatt bilag med én linje per post."
+        )
 
     # Last word to the sign, because it is the only statement about direction
     # the document makes. Everything above it is inference: who is named first,

@@ -32,7 +32,12 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass
 
-from myntos.domain.ledger.chart import ACCOUNTS_BY_NUMBER, NO_VAT_CODE, TAX_CODES_BY_CODE
+from myntos.domain.ledger.chart import (
+    ACCOUNTS_BY_NUMBER,
+    KNOWN_ACCOUNTS,
+    NO_VAT_CODE,
+    TAX_CODES_BY_CODE,
+)
 from myntos.domain.ledger.errors import UnknownCashFlowTypeError
 
 
@@ -72,6 +77,20 @@ class CashFlowType:
     #: 2710. Between them that is the difference between reducing a deduction and
     #: owing tax on a sale that never happened.
     reverses: str | None = None
+    #: The add-on this category belongs to, or ``None`` for the categories
+    #: every business sees. ``"landbruk"`` is the only one
+    #: (:mod:`myntos.domain.ledger.landbruk`): a farm's categories are offered,
+    #: proposed by the model and accepted for posting only in books that have
+    #: the add-on, so the catalogue a hairdresser sees is the one it always was.
+    segment: str | None = None
+    #: A deduction the buyer made on a settlement it wrote: money out that is
+    #: neither a purchase nor a reversal of one sale, but a reduction of the
+    #: sales the settlement is for (the levy on a melkeoppgjør, the
+    #: bunnfradrag on produksjonstilskudd). It books as the sale's side, so
+    #: VAT on it, if the settlement shows any, goes back against the output
+    #: VAT on 2700. Booked as a purchase it would claim a deduction on 2710 for
+    #: tax that was never charged to the farm.
+    deducts_from_sale: bool = False
 
     @property
     def is_refund(self) -> bool:
@@ -91,7 +110,12 @@ class CashFlowType:
         not be reversed: ``is_incoming and not is_refund`` put a kreditnota's
         VAT on 2710, which claims a deduction on a sale that was cancelled
         rather than giving back the tax that was charged on it.
+
+        A deduction on a settlement (``deducts_from_sale``) is the sale's side
+        too, for the same reason a kreditnota is.
         """
+        if self.deducts_from_sale:
+            return CashFlowDirection.INN
         if not self.is_refund:
             return self.direction
         return (
@@ -498,6 +522,566 @@ _BASE: tuple[CashFlowType, ...] = (
     ),
 )
 
+#: The farming add-on's categories (docs/landbruk.md), offered only in books
+#: that have it. Each points at an account from NIBIO's Landbrukets
+#: kodesystem (:data:`~myntos.domain.ledger.chart.LANDBRUK_ACCOUNTS`), which
+#: the add-on puts in the kontoplan.
+#:
+#: Three things a farm's books get wrong elsewhere, and which these get right:
+#:
+#: - **The rate.** Milk delivered to the dairy, slaughter animals, live animals
+#:   and grain are 25 %, not food's 15 %: none of them is a næringsmiddel until
+#:   it has been processed (Merverdiavgiftshåndboken M-5-2.4). Potatoes,
+#:   vegetables, fruit, berries and eggs sold as food are 15 %.
+#: - **The settlement is a sale.** Tine, Nortura and Felleskjøpet write the
+#:   sales document themselves (bokføringsforskriften § 5-2-1 tredje ledd), so
+#:   the paper with their name at the top is the farmer's own invoice, not a
+#:   bill. The deductions on it are lines of their own in a composite entry:
+#:   the levy against the sale, the share in the cooperative on the balance
+#:   sheet, feed set off as a purchase with its own deduction.
+#: - **Tilskudd are not sales.** Outside VAT, income in the year they are paid
+#:   (Skatte-ABC J-2-8.63.2), and kept apart from the price, except the
+#:   distriktstilskudd the dairy or slaughterhouse pays with the price, which
+#:   NIBIO codes as part of it (25 %).
+_LANDBRUK = "landbruk"
+
+_FARM: tuple[CashFlowType, ...] = (
+    # --- Money in: settlements and sales ---
+    CashFlowType(
+        code="landbruk_melk",
+        label="Melkeoppgjør",
+        direction=CashFlowDirection.INN,
+        account_number="3071",
+        default_tax_code="3",
+        note=(
+            "Melk levert til meieriet. Den er ikke næringsmiddel før meieriet har behandlet "
+            "den, så salget har 25 % mva. Oppgjøret fra Tine er salgsdokumentet ditt, skrevet "
+            "ut av kjøperen. Før trekkene i oppgjøret som egne linjer. Etterbetaling fra Tine "
+            "føres også her, i året årsmøtet vedtar den."
+        ),
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_distriktstilskudd_melk",
+        label="Distrikts- og grunntilskudd i melkeoppgjøret",
+        direction=CashFlowDirection.INN,
+        account_number="3073",
+        default_tax_code="3",
+        note=(
+            "Tilskuddet meieriet betaler sammen med melkeprisen. Det regnes som en del av "
+            "prisen og har 25 % mva, slik NIBIOs kodesystem fører det."
+        ),
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_slakt",
+        label="Slakteoppgjør",
+        direction=CashFlowDirection.INN,
+        account_number="3041",
+        default_tax_code="3",
+        note=(
+            "Dyr levert til slakteriet. Slaktedyr er ikke næringsmiddel, så salget har 25 % "
+            "mva. Oppgjøret fra Nortura eller et annet slakteri er salgsdokumentet ditt. "
+            "Distriktstilskuddet på oppgjøret har sin egen type, og trekkene føres som egne "
+            "linjer."
+        ),
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_distriktstilskudd_slakt",
+        label="Distriktstilskudd i slakteoppgjøret",
+        direction=CashFlowDirection.INN,
+        account_number="3047",
+        default_tax_code="3",
+        note=(
+            "Tilskuddet slakteriet betaler sammen med prisen. Det regnes som en del av "
+            "prisen og har 25 % mva, slik NIBIOs kodesystem fører det."
+        ),
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_livdyr",
+        label="Salg av livdyr",
+        direction=CashFlowDirection.INN,
+        account_number="3051",
+        default_tax_code="3",
+        note="Levende dyr er ikke næringsmiddel, så salget har 25 % mva.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_korn",
+        label="Kornoppgjør og salg av frø",
+        direction=CashFlowDirection.INN,
+        account_number="3001",
+        default_tax_code="3",
+        note=(
+            "Korn bonden selger er ikke næringsmiddel ennå, verken fôrkorn eller matkorn, så "
+            "salget har 25 % mva. Oppgjøret fra mølla eller Felleskjøpet er salgsdokumentet "
+            "ditt."
+        ),
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_grovfor_salg",
+        label="Salg av høy, halm og grovfôr",
+        direction=CashFlowDirection.INN,
+        account_number="3005",
+        default_tax_code="3",
+        note="Fôr er ikke mat for mennesker, så salget har 25 % mva.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_poteter",
+        label="Salg av poteter",
+        direction=CashFlowDirection.INN,
+        account_number="3011",
+        default_tax_code="31",
+        note=(
+            "Poteter solgt som mat har 15 % mva. Settepoteter og fôrpoteter har 25 %: velg "
+            "kode 3 da."
+        ),
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_gront",
+        label="Salg av grønnsaker, frukt og bær",
+        direction=CashFlowDirection.INN,
+        account_number="3015",
+        default_tax_code="31",
+        note=(
+            "Grønnsaker, frukt og bær solgt som mat har 15 % mva. Frukt og bær har egne "
+            "kontoer (3021 og 3025) hvis du vil skille dem."
+        ),
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_egg",
+        label="Salg av egg og andre husdyrprodukter",
+        direction=CashFlowDirection.INN,
+        account_number="3075",
+        default_tax_code="31",
+        note="Egg solgt som mat har 15 % mva. Rugeegg har 25 %: velg kode 3 da.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_ull",
+        label="Salg av ull og skinn",
+        direction=CashFlowDirection.INN,
+        account_number="3079",
+        default_tax_code="3",
+        note="Ull og skinn er ikke mat, så salget har 25 % mva.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_leiekjoring",
+        label="Leiekjøring og maskinarbeid for andre",
+        direction=CashFlowDirection.INN,
+        account_number="3091",
+        default_tax_code="3",
+        note=(
+            "25 % mva. Brukes maskinen minst 60 % i din egen drift, hører inntekten med i "
+            "mva-meldingen for primærnæring og i grunnlaget for jordbruksfradraget. Den holdes "
+            "likevel utenfor jordbrukskontoen."
+        ),
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_skogsvirke",
+        label="Tømmeroppgjør og salg av ved",
+        direction=CashFlowDirection.INN,
+        account_number="3094",
+        default_tax_code="3",
+        note=(
+            "Tømmer, massevirke, ved og flis har 25 % mva. Det kjøperen trekker til "
+            "skogfondet, føres som en egen linje («Trekk til skogfond»), så salget står med "
+            "hele beløpet."
+        ),
+        segment=_LANDBRUK,
+    ),
+    # --- Money in: tilskudd ---
+    CashFlowType(
+        code="landbruk_tilskudd_areal",
+        label="Produksjonstilskudd: areal",
+        direction=CashFlowDirection.INN,
+        account_number="3410",
+        default_tax_code=NO_VAT_CODE,
+        note=(
+            "Arealtilskudd fra Landbruksdirektoratet. Tilskudd er ikke salg og har ingen mva, "
+            "og de er inntekt i året de blir utbetalt: tilskuddet for 2025 som kommer i "
+            "februar 2026, er inntekt i 2026. Arealtilskudd for grovfôr kan flyttes til konto "
+            "3430."
+        ),
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_tilskudd_kulturlandskap",
+        label="Produksjonstilskudd: kulturlandskap",
+        direction=CashFlowDirection.INN,
+        account_number="3413",
+        default_tax_code=NO_VAT_CODE,
+        note="Tilskudd har ingen mva og er inntekt i året de blir utbetalt.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_tilskudd_husdyr",
+        label="Produksjonstilskudd: husdyr",
+        direction=CashFlowDirection.INN,
+        account_number="3450",
+        default_tax_code=NO_VAT_CODE,
+        note="Tilskudd har ingen mva og er inntekt i året de blir utbetalt.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_tilskudd_driftstilskudd",
+        label="Produksjonstilskudd: driftstilskudd",
+        direction=CashFlowDirection.INN,
+        account_number="3455",
+        default_tax_code=NO_VAT_CODE,
+        note="Driftstilskudd for melk eller ammeku. Ingen mva, inntekt i utbetalingsåret.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_tilskudd_beite",
+        label="Produksjonstilskudd: dyr på beite",
+        direction=CashFlowDirection.INN,
+        account_number="3457",
+        default_tax_code=NO_VAT_CODE,
+        note="Tilskudd har ingen mva og er inntekt i året de blir utbetalt.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_tilskudd_avloser",
+        label="Avløsertilskudd",
+        direction=CashFlowDirection.INN,
+        account_number="3440",
+        default_tax_code=NO_VAT_CODE,
+        note=(
+            "Tilskudd til avløsning ved ferie og fritid. Ingen mva, inntekt i "
+            "utbetalingsåret. Avløsning ved sykdom har sin egen konto (3442)."
+        ),
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_tilskudd_miljo",
+        label="Miljøtilskudd (RMP, økologisk)",
+        direction=CashFlowDirection.INN,
+        account_number="3460",
+        default_tax_code=NO_VAT_CODE,
+        note="Regionalt miljøtilskudd og tilskudd til økologisk drift. Ingen mva.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_tilskudd_annet",
+        label="Annet tilskudd",
+        direction=CashFlowDirection.INN,
+        account_number="3490",
+        default_tax_code=NO_VAT_CODE,
+        note=(
+            "Andre offentlige tilskudd til driften. Investeringstilskudd fra Innovasjon Norge "
+            "hører ikke hjemme her: det trekkes fra det du kjøpte for det (skatteloven § 14-42)."
+        ),
+        segment=_LANDBRUK,
+    ),
+    # --- Money in: rent, compensation, the cooperative, the forest fund ---
+    CashFlowType(
+        code="landbruk_jordleie_inn",
+        label="Jordleie og beiteleie (utleie)",
+        direction=CashFlowDirection.INN,
+        account_number="3605",
+        default_tax_code="6",
+        note=(
+            "Utleie av jord, beite og forpaktning er unntatt mva (merverdiavgiftsloven "
+            "§ 3-11). Er du frivillig registrert for utleien, velg kode 3."
+        ),
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_jakt",
+        label="Utleie av jakt og fiske",
+        direction=CashFlowDirection.INN,
+        account_number="3631",
+        default_tax_code="3",
+        note=(
+            "Jakt- og fiskerett er ikke unntatt som jordleie er: utleien har 25 % mva "
+            "(merverdiavgiftsloven § 3-11 annet ledd h)."
+        ),
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_kvote_inn",
+        label="Utleie av melkekvote",
+        direction=CashFlowDirection.INN,
+        account_number="3675",
+        default_tax_code="3",
+        note="Utleie av melkekvote er en avgiftspliktig tjeneste med 25 % mva.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_erstatning",
+        label="Erstatning for avlingsskade eller tap av dyr",
+        direction=CashFlowDirection.INN,
+        account_number="3901",
+        default_tax_code=NO_VAT_CODE,
+        note="Erstatning er ikke betaling for noe du har solgt, så den har ingen mva.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_andel_utbetalt",
+        label="Utbetalt andelskapital fra samvirke",
+        direction=CashFlowDirection.INN,
+        account_number="1355",
+        default_tax_code=NO_VAT_CODE,
+        note=(
+            "Andelen din i Tine, Nortura eller Felleskjøpet betalt tilbake. Dette er ikke "
+            "inntekt: pengene var dine fra før og sto som en eiendel."
+        ),
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_skogfond_frigitt",
+        label="Utbetaling fra skogfond",
+        direction=CashFlowDirection.INN,
+        account_number="3910",
+        default_tax_code=NO_VAT_CODE,
+        note=(
+            "Penger utbetalt fra skogfondskontoen er inntekt. Er de brukt til skogkultur, "
+            "skogsvei eller et annet godkjent formål, er bare 15 % skattepliktig; den "
+            "fordelingen gjøres i skattemeldingen."
+        ),
+        segment=_LANDBRUK,
+    ),
+    # --- Money out: deductions on a settlement ---
+    #
+    # Lines of a composite entry rather than payments of their own: the dairy
+    # paid the net amount, and these are what it kept back. Each one goes where
+    # NIBIO's coding puts it.
+    CashFlowType(
+        code="landbruk_trekk_avgift",
+        label="Trekk: omsetningsavgift og forskningsavgift",
+        direction=CashFlowDirection.UT,
+        # Against the sale, as NIBIO's coding does (tillegg/trekk 33002 for
+        # milk, 43004 for slaughter, both on the product's own account). The
+        # levy is the farmer's own debt that the buyer collects, not a price
+        # reduction, so it carries no VAT and the sale's VAT basis stays the
+        # gross price.
+        account_number="3071",
+        default_tax_code=NO_VAT_CODE,
+        note=(
+            "Avgiften er din; kjøperen krever den bare inn. Den har ikke mva og trekkes fra "
+            "salget på samme konto som varen: 3071 for melk, 3041 for slakt, 3001 for korn. "
+            "Bytt konto hvis oppgjøret ikke er for melk."
+        ),
+        deducts_from_sale=True,
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_trekk_andel",
+        label="Trekk: andelsinnskudd i samvirke",
+        direction=CashFlowDirection.UT,
+        # Balance sheet: the share is still the farmer's money.
+        account_number="1355",
+        default_tax_code=NO_VAT_CODE,
+        note=(
+            "Andelskapital Tine, Nortura eller Felleskjøpet holder tilbake. Det er ikke en "
+            "kostnad: pengene står som din andel i samvirket, og du får dem tilbake når du "
+            "slutter å levere."
+        ),
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_trekk_skogfond",
+        label="Trekk til skogfond",
+        direction=CashFlowDirection.UT,
+        account_number="7761",
+        default_tax_code=NO_VAT_CODE,
+        note=(
+            "Det tømmerkjøperen setter inn på skogfondskontoen din. Avsetningen er en "
+            "fradragsberettiget kostnad i året du solgte, og har ikke mva."
+        ),
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_trekk_tilskudd",
+        label="Bunnfradrag eller avkorting i tilskudd",
+        direction=CashFlowDirection.UT,
+        account_number="3499",
+        default_tax_code=NO_VAT_CODE,
+        note=(
+            "Bunnfradraget Landbruksdirektoratet trekker fra produksjonstilskuddet, og "
+            "avkorting eller tilbakebetaling av tilskudd. Føres mot tilskuddene, ikke som en "
+            "kostnad."
+        ),
+        deducts_from_sale=True,
+        segment=_LANDBRUK,
+    ),
+    # --- Money out: purchases ---
+    CashFlowType(
+        code="landbruk_kraftfor",
+        label="Kraftfôr",
+        direction=CashFlowDirection.UT,
+        account_number="4020",
+        default_tax_code="1",
+        note=(
+            "Fôr er ikke mat for mennesker, så det har 25 % mva. Er kraftfôret trukket i et "
+            "oppgjør, føres det som en egen linje der, ikke trukket fra salget."
+        ),
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_grovfor_kjop",
+        label="Kjøp av grovfôr og halm",
+        direction=CashFlowDirection.UT,
+        account_number="4030",
+        default_tax_code="1",
+        note="Fôr har 25 % mva.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_annet_for",
+        label="Mineraler og tilskuddsfôr",
+        direction=CashFlowDirection.UT,
+        account_number="4040",
+        default_tax_code="1",
+        note="Fôr har 25 % mva.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_gjodsel",
+        label="Gjødsel og kalk",
+        direction=CashFlowDirection.UT,
+        account_number="4451",
+        default_tax_code="1",
+        note="Handelsgjødsel og kalk har 25 % mva. Kalk har sin egen konto (4457).",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_savarer",
+        label="Såvarer og settepoteter",
+        direction=CashFlowDirection.UT,
+        account_number="4001",
+        default_tax_code="1",
+        note="Såkorn, frø og settepoteter er ikke mat, så de har 25 % mva.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_plantevern",
+        label="Plantevernmidler",
+        direction=CashFlowDirection.UT,
+        account_number="4410",
+        default_tax_code="1",
+        note="25 % mva.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_forbruksmateriell",
+        label="Rundballeplast, strø og forbruksmateriell",
+        direction=CashFlowDirection.UT,
+        account_number="4430",
+        default_tax_code="1",
+        note="Plast, nett, garn, strø og annet som brukes opp i drifta. 25 % mva.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_konservering",
+        label="Ensileringsmidler og konservering",
+        direction=CashFlowDirection.UT,
+        account_number="4480",
+        default_tax_code="1",
+        note="25 % mva.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_veterinaer",
+        label="Veterinær",
+        direction=CashFlowDirection.UT,
+        account_number="4521",
+        default_tax_code="1",
+        note="Veterinærtjenester for dyr har 25 % mva. Medisin har sin egen type.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_medisin",
+        label="Medisin til dyr",
+        direction=CashFlowDirection.UT,
+        account_number="4420",
+        default_tax_code="1",
+        note="25 % mva.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_semin",
+        label="Inseminering og sædavgift",
+        direction=CashFlowDirection.UT,
+        account_number="4522",
+        default_tax_code="1",
+        note="25 % mva.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_husdyrkontroll",
+        label="Husdyrkontroll",
+        direction=CashFlowDirection.UT,
+        account_number="4531",
+        default_tax_code="1",
+        note=(
+            "Kukontrollen og andre avlsavgifter. Trekkes de i melkeoppgjøret, føres de som en "
+            "egen linje der."
+        ),
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_leiekjoring_kjop",
+        label="Kjøpt leiekjøring (pressing, tresking, jordarbeid)",
+        direction=CashFlowDirection.UT,
+        account_number="4559",
+        default_tax_code="1",
+        note="Maskinarbeid du kjøper av en annen bonde eller entreprenør. 25 % mva.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_avloser",
+        label="Avløserlag og landbruksvikar",
+        direction=CashFlowDirection.UT,
+        account_number="4570",
+        default_tax_code="1",
+        note=(
+            "Faktura fra avløserlaget eller landbruksvikaren. Står det ingen mva på fakturaen, "
+            "velg «ingen mva». Ansetter du avløseren selv, er det lønn og a-melding."
+        ),
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_kjop_dyr",
+        label="Kjøp av dyr til buskapen",
+        direction=CashFlowDirection.UT,
+        account_number="4600",
+        default_tax_code="1",
+        note="Levende dyr har 25 % mva.",
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_jordleie_ut",
+        label="Jordleie og beiteleie (leie)",
+        direction=CashFlowDirection.UT,
+        account_number="6471",
+        default_tax_code=NO_VAT_CODE,
+        note=(
+            "Leie av jord, beite og forpaktning er unntatt mva, så det er ingen mva å trekke "
+            "fra. Står det mva på fakturaen, er utleier frivillig registrert: velg kode 1."
+        ),
+        segment=_LANDBRUK,
+    ),
+    CashFlowType(
+        code="landbruk_kvote_ut",
+        label="Leie av melkekvote",
+        direction=CashFlowDirection.UT,
+        account_number="6475",
+        default_tax_code="1",
+        note="Leie av melkekvote har 25 % mva.",
+        segment=_LANDBRUK,
+    ),
+)
+
 #: Money-out categories that get no refund counterpart, and why.
 #:
 #: ``privatuttak`` is equity and already has its own money-in twin
@@ -516,6 +1100,13 @@ _BASE: tuple[CashFlowType, ...] = (
 #: a-melding and the næringsspesifikasjon. A real reversal of a wrongly paid
 #: salary is a correction of the voucher, which the register already does
 #: properly.
+#:
+#: The farm's four deductions are lines of a settlement, not purchases, and a
+#: "refund" of one is not a thing that happens: the levy and the bunnfradrag are
+#: never paid back, and a share paid back is ``landbruk_andel_utbetalt``, written
+#: out because it is the cooperative returning capital, not a refund. Money
+#: coming back from the skogfond is ``landbruk_skogfond_frigitt``, for the same
+#: reason.
 _NO_REFUND = frozenset(
     {
         "privatuttak",
@@ -525,6 +1116,10 @@ _NO_REFUND = frozenset(
         "avdrag_lan",
         "mva_oppgjor",
         "valutatap",
+        "landbruk_trekk_avgift",
+        "landbruk_trekk_andel",
+        "landbruk_trekk_skogfond",
+        "landbruk_trekk_tilskudd",
     }
 )
 
@@ -537,6 +1132,11 @@ _NO_REFUND = frozenset(
 #: ``salg_driftsmiddel`` cancelled is the asset coming back, which is
 #: ``refusjon_driftsmiddel``, and pointing a second category at 1250 would let
 #: the same event be booked two ways.
+#:
+#: On a farm the settlements are sales and keep their kreditnota (a dairy does
+#: correct a settlement). Tilskudd, rent, compensation and the two balance
+#: movements are not: a tilskudd clawed back is ``landbruk_trekk_tilskudd``,
+#: and the rest is money nobody "credits".
 _NO_CREDIT_NOTE = frozenset(
     {
         "renteinntekt",
@@ -545,6 +1145,20 @@ _NO_CREDIT_NOTE = frozenset(
         "laneopptak",
         "mva_tilgode",
         "salg_driftsmiddel",
+        "landbruk_tilskudd_areal",
+        "landbruk_tilskudd_kulturlandskap",
+        "landbruk_tilskudd_husdyr",
+        "landbruk_tilskudd_driftstilskudd",
+        "landbruk_tilskudd_beite",
+        "landbruk_tilskudd_avloser",
+        "landbruk_tilskudd_miljo",
+        "landbruk_tilskudd_annet",
+        "landbruk_jordleie_inn",
+        "landbruk_jakt",
+        "landbruk_kvote_inn",
+        "landbruk_erstatning",
+        "landbruk_andel_utbetalt",
+        "landbruk_skogfond_frigitt",
     }
 )
 
@@ -573,6 +1187,9 @@ def _refund_of(cost: CashFlowType) -> CashFlowType:
             f"{deduction}"
         ),
         reverses=cost.code,
+        # A twin belongs to whatever its original belongs to: a refund of
+        # kraftfôr is a farm category exactly as kraftfôr is.
+        segment=cost.segment,
     )
 
 
@@ -601,22 +1218,30 @@ def _credit_note_of(sale: CashFlowType) -> CashFlowType:
             f"{tax}"
         ),
         reverses=sale.code,
+        segment=sale.segment,
     )
 
 
-_TYPES: tuple[CashFlowType, ...] = (
-    _BASE
-    + tuple(
-        _refund_of(entry)
-        for entry in _BASE
-        if entry.direction is CashFlowDirection.UT and entry.code not in _NO_REFUND
+def _with_twins(base: tuple[CashFlowType, ...]) -> tuple[CashFlowType, ...]:
+    """``base``, then its refunds, then its kreditnotaer."""
+    return (
+        base
+        + tuple(
+            _refund_of(entry)
+            for entry in base
+            if entry.direction is CashFlowDirection.UT and entry.code not in _NO_REFUND
+        )
+        + tuple(
+            _credit_note_of(entry)
+            for entry in base
+            if entry.direction is CashFlowDirection.INN and entry.code not in _NO_CREDIT_NOTE
+        )
     )
-    + tuple(
-        _credit_note_of(entry)
-        for entry in _BASE
-        if entry.direction is CashFlowDirection.INN and entry.code not in _NO_CREDIT_NOTE
-    )
-)
+
+
+# Every business's categories first and the add-ons' after, so the order an
+# ordinary company sees is exactly the order it always saw.
+_TYPES: tuple[CashFlowType, ...] = _with_twins(_BASE) + _with_twins(_FARM)
 
 CASH_FLOW_TYPES: dict[str, CashFlowType] = {entry.code: entry for entry in _TYPES}
 
@@ -629,9 +1254,22 @@ def get_type(code: str) -> CashFlowType:
         raise UnknownCashFlowTypeError(f"ukjent type: {code!r}") from error
 
 
-def types_for(direction: CashFlowDirection | None = None) -> list[CashFlowType]:
-    """The catalogue, optionally narrowed to one direction."""
-    return [t for t in _TYPES if direction is None or t.direction is direction]
+def types_for(
+    direction: CashFlowDirection | None = None, *, segments: frozenset[str] = frozenset()
+) -> list[CashFlowType]:
+    """The catalogue, optionally narrowed to one direction.
+
+    ``segments`` are the add-ons whose categories to include beside everyone's;
+    :func:`myntos.domain.ledger.landbruk.segments_for` says which a company has.
+    Left empty it is the catalogue every business sees, which is what a caller
+    that knows no company (signup, the shared catalogue) must get.
+    """
+    return [
+        t
+        for t in _TYPES
+        if (direction is None or t.direction is direction)
+        and (t.segment is None or t.segment in segments)
+    ]
 
 
 def _validate_catalogue() -> None:
@@ -647,10 +1285,22 @@ def _validate_catalogue() -> None:
     ordinary entry while doing it.
     """
     for entry in _TYPES:
-        if entry.account_number not in ACCOUNTS_BY_NUMBER:
+        if entry.account_number not in KNOWN_ACCOUNTS:
             raise AssertionError(f"{entry.code}: konto {entry.account_number} finnes ikke i chart")
+        if entry.segment is None and entry.account_number not in ACCOUNTS_BY_NUMBER:
+            # A category every business sees must book to an account every
+            # business has, or posting it would add a farm account to a
+            # hairdresser's kontoplan.
+            raise AssertionError(f"{entry.code}: konto {entry.account_number} er bare i et tillegg")
         if entry.default_tax_code not in TAX_CODES_BY_CODE:
             raise AssertionError(f"{entry.code}: mva-kode {entry.default_tax_code} finnes ikke")
+
+    for entry in _TYPES:
+        if entry.deducts_from_sale and (
+            entry.direction is not CashFlowDirection.UT
+            or KNOWN_ACCOUNTS[entry.account_number].account_type.value != "inntekt"
+        ):
+            raise AssertionError(f"{entry.code}: et trekk er penger ut mot en inntektskonto")
 
     by_code = {entry.code: entry for entry in _TYPES}
     for entry in _TYPES:
@@ -667,6 +1317,8 @@ def _validate_catalogue() -> None:
             raise AssertionError(f"{entry.code}: annen konto enn {original.code}")
         if entry.default_tax_code != original.default_tax_code:
             raise AssertionError(f"{entry.code}: annen mva-kode enn {original.code}")
+        if entry.segment != original.segment:
+            raise AssertionError(f"{entry.code}: annet tillegg enn {original.code}")
 
 
 _validate_catalogue()

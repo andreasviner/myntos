@@ -40,6 +40,7 @@ function entry(author: Partial<CashFlowEntry>): CashFlowEntry {
     created_by_name: null,
     created_via: null,
     attachments: [],
+    parts: [],
     ...author,
   };
 }

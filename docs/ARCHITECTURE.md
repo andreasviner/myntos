@@ -619,6 +619,41 @@ Salg 1 250 kr, 25 % mva                 Kontorrekvisita 625 kr, 25 % mva
   added to its kontoplan, never across types and never to a deactivated or
   locked account (`service._basis_account`).
 
+**Composite entries** (sammensatt bilag, built 2026-10-12). One bank line is
+often several trades netted together: a melkeoppgjør is milk sold less the
+levy, the share in Tine and the feed set off; a Vipps payout is sales less a
+fee; one receipt has food at 15 % and other goods at 25 %; an instalment is
+interest and repayment. Under one category each is wrong somewhere, so
+`service.record_composite` books **one voucher with one trade per line** and
+one payment line for what they net to:
+
+- Every line is built by `service._trade`, the same function an ordinary entry
+  uses, so a settlement's milk line and a milk payment of its own cannot
+  disagree about the rate, the deduction or which side the VAT goes on. Lines
+  may go against the bank movement (a settlement is money in with deductions
+  out); lines that net to zero are refused, because then no money moved.
+- Each trade line records its category in `gl_transaction_line.entry_type`
+  (`voucher_type` holds one, and this voucher has several), so the register
+  reads it back line by line (`CashFlowView.parts`). The voucher is
+  `voucher_type = 'sammensatt'`; a reversal copies `entry_type` with the rest
+  of the line.
+- It is posted, reversed and corrected like any other entry; a correction may
+  turn an ordinary entry into a composite one (`PUT …/cashflow/sammensatt/{id}`),
+  which is how a settlement booked as one sale is split afterwards. The
+  MVA-melding and SAF-T read lines, so neither needed a change.
+- `CashFlowType.deducts_from_sale` marks a deduction the buyer made on a
+  settlement it wrote (the levy, the bunnfradrag): money out that books as the
+  sale's side, so VAT on it reduces 2700 instead of claiming a deduction on
+  2710.
+
+**Add-ons** (built 2026-10-12, [landbruk.md](landbruk.md)). Myntos is for every
+business, and an industry's needs come as an add-on rather than a different
+product: categories with `segment` set are offered, proposed by the model and
+accepted only in books that have that add-on, and its accounts are added to
+those books' kontoplan alone. `landbruk` is the only one: NIBIO's farm
+accounts, the farm's categories, and a bilag reader that reads a settlement
+from Tine as the farm's sale.
+
 **Who** the payment was with is a separate field: `Party`, SAF-T's `Customers`
 and `Suppliers`. It is optional, because most payments have no counterparty
 worth registering and demanding one makes people invent placeholder suppliers.
@@ -1334,6 +1369,24 @@ import VAT on goods arrives later on the freight forwarder's or Tolletaten's
 bill and is its own entry, "Mva betalt ved innførsel (tollpass)" at code 14. A
 bilag filed under that category keeps code 14 whatever its currency, because
 it is that bill.
+
+**A VOEC invoice is proposed at mva-kode 0 too, and before the currency rule.**
+VOEC is the simplified scheme for foreign web shops selling low-value goods to
+*consumers*; Skatteetaten states it is "kun for salg til forbrukere (B2C)". The
+25 % it prints is a consumer's VAT. A business cannot deduct it, registered or
+not, and § 8-6 applies the ordinary deduction conditions, so registering later
+does not change that. A business that gives its organisasjonsnummer has the
+import VAT charged at the border instead. That VAT is deductible, and for a
+company not yet registered it is what tilbakegående avgiftsoppgjør can later
+claim. Code 0 is "not deducted", not "no VAT was paid", and the warning says so:
+an owner read the bare 0 as the second. The
+parser reads the seller's VOEC number off the page (`under_voec`), not the
+model. Nothing else proposed a code for AliExpress's nine orders on one card
+charge, so the form fell back to the category. For an unregistered company that
+was a silent 0 that its owner took for a mistake, because the invoices
+plainly showed 25 %. For a registered company it was 25 % of 9 771,76, which
+deducts 1 954 kroner when 333 were charged and none could be deducted. The
+proposal now says why the code is 0.
 
 The second use is `domain/faktura/drafting.py`, behind
 `POST /companies/{id}/faktura/linjeforslag`: a sentence describing a sale becomes

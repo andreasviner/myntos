@@ -16,7 +16,7 @@ what it does.
 > you submit to Skatteetaten or any other authority. Read
 > [DISCLAIMER.md](DISCLAIMER.md) before using the software.
 
-> **Status: pre-alpha.** Accounts, organizations, customers and suppliers, the
+> **Status: beta.** Accounts, organizations, customers and suppliers, the
 > cash-flow register with its bilag archive, invoicing, bank import, the
 > opening balance and year-end, and the SAF-T export work end to end. The
 > government integrations authenticate and read: Maskinporten and ID-porten
@@ -24,8 +24,9 @@ what it does.
 > Altinn 3 instance are all verified against Skatteetaten's test environment.
 > Skatteetaten's MVA validation answered a melding Myntos built in TT02 on
 > 2026-10-10, and its only finding was about TT02's test data. The ID-porten
-> company confirmation runs in production. **Nothing has been submitted.**
-> Nothing here is ready for production bookkeeping. See
+> company confirmation runs in production. **Nothing has been submitted**:
+> the books can be kept here, but keep another way to file MVA and the
+> skattemelding until Myntos has filed one for real. See
 > [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Features

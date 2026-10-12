@@ -71,7 +71,7 @@ from myntos.domain.bilag.models import (
 )
 from myntos.domain.bilag.text import extract_text
 from myntos.domain.identity.access import Permission, require_permission
-from myntos.domain.ledger import kontoplan, vatstatus
+from myntos.domain.ledger import kontoplan, landbruk, vatstatus
 from myntos.domain.ledger import parties as party_service
 from myntos.domain.ledger import service as ledger_service
 from myntos.domain.ledger.cashflow import (
@@ -79,9 +79,17 @@ from myntos.domain.ledger.cashflow import (
     CashFlowDirection,
     types_for,
 )
-from myntos.domain.ledger.chart import STANDARD_TAX_CODES
+from myntos.domain.ledger.chart import LANDBRUK_ACCOUNTS, STANDARD_TAX_CODES
 from myntos.domain.ledger.models import Account, AccountType, Company, PartyType
-from myntos.domain.ledger.service import CashFlowView, PaymentMethod
+from myntos.domain.ledger.service import (
+    COMPOSITE_LABEL,
+    COMPOSITE_TYPE,
+    MAX_COMPOSITE_PARTS,
+    CashFlowPart,
+    CashFlowView,
+    CompositePart,
+    PaymentMethod,
+)
 from myntos.integrations import loynd, norgesbank
 
 logger = logging.getLogger(__name__)
@@ -103,6 +111,10 @@ class CashFlowTypeResponse(BaseModel):
     #: where the form offers other accounts of the same type (see
     #: myntos.domain.ledger.service._basis_account).
     account_type: AccountType | None = None
+    #: The add-on the category belongs to (``landbruk``), or null for the
+    #: categories every business has. Only an add-on the company has switched
+    #: on ever appears here.
+    segment: str | None = None
 
 
 class TaxCodeResponse(BaseModel):
@@ -140,6 +152,9 @@ class CompanyCatalogueResponse(CatalogueResponse):
     # Active accounts a category may be moved to, beside its own: the ones a
     # person added, and the seeded ones not locked to a purpose.
     accounts: list[CatalogueAccountResponse]
+    #: The add-ons these books have (``landbruk``), whose categories are in
+    #: ``types``. Empty for most companies.
+    segments: list[str] = []
 
 
 class AttachmentResponse(BaseModel):
@@ -152,6 +167,23 @@ class AttachmentResponse(BaseModel):
     content_type: str
     byte_size: int
     sha256: str
+
+
+class CashFlowPartResponse(BaseModel):
+    """One line of a composite entry (sammensatt bilag)."""
+
+    type_code: str | None
+    type_label: str | None
+    #: Which way this line moved money. On a settlement the sale is ``inn``
+    #: and each deduction ``ut``, whatever the bank movement as a whole did.
+    direction: CashFlowDirection
+    gross_amount: Decimal
+    net_amount: Decimal
+    vat_amount: Decimal
+    account_number: str
+    account_description: str
+    tax_code: str | None
+    description: str
 
 
 class CashFlowResponse(BaseModel):
@@ -189,6 +221,11 @@ class CashFlowResponse(BaseModel):
     # the entry came from an agent or an integration rather than this page.
     created_via: str | None = None
     attachments: list[AttachmentResponse]
+    #: The lines of a composite entry, whose ``type_code`` is ``sammensatt``.
+    #: Empty for an ordinary entry. On a composite entry ``tax_code`` is null
+    #: (each line has its own) and ``vat_amount`` is the VAT that moved with
+    #: the money, netted across the lines.
+    parts: list[CashFlowPartResponse] = []
 
 
 class TypeTotalResponse(BaseModel):
@@ -323,6 +360,41 @@ class CreateCashFlowRequest(BaseModel):
     account_number: str | None = Field(default=None, max_length=32)
 
 
+class CompositeLineRequest(BaseModel):
+    """One line of a composite entry: a category and the gross amount it moved."""
+
+    type_code: str = Field(min_length=1, max_length=64)
+    # Gross, like an ordinary entry: the amount with VAT, as the settlement
+    # prints it. Always positive; the category says which way it went.
+    gross_amount: Decimal = Field(gt=0)
+    tax_code: str | None = Field(default=None, max_length=32)
+    account_number: str | None = Field(default=None, max_length=32)
+    # The line's own text, when it needs one ("Omsetningsavgift 0,10 kr/l").
+    # Left out, the line carries the voucher's description.
+    description: str | None = Field(default=None, max_length=255)
+
+
+class CreateCompositeRequest(BaseModel):
+    occurred_on: date
+    description: str = Field(min_length=1, max_length=255)
+    lines: list[CompositeLineRequest] = Field(min_length=2, max_length=MAX_COMPOSITE_PARTS)
+    payment_method: PaymentMethod = PaymentMethod.BANK
+    party_id: int | None = None
+
+
+def _composite_parts(payload: CreateCompositeRequest) -> list[CompositePart]:
+    return [
+        CompositePart(
+            type_code=line.type_code,
+            gross_amount=line.gross_amount,
+            tax_code=line.tax_code,
+            account_number=line.account_number,
+            description=line.description,
+        )
+        for line in payload.lines
+    ]
+
+
 async def _ask_for_category(
     document_text: str,
     *,
@@ -330,6 +402,7 @@ async def _ask_for_category(
     title: str | None,
     context: "bilag_context.BilagContext | None" = None,
     returning: bool = False,
+    segments: frozenset[str] = frozenset(),
 ) -> classification.Classification:
     """Which category Løynd puts the document in, and which it nearly chose.
 
@@ -345,6 +418,7 @@ async def _ask_for_category(
             title=title,
             context=context,
             returning=returning,
+            segments=segments,
         )
     except loynd.LoyndError:
         return classification.Classification()
@@ -643,6 +717,7 @@ async def _company_context(
         vat_registered=company.vat_registered,
         note=note,
         direction=direction.value if direction is not None else None,
+        farm=landbruk.is_enabled(company),
     )
 
 
@@ -692,8 +767,25 @@ async def _to_kroner(suggestion: interpretation.InvoiceSuggestion, *, on: date) 
 
 
 def _label_for(type_code: str | None) -> str | None:
+    if type_code == COMPOSITE_TYPE:
+        return COMPOSITE_LABEL
     entry_type = CASH_FLOW_TYPES.get(type_code) if type_code is not None else None
     return entry_type.label if entry_type is not None else None
+
+
+def _part_response(part: CashFlowPart) -> CashFlowPartResponse:
+    return CashFlowPartResponse(
+        type_code=part.type_code,
+        type_label=_label_for(part.type_code),
+        direction=part.direction,
+        gross_amount=part.gross_amount,
+        net_amount=part.net_amount,
+        vat_amount=part.vat_amount,
+        account_number=part.account_number,
+        account_description=part.account_description,
+        tax_code=part.tax_code,
+        description=part.description,
+    )
 
 
 def _attachment_response(attachment: Attachment) -> AttachmentResponse:
@@ -733,6 +825,7 @@ def _cash_flow_response(
         created_by_name=view.created_by_name,
         created_via=view.created_via,
         attachments=[_attachment_response(a) for a in attachments or []],
+        parts=[_part_response(part) for part in view.parts],
     )
 
 
@@ -791,19 +884,50 @@ async def company_catalogue(context: CurrentCompany, db: DbSession) -> CompanyCa
     the VAT codes this company may use: only code 0 and a few reverse-charge
     codes when it is not VAT-registered (``vat_registered``). ``accounts`` are
     the other accounts a category may be moved to, same type only.
+
+    ``segments`` lists the add-ons the company has. With ``landbruk`` (the
+    farming add-on, ``GET /api/v1/companies/{company_id}/landbruk``) the
+    catalogue also carries the farm's categories, marked ``segment:
+    "landbruk"``: settlements from the dairy or slaughterhouse, production
+    subsidies (produksjonstilskudd), feed, fertiliser and the deductions on a
+    settlement. Their accounts are added to the kontoplan the first time they
+    are used if they are not there yet, and are offered here either way.
     """
     require_permission(context.membership.role, Permission.LEDGER_READ)
     company = context.company
     registered = vatstatus.registered_on(company, utc_now().date())
     allowed = vatstatus.allowed_tax_codes(registered)
+    segments = landbruk.segments_for(company)
     accounts = {
-        account.account_number: account
+        account.account_number: CatalogueAccountResponse(
+            number=account.account_number,
+            description=account.description,
+            account_type=account.account_type,
+        )
+        for account in await db.scalars(
+            select(Account).where(Account.company_id == company.id, Account.is_active)
+        )
+    }
+    known = {
+        account.account_number
         for account in await db.scalars(select(Account).where(Account.company_id == company.id))
     }
+    if landbruk.SEGMENT in segments:
+        # The add-on's accounts a farm has not got yet, because its næringskode
+        # switched the add-on on and nobody has posted to them. Offered as if
+        # they were there, since posting adds them (ledger.service._accounts_for);
+        # one the company has switched off is not offered, since it is there.
+        for seed in LANDBRUK_ACCOUNTS:
+            if seed.number not in known:
+                accounts[seed.number] = CatalogueAccountResponse(
+                    number=seed.number,
+                    description=seed.description,
+                    account_type=seed.account_type,
+                )
     types: list[CashFlowTypeResponse] = []
-    for entry in types_for():
+    for entry in types_for(segments=segments):
         own = accounts.get(entry.account_number)
-        if own is None or not own.is_active:
+        if own is None:
             continue
         if not registered and entry.code in vatstatus.REGISTERED_ONLY_TYPES:
             continue
@@ -817,6 +941,7 @@ async def company_catalogue(context: CurrentCompany, db: DbSession) -> CompanyCa
                 note=entry.note,
                 reverses=entry.reverses,
                 account_type=own.account_type,
+                segment=entry.segment,
             )
         )
     return CompanyCatalogueResponse(
@@ -832,14 +957,11 @@ async def company_catalogue(context: CurrentCompany, db: DbSession) -> CompanyCa
         vat_registered=registered,
         vat_registered_from=company.vat_registered_from,
         accounts=[
-            CatalogueAccountResponse(
-                number=account.account_number,
-                description=account.description,
-                account_type=account.account_type,
-            )
+            account
             for number, account in sorted(accounts.items())
-            if account.is_active and number not in kontoplan.LOCKED_ACCOUNTS
+            if number not in kontoplan.LOCKED_ACCOUNTS
         ],
+        segments=sorted(segments),
     )
 
 
@@ -1013,6 +1135,7 @@ async def _propose(
             parties=hints,
             model_fields=model_fields,
             direction=retning,
+            farm=landbruk.is_enabled(context.company),
         )
 
     # The heuristics are CPU-bound and operate on text from outside; off the
@@ -1078,6 +1201,7 @@ async def _propose(
                         # Both legs are printed on the page, so the question is
                         # not whether this is a refund but a refund of what.
                         returning=reading.shows_a_return,
+                        segments=landbruk.segments_for(context.company),
                     ),
                     _ask_for_fields(
                         extracted.text,
@@ -1602,6 +1726,116 @@ async def edit_entry(
         corrects_pk=voucher_id,
         created_by_user_id=user.id,
         account_number=payload.account_number,
+    )
+    view = ledger_service.describe(
+        transaction, created_by_name=user.full_name, created_via=_via(context)
+    )
+    assert view is not None  # noqa: S101
+    return _cash_flow_response(view)
+
+
+@router.post(
+    "/companies/{company_id}/cashflow/sammensatt",
+    status_code=status.HTTP_201_CREATED,
+    openapi_extra=key_post("føre et sammensatt bilag", attachments=ATTACH_TO_VOUCHER),
+)
+async def record_composite(
+    payload: CreateCompositeRequest, context: CurrentCompany, db: DbSession, user: CurrentUser
+) -> CashFlowResponse:
+    """Register one payment that is several things at once (et sammensatt bilag).
+
+    For a bank movement that several trades netted into: a settlement from the
+    dairy (melkeoppgjør) is milk sold, less the levy, the share in the
+    cooperative and the feed the dairy sold you; a payout from Vipps or Stripe
+    is the day's sales less the fee; one shop receipt has food at 15 % and other
+    goods at 25 %; a loan instalment is interest and repayment. Booked under one
+    category each of these is wrong somewhere, so each part is a ``line`` of
+    its own: a category (``type_code`` from ``GET
+    /api/v1/companies/{company_id}/cashflow/types``), its gross amount with VAT
+    (``gross_amount``, a decimal string above zero), and optionally its own VAT
+    code, account and text, exactly as for ``POST
+    /api/v1/companies/{company_id}/cashflow``.
+
+    Every amount is positive; the category says which way it went. A money-in
+    category adds to the payment and a money-out category takes from it, so a
+    settlement of 12 500 of milk with 600 deducted for the share in Tine is the
+    milk line (money in, 12 500) and the share line (money out, 600), and the
+    bank line becomes 11 900 in. The lines must not net to zero. ``occurred_on``,
+    ``description``, ``payment_method`` and ``party_id`` belong to the whole
+    voucher. Between 2 and 40 lines; one line is an ordinary payment.
+
+    Posted at once, one bilagsnummer, immutable like any other entry: show the
+    person every line and the net amount before calling this, and attach the
+    settlement with ``POST
+    /api/v1/companies/{company_id}/cashflow/{voucher_id}/dokument``. The answer
+    is the entry with ``type_code`` ``sammensatt`` and its ``parts``.
+
+    Refuses fewer than two or more than forty lines, or lines that net to
+    nothing (422 ``invalid_composite_entry``), a category from an add-on the
+    company has not switched on (409 ``segment_not_enabled``), and everything
+    ``POST /api/v1/companies/{company_id}/cashflow`` refuses about any line.
+    Nothing is posted unless every line is accepted. Needs the role Medlem or
+    above.
+    """
+    require_permission(context.membership.role, Permission.LEDGER_WRITE)
+    transaction = await ledger_service.record_composite(
+        db,
+        company=context.company,
+        occurred_on=payload.occurred_on,
+        description=payload.description,
+        parts=_composite_parts(payload),
+        payment_method=payload.payment_method,
+        party_pk=payload.party_id,
+        created_by_user_id=user.id,
+    )
+    view = ledger_service.describe(
+        transaction, created_by_name=user.full_name, created_via=_via(context)
+    )
+    assert view is not None  # noqa: S101
+    return _cash_flow_response(view)
+
+
+@router.put(
+    "/companies/{company_id}/cashflow/sammensatt/{voucher_id}",
+    status_code=status.HTTP_201_CREATED,
+    openapi_extra=key_post("rette et sammensatt bilag", attachments=ATTACH_TO_VOUCHER),
+)
+async def edit_composite(
+    voucher_id: int,
+    payload: CreateCompositeRequest,
+    context: CurrentCompany,
+    db: DbSession,
+    user: CurrentUser,
+) -> CashFlowResponse:
+    """Change a registered payment into a composite entry, or correct one.
+
+    The composite twin of ``PUT /api/v1/companies/{company_id}/cashflow/{voucher_id}``,
+    and atomic for the same reason: it reverses the original and posts the
+    replacement in one transaction, so the ledger keeps the original, its
+    reversal and the corrected entry, and the person sees an edit. The original
+    may be an ordinary entry, which is how a payment booked as one category is
+    split up after the fact. The body is the whole composite entry again.
+
+    Refuses what ``PUT …/cashflow/{voucher_id}`` refuses about the original
+    (409 ``already_reversed``, 409 ``closed_financial_year``, 409
+    ``cannot_reverse_here``, 404 ``voucher_not_found``) and what ``POST
+    /api/v1/companies/{company_id}/cashflow/sammensatt`` refuses about the new
+    lines. Either all of it happens or none of it does.
+    """
+    require_permission(context.membership.role, Permission.LEDGER_WRITE)
+    await ledger_service.reverse_cash_flow(
+        db, company=context.company, voucher_pk=voucher_id, created_by_user_id=user.id
+    )
+    transaction = await ledger_service.record_composite(
+        db,
+        company=context.company,
+        occurred_on=payload.occurred_on,
+        description=payload.description,
+        parts=_composite_parts(payload),
+        payment_method=payload.payment_method,
+        party_pk=payload.party_id,
+        corrects_pk=voucher_id,
+        created_by_user_id=user.id,
     )
     view = ledger_service.describe(
         transaction, created_by_name=user.full_name, created_via=_via(context)

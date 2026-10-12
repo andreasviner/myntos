@@ -56,6 +56,7 @@ from myntos.domain.ledger.chart import (
     BANK_ACCOUNT,
     CASH_ACCOUNT,
     INPUT_VAT_ACCOUNT,
+    KNOWN_ACCOUNTS,
     OUTPUT_VAT_ACCOUNT,
     PAYABLES_ACCOUNT,
     RECEIVABLES_ACCOUNT,
@@ -203,7 +204,9 @@ def default_grouping(number: str, year: int) -> tuple[str, str]:
 
     In order, and the order is the judgement:
 
-    1. The seed's own pair for a seeded number.
+    1. The seed's own pair for a seeded number, or an add-on's for one of its
+       accounts (a 4020 is kraftfôr in NIBIO's chart, varekostnad wherever it
+       is added).
     2. The post in the year's list with the same number, which is common
        because the list was built on NS 4102: a 2770 lands on «Skyldig
        arbeidsgiveravgift», a 3400 on «Offentlige tilskudd og refusjoner».
@@ -219,7 +222,7 @@ def default_grouping(number: str, year: int) -> tuple[str, str]:
     ran. It is a proposal shown next to the choice and it can still be wrong; a
     person picking it is the point of showing it.
     """
-    seeded = ACCOUNTS_BY_NUMBER.get(number)
+    seeded = KNOWN_ACCOUNTS.get(number)
     if seeded is not None:
         return seeded.grouping_category, seeded.grouping_code
     candidates = sorted(
@@ -279,9 +282,11 @@ def grouping_for_new_year(
 
     Used by :func:`myntos.domain.ledger.service._open_financial_year`, which
     used to look every account up in the seed and would have raised
-    StopIteration on the first account a person added.
+    StopIteration on the first account a person added. An add-on's account
+    (:data:`~myntos.domain.ledger.chart.KNOWN_ACCOUNTS`) counts as seeded here,
+    so a corrected pair for a farm account reaches the next year too.
     """
-    seeded = ACCOUNTS_BY_NUMBER.get(account.account_number)
+    seeded = KNOWN_ACCOUNTS.get(account.account_number)
     if previous is not None and previous.chosen_at is not None:
         return AccountGrouping(
             account_id=account.id,
@@ -477,15 +482,17 @@ async def ensure_seeded_account(db: AsyncSession, *, company: Company, number: s
     """The account with ``number``, created from the seed when it is missing.
 
     For an account that joined the starter chart after the company was set up
-    (7830, for tap på krav). Only for seeded numbers: anything else is the
-    person's to create, under the name they choose.
+    (7830, for tap på krav), and for an add-on's account the first time a
+    category needs it (:mod:`myntos.domain.ledger.landbruk`). Only for numbers
+    Myntos knows: anything else is the person's to create, under the name they
+    choose.
     """
     account = await db.scalar(
         select(Account).where(Account.company_id == company.id, Account.account_number == number)
     )
     if account is not None:
         return account
-    seed = ACCOUNTS_BY_NUMBER[number]
+    seed = KNOWN_ACCOUNTS[number]
     return await create_account(
         db,
         company=company,

@@ -35,7 +35,7 @@ from myntos.domain.identity.models import (
     OrganizationRole,
     User,
 )
-from myntos.domain.ledger import cashflow, kontoplan, parties, posting, vatstatus
+from myntos.domain.ledger import cashflow, kontoplan, landbruk, parties, posting, vatstatus
 from myntos.domain.ledger.bankkonto import format_bank_account, validate_bank_account
 from myntos.domain.ledger.cashflow import CashFlowDirection
 from myntos.domain.ledger.chart import (
@@ -46,6 +46,7 @@ from myntos.domain.ledger.chart import (
     CASH_JOURNAL_TYPE,
     CLOSING_JOURNAL_ID,
     INPUT_VAT_ACCOUNT,
+    LANDBRUK_ACCOUNTS_BY_NUMBER,
     OPENING_JOURNAL_ID,
     OUTPUT_VAT_ACCOUNT,
     SETTLEMENT_JOURNAL_ID,
@@ -68,6 +69,7 @@ from myntos.domain.ledger.errors import (
     InactiveAccountError,
     InvalidAccountNumberError,
     InvalidAmountError,
+    InvalidCompositeEntryError,
     NotAuthorizedForPartyError,
     PeriodOutsideBooksError,
     PrimaryBankAccountRequiredError,
@@ -83,6 +85,7 @@ from myntos.domain.ledger.models import (
     CompanyRegisterSnapshot,
     FinancialYear,
     Journal,
+    Party,
     TaxCode,
     TaxRate,
     Transaction,
@@ -569,6 +572,13 @@ async def refresh_company_from_register(
 
     company.register_synced_at = utc_now()
     await db.flush()
+    # A næringskode that makes these books a farm, and nobody has said
+    # otherwise: the farm's accounts go in now, the way switching the add-on on
+    # would add them. A farm moving to Myntos brings an opening balance with
+    # buskap on 1450 and its share in Tine on 1355 before anything is posted,
+    # and those accounts have to be there to receive it.
+    if "industry_code" in changed and landbruk.is_enabled(company):
+        await landbruk.ensure_accounts(db, company=company)
     return changed
 
 
@@ -960,69 +970,68 @@ def _check_gross(amount: Decimal) -> Decimal:
     return amount
 
 
-async def record_cash_flow(
+async def _accounts_for(
+    db: AsyncSession,
+    company: Company,
+    wanted: Sequence[tuple[cashflow.CashFlowType, str | None]],
+) -> dict[str, Account]:
+    """The kontoplan by number, with any add-on account these categories need.
+
+    A farm category books to a NIBIO account the add-on adds to the kontoplan.
+    Books that have the add-on through their næringskode, and that nobody has
+    switched on by hand, may not have the account yet; it is added here the
+    first time a category needs it, from the same table the switch adds from,
+    rather than refusing a farm's first milk settlement with a missing account.
+    The same holds for the account a person moved the category to, when that is
+    one of the add-on's (the levy moved from milk to slaughter). Every other
+    missing account stays the person's to create.
+    """
+    accounts = await _accounts_by_number(db, company)
+    for entry_type, chosen in wanted:
+        if entry_type.segment is None:
+            continue
+        for number in (entry_type.account_number, chosen):
+            if number is None or number in accounts or number not in LANDBRUK_ACCOUNTS_BY_NUMBER:
+                continue
+            accounts[number] = await kontoplan.ensure_seeded_account(
+                db, company=company, number=number
+            )
+    return accounts
+
+
+@dataclass(frozen=True)
+class _Trade:
+    """The lines one category produces, and the money it moved.
+
+    ``lines`` are the basis line and its VAT lines, in posting order and without
+    record ids, which the voucher assigns once every trade is in. ``cash`` is
+    signed: what this trade adds to the bank (positive) or takes from it.
+    """
+
+    lines: list[TransactionLine]
+    cash: Decimal
+
+
+async def _trade(
     db: AsyncSession,
     *,
     company: Company,
-    type_code: str,
+    entry_type: cashflow.CashFlowType,
     occurred_on: date,
-    gross_amount: Decimal,
+    gross: Decimal,
     description: str,
-    tax_code: str | None = None,
-    payment_method: PaymentMethod = PaymentMethod.BANK,
-    party_pk: int | None = None,
-    corrects_pk: int | None = None,
-    created_by_user_id: int | None = None,
-    account_number: str | None = None,
-) -> Transaction:
-    """Record one payment in or out as a posted voucher.
+    tax_code: str | None,
+    account_number: str | None,
+    party: Party | None,
+    accounts: dict[str, Account],
+) -> _Trade:
+    """The basis and VAT lines for one category, as both kinds of entry book them.
 
-    ``gross_amount`` is what actually moved — VAT included — because that is
-    the number on the bank statement and the only one the user can read off
-    without doing arithmetic. The split into net and VAT is derived, and
-    derived in the one way that keeps the voucher balanced
-    (:func:`~myntos.domain.ledger.posting.split_gross`).
-
-    ``party_pk`` names the customer or supplier, and is optional: plenty of
-    payments have no counterparty worth registering, and demanding one would
-    make people invent placeholder suppliers — which is worse than the field
-    being empty.
-
-    The entry is posted immediately rather than left as a draft. The money has
-    moved; there is nothing provisional about it. That makes it immutable, so
-    :func:`reverse_cash_flow` is how a mistake is undone.
-
-    ``corrects_pk`` names the entry this one was written to replace, and is set
-    only by the correction flow: reverse the original, post this in its place,
-    and record which is which. Without it the replacement is indistinguishable
-    from an unrelated payment made the same day, and the three vouchers a
-    correction leaves behind cannot be read back as one event.
-
-    ``created_by_user_id`` is the person doing the entering, and every caller
-    with a session should pass it: on books with two people on them it is the
-    only thing that says which of them booked this. It defaults to ``None``
-    rather than being required because the column is honestly nullable — see
-    :class:`~myntos.domain.ledger.models.Transaction` — and a required argument
-    would tempt a caller without a user into passing a placeholder id, which is
-    worse than an empty field.
-
-    ``account_number`` books the amount to another account of the same type
-    than the category's own, one the company added to its kontoplan; see
-    :func:`_basis_account` for what may be chosen.
+    An ordinary entry is one of these and the payment line; a composite entry is
+    several and one payment line for what they net to. Written once, so a
+    settlement's milk line and a milk payment of its own cannot come to disagree
+    about the rate, the deduction or which side the VAT goes on.
     """
-    entry_type = cashflow.get_type(type_code)
-    gross = _check_gross(gross_amount)
-    financial_year = await ensure_financial_year(db, company, occurred_on.year)
-    journal = await _cash_journal(db, company)
-    accounts = await _accounts_by_number(db, company)
-    # Resolved through the company, so a party id belonging to another tenant
-    # is not found rather than quietly attached.
-    party = (
-        None
-        if party_pk is None
-        else await parties.get_party(db, company=company, party_pk=party_pk)
-    )
-
     # Registration is read on the entry's own date, not today's: a purchase
     # made before the registration took effect carried no deduction, whenever
     # it is typed in. See .vatstatus for what an unregistered business gets.
@@ -1075,15 +1084,7 @@ async def record_cash_flow(
             net, vat = gross, ZERO
 
     is_incoming = entry_type.direction is CashFlowDirection.INN
-    payment_line = TransactionLine(
-        record_id="1",
-        account=accounts[payment_method.account_number],
-        description=description,
-        debit=gross if is_incoming else ZERO,
-        credit=ZERO if is_incoming else gross,
-    )
     basis_line = TransactionLine(
-        record_id="2",
         # Whatever the category says, a vat-only code lands on 2710: picking 14
         # under "Varekjøp" means the bill was the border VAT, and booking it to
         # 4000 would make a deductible tax a cost.
@@ -1095,12 +1096,15 @@ async def record_cash_flow(
         description=description,
         debit=ZERO if is_incoming else net,
         credit=net if is_incoming else ZERO,
+        # What this line was booked as, so a composite entry reads back line
+        # by line (see TransactionLine.entry_type).
+        entry_type=entry_type.code,
     )
     # On the basis line, never on the VAT line — see posting.set_tax_information.
     # The one exception is a vat-only code, where the two are the same line.
     basis = posting.quantize_money(gross / rate) if vat_only and rate > ZERO else net
     posting.set_tax_information(basis_line, tax_code=tax, rate=rate, basis=basis, amount=vat)
-    lines = [payment_line, basis_line]
+    lines = [basis_line]
 
     if vat_only:
         pass
@@ -1122,7 +1126,6 @@ async def record_cash_flow(
         undone = entry_type.is_refund and is_incoming
         lines.append(
             TransactionLine(
-                record_id="3",
                 account=accounts[OUTPUT_VAT_ACCOUNT],
                 description=f"Beregnet mva ved innførsel, kode {code}",
                 debit=vat if undone else ZERO,
@@ -1132,7 +1135,6 @@ async def record_cash_flow(
         if seed is not None and seed.deductible:
             lines.append(
                 TransactionLine(
-                    record_id="4",
                     account=accounts[INPUT_VAT_ACCOUNT],
                     description=f"Fradrag innførselsmva, kode {code}",
                     debit=ZERO if undone else vat,
@@ -1145,7 +1147,6 @@ async def record_cash_flow(
             # on a refund it leaves that account again with the purchase.
             lines.append(
                 TransactionLine(
-                    record_id="4",
                     account=basis_account,
                     description=f"Ikke fradragsberettiget innførselsmva, kode {code}",
                     debit=ZERO if undone else vat,
@@ -1168,13 +1169,104 @@ async def record_cash_flow(
         owed_on_a_sale = entry_type.books_as is CashFlowDirection.INN
         lines.append(
             TransactionLine(
-                record_id="3",
                 account=accounts[OUTPUT_VAT_ACCOUNT if owed_on_a_sale else INPUT_VAT_ACCOUNT],
                 description=f"Mva {code}",
                 debit=ZERO if is_incoming else vat,
                 credit=vat if is_incoming else ZERO,
             )
         )
+    return _Trade(lines=lines, cash=gross if is_incoming else -gross)
+
+
+def _numbered(lines: list[TransactionLine]) -> list[TransactionLine]:
+    """Give each line its SAF-T RecordID, from one, in posting order."""
+    for index, line in enumerate(lines, start=1):
+        line.record_id = str(index)
+    return lines
+
+
+async def record_cash_flow(
+    db: AsyncSession,
+    *,
+    company: Company,
+    type_code: str,
+    occurred_on: date,
+    gross_amount: Decimal,
+    description: str,
+    tax_code: str | None = None,
+    payment_method: PaymentMethod = PaymentMethod.BANK,
+    party_pk: int | None = None,
+    corrects_pk: int | None = None,
+    created_by_user_id: int | None = None,
+    account_number: str | None = None,
+) -> Transaction:
+    """Record one payment in or out as a posted voucher.
+
+    ``gross_amount`` is what actually moved — VAT included — because that is
+    the number on the bank statement and the only one the user can read off
+    without doing arithmetic. The split into net and VAT is derived, and
+    derived in the one way that keeps the voucher balanced
+    (:func:`~myntos.domain.ledger.posting.split_gross`).
+
+    ``party_pk`` names the customer or supplier, and is optional: plenty of
+    payments have no counterparty worth registering, and demanding one would
+    make people invent placeholder suppliers — which is worse than the field
+    being empty.
+
+    The entry is posted immediately rather than left as a draft. The money has
+    moved; there is nothing provisional about it. That makes it immutable, so
+    :func:`reverse_cash_flow` is how a mistake is undone.
+
+    ``corrects_pk`` names the entry this one was written to replace, and is set
+    only by the correction flow: reverse the original, post this in its place,
+    and record which is which. Without it the replacement is indistinguishable
+    from an unrelated payment made the same day, and the three vouchers a
+    correction leaves behind cannot be read back as one event.
+
+    ``created_by_user_id`` is the person doing the entering, and every caller
+    with a session should pass it: on books with two people on them it is the
+    only thing that says which of them booked this. It defaults to ``None``
+    rather than being required because the column is honestly nullable — see
+    :class:`~myntos.domain.ledger.models.Transaction` — and a required argument
+    would tempt a caller without a user into passing a placeholder id, which is
+    worse than an empty field.
+
+    ``account_number`` books the amount to another account of the same type
+    than the category's own, one the company added to its kontoplan; see
+    :func:`_basis_account` for what may be chosen.
+    """
+    entry_type = cashflow.get_type(type_code)
+    landbruk.require_segment(company, entry_type.segment)
+    gross = _check_gross(gross_amount)
+    financial_year = await ensure_financial_year(db, company, occurred_on.year)
+    journal = await _cash_journal(db, company)
+    accounts = await _accounts_for(db, company, [(entry_type, account_number)])
+    # Resolved through the company, so a party id belonging to another tenant
+    # is not found rather than quietly attached.
+    party = (
+        None
+        if party_pk is None
+        else await parties.get_party(db, company=company, party_pk=party_pk)
+    )
+    trade = await _trade(
+        db,
+        company=company,
+        entry_type=entry_type,
+        occurred_on=occurred_on,
+        gross=gross,
+        description=description,
+        tax_code=tax_code,
+        account_number=account_number,
+        party=party,
+        accounts=accounts,
+    )
+    is_incoming = trade.cash > ZERO
+    payment_line = TransactionLine(
+        account=accounts[payment_method.account_number],
+        description=description,
+        debit=gross if is_incoming else ZERO,
+        credit=ZERO if is_incoming else gross,
+    )
 
     transaction = Transaction(
         journal_id=journal.id,
@@ -1191,7 +1283,139 @@ async def record_cash_flow(
         corrects_transaction_pk=corrects_pk,
         created_by_user_id=created_by_user_id,
     )
-    transaction.lines = lines
+    transaction.lines = _numbered([payment_line, *trade.lines])
+    posting.post(transaction)
+    db.add(transaction)
+    await db.flush()
+    return transaction
+
+
+# --- Composite entries ------------------------------------------------------------
+
+#: The voucher type (SAF-T TransactionType) of a composite entry. Not a category:
+#: the categories are on its lines (``TransactionLine.entry_type``).
+COMPOSITE_TYPE = "sammensatt"
+COMPOSITE_LABEL = "Sammensatt bilag"
+
+#: How many lines one composite entry may have. A Tine settlement with every
+#: tillegg and trekk split out is a dozen or so; past this it is more likely a
+#: whole statement pasted in as one voucher, which the bank import does better.
+MAX_COMPOSITE_PARTS = 40
+
+
+@dataclass(frozen=True)
+class CompositePart:
+    """One line of a composite entry: a category and the gross amount it moved.
+
+    The same fields as an ordinary entry, minus the ones the voucher owns (the
+    date, the payment method, the counterparty). ``description`` defaults to the
+    voucher's own text.
+    """
+
+    type_code: str
+    gross_amount: Decimal
+    tax_code: str | None = None
+    account_number: str | None = None
+    description: str | None = None
+
+
+async def record_composite(
+    db: AsyncSession,
+    *,
+    company: Company,
+    occurred_on: date,
+    description: str,
+    parts: Sequence[CompositePart],
+    payment_method: PaymentMethod = PaymentMethod.BANK,
+    party_pk: int | None = None,
+    corrects_pk: int | None = None,
+    created_by_user_id: int | None = None,
+) -> Transaction:
+    """Record one bank movement that several trades netted into, as one voucher.
+
+    The register's rule is one payment, one category. Plenty of real payments
+    are several: the dairy pays for the month's milk less the levy, the share
+    it keeps and the feed it sold the farmer; Vipps pays out the day's sales
+    less its fee; a receipt from a shop has food at 15 % and a light bulb at
+    25 %; a loan instalment is interest and repayment. Booked as one category,
+    each of those is wrong somewhere: the net milk money on 3071 understates
+    the sale and the VAT on it, the fee vanishes into the sales figure.
+
+    So each trade is a line of its own, with its own category, amount, VAT code
+    and account, built by exactly the same rules as an ordinary entry
+    (:func:`_trade`), and one payment line carries what they net to. Lines going
+    the other way from the bank movement are fine and expected: a settlement is
+    money in with deductions out. Lines that cancel to nothing are refused,
+    because then no money moved and there is nothing for the bank line to say.
+
+    The voucher is filed as ``sammensatt`` and reads back line by line
+    (:class:`CashFlowPart`). It is posted at once and immutable like any other
+    entry, reversed or corrected as a whole.
+    """
+    if len(parts) < 2:
+        raise InvalidCompositeEntryError(
+            "et sammensatt bilag må ha minst to linjer. Én linje føres som en vanlig betaling"
+        )
+    if len(parts) > MAX_COMPOSITE_PARTS:
+        raise InvalidCompositeEntryError(
+            f"et sammensatt bilag kan ha høyst {MAX_COMPOSITE_PARTS} linjer"
+        )
+    types = [cashflow.get_type(part.type_code) for part in parts]
+    for entry_type in types:
+        landbruk.require_segment(company, entry_type.segment)
+    grosses = [_check_gross(part.gross_amount) for part in parts]
+    financial_year = await ensure_financial_year(db, company, occurred_on.year)
+    journal = await _cash_journal(db, company)
+    accounts = await _accounts_for(
+        db, company, [(t, part.account_number) for t, part in zip(types, parts, strict=True)]
+    )
+    party = (
+        None
+        if party_pk is None
+        else await parties.get_party(db, company=company, party_pk=party_pk)
+    )
+    trades = [
+        await _trade(
+            db,
+            company=company,
+            entry_type=entry_type,
+            occurred_on=occurred_on,
+            gross=gross,
+            description=(part.description or "").strip() or description,
+            tax_code=part.tax_code,
+            account_number=part.account_number,
+            party=party,
+            accounts=accounts,
+        )
+        for entry_type, part, gross in zip(types, parts, grosses, strict=True)
+    ]
+    net = sum((trade.cash for trade in trades), ZERO)
+    if net == ZERO:
+        raise InvalidCompositeEntryError(
+            "linjene går i null, så ingen penger har flyttet seg, og bilaget har ingen "
+            "betaling å vise. Sjekk beløpene mot det som kom inn eller gikk ut på kontoen"
+        )
+    payment_line = TransactionLine(
+        account=accounts[payment_method.account_number],
+        description=description,
+        debit=net if net > ZERO else ZERO,
+        credit=-net if net < ZERO else ZERO,
+    )
+    transaction = Transaction(
+        journal_id=journal.id,
+        transaction_id=await _next_voucher_number(db, journal.id, financial_year.year),
+        financial_year=financial_year.year,
+        period=occurred_on.month,
+        transaction_date=occurred_on,
+        gl_posting_date=occurred_on,
+        description=description.strip(),
+        voucher_type=COMPOSITE_TYPE,
+        corrects_transaction_pk=corrects_pk,
+        created_by_user_id=created_by_user_id,
+    )
+    transaction.lines = _numbered(
+        [payment_line, *(line for trade in trades for line in trade.lines)]
+    )
     posting.post(transaction)
     db.add(transaction)
     await db.flush()
@@ -1283,6 +1507,63 @@ async def reverse_cash_flow(
 
 
 @dataclass(frozen=True)
+class CashFlowPart:
+    """One line of a composite entry, read back as the category it was entered as.
+
+    ``direction`` is which way *this line* moved money, which on a settlement
+    differs from the voucher's: the milk is money in, the levy deducted from it
+    money out. On a reversal every line's direction flips with the amounts.
+    ``gross_amount`` is what the line contributed to the bank movement: net plus
+    VAT for an ordinary trade, the net alone for reverse charge (the VAT there
+    is computed on top and never paid to anyone), the VAT alone for a tollpass.
+    """
+
+    type_code: str | None
+    direction: CashFlowDirection
+    gross_amount: Decimal
+    net_amount: Decimal
+    vat_amount: Decimal
+    account_number: str
+    account_description: str
+    tax_code: str | None
+    description: str
+
+
+def _parts(transaction: Transaction) -> tuple[CashFlowPart, ...]:
+    """The trade lines of a composite voucher, in the order they were entered."""
+    parts: list[CashFlowPart] = []
+    for line in sorted(transaction.lines, key=lambda line: int(line.record_id)):
+        if line.entry_type is None:
+            continue
+        amount = (line.debit or ZERO) + (line.credit or ZERO)
+        vat = (line.debit_tax_amount or ZERO) + (line.credit_tax_amount or ZERO)
+        code = line.tax_code.code if line.tax_code is not None else None
+        seed = TAX_CODES_BY_CODE.get(code) if code is not None else None
+        if seed is not None and seed.vat_only:
+            net, gross = ZERO, vat
+        elif seed is not None and seed.reverse_charge:
+            net, gross = amount, amount
+        else:
+            net, gross = amount, amount + vat
+        parts.append(
+            CashFlowPart(
+                type_code=line.entry_type,
+                direction=(
+                    CashFlowDirection.INN if (line.credit or ZERO) > ZERO else CashFlowDirection.UT
+                ),
+                gross_amount=gross,
+                net_amount=net,
+                vat_amount=vat,
+                account_number=line.account.account_number,
+                account_description=line.account.description,
+                tax_code=code,
+                description=line.description,
+            )
+        )
+    return tuple(parts)
+
+
+@dataclass(frozen=True)
 class CashFlowView:
     """A posted voucher read back as the cash-flow entry it was recorded as."""
 
@@ -1315,6 +1596,9 @@ class CashFlowView:
     # The name of the key the author worked through, when they used one
     # (docs/agents-and-api.md rule 6): "Kari Nordmann via «Claude»".
     created_via: str | None = None
+    # The lines of a composite entry (type_code ``sammensatt``); empty for an
+    # ordinary one, whose single line is the fields above.
+    parts: tuple[CashFlowPart, ...] = ()
 
 
 def describe(
@@ -1345,6 +1629,14 @@ def describe(
     )
     if payment is None:
         return None
+    if transaction.voucher_type == COMPOSITE_TYPE:
+        return _describe_composite(
+            transaction,
+            payment,
+            reversed_by_id=reversed_by_id,
+            created_by_name=created_by_name,
+            created_via=created_via,
+        )
     basis = next(
         (
             line
@@ -1405,6 +1697,68 @@ def describe(
         # facts, and the interface says «ukjent» for the second one only.
         created_by_name=created_by_name,
         created_via=created_via,
+    )
+
+
+def _describe_composite(
+    transaction: Transaction,
+    payment: TransactionLine,
+    *,
+    reversed_by_id: int | None,
+    created_by_name: str | None,
+    created_via: str | None,
+) -> CashFlowView | None:
+    """A composite voucher: the bank movement, and the lines it is made of.
+
+    The headline figures describe the movement as a whole. ``vat_amount`` is
+    the VAT that moved *with the money*, netted: on a settlement, the output VAT
+    on the milk less the input VAT on the feed set off against it. Reverse
+    charge does not count, since nobody paid it. ``net_amount`` is the rest. The
+    account and the category on the headline are the first line's, which is
+    what the person entered first and almost always the trade the voucher is
+    about.
+    """
+    parts = _parts(transaction)
+    if not parts:
+        return None
+    debit = payment.debit or ZERO
+    credit = payment.credit or ZERO
+    incoming = debit > ZERO
+    gross = debit if incoming else credit
+    moved_vat = ZERO
+    for part in parts:
+        seed = TAX_CODES_BY_CODE.get(part.tax_code) if part.tax_code is not None else None
+        if seed is not None and seed.reverse_charge:
+            continue
+        same_way = (part.direction is CashFlowDirection.INN) is incoming
+        moved_vat += part.vat_amount if same_way else -part.vat_amount
+    first = parts[0]
+    trade_lines = [line for line in transaction.lines if line.entry_type is not None]
+    party = next((line.party for line in trade_lines if line.party is not None), None)
+    return CashFlowView(
+        id=transaction.id,
+        voucher_no=transaction.transaction_id,
+        occurred_on=transaction.transaction_date,
+        direction=CashFlowDirection.INN if incoming else CashFlowDirection.UT,
+        type_code=COMPOSITE_TYPE,
+        gross_amount=gross,
+        net_amount=gross - moved_vat,
+        vat_amount=moved_vat,
+        account_number=first.account_number,
+        account_description=first.account_description,
+        # Several codes, so none on the headline; each line carries its own.
+        tax_code=None,
+        party_id=party.id if party is not None else None,
+        party_name=party.name if party is not None else None,
+        payment_account=payment.account.account_number,
+        description=transaction.description,
+        is_reversal=transaction.reverses_transaction_pk is not None,
+        reversed_by_id=reversed_by_id,
+        corrects_id=transaction.corrects_transaction_pk,
+        created_by_id=transaction.created_by_user_id,
+        created_by_name=created_by_name,
+        created_via=created_via,
+        parts=parts,
     )
 
 

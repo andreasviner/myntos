@@ -476,6 +476,42 @@ to every feature from now on, not only to this phase.
       pasted key
 - [ ] Developers: webhooks, sandbox companies, a developer page
 
+## Phase L — Landbruk, an add-on for farms (pilot: Reime Gard)
+
+Started 2026-10-12, after a farmer told the owner that Tripletex handles farms
+badly. Myntos stays a program for everyone: a farm gets an add-on on top, and
+nothing in it changes what other companies see. The rules are in
+[landbruk.md](landbruk.md); the rest of the gap is the Landbruk section of
+[FEATURES.md](FEATURES.md). Reime Gard (ENK) has offered to run Myntos beside
+its current system, with its accountant checking the books and the year-end.
+
+- [x] Composite entries for everyone (`POST …/cashflow/sammensatt`, the
+      «Del opp i flere linjer» editor on `/kontantstrom/`): one payment, one
+      line per trade, each with its own category and VAT. Migration
+      `cddd50896de9` (`gl_transaction_line.entry_type`)
+- [x] The add-on and its switch (`company.landbruk`, on by næringskode 01/02
+      unless a person says otherwise; `GET`/`PUT …/landbruk`, the «Landbruk»
+      card on `/kontoplan/`)
+- [x] 62 accounts from NIBIO's Landbrukets kodesystem 1.3.6, each with its
+      næringsspesifikasjon post; farm categories with the farm VAT rates (milk,
+      slaughter, live animals and grain at 25 %), the settlement deductions,
+      a category per tilskudd, skogfond
+- [x] Settlements read as sales: `issued_by_buyer` in the bilag reader, and
+      the model told so for farm books
+- [x] Skill `myntos-landbruk`, help area `farming`
+- [ ] **The pilot.** Reime Gard's opening balance (from its current system),
+      a month of settlements booked in both, the accountant's review of the
+      groupings and of booking omsetningsavgift against the sale
+- [ ] Two VAT returns in one company (FEATURES 23b)
+- [ ] Manual journal entries for the year-end adjustments (FEATURES 23a), then
+      the livestock and feed count at the takseringsregler rates
+- [ ] Fixed assets with the farm rules (FEATURES 7), the næringsspesifikasjon
+      with the jordbrukskonto and tømmerkonto cards (FEATURES 2)
+- [ ] The decision on Landbrukets Dataflyt (about 325 000 kr a year;
+      [integrations/landbrukets-dataflyt.md](integrations/landbrukets-dataflyt.md))
+- [ ] Bank import: split a bank line straight into a composite entry, rather
+      than registering the settlement first and matching it after
+
 ## Continuous / before first public release
 
 - [ ] Threat model review; independent security review of auth + storage

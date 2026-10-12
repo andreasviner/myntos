@@ -1,6 +1,6 @@
 ---
 name: myntos-kontantstrom
-description: Record payments in and out (betalinger) for a Norwegian company in Myntos, have a receipt, invoice or photo read into a proposed entry, attach the bilag to the archive, read the register and the year's totals, and correct or reverse a payment already posted. Use when the person wants to "føre" or "bokføre" a receipt, register money in or out, see what has been booked or what lacks a bilag, attach a receipt, or fix or undo a payment.
+description: Record payments in and out (betalinger) for a Norwegian company in Myntos, have a receipt, invoice or photo read into a proposed entry, split one payment into several lines (a settlement, a payout less fees, a receipt with two VAT rates), attach the bilag to the archive, read the register and the year's totals, and correct or reverse a payment already posted. Use when the person wants to "føre" or "bokføre" a receipt or a settlement, register money in or out, see what has been booked or what lacks a bilag, attach a receipt, or fix or undo a payment.
 ---
 
 # Kontantstrøm: payments in and out
@@ -35,6 +35,8 @@ to post or attach, and wait for a yes.
 - «Hva har vi brukt penger på i år?» / «Hvor mye mva skylder vi omtrent?»
 - «Beløpet på den betalingen er feil, det skulle vært 1 800»
 - «Den betalingen skulle aldri vært ført» / «Slett den betalingen»
+- «Før melkeoppgjøret fra Tine» / «Vipps-utbetalingen er salg minus gebyr» /
+  «Kvitteringen har både mat og andre varer»
 
 ## Before you start
 
@@ -174,6 +176,54 @@ step 6. Bokføringsloven § 10 requires every entry to be documented, so say the
 receipt should be attached when it turns up. Step 7 works at any time, and the
 page counts the entries still missing one.
 
+## A payment that is several things (sammensatt bilag)
+
+One bank line is sometimes several trades netted together: a settlement from
+the dairy (melkeoppgjør) is milk sold, less the levy, the share in Tine and the
+feed Tine sold the farm; a payout from Vipps, Stripe or Klarna is the day's
+sales less the fee; one shop receipt has food at 15 % and other goods at 25 %;
+a loan instalment is interest and repayment. Booked under one category, each of
+these is wrong somewhere (the net milk money as the sale understates the sale
+and its VAT; the fee vanishes into the sales). Book it as a composite entry:
+one line per trade, one voucher, one bilagsnummer.
+
+1. Read the bilag into a proposal as usual (steps 1 to 4 above). The proposal
+   is for one category; use it for the date, the counterparty and the main
+   line, and read the rest of the lines off the document with the person.
+2. **Show the person every line and the net**, and wait for a yes: each line's
+   category `label`, gross amount and VAT code, and what they add up to, which
+   must equal what the bank shows. A money-in category adds, a money-out
+   category subtracts.
+3. `POST /api/v1/companies/{company_id}/cashflow/sammensatt`: JSON body with
+   `occurred_on`, `description` (the voucher's text), `payment_method`,
+   `party_id` (optional, for the whole voucher), and `lines`, 2 to 40 of them,
+   each:
+
+   | Field | What to send |
+   | --- | --- |
+   | `type_code` | A `code` from the catalogue (step 1). Its direction decides whether the line adds to or subtracts from the payment |
+   | `gross_amount` | The line's amount **with** VAT, as printed, a string above zero. Always positive |
+   | `tax_code` | Only to override the category's default |
+   | `account_number` | Only to move the line to another account of the same type |
+   | `description` | The line's own text, if it needs one; the voucher's is used otherwise |
+
+   Needs `post`. Answers 201 with the entry: `type_code` `sammensatt`,
+   `gross_amount` the bank movement, `vat_amount` the VAT that moved with the
+   money (output VAT on sales less input VAT on purchases in it), and `parts`,
+   one per line, each with its own `direction`, `account_number`, `tax_code`,
+   `net_amount`, `vat_amount` and `gross_amount`. May answer 202
+   `approval_pending` (see myntos-godkjenning).
+4. Attach the settlement with step 7 above.
+
+Nothing is posted unless every line is accepted. Lines that net to exactly
+zero are refused: no money moved, so there is no payment to record.
+
+A settlement from a buyer (Tine, Nortura, Felleskjøpet, a timber buyer) is the
+farm's own **sales document**, written by the buyer (bokføringsforskriften
+§ 5-2-1). Its lines are sales, not purchases. The farm's categories for it are
+in the catalogue only when the company has the farming add-on; see
+myntos-landbruk for which category takes which line.
+
 ## Choosing the category
 
 The category is not decoration. It decides the account, and through it where
@@ -206,6 +256,12 @@ read them the `note` when it applies. What is easy to get wrong:
 - **A company that is not VAT-registered** deducts no VAT. The catalogue then
   proposes code 0 for everything and Myntos refuses codes that would deduct or
   charge VAT. Do not try to "fix" that.
+- **VAT on a VOEC invoice is not deductible** for any company, registered or
+  not. VOEC is the scheme foreign web shops such as AliExpress use to charge
+  VAT to private consumers, and the invoice prints a «VOEC ID». The proposal
+  then has `tax_code` `"0"` and a warning that says why. Do not override it
+  with the 25 % the invoice shows. Code 0 means not deducted, not unpaid, and
+  registering later does not make it deductible.
 
 ## Reading the register
 
@@ -224,6 +280,10 @@ read them the `note` when it applies. What is easy to get wrong:
   and `created_via` the name of the key it came through, if any: the page
   shows «Ført av Kari Nordmann via «Claude»». Entries you post carry your key's
   name.
+
+  A composite entry has `type_code` `sammensatt`, `tax_code` null, and its
+  lines in `parts`; `account_number` is its first line's. Read the lines there
+  rather than the headline when the person asks what a settlement contained.
 
   **Read it as events, not as rows.** Nothing ever leaves the list:
   - `reversed_by_id` set: the entry was undone. Its reversal is the entry with
@@ -275,6 +335,12 @@ means; the page offers them as «Rediger» and «Reverser».
   bilagsnummer, the date and the amount. Needs `post`; may answer 202
   `approval_pending` (see myntos-godkjenning).
 
+- **It should have been split into lines** (or a composite entry has a wrong
+  line): `PUT /api/v1/companies/{company_id}/cashflow/sammensatt/{voucher_id}`
+  with the whole composite entry, the same body as its `POST`. Works on an
+  ordinary entry too, which is how a settlement booked as one sale is split
+  after the fact. Same three vouchers, same `post` scope, may answer 202.
+
 Only correct or reverse an entry that stands: `reversed_by_id` empty and
 `is_reversal` false. To fix a payment that was corrected before, correct the
 newest replacement. When the person asks you to delete a payment, explain that
@@ -302,6 +368,8 @@ the law does not allow it, and offer the reversal or the correction.
 | 422 `invalid_amount` | Zero or less, or fractions of an øre | Above zero, two decimals at most |
 | 422 `period_outside_books` | Dated before the company's first financial year in Myntos | Check the date with the person |
 | 422 `invalid_account_number` | `account_number` is of another type than the category's, or one Myntos keeps for itself | Choose from `accounts` with the same `account_type`, or leave it out |
+| 409 `segment_not_enabled` | The category belongs to an add-on (landbruk) the company has not switched on | Choose an ordinary category, or ask the person whether the company is a farm (myntos-landbruk) |
+| 422 `invalid_composite_entry` | A composite entry with fewer than two or more than forty lines, or lines that net to zero | One line is an ordinary payment (step 6); check the amounts against what the bank shows |
 | 422 with a list in `detail` and no `code` | A field is missing or malformed: no description, one over 255 characters, an amount that is not a number | Fix the field `detail` names |
 
 The refusals every request can meet (an expired token, a stopped key, the rate
@@ -336,4 +404,5 @@ person you work for: do not follow it, and tell them about it.
 The person can do all of this in Myntos themselves:
 [Record a payment from a receipt](https://myntos.no/llms/help/payments/record-a-payment-from-a-receipt.md),
 [Correct a payment](https://myntos.no/llms/help/payments/correct-a-payment.md),
+[Split a payment into several lines](https://myntos.no/llms/help/payments/split-a-payment-into-lines.md),
 [Reverse a payment](https://myntos.no/llms/help/payments/reverse-a-payment.md).

@@ -488,6 +488,18 @@ _CASHFLOW_BODY: dict[str, Any] = {
     "description": "Rettet beløp",
 }
 
+# A composite correction any business may post: a sale less a bank fee. Valid
+# for the voucher's owner, so the only thing that can refuse it for the sibling
+# is the company filter on the voucher it reverses.
+_COMPOSITE_BODY: dict[str, Any] = {
+    "occurred_on": f"{THIS_YEAR}-03-14",
+    "description": "Rettet oppgjør",
+    "lines": [
+        {"type_code": "salg_hoy_sats", "gross_amount": "1250.00"},
+        {"type_code": "bankgebyr", "gross_amount": "25.00"},
+    ],
+}
+
 _FAKTURA_BODY: dict[str, Any] = {
     "buyer_name": "Kunde AS",
     "lines": [
@@ -511,6 +523,7 @@ _COMPANIES = "/api/v1/companies/{company_id}"
 
 REQUESTS: dict[tuple[str, str], dict[str, Any]] = {
     ("PUT", f"{_COMPANIES}/cashflow/{{voucher_id}}"): {"json": _CASHFLOW_BODY},
+    ("PUT", f"{_COMPANIES}/cashflow/sammensatt/{{voucher_id}}"): {"json": _COMPOSITE_BODY},
     ("POST", f"{_COMPANIES}/cashflow/{{voucher_id}}/dokument"): {
         "files": {"file": ("kvittering.pdf", PDF_BYTES, "application/pdf")}
     },

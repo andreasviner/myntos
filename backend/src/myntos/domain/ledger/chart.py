@@ -333,6 +333,313 @@ STANDARD_ACCOUNTS: tuple[SeedAccount, ...] = (
 
 ACCOUNTS_BY_NUMBER: dict[str, SeedAccount] = {a.number: a for a in STANDARD_ACCOUNTS}
 
+# --- The farming add-on (docs/landbruk.md) ---------------------------------------
+#
+# The accounts a farm needs that an ordinary business does not, added to a
+# company's kontoplan when the add-on is switched on and never seeded into
+# anyone else's. Myntos is for every business; a hairdresser's kontoplan must
+# not open with «Kjøp av kraftfôr».
+#
+# **The numbers are NIBIO's.** Landbrukets kodesystem (NIBIO, version 1.3.6,
+# December 2025) is the chart every farm program and every farm accountant uses,
+# and the coding Tine, Nortura and Felleskjøpet put on their settlements
+# through Landbrukets Dataflyt. NIBIO writes an account as department.account
+# (20.3071 is milk in jordbruk); Myntos keeps NS 4102's four digits and the
+# jordbruk department's numbers, so a farm accountant reads 3071 as milk
+# without a translation table, and a later Dataflyt import maps one to one. The
+# department becomes a næring dimension when the books need two næringer (see
+# docs/landbruk.md, What is not built yet).
+#
+# Only NIBIO's leaf accounts, never a heading: 3010 is NIBIO's heading for
+# potatoes and vegetables and the starter chart's «Salgsinntekt, avgiftspliktig
+# middels sats», and the two must never meet. Forestry is the one place NIBIO's
+# department numbers could not be kept: department 30 reuses 3010 and 3030 for
+# timber, so timber goes on the jordbruk department's 3094 «Skogsvirke» instead.
+#
+# **The VAT a category defaults to follows the account's name**, and the names
+# say the rate because the rate is the trap. Milk sold to the dairy, slaughter
+# animals and grain are 25 %, not the 15 % for food: none of them is a
+# næringsmiddel until the dairy, the slaughterhouse or the mill has processed it
+# (Merverdiavgiftshåndboken M-5-2.4). NIBIO's own table says the same (O_S).
+#
+# Every pair below is in Skatteetaten's list, and a test says so.
+LANDBRUK_ACCOUNTS: tuple[SeedAccount, ...] = (
+    # --- Balance sheet ---
+    # Bought milk quota is a right, capitalised and not depreciated unless its
+    # value has plainly fallen (Skatte-ABC J-2-8.43).
+    SeedAccount(
+        "1010", "Melkekvote, kjøpt", AccountType.EIENDEL, "balanseverdiForAnleggsmiddel", "1020"
+    ),
+    # Saldogruppe h. Husdyrbygg (at least half the floor for animals) is
+    # written down at 6 % rather than 4 % (skatteloven § 14-43 tredje ledd),
+    # which is a matter for the asset register when it exists, not for the
+    # account.
+    SeedAccount(
+        "1100",
+        "Driftsbygninger (saldogruppe h)",
+        AccountType.EIENDEL,
+        "balanseverdiForAnleggsmiddel",
+        "1115",
+    ),
+    SeedAccount(
+        "1140", "Jordbrukseiendom", AccountType.EIENDEL, "balanseverdiForAnleggsmiddel", "1140"
+    ),
+    SeedAccount(
+        "1200",
+        "Traktorer, maskiner og redskap (saldogruppe d)",
+        AccountType.EIENDEL,
+        "balanseverdiForAnleggsmiddel",
+        "1205",
+    ),
+    SeedAccount(
+        "1230",
+        "Vare- og lastebiler (saldogruppe c)",
+        AccountType.EIENDEL,
+        "balanseverdiForAnleggsmiddel",
+        "1238",
+    ),
+    # Andelsinnskudd in Tine, Nortura or Felleskjøpet, deducted on the
+    # settlements. An asset the member owns, not a cost: a settlement that
+    # booked it as one would deduct money the farmer still has.
+    SeedAccount(
+        "1355",
+        "Andeler i samvirke (Tine, Nortura, Felleskjøpet)",
+        AccountType.EIENDEL,
+        "balanseverdiForAnleggsmiddel",
+        "1350",
+    ),
+    SeedAccount(
+        "1400",
+        "Lager av innkjøpt fôr, gjødsel og såvarer",
+        AccountType.EIENDEL,
+        "balanseverdiForOmloepsmiddel",
+        "1400",
+    ),
+    # Livestock is omløpsmidler, not driftsmidler (skatteloven § 8-1 fjerde
+    # ledd), valued at year end by the takseringsregler.
+    SeedAccount(
+        "1450", "Buskap (husdyr)", AccountType.EIENDEL, "balanseverdiForOmloepsmiddel", "1400"
+    ),
+    # Hay, silage and grain grown for the farm's own animals. A post of its own
+    # in the næringsspesifikasjon, because it is income inventory but not
+    # taxable formue (skatteloven § 4-2 første ledd h).
+    SeedAccount(
+        "1490",
+        "Egenproduserte varer til eget bruk (fôr, såkorn)",
+        AccountType.EIENDEL,
+        "balanseverdiForOmloepsmiddel",
+        "1401",
+    ),
+    # --- Sales ---
+    SeedAccount("3001", "Salg av korn og frø (25 %)", AccountType.INNTEKT, "salgsinntekt", "3000"),
+    SeedAccount(
+        "3005", "Salg av høy, halm og grovfôr (25 %)", AccountType.INNTEKT, "salgsinntekt", "3000"
+    ),
+    SeedAccount("3011", "Salg av poteter (15 %)", AccountType.INNTEKT, "salgsinntekt", "3000"),
+    SeedAccount(
+        "3015", "Salg av grønnsaker og urter (15 %)", AccountType.INNTEKT, "salgsinntekt", "3000"
+    ),
+    SeedAccount("3021", "Salg av frukt (15 %)", AccountType.INNTEKT, "salgsinntekt", "3000"),
+    SeedAccount("3025", "Salg av bær (15 %)", AccountType.INNTEKT, "salgsinntekt", "3000"),
+    SeedAccount("3041", "Salg av slakt (25 %)", AccountType.INNTEKT, "salgsinntekt", "3000"),
+    # Paid by the slaughterhouse with the settlement and taxed like the price
+    # it tops up: NIBIO codes it O_S.
+    SeedAccount(
+        "3047", "Distriktstilskudd slakt (25 %)", AccountType.INNTEKT, "salgsinntekt", "3000"
+    ),
+    SeedAccount("3051", "Salg av livdyr (25 %)", AccountType.INNTEKT, "salgsinntekt", "3000"),
+    SeedAccount("3071", "Salg av melk (25 %)", AccountType.INNTEKT, "salgsinntekt", "3000"),
+    SeedAccount(
+        "3073",
+        "Distriktstilskudd og grunntilskudd melk (25 %)",
+        AccountType.INNTEKT,
+        "salgsinntekt",
+        "3000",
+    ),
+    SeedAccount(
+        "3075",
+        "Salg av egg og andre husdyrprodukter (15 %)",
+        AccountType.INNTEKT,
+        "salgsinntekt",
+        "3000",
+    ),
+    SeedAccount("3079", "Salg av ull og skinn (25 %)", AccountType.INNTEKT, "salgsinntekt", "3000"),
+    SeedAccount(
+        "3091", "Leiekjøring og maskinarbeid (25 %)", AccountType.INNTEKT, "salgsinntekt", "3000"
+    ),
+    # Forestry, on the jordbruk department's own account for skogsvirke (see
+    # above): timber, massevirke, ved and flis alike.
+    SeedAccount(
+        "3094",
+        "Salg av tømmer, ved og annet skogsvirke (25 %)",
+        AccountType.INNTEKT,
+        "salgsinntekt",
+        "3000",
+    ),
+    # --- Tilskudd: outside VAT, income in the year they are paid out
+    # (Skatte-ABC J-2-8.63.2), counted in the jordbruksfradrag basis ---
+    SeedAccount(
+        "3410",
+        "Produksjonstilskudd, areal og planteproduksjon",
+        AccountType.INNTEKT,
+        "annenDriftsinntekt",
+        "3400",
+    ),
+    SeedAccount(
+        "3413", "Kulturlandskapstilskudd", AccountType.INNTEKT, "annenDriftsinntekt", "3400"
+    ),
+    SeedAccount(
+        "3430",
+        "Produksjonstilskudd, grovfôrareal",
+        AccountType.INNTEKT,
+        "annenDriftsinntekt",
+        "3400",
+    ),
+    SeedAccount("3440", "Avløsertilskudd", AccountType.INNTEKT, "annenDriftsinntekt", "3400"),
+    SeedAccount(
+        "3442",
+        "Tilskudd til avløsning ved sykdom",
+        AccountType.INNTEKT,
+        "annenDriftsinntekt",
+        "3400",
+    ),
+    SeedAccount(
+        "3450",
+        "Produksjonstilskudd, husdyr",
+        AccountType.INNTEKT,
+        "annenDriftsinntekt",
+        "3400",
+    ),
+    SeedAccount("3455", "Driftstilskudd melk", AccountType.INNTEKT, "annenDriftsinntekt", "3400"),
+    SeedAccount(
+        "3457", "Tilskudd til dyr på beite", AccountType.INNTEKT, "annenDriftsinntekt", "3400"
+    ),
+    SeedAccount(
+        "3460",
+        "Miljøtilskudd (RMP, økologisk)",
+        AccountType.INNTEKT,
+        "annenDriftsinntekt",
+        "3400",
+    ),
+    SeedAccount("3490", "Andre tilskudd", AccountType.INNTEKT, "annenDriftsinntekt", "3400"),
+    # Negative: the bunnfradrag Landbruksdirektoratet subtracts, and any
+    # avkorting. Kept apart so the tilskudd above stay the amounts granted.
+    SeedAccount(
+        "3499",
+        "Bunnfradrag og avkorting i tilskudd",
+        AccountType.INNTEKT,
+        "annenDriftsinntekt",
+        "3400",
+    ),
+    # --- Rent ---
+    # Exempt (merverdiavgiftsloven § 3-11 første ledd), unless the lessor has
+    # registered voluntarily.
+    SeedAccount(
+        "3605",
+        "Jordleie, beiteleie og forpaktning (uten mva)",
+        AccountType.INNTEKT,
+        "annenDriftsinntekt",
+        "3600",
+    ),
+    # Taxable at 25 % (§ 3-11 annet ledd h), and outside the exemption for
+    # land, which is the mistake this account is here to prevent.
+    SeedAccount(
+        "3631", "Utleie av jakt og fiske (25 %)", AccountType.INNTEKT, "annenDriftsinntekt", "3650"
+    ),
+    SeedAccount(
+        "3675", "Utleie av melkekvote (25 %)", AccountType.INNTEKT, "annenDriftsinntekt", "3695"
+    ),
+    SeedAccount(
+        "3901",
+        "Erstatning for avlingsskade og tap av dyr",
+        AccountType.INNTEKT,
+        "annenDriftsinntekt",
+        "3900",
+    ),
+    # Money paid out of the skogfondskonto is income (Skatte-ABC S-17-14.27),
+    # of which only 15 % is taxed when it went to a qualifying purpose
+    # (skatteloven § 8-2 annet ledd a). The split is the skattemelding's, so
+    # the whole payout lands here. NIBIO's department 30 number, which in
+    # Skatteetaten's list happens to be the post for tømmerkonto income; the
+    # explicit pair below is what reaches the næringsspesifikasjon.
+    SeedAccount(
+        "3910",
+        "Skogfond frigitt (utbetalt fra skogfondskonto)",
+        AccountType.INNTEKT,
+        "annenDriftsinntekt",
+        "3900",
+    ),
+    # --- Costs ---
+    SeedAccount("4001", "Såvarer og settepoteter", AccountType.KOSTNAD, "varekostnad", "4005"),
+    # Feed is 25 %: it is not food for people (M-5-2.4).
+    SeedAccount("4020", "Kraftfôr", AccountType.KOSTNAD, "varekostnad", "4005"),
+    SeedAccount("4030", "Grovfôr og halm", AccountType.KOSTNAD, "varekostnad", "4005"),
+    SeedAccount(
+        "4040", "Annet fôr (mineraler, tilskuddsfôr)", AccountType.KOSTNAD, "varekostnad", "4005"
+    ),
+    SeedAccount("4410", "Plantevernmidler", AccountType.KOSTNAD, "varekostnad", "4005"),
+    SeedAccount("4420", "Medisin til dyr", AccountType.KOSTNAD, "varekostnad", "4005"),
+    SeedAccount(
+        "4430",
+        "Forbruksmateriell (plast, strø, garn)",
+        AccountType.KOSTNAD,
+        "varekostnad",
+        "4005",
+    ),
+    SeedAccount("4451", "Handelsgjødsel", AccountType.KOSTNAD, "varekostnad", "4005"),
+    SeedAccount("4457", "Kalk", AccountType.KOSTNAD, "varekostnad", "4005"),
+    SeedAccount("4480", "Konserveringsmidler", AccountType.KOSTNAD, "varekostnad", "4005"),
+    # Services bought for the production, which NS 4102 keeps in class 4 and
+    # the næringsspesifikasjon has no post of its own for. Varekostnad, beside
+    # what they are spent on, is the nearest honest post; an accountant who
+    # disagrees moves the grouping on /kontoplan/, which carries forward.
+    SeedAccount("4521", "Veterinær", AccountType.KOSTNAD, "varekostnad", "4005"),
+    SeedAccount("4522", "Inseminering og sædavgift", AccountType.KOSTNAD, "varekostnad", "4005"),
+    SeedAccount("4531", "Husdyrkontroll", AccountType.KOSTNAD, "varekostnad", "4005"),
+    SeedAccount(
+        "4559",
+        "Kjøpt leiekjøring (pressing, tresking, jordarbeid)",
+        AccountType.KOSTNAD,
+        "varekostnad",
+        "4005",
+    ),
+    # Hired labour, which is what the post is.
+    SeedAccount("4570", "Avløserlag", AccountType.KOSTNAD, "varekostnad", "4500"),
+    SeedAccount("4580", "Landbruksvikar", AccountType.KOSTNAD, "varekostnad", "4500"),
+    SeedAccount("4600", "Kjøp av dyr til buskapen", AccountType.KOSTNAD, "varekostnad", "4005"),
+    SeedAccount("4690", "Beholdningsendring buskap", AccountType.KOSTNAD, "varekostnad", "4005"),
+    SeedAccount(
+        "6471",
+        "Leie av jord og beite (uten mva)",
+        AccountType.KOSTNAD,
+        "annenDriftskostnad",
+        "6300",
+    ),
+    SeedAccount("6472", "Forpaktningsavgift", AccountType.KOSTNAD, "annenDriftskostnad", "6300"),
+    SeedAccount("6475", "Leie av melkekvote", AccountType.KOSTNAD, "annenDriftskostnad", "6400"),
+    # The skogfond share the buyer withholds from a timber settlement and pays
+    # into the skogfondskonto: a deductible cost in the year of the sale
+    # (Skatte-ABC S-17-14.27), outside VAT. NIBIO 30.7761.
+    SeedAccount(
+        "7761",
+        "Avsetning til skogfond (trukket i tømmeroppgjør)",
+        AccountType.KOSTNAD,
+        "annenDriftskostnad",
+        "7700",
+    ),
+)
+
+LANDBRUK_ACCOUNTS_BY_NUMBER: dict[str, SeedAccount] = {a.number: a for a in LANDBRUK_ACCOUNTS}
+
+#: Every account Myntos itself knows how to create: the starter chart, and the
+#: add-ons'. What :func:`myntos.domain.ledger.kontoplan.ensure_seeded_account`
+#: and the catalogue check read, so a category can point at an add-on account,
+#: and what the grouping proposal reads for an exact number (a 4020 added by
+#: anyone is varekostnad). The proposal's *neighbour* rule still reads only the
+#: starter chart (``ACCOUNTS_BY_NUMBER``): a hairdresser adding a 4575 should
+#: not be steered by a farm's avløserlag.
+KNOWN_ACCOUNTS: dict[str, SeedAccount] = ACCOUNTS_BY_NUMBER | LANDBRUK_ACCOUNTS_BY_NUMBER
+
 # Internal code == standard code. Keeping them equal costs nothing and removes
 # a translation step that would otherwise be wrong in exactly one place.
 # Rates as of 2026 (docs/integrations/mva.md); they are seeded date-effective

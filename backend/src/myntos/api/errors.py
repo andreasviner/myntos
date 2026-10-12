@@ -134,6 +134,7 @@ from myntos.domain.ledger.errors import (
     InvalidAccountNumberError,
     InvalidAmountError,
     InvalidBankAccountError,
+    InvalidCompositeEntryError,
     InvalidGroupingError,
     InvalidOrgnrError,
     LedgerError,
@@ -141,6 +142,7 @@ from myntos.domain.ledger.errors import (
     PartyNotFoundError,
     PeriodOutsideBooksError,
     PrimaryBankAccountRequiredError,
+    SegmentNotEnabledError,
     TaxCodeNotAllowedError,
     UnknownCashFlowTypeError,
     UnknownTaxCodeError,
@@ -321,6 +323,10 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     InvalidGroupingError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     # 422: the code is real, and this company may not use it on that date.
     TaxCodeNotAllowedError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    InvalidCompositeEntryError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    # 409: the category exists, and these books have not switched on the
+    # add-on it belongs to. A setting stands in the way, not the request.
+    SegmentNotEnabledError: status.HTTP_409_CONFLICT,
     # --- Fakturering ---
     InvoiceNotFoundError: status.HTTP_404_NOT_FOUND,
     # 404 on the XML resource, not on the invoice: the document exists, the

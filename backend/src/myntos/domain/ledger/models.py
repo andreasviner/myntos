@@ -242,6 +242,22 @@ class Company(Base):
     # cannot quietly bring back a key somebody had forgotten.
     agent_access_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Whether these books get the farming add-on: the accounts from NIBIO's
+    # Landbrukets kodesystem, the farm categories in the register, and a model
+    # told that a settlement from Tine is a sale (docs/landbruk.md).
+    #
+    # Three states, because two questions hide in one switch. NULL is "nobody
+    # has said", and then the næringskode decides: 01 (jordbruk) and 02
+    # (skogbruk) get it, which is right for nearly every farm and asks nothing
+    # of them. True and False are a person's answer and outrank the register,
+    # because a farm registered under another code exists, and so does a 01
+    # company that would rather not see thirty farm categories. Read through
+    # :func:`myntos.domain.ledger.landbruk.is_enabled` and nowhere else.
+    #
+    # An add-on and not a kind of company: Myntos is for every business, and
+    # nothing here may change what a company without it sees.
+    landbruk: Mapped[bool | None] = mapped_column(Boolean)
+
     # --- What Enhetsregisteret says ------------------------------------------
     #
     # Filled from the register rather than typed, and refreshed whenever the
@@ -257,7 +273,8 @@ class Company(Base):
     # migration every time Brønnøysund adds one.
 
     # SN2007. The næringsspesifikasjon asks for it, which is why this one is
-    # stored rather than merely shown.
+    # stored rather than merely shown. It also decides whether the farming
+    # add-on is on when nobody has said (``landbruk`` below).
     industry_code: Mapped[str | None] = mapped_column(String(16))
     industry_description: Mapped[str | None] = mapped_column(String(255))
     # Seller contact details a salgsdokument may carry beside the address.
@@ -936,6 +953,18 @@ class TransactionLine(Base):
     # Only set where tax information is set, on the same line. Not a SAF-T
     # field; the export does not read it.
     vat_specification: Mapped[str | None] = mapped_column(String(64))
+    # The register category this line was booked as
+    # (:mod:`myntos.domain.ledger.cashflow`), on the line describing the trade.
+    #
+    # The voucher's ``voucher_type`` says the same for an ordinary entry, where
+    # one voucher is one category. A composite entry has several: a settlement
+    # from Tine is milk sold, a levy deducted and feed set off against it, all
+    # behind one bank line, and reading it back as what it was entered as needs
+    # the category per line. Set by the register on every trade line it
+    # writes; NULL on lines written before it existed, and on the payment and
+    # VAT lines, which belong to no category. Copied by a reversal like the
+    # rest of the line. Not a SAF-T field.
+    entry_type: Mapped[str | None] = mapped_column(String(64))
 
     transaction: Mapped[Transaction] = relationship(back_populates="lines")
     account: Mapped[Account] = relationship()

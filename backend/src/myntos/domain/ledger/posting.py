@@ -379,6 +379,9 @@ def _reverse_line(line: TransactionLine) -> TransactionLine:
         # it would net against the period's ordinary deductions instead and
         # leave both lines wrong by the same amount.
         vat_specification=line.vat_specification,
+        # A composite entry reads back line by line, and so must its reversal,
+        # or the register shows the cancelling voucher as lines of nothing.
+        entry_type=line.entry_type,
     )
     # Copy the relationships too, and only when they are actually set: on a
     # transaction that has not been flushed the foreign key columns are still

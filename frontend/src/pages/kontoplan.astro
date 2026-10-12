@@ -85,6 +85,34 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         </table>
       </div>
     </section>
+
+    {/*
+      Landbruk er et tillegg, ikke en egen utgave av Myntos. Et selskap som
+      driver gårdsbruk eller skog får kontoene fra landbrukets kontoplan og egne
+      typer i registeret; alle andre ser ingenting av det. Kortet står nederst
+      fordi det angår få, og her fordi det å slå det på er å legge kontoer til i
+      denne kontoplanen.
+    */}
+    <section class="card" id="landbruk-card">
+      <h2 class="card-title">Landbruk</h2>
+      <p class="card-hint" id="landbruk-state">Henter …</p>
+      <p class="card-hint">
+        Med landbruk får selskapet kontoene fra landbrukets standard kontoplan (NIBIO), egne typer i
+        registeret for melkeoppgjør, slakteoppgjør, produksjonstilskudd, kraftfôr og trekk, med
+        riktig mva, og KI-en vet at et oppgjør fra Tine eller Nortura er et salg. Selskaper uten
+        landbruk ser ingenting av dette.
+      </p>
+      <p class="status" id="landbruk-status" hidden></p>
+      <p class="landbruk-actions" id="landbruk-actions" hidden>
+        <button type="button" class="btn btn-primary btn-small" id="landbruk-on">
+          Slå på landbruk
+        </button>
+        <button type="button" class="btn btn-ghost btn-small" id="landbruk-off">
+          Slå av landbruk
+        </button>
+        <button type="button" class="btn-link" id="landbruk-auto">La næringskoden avgjøre</button>
+      </p>
+    </section>
   </div>
 </BaseLayout>
 
@@ -126,6 +154,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   .narrow {
     flex: 0 0 8rem;
   }
+  #landbruk-card {
+    margin-top: 1rem;
+  }
+  .landbruk-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem 1rem;
+    margin: 0.75rem 0 0;
+  }
   .grouping-code {
     font-variant-numeric: tabular-nums;
     font-weight: 600;
@@ -161,12 +199,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     createAccount,
     deleteAccount,
     getKontoplan,
+    getLandbruk,
     setGrouping,
+    setLandbruk,
     suggestAccount,
     updateAccount,
     type Company,
     type GroupingOption,
     type Kontoplan,
+    type Landbruk,
     type LedgerAccount,
   } from '../lib/api';
   import { currentCompany, loadCompanies } from '../lib/company';
@@ -457,6 +498,76 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       });
   });
 
+  // --- Landbruk ---------------------------------------------------------------
+
+  /** Hvor tillegget står, og hvorfor, i én setning. */
+  function landbrukState(state: Landbruk): string {
+    const code = state.industry_code ?? 'ingen';
+    if (state.enabled && state.source === 'naeringskode') {
+      return `Slått på, fordi selskapet er registrert med næringskode ${code}, som er jord- eller skogbruk.`;
+    }
+    if (state.enabled) return 'Slått på.';
+    if (state.source === 'valgt') return 'Slått av.';
+    return 'Av. Selskapet er ikke registrert med næringskode for jordbruk (01) eller skogbruk (02).';
+  }
+
+  function showLandbruk(state: Landbruk): void {
+    el('#landbruk-state').textContent = landbrukState(state);
+    const may = mayChange();
+    show(el('#landbruk-actions'), may);
+    if (!may) return;
+    const on = el<HTMLButtonElement>('#landbruk-on');
+    // Påslått, men uten alle kontoene: knappen legger dem til. Det skjer når
+    // næringskoden slo tillegget på og ingen har brukt kontoene ennå.
+    on.textContent =
+      state.enabled && state.missing_accounts.length > 0
+        ? 'Legg til landbrukskontoene'
+        : 'Slå på landbruk';
+    show(on, !state.enabled || state.missing_accounts.length > 0);
+    show(el('#landbruk-off'), state.enabled);
+    show(el('#landbruk-auto'), state.source === 'valgt');
+  }
+
+  /** Hva bryteren gjorde, sagt slik at en konto som ble stående ikke er en overraskelse. */
+  function landbrukResult(state: Landbruk): string {
+    const parts = [state.enabled ? 'Landbruk er slått på.' : 'Landbruk er slått av.'];
+    if (state.added_accounts.length > 0) {
+      parts.push(`${state.added_accounts.length} kontoer er lagt til i kontoplanen.`);
+    }
+    if (state.kept_accounts.length > 0) {
+      parts.push(
+        `${state.kept_accounts.length === 1 ? 'Konto' : 'Kontoene'} ${state.kept_accounts.join(', ')} ` +
+          'fantes fra før med et annet navn og er ikke endret. Landbrukstypene som bruker ' +
+          `${state.kept_accounts.length === 1 ? 'det nummeret' : 'de numrene'}, fører dit.`,
+      );
+    }
+    if (!state.enabled) parts.push('Kontoene står der fortsatt; deaktiver dem i listen hvis de er i veien.');
+    return parts.join(' ');
+  }
+
+  async function switchLandbruk(enabled: boolean | null): Promise<void> {
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>('#landbruk-actions button')];
+    for (const button of buttons) button.disabled = true;
+    setStatus(el('#landbruk-status'), '');
+    try {
+      const state = await setLandbruk(company.id, enabled);
+      showLandbruk(state);
+      setStatus(el('#landbruk-status'), landbrukResult(state), 'ok');
+      await refresh();
+    } catch (error: unknown) {
+      setStatus(
+        el('#landbruk-status'),
+        error instanceof ApiError ? error.message : 'Vi fikk ikke endret landbruk.',
+      );
+    } finally {
+      for (const button of buttons) button.disabled = false;
+    }
+  }
+
+  el('#landbruk-on').addEventListener('click', () => void switchLandbruk(true));
+  el('#landbruk-off').addEventListener('click', () => void switchLandbruk(false));
+  el('#landbruk-auto').addEventListener('click', () => void switchLandbruk(null));
+
   function changeYear(step: number): void {
     year += step;
     void refresh();
@@ -481,6 +592,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       company = current;
       el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
       await refresh();
+      // For seg, så en kontoplan som ble hentet ikke går tapt fordi tilleggets
+      // tilstand ikke gjorde det.
+      await getLandbruk(company.id)
+        .then(showLandbruk)
+        .catch(() => {
+          el('#landbruk-state').textContent = 'Vi fikk ikke hentet om landbruk er slått på.';
+        });
     } catch (error: unknown) {
       setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet selskapet.');
     } finally {

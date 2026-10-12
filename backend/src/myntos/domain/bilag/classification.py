@@ -53,7 +53,12 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from myntos.domain.bilag.context import NO_CONTEXT, BilagContext
-from myntos.domain.ledger.cashflow import CashFlowDirection, CashFlowType, types_for
+from myntos.domain.ledger.cashflow import (
+    CASH_FLOW_TYPES,
+    CashFlowDirection,
+    CashFlowType,
+    types_for,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +162,10 @@ class MenuItem:
 
 
 def build_menu(
-    allowed: CashFlowDirection | None = None, *, returning: bool = False
+    allowed: CashFlowDirection | None = None,
+    *,
+    returning: bool = False,
+    segments: frozenset[str] = frozenset(),
 ) -> tuple[MenuItem, ...]:
     """The categories on offer, numbered from one.
 
@@ -186,8 +194,12 @@ def build_menu(
     often as it is a customer being paid back, so the answer has to stay
     reachable. Money in with a matching outgoing leg cannot be a sale; money out
     with a matching incoming leg can be almost anything.
+
+    ``segments`` are the company's add-ons (:mod:`myntos.domain.ledger.landbruk`).
+    A farm's menu carries «Melkeoppgjør» and «Kraftfôr»; nobody else's does,
+    since a category the model can pick is a category the form will propose.
     """
-    entries = types_for(allowed)
+    entries = types_for(allowed, segments=segments)
     if returning and allowed is CashFlowDirection.INN:
         entries = [entry for entry in entries if entry.is_refund] or entries
     return tuple(
@@ -403,6 +415,7 @@ async def classify(
     title: str | None = None,
     context: BilagContext | None = None,
     returning: bool = False,
+    segments: frozenset[str] = frozenset(),
 ) -> Classification:
     """Ask which category the document belongs to.
 
@@ -419,7 +432,7 @@ async def classify(
     if not document_text.strip() and title is None and context.note is None:
         return Classification()
 
-    menu = build_menu(allowed, returning=returning)
+    menu = build_menu(allowed, returning=returning, segments=segments)
     reply = await ask(
         system=_SYSTEM,
         prompt=build_prompt(document_text, menu, title=title, context=context),
@@ -440,4 +453,4 @@ async def classify(
 
 def _type_of(item: MenuItem) -> CashFlowType:
     """The full catalogue entry behind a menu line."""
-    return next(entry for entry in types_for() if entry.code == item.type_code)
+    return CASH_FLOW_TYPES[item.type_code]

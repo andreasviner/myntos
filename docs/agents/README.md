@@ -66,6 +66,7 @@ search this folder for the old label.
 | `myntos-inngaende-balanse` | The opening balance |
 | `myntos-arsavslutning` | Closing and reopening a financial year |
 | `myntos-kontoplan` | The chart of accounts |
+| `myntos-landbruk` | The farming add-on: switching it, settlements, subsidies, farm VAT |
 | `myntos-saft` | The SAF-T export |
 
 ### Who reads a skill
@@ -202,6 +203,7 @@ features in the order a person does.
 | `vat` | `/mva/`, `/mva-justeringer/` | `myntos-mva`, `myntos-mva-justering` |
 | `opening-balance-and-year-end` | `/inngaende-balanse/`, `/arsavslutning/` | `myntos-inngaende-balanse`, `myntos-arsavslutning` |
 | `chart-of-accounts` | `/kontoplan/` | `myntos-kontoplan` |
+| `farming` | The «Landbruk» card on `/kontoplan/`, the farm types on `/kontantstrom/` | `myntos-landbruk` |
 | `saf-t` | `/saft/` | `myntos-saft` |
 | `company-and-access` | `/organisasjon/` | `myntos-selskap` |
 | `ai` | `/ki/`, `/godkjenning/`, the KI part of `/organisasjon/` | `myntos-godkjenning`, `myntos-connect` |

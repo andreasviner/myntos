@@ -19,9 +19,10 @@ paragraph explaining why is the part worth keeping.
 | [docs/register-access.md](docs/register-access.md) | Anything that joins Enhetsregisteret's board list to the member list, or that touches the ID-porten identity link. The join has no key: it is a name match, and the mark has to say how much the match is worth |
 | [docs/agents-and-api.md](docs/agents-and-api.md) | **Any new route, page or feature.** Every feature is a public API feature and ships with a skill for agents and help articles for an AI helping a person; keys, what a key may never do, what waits for the person's approval, and why a pasted key must die on first use |
 | [docs/agents/README.md](docs/agents/README.md) | **Writing or changing a skill or a help article**, which every route and every page change needs. The two halves of what agents read, the areas and their order, the exact shape of each file |
+| [docs/landbruk.md](docs/landbruk.md) | Anything with `segment="landbruk"`, `company.landbruk` or a farm account or category, and any other industry add-on. Myntos is for everyone: an industry gets an add-on, never a different product. The farm VAT rates, why a settlement from Tine is a sale, and the farm's list of what is built and what the law still requires |
 | [docs/gdpr.md](docs/gdpr.md) | Account deletion, the session list, or any column that points at `app_user`. What is the person's to erase and what is the books' to keep, and why a deleted bookkeeper leaves a tombstone with their name |
 | [docs/frontend-conventions.md](docs/frontend-conventions.md) | Adding or changing a page. `hidden`, session and chrome, forms, the text rules |
-| [docs/integrations/](docs/integrations/) | Maskinporten, ID-porten, Altinn, MVA, SAF-T, EHF, bank statements, BankID login (Idura). One file per counterparty |
+| [docs/integrations/](docs/integrations/) | Maskinporten, ID-porten, Altinn, MVA, SAF-T, EHF, bank statements, BankID login (Idura), Landbrukets Dataflyt. One file per counterparty |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Deciding what to build next: what is being built, phase by phase |
 | [docs/FEATURES.md](docs/FEATURES.md) | Choosing what to build after that: everything Fiken, Tripletex and the rest have that Myntos lacks, ranked, with sources |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Commits, style, running the checks |

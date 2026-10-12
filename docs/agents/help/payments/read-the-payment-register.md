@@ -41,6 +41,10 @@ role. It is the register of the company named at the top right of the screen.
 3. Click «Vis info» at the end of a line for the rest: «Motpart», «Type»,
    «Konto», «Netto», «Mva», «Mva-kode», «Betalt via» («Bankkonto» or
    «Kontant»), «Ført av», and the list of files. «Skjul info» closes it.
+   A payment split into lines (a settlement, a payout less fees) says «Type:
+   Sammensatt bilag, 4 linjer», and under «Linjer» lists each line with its
+   account, VAT code and amount, + for money in and − for money out:
+   [Split a payment into several lines](https://myntos.no/llms/help/payments/split-a-payment-into-lines.md).
 4. A line with a small triangle in front of the date stands for several
    entries. The sentence under its description says which kind:
    - «Rettet. 2 eldre bilag.»: the payment was corrected. The line shows the

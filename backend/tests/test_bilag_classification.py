@@ -31,10 +31,20 @@ class Answering:
 
 
 def test_the_menu_offers_every_category_exactly_once() -> None:
-    menu = classification.build_menu()
+    menu = classification.build_menu(segments=frozenset({"landbruk"}))
 
     assert [item.number for item in menu] == list(range(1, len(CASH_FLOW_TYPES) + 1))
     assert {item.type_code for item in menu} == set(CASH_FLOW_TYPES)
+
+
+def test_only_a_farm_is_offered_the_farm_categories() -> None:
+    """A model that can answer «Melkeoppgjør» for a hairdresser eventually will."""
+    everyone = {item.type_code for item in classification.build_menu()}
+    farm = {item.type_code for item in classification.build_menu(segments=frozenset({"landbruk"}))}
+
+    assert "landbruk_melk" not in everyone
+    assert "landbruk_melk" in farm
+    assert everyone < farm
 
 
 def test_a_menu_can_be_restricted_to_one_direction() -> None:

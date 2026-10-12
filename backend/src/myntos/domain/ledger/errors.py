@@ -196,3 +196,24 @@ class TaxCodeNotAllowedError(LedgerError):
     An unregistered business claiming a deduction, or charging output VAT,
     is the case this exists for: see :mod:`myntos.domain.ledger.vatstatus`.
     """
+
+
+# --- Composite entries and add-ons ----------------------------------------------
+
+
+class InvalidCompositeEntryError(LedgerError):
+    """A composite entry that cannot be posted as one: too few or too many lines,
+    or lines that cancel out so that no money moved at all.
+
+    A composite entry is one bank movement split into the trades behind it. With
+    one line it is an ordinary entry, which has its own route; with lines that
+    net to nothing there is no bank movement for it to describe.
+    """
+
+
+class SegmentNotEnabledError(LedgerError):
+    """The category belongs to an add-on these books do not have switched on.
+
+    Refused rather than switching the add-on on, because one entry must not
+    change what every colleague sees: see :mod:`myntos.domain.ledger.landbruk`.
+    """

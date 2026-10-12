@@ -66,6 +66,9 @@ post is written into the SAF-T file.
   in the person's other companies.
 - Every account, deactivated ones too, stays in the list for good once
   anything has been posted to it.
+- A farm or forest owner can add the farm sector's accounts (NIBIO's chart)
+  with the card «Landbruk» at the bottom of the page:
+  [Turn on farming](https://myntos.no/llms/help/farming/turn-on-farming.md).
 
 ## Related
 

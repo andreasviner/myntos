@@ -1260,6 +1260,7 @@ VOEC_INVOICE = """Tax Invoice
 Invoice No. : NO011012026100500011117
 Invoice Date : 2026-10-05
 Sold By:  stemedu Official Store Alibaba.com Singapore E-Commerce Private Limited
+VOEC ID: 2034638
 ITEMS Qty Price (tax excl.) Discount Tax Rate Tax Amount Amount (USD)   Amount (NOK)
 Order Number: 3076911632201854
 75kg 5M Diving Servos IP68 Waterproof
@@ -1364,6 +1365,47 @@ def test_several_orders_are_not_described_by_the_first_one() -> None:
 
     assert reading.invoice_number is None
     assert reading.item_text is None
+
+
+def test_voec_vat_is_never_proposed_as_input_vat() -> None:
+    """The 25 % on a VOEC invoice is a consumer's VAT, and no business deducts it.
+
+    The parser proposed no code here, so the form took the category's: 25 % on
+    9 771,76 for a registered company, of which 333 kroner was VAT at all.
+    """
+    text = (
+        f"{BANK_APP_CHARGE}\n--- Dokument 2: invoice.pdf ---\n{VOEC_INVOICE}"
+        f"\n--- Dokument 3: summary.png ---\n{ORDER_SUMMARY}"
+    )
+    found = read(text, today=date(2026, 10, 9), has_letterhead=False)
+    proposal = suggest(
+        text, today=date(2026, 10, 9), own_orgnr=OWN_ORGNR, own_name=OWN_NAME, reading=found
+    )
+    apply_type(proposal, reading=found, type_code="varekjop", source=FieldSource.MODEL)
+
+    assert found.under_voec
+    assert proposal.tax_code == "0"
+    assert proposal.sources["tax_code"] is FieldSource.DOCUMENT
+    assert any("VOEC" in warning for warning in proposal.warnings)
+
+
+def test_a_voec_invoice_in_dollars_is_not_called_free_of_norwegian_vat() -> None:
+    """The currency rule says "ingen norsk mva", which a VOEC invoice contradicts."""
+    text = "Tax Invoice\nVOEC ID: 2034638\nInvoice Date : 2026-10-05\nAmount paid USD 52.80\n"
+    found = read(text, today=date(2026, 10, 9))
+    proposal = suggest(
+        text, today=date(2026, 10, 9), own_orgnr=OWN_ORGNR, own_name=OWN_NAME, reading=found
+    )
+    apply_type(proposal, reading=found, type_code="varekjop", source=FieldSource.MODEL)
+
+    assert found.currency_code == "USD"
+    assert proposal.tax_code == "0"
+    assert not any("ingen norsk mva" in warning for warning in proposal.warnings)
+
+
+def test_an_ordinary_norwegian_invoice_is_not_read_as_voec() -> None:
+    assert not read(PURCHASE, today=TODAY).under_voec
+    assert only(PURCHASE).tax_code == "1"
 
 
 def test_a_camera_roll_name_says_nothing() -> None:

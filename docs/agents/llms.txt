@@ -44,7 +44,7 @@ Everything below is one of two kinds, and which you need depends on how you meet
 - [Connecting to Myntos: start here](https://myntos.no/llms/skills/myntos-connect.md)
 - [Requests that wait for the person's approval, and asking the person to file](https://myntos.no/llms/skills/myntos-godkjenning.md)
 - [Which company, its register data and financial years](https://myntos.no/llms/skills/myntos-selskap.md)
-- [Payments in and out, receipts read by KI, the bilag archive, corrections](https://myntos.no/llms/skills/myntos-kontantstrom.md)
+- [Payments in and out, receipts read by KI, payments split into lines, the bilag archive, corrections](https://myntos.no/llms/skills/myntos-kontantstrom.md)
 - [Sales invoices and credit notes](https://myntos.no/llms/skills/myntos-faktura.md)
 - [Customers and suppliers](https://myntos.no/llms/skills/myntos-parter.md)
 - [Bank statements and reconciliation](https://myntos.no/llms/skills/myntos-bank.md)
@@ -53,6 +53,7 @@ Everything below is one of two kinds, and which you need depends on how you meet
 - [The opening balance](https://myntos.no/llms/skills/myntos-inngaende-balanse.md)
 - [Closing and reopening a financial year](https://myntos.no/llms/skills/myntos-arsavslutning.md)
 - [The chart of accounts](https://myntos.no/llms/skills/myntos-kontoplan.md)
+- [Farming: the landbruk add-on, settlements from Tine and Nortura, subsidies, farm VAT](https://myntos.no/llms/skills/myntos-landbruk.md)
 - [The SAF-T export](https://myntos.no/llms/skills/myntos-saft.md)
 
 ## Help: helping a person use the web app
@@ -98,6 +99,7 @@ You have no access to the books here and must not ask for a password or a key. I
 - [Reverse a payment](https://myntos.no/llms/help/payments/reverse-a-payment.md)
 - [See the documents for a payment](https://myntos.no/llms/help/payments/see-the-documents-for-a-payment.md)
 - [See who recorded a payment](https://myntos.no/llms/help/payments/see-who-recorded-a-payment.md)
+- [Split a payment into several lines](https://myntos.no/llms/help/payments/split-a-payment-into-lines.md)
 - [Understand the figures beside the register](https://myntos.no/llms/help/payments/understand-the-payment-figures.md)
 
 ### Faktura: sales invoices
@@ -186,6 +188,13 @@ You have no access to the books here and must not ask for a password or a key. I
 - [Rename an account](https://myntos.no/llms/help/chart-of-accounts/rename-an-account.md)
 - [Understand the chart of accounts](https://myntos.no/llms/help/chart-of-accounts/understand-the-chart-of-accounts.md)
 - [Who can change the chart of accounts](https://myntos.no/llms/help/chart-of-accounts/who-can-change-the-chart-of-accounts.md)
+
+### Landbruk: farms and forestry
+
+- [Book a settlement from the dairy or slaughterhouse](https://myntos.no/llms/help/farming/book-a-settlement.md)
+- [Book production subsidies](https://myntos.no/llms/help/farming/book-production-subsidies.md)
+- [Choose the VAT for farm sales](https://myntos.no/llms/help/farming/choose-the-vat-for-farm-sales.md)
+- [Turn on farming](https://myntos.no/llms/help/farming/turn-on-farming.md)
 
 ### SAF-T
 

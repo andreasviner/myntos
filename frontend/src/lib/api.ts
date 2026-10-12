@@ -1361,6 +1361,11 @@ export interface CashFlowType {
   reverses: string | null;
   /** Only in a company's own catalogue: the type of the category's account. */
   account_type?: AccountType | null;
+  /**
+   * The add-on the category belongs to (`landbruk`), or null for the ones every
+   * business has. Only an add-on the company has switched on reaches the page.
+   */
+  segment?: string | null;
 }
 
 export type AccountType = 'eiendel' | 'gjeld' | 'egenkapital' | 'inntekt' | 'kostnad';
@@ -1389,6 +1394,8 @@ export interface CompanyCatalogue extends Catalogue {
   vat_registered_from: string | null;
   /** Active accounts a category may be moved to, beside its own. */
   accounts: { number: string; description: string; account_type: AccountType }[];
+  /** The add-ons these books have (`landbruk`), whose categories are in `types`. */
+  segments: string[];
 }
 
 export interface AttachmentInfo {
@@ -1450,6 +1457,45 @@ export interface CashFlowEntry {
    */
   created_via: string | null;
   attachments: AttachmentInfo[];
+  /**
+   * The lines of a composite entry (`type_code` `sammensatt`): one payment,
+   * several trades behind it. Empty for an ordinary entry. On a composite entry
+   * `tax_code` is null, since each line has its own.
+   */
+  parts: CashFlowPart[];
+}
+
+/** One line of a composite entry. */
+export interface CashFlowPart {
+  type_code: string | null;
+  type_label: string | null;
+  /** Which way this line moved money, which on a settlement differs per line. */
+  direction: Direction;
+  gross_amount: string;
+  net_amount: string;
+  vat_amount: string;
+  account_number: string;
+  account_description: string;
+  tax_code: string | null;
+  description: string;
+}
+
+/** The voucher type of a composite entry, as the register reads it back. */
+export const COMPOSITE_TYPE = 'sammensatt';
+
+/** What a composite entry is posted with. */
+export interface CompositeEntry {
+  occurred_on: string;
+  description: string;
+  payment_method: 'bank' | 'kontant';
+  party_id?: number | null;
+  lines: {
+    type_code: string;
+    gross_amount: string;
+    tax_code?: string | null;
+    account_number?: string | null;
+    description?: string | null;
+  }[];
 }
 
 export interface TypeTotal {
@@ -1776,6 +1822,29 @@ export const recordCashFlow = (
  * posts the corrected version, both in one transaction. The register ends up
  * showing three entries; the user sees one edit. Returns the corrected entry.
  */
+/** Post one payment that is several trades: a settlement, a payout less fees. */
+export const recordComposite = (
+  companyId: number,
+  payload: CompositeEntry,
+): Promise<CashFlowEntry> =>
+  json<CashFlowEntry>(`/api/v1/companies/${companyId}/cashflow/sammensatt`, 'POST', payload);
+
+/**
+ * Replace a posted entry, ordinary or composite, with a composite one: the
+ * original is reversed and the replacement posted in the same request, as for
+ * `editCashFlow`.
+ */
+export const editComposite = (
+  companyId: number,
+  voucherId: number,
+  payload: CompositeEntry,
+): Promise<CashFlowEntry> =>
+  json<CashFlowEntry>(
+    `/api/v1/companies/${companyId}/cashflow/sammensatt/${voucherId}`,
+    'PUT',
+    payload,
+  );
+
 export const editCashFlow = (
   companyId: number,
   voucherId: number,
@@ -2725,6 +2794,32 @@ export const setGrouping = (
 
 export const deleteAccount = (companyId: number, accountId: number): Promise<void> =>
   request<void>(`/api/v1/companies/${companyId}/kontoplan/${accountId}`, { method: 'DELETE' });
+
+// --- Landbruk: the farming add-on ---------------------------------------------------
+
+/**
+ * Whether the books have the farming add-on, and why.
+ *
+ * `source` is `naeringskode` when the company's næringskode decided (01 and 02
+ * have it unless somebody said no) and `valgt` when a person did.
+ */
+export interface Landbruk {
+  enabled: boolean;
+  source: 'naeringskode' | 'valgt';
+  industry_code: string | null;
+  /** The add-on's accounts the kontoplan does not have yet. */
+  missing_accounts: string[];
+  /** Set by a switch: what it added, and what it left alone under the same number. */
+  added_accounts: string[];
+  kept_accounts: string[];
+}
+
+export const getLandbruk = (companyId: number): Promise<Landbruk> =>
+  request<Landbruk>(`/api/v1/companies/${companyId}/landbruk`);
+
+/** `true` on, `false` off, `null` to hand the decision back to the næringskode. */
+export const setLandbruk = (companyId: number, enabled: boolean | null): Promise<Landbruk> =>
+  json<Landbruk>(`/api/v1/companies/${companyId}/landbruk`, 'PUT', { enabled });
 
 // --- Uttak, tap på krav og justering (mva-meldingens spesifikasjon) --------------
 

@@ -21,6 +21,8 @@ from myntos.domain.ledger.cashflow import (
 )
 from myntos.domain.ledger.chart import (
     ACCOUNTS_BY_NUMBER,
+    KNOWN_ACCOUNTS,
+    LANDBRUK_ACCOUNTS,
     NO_VAT_CODE,
     STANDARD_ACCOUNTS,
     STANDARD_TAX_CODES,
@@ -29,6 +31,10 @@ from myntos.domain.ledger.chart import (
 from myntos.domain.ledger.errors import InvalidOrgnrError, UnknownCashFlowTypeError
 from myntos.domain.ledger.models import NON_REPORTABLE_STANDARD_TAX_CODES
 from myntos.domain.ledger.orgnr import validate_orgnr
+
+# Every add-on a category can belong to. The invariants below hold for all of
+# them; the catalogue a company without add-ons sees is ``types_for()``.
+EVERY_SEGMENT = frozenset({"landbruk"})
 
 # The rates the catalogue can produce, plus the boundary ones.
 RATES = [Decimal("0.00"), Decimal("0.12"), Decimal("0.15"), Decimal("0.25")]
@@ -50,15 +56,32 @@ def test_every_type_points_at_a_seeded_account_and_tax_code() -> None:
         assert entry.default_tax_code in TAX_CODES_BY_CODE, entry.code
 
 
+def test_every_add_on_type_points_at_an_account_its_add_on_brings() -> None:
+    """A farm category books to a farm account or one everybody has, never a stranger."""
+    for entry in types_for(segments=EVERY_SEGMENT):
+        assert entry.account_number in KNOWN_ACCOUNTS, entry.code
+        assert entry.default_tax_code in TAX_CODES_BY_CODE, entry.code
+
+
 def test_account_numbers_are_unique() -> None:
-    numbers = [account.number for account in STANDARD_ACCOUNTS]
+    numbers = [account.number for account in (*STANDARD_ACCOUNTS, *LANDBRUK_ACCOUNTS)]
     assert len(numbers) == len(set(numbers))
 
 
 def test_both_directions_are_offered() -> None:
     assert types_for(CashFlowDirection.INN)
     assert types_for(CashFlowDirection.UT)
-    assert len(types_for()) == len(CASH_FLOW_TYPES)
+    assert len(types_for(segments=EVERY_SEGMENT)) == len(CASH_FLOW_TYPES)
+
+
+def test_a_company_without_add_ons_sees_none_of_their_categories() -> None:
+    """Myntos is for every business: a farm's categories are the farm's alone."""
+    assert all(entry.segment is None for entry in types_for())
+    farm = [entry for entry in types_for(segments=EVERY_SEGMENT) if entry.segment == "landbruk"]
+    assert farm
+    # Everyone's categories come first and in the order they always had, so
+    # switching the add-on on only adds to the end of the list.
+    assert types_for(segments=EVERY_SEGMENT)[: len(types_for())] == types_for()
 
 
 def test_the_income_statement_is_only_ever_touched_from_its_own_side() -> None:
@@ -77,8 +100,8 @@ def test_the_income_statement_is_only_ever_touched_from_its_own_side() -> None:
     bought and sold, a loan is drawn and repaid — and the sign is the posting's
     job, not the catalogue's.
     """
-    for entry in types_for():
-        account = ACCOUNTS_BY_NUMBER[entry.account_number]
+    for entry in types_for(segments=EVERY_SEGMENT):
+        account = KNOWN_ACCOUNTS[entry.account_number]
         if account.account_type.value == "inntekt":
             assert entry.books_as is CashFlowDirection.INN, entry.code
         if account.account_type.value == "kostnad":
@@ -145,7 +168,7 @@ def test_a_reversal_is_never_derived_from_another_reversal() -> None:
     six kreditnotaer and produce "Refusjon: kreditnota: salg med 25 % mva",
     which is a sale, spelled as a reversal of a reversal.
     """
-    for entry in types_for():
+    for entry in types_for(segments=EVERY_SEGMENT):
         if entry.reverses is None:
             continue
         assert CASH_FLOW_TYPES[entry.reverses].reverses is None, entry.code
@@ -217,7 +240,7 @@ def test_a_refund_of_a_driftsmiddel_goes_back_to_the_balance_sheet() -> None:
 
 def test_every_type_carries_a_note() -> None:
     """The note is where the default VAT assumption is stated; an empty one lies."""
-    for entry in types_for():
+    for entry in types_for(segments=EVERY_SEGMENT):
         assert entry.note.strip()
 
 

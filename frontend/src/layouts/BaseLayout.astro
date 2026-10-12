@@ -604,7 +604,7 @@ const gettingStarted = [
           </p>
           {/* The full disclaimer lives on /ansvar; one line is enough here. */}
           <p class="meta">
-            Myntos er i tidlig utvikling og leveres uten garanti.
+            Myntos er i beta og leveres uten garanti.
             <a href="/ansvar/">Ansvar og vilkår</a>.
           </p>
           {/*
@@ -1977,6 +1977,40 @@ const gettingStarted = [
      alle til de samme første tegnene. */
   .detail .detail-files {
     grid-column: 1 / -1;
+  }
+
+  /* Linjene i et sammensatt bilag (et melkeoppgjør, en utbetaling minus gebyr):
+     hva, konto og mva-kode, og beløpet med fortegn, under hverandre over hele
+     bredden. Her av samme grunn som filene: raden bygges med createElement. */
+  .detail .detail-lines {
+    grid-column: 1 / -1;
+  }
+  .detail-line-list {
+    list-style: none;
+    margin: 0.3rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: 0.25rem;
+  }
+  .detail-line-list li {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 2fr) auto;
+    gap: 0 1rem;
+    align-items: baseline;
+  }
+  .detail-line-list li > :last-child {
+    text-align: right;
+    white-space: nowrap;
+  }
+  @media (max-width: 40rem) {
+    .detail-line-list li {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .detail-line-list li > .muted {
+      grid-column: 1 / -1;
+      grid-row: 2;
+      font-size: 0.85rem;
+    }
   }
   .bilag-files {
     list-style: none;

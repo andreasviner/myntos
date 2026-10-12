@@ -173,7 +173,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
               bilaget ble lest, med «Salg» og 25 % utgående mva under, og for en
               faktura fra MA-3D så det ut som svaret i fire sekunder. Retningen
               kommer fra bilaget eller fra brukeren, aldri fra en standard. */}
-          <div class="direction" role="group" aria-label="Retning">
+          <div class="direction" role="group" aria-label="Retning" id="direction-group">
             <label>
               {/* Påkrevd, så nettleseren peker på retningen før den peker på en
                   kategoriliste som er tom fordi retningen mangler. */}
@@ -186,18 +186,51 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             </label>
           </div>
 
-          <label class="field" data-field="type_code">
+          <label class="field" data-field="type_code" id="type-field">
             <span>Hva gjaldt det? <span class="tag" data-tag hidden></span></span>
             <select name="type_code" id="type-select" required></select>
             <span class="field-hint" id="type-note"></span>
           </label>
+
+          {/*
+            Én betaling er ofte flere ting. Melkeoppgjøret fra Tine er melk solgt,
+            minus omsetningsavgiften, andelen i Tine og kraftfôret Tine solgte
+            gården; en utbetaling fra Vipps er salg minus gebyr; én kvittering har
+            mat til 15 % og annet til 25 %. Ført som én type blir hver av dem feil
+            et sted, så de deles opp i linjer, én per post, under ett bilag.
+            Lenken står rett under typen, fordi det er der man oppdager at én type
+            ikke er nok.
+          */}
+          <p class="split-row" id="split-row">
+            <button type="button" class="btn-link" id="split-open">Del opp i flere linjer</button>
+            <span class="field-hint">
+              For et oppgjør med trekk, en utbetaling minus gebyr eller en kvittering med to
+              mva-satser.
+            </span>
+          </p>
+
+          <fieldset class="lines" id="lines" hidden>
+            <legend>Linjer</legend>
+            <p class="field-hint lines-intro">
+              Én linje per post på bilaget, med beløpet inkludert mva slik det står. Penger inn
+              legges til, penger ut trekkes fra.
+            </p>
+            <ol class="line-list" id="line-list"></ol>
+            <p class="lines-actions">
+              <button type="button" class="btn-link" id="line-add">Legg til linje</button>
+            </p>
+            <p class="lines-sum" id="lines-sum" role="status"></p>
+            <p class="lines-actions">
+              <button type="button" class="btn-link" id="split-close">Tilbake til én linje</button>
+            </p>
+          </fieldset>
 
           <div class="field-row">
             <label class="field" data-field="occurred_on">
               <span>Dato <span class="tag" data-tag hidden></span></span>
               <input type="date" name="occurred_on" id="date-input" required />
             </label>
-            <label class="field" data-field="gross_amount">
+            <label class="field" data-field="gross_amount" id="amount-field">
               <span>Beløp inkl. mva <span class="tag" data-tag hidden></span></span>
               <input
                 type="number"
@@ -267,7 +300,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           </div>
 
           <div class="field-row">
-            <label class="field" data-field="tax_code">
+            <label class="field" data-field="tax_code" id="tax-field">
               <span>Mva-kode <span class="tag" data-tag hidden></span></span>
               <select name="tax_code" id="tax-select"></select>
               <span class="field-hint">Foreslått ut fra typen. Endre hvis fakturaen sier noe annet.</span>
@@ -790,6 +823,80 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     margin-top: 1.25rem;
   }
 
+  /* --- Et bilag delt i linjer --------------------------------------------- */
+
+  .split-row {
+    margin: -0.5rem 0 1rem;
+    font-size: 0.88rem;
+  }
+  .split-row .field-hint {
+    display: inline;
+    margin-left: 0.35rem;
+  }
+  .lines {
+    margin: 0 0 1rem;
+    padding: 0.9rem 1rem 0.4rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-small);
+  }
+  .lines legend {
+    padding: 0 0.35rem;
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+  .lines-intro {
+    margin: 0 0 0.75rem;
+  }
+  .line-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  /* Linjene bygges med createElement, så reglene for dem når fram gjennom
+     :global(), forankret i lista som står i malen. */
+  .line-list :global(li) {
+    display: grid;
+    gap: 0 0.75rem;
+    grid-template-columns: minmax(0, 2fr) minmax(6.5rem, 1fr) minmax(9rem, 1.4fr) auto;
+    align-items: end;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0.75rem;
+  }
+  .line-list :global(.field) {
+    margin-bottom: 0.4rem;
+  }
+  .line-list :global(.line-remove) {
+    margin-bottom: 0.9rem;
+    font-size: 0.85rem;
+  }
+  .line-list :global(.line-account) {
+    grid-column: 1 / -1;
+  }
+  .line-list :global(.line-note) {
+    grid-column: 1 / -1;
+    margin: 0 0 0.35rem;
+    font-size: 0.82rem;
+    color: var(--muted);
+  }
+  @media (max-width: 40rem) {
+    .line-list :global(li) {
+      grid-template-columns: 1fr 1fr;
+    }
+    .line-list :global(.line-type) {
+      grid-column: 1 / -1;
+    }
+  }
+  .lines-actions {
+    margin: 0 0 0.6rem;
+    font-size: 0.88rem;
+  }
+  .lines-sum {
+    margin: 0 0 0.6rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
   /* Knappen sier hva som skjer mens den er opptatt, så teksten må kunne
      leses: halvgjennomsiktig og «ikke tillatt» er for en knapp som venter på
      brukeren, ikke for en som brukeren venter på. */
@@ -939,11 +1046,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     listCashFlow,
     listParties,
     createParty,
+    COMPOSITE_TYPE,
     editCashFlow,
+    editComposite,
     recordCashFlow,
+    recordComposite,
     reverseCashFlow,
     uploadDocument,
     type CashFlowEntry,
+    type CashFlowPart,
+    type CompositeEntry,
     type CashFlowType,
     type CompanyCatalogue,
     type Company,
@@ -965,7 +1077,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     vouchersIn,
     type RegisterRow,
   } from '../lib/corrections';
+  import { normaliseAmount } from '../lib/amount';
   import { el, setStatus, show } from '../lib/dom';
+  import { netOf } from '../lib/lines';
   import { fileSize, isoDate, kroner, todayIso } from '../lib/format';
   import { settleLimited } from '../lib/parallel';
   import { can, loadSession, redirectToLogin } from '../lib/session';
@@ -1009,6 +1123,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   const formFields = el<HTMLDivElement>('#form-fields');
   const manualRow = el<HTMLParagraphElement>('#manual-row');
   const body = el<HTMLTableSectionElement>('#entries');
+  const linesBox = el<HTMLFieldSetElement>('#lines');
+  const lineList = el<HTMLOListElement>('#line-list');
+  const linesSum = el<HTMLParagraphElement>('#lines-sum');
+  const splitRow = el<HTMLParagraphElement>('#split-row');
+
+  // Om skjemaet fører ett bilag med flere linjer (et sammensatt bilag) i stedet
+  // for én type og ett beløp. Dato, motpart, beskrivelse og «Betalt via» gjelder
+  // hele bilaget i begge tilfeller; det er typen, beløpet, mva-koden og kontoen
+  // som blir én per linje.
+  let splitting = false;
 
   let catalogue: CompanyCatalogue;
   let company: Company;
@@ -1070,6 +1194,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
   /** What to call an entry whose description was left empty. */
   function describedByType(): string {
+    if (splitting) {
+      const first = lineList.querySelector<HTMLSelectElement>('select.line-type');
+      const type = catalogue.types.find((entry) => entry.code === first?.value);
+      return type?.label ?? 'Sammensatt bilag';
+    }
     return selectedType()?.label ?? 'Betaling';
   }
 
@@ -1141,10 +1270,336 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     return label.charAt(0).toUpperCase() + label.slice(1);
   }
 
+  // --- Et bilag delt i linjer ---------------------------------------------------
+
+  /**
+   * Hver linjes typeliste: alle typene, i begge retninger, i fire grupper.
+   *
+   * Begge retninger fordi linjene i ett oppgjør går hver sin vei: melken er
+   * penger inn, trekkene er penger ut. Gruppene er de samme som i lista for én
+   * linje, så en type heter det samme og står på samme sted begge steder.
+   */
+  function fillLineTypes(select: HTMLSelectElement): void {
+    const waiting = option('', 'Velg type');
+    waiting.disabled = true;
+    select.replaceChildren(waiting);
+    const groups: [string, CashFlowType[]][] = [
+      ['Penger inn', catalogue.types.filter((t) => t.direction === 'inn' && t.reverses === null)],
+      ['Penger ut', catalogue.types.filter((t) => t.direction === 'ut' && t.reverses === null)],
+      [REVERSAL_GROUP.inn, catalogue.types.filter((t) => t.direction === 'inn' && t.reverses !== null)],
+      [REVERSAL_GROUP.ut, catalogue.types.filter((t) => t.direction === 'ut' && t.reverses !== null)],
+    ];
+    for (const [label, entries] of groups) {
+      if (entries.length === 0) continue;
+      const group = document.createElement('optgroup');
+      group.label = label;
+      for (const entry of entries) {
+        group.append(
+          option(
+            entry.code,
+            entry.reverses === null
+              ? entry.label
+              : capitalised(entry.label.replace(REVERSAL_PREFIX, '')),
+          ),
+        );
+      }
+      select.append(group);
+    }
+    select.value = '';
+  }
+
+  interface LineValues {
+    type_code: string;
+    gross_amount: string;
+    tax_code: string | null;
+    account_number?: string | null;
+    description?: string | null;
+  }
+
+  /** Én linje i et oppdelt bilag: type, beløp inkl. mva, mva-kode, og en vei ut. */
+  function addLine(values?: LineValues): HTMLLIElement {
+    const item = document.createElement('li');
+    const index = lineList.children.length + 1;
+
+    const typeLabel = document.createElement('label');
+    typeLabel.className = 'field line-type';
+    const typeText = document.createElement('span');
+    typeText.textContent = 'Hva gjaldt linjen?';
+    const type = document.createElement('select');
+    type.className = 'line-type-select';
+    type.setAttribute('aria-label', `Type, linje ${index}`);
+    fillLineTypes(type);
+    typeLabel.append(typeText, type);
+
+    const amountLabel = document.createElement('label');
+    amountLabel.className = 'field';
+    const amountText = document.createElement('span');
+    amountText.textContent = 'Beløp inkl. mva';
+    const amount = document.createElement('input');
+    amount.type = 'text';
+    amount.inputMode = 'decimal';
+    amount.className = 'line-amount';
+    amount.placeholder = '0,00';
+    amount.setAttribute('aria-label', `Beløp, linje ${index}`);
+    amountLabel.append(amountText, amount);
+
+    const taxLabel = document.createElement('label');
+    taxLabel.className = 'field';
+    const taxText = document.createElement('span');
+    taxText.textContent = 'Mva-kode';
+    const tax = document.createElement('select');
+    tax.className = 'line-tax';
+    tax.setAttribute('aria-label', `Mva-kode, linje ${index}`);
+    for (const code of catalogue.tax_codes) {
+      tax.append(option(code.code, `${code.code}: ${code.description}`));
+    }
+    taxLabel.append(taxText, tax);
+
+    // Konto, som for én linje: bare når typen har et alternativ av samme slag,
+    // og da med typens egen konto valgt. Trekket i et slakteoppgjør skal mot
+    // 3041, ikke mot melka på 3071 som typen foreslår.
+    const accountLabel = document.createElement('label');
+    accountLabel.className = 'field line-account';
+    accountLabel.hidden = true;
+    const accountText = document.createElement('span');
+    accountText.textContent = 'Konto';
+    const account = document.createElement('select');
+    account.className = 'line-account-select';
+    account.setAttribute('aria-label', `Konto, linje ${index}`);
+    accountLabel.append(accountText, account);
+
+    const fillLineAccounts = (entry: CashFlowType | undefined): void => {
+      account.replaceChildren();
+      if (entry === undefined || entry.account_type == null) {
+        accountLabel.hidden = true;
+        return;
+      }
+      const own = catalogue.accounts.find((candidate) => candidate.number === entry.account_number);
+      account.append(
+        option(entry.account_number, `${entry.account_number}${own ? ` ${own.description}` : ''}`),
+      );
+      const others = catalogue.accounts.filter(
+        (candidate) =>
+          candidate.account_type === entry.account_type && candidate.number !== entry.account_number,
+      );
+      for (const candidate of others) {
+        account.append(option(candidate.number, `${candidate.number} ${candidate.description}`));
+      }
+      account.value = entry.account_number;
+      accountLabel.hidden = others.length === 0;
+    };
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn-link line-remove';
+    remove.textContent = 'Fjern';
+    remove.addEventListener('click', () => {
+      item.remove();
+      updateSum();
+    });
+
+    // Typens antakelse, som for én linje: et trekk føres mot salget, en andel
+    // er en eiendel. Det er her den som fører, ser hvorfor beløpet havner der.
+    const note = document.createElement('p');
+    note.className = 'line-note';
+    note.hidden = true;
+
+    type.addEventListener('change', () => {
+      const chosen = catalogue.types.find((entry) => entry.code === type.value);
+      if (chosen !== undefined) tax.value = chosen.default_tax_code;
+      note.textContent = chosen?.note ?? '';
+      note.hidden = chosen === undefined;
+      // En konto personen valgte for en annen type gjelder ikke denne.
+      fillLineAccounts(chosen);
+      updateSum();
+    });
+    amount.addEventListener('input', updateSum);
+
+    if (values !== undefined) {
+      type.value = values.type_code;
+      const chosen = catalogue.types.find((entry) => entry.code === values.type_code);
+      note.textContent = chosen?.note ?? '';
+      note.hidden = chosen === undefined;
+      amount.value = values.gross_amount;
+      if (values.tax_code !== null) tax.value = values.tax_code;
+      fillLineAccounts(chosen);
+      if (
+        values.account_number &&
+        [...account.options].some((candidate) => candidate.value === values.account_number)
+      ) {
+        account.value = values.account_number;
+        accountLabel.hidden = false;
+      }
+      // Teksten en linje ble ført med, når den ikke er bilagets egen. Uten eget
+      // felt: den er sjelden, og en retting skal ikke miste den bare fordi
+      // skjemaet ikke viser den.
+      if (values.description) item.dataset.description = values.description;
+    }
+
+    item.append(typeLabel, amountLabel, taxLabel, remove, accountLabel, note);
+    lineList.append(item);
+    return item;
+  }
+
+  /** Linjene slik de står i skjemaet, uten å tolke noe. */
+  function lineItems(): HTMLLIElement[] {
+    return [...lineList.querySelectorAll<HTMLLIElement>(':scope > li')];
+  }
+
+  function readLines(): { amount: string; direction: Direction | null }[] {
+    return lineItems().map((item) => {
+      const code = item.querySelector<HTMLSelectElement>('select.line-type-select')?.value ?? '';
+      const type = catalogue.types.find((entry) => entry.code === code);
+      return {
+        amount: item.querySelector<HTMLInputElement>('input.line-amount')?.value ?? '',
+        direction: type?.direction ?? null,
+      };
+    });
+  }
+
+  /**
+   * Hva linjene går i, mens de skrives: det er tallet som skal stemme med
+   * kontoutskriften, og det er bedre å se at det ikke gjør det før bilaget er
+   * ført enn etter.
+   */
+  function updateSum(): void {
+    const net = netOf(readLines());
+    if (net.unreadable.length > 0) {
+      linesSum.textContent =
+        `Vi kan ikke lese beløpet på linje ${net.unreadable.map((i) => i + 1).join(', ')}. ` +
+        'Skriv det med komma eller punktum foran ørene, som 1 250,50.';
+      return;
+    }
+    if (net.direction === null) {
+      linesSum.textContent = lineItems().some(
+        (item) => (item.querySelector<HTMLInputElement>('input.line-amount')?.value ?? '') !== '',
+      )
+        ? 'Linjene går i null. Et bilag må flytte penger inn eller ut.'
+        : '';
+      return;
+    }
+    linesSum.textContent =
+      `Til sammen ${kroner(net.amount)} ${net.direction === 'inn' ? 'inn på' : 'ut fra'} ` +
+      'kontoen. Sjekk at det stemmer med det banken viser.';
+  }
+
+  /** Feltene som bare gjelder én linje, og som skjules mens bilaget er delt opp. */
+  const SINGLE_ONLY = ['#direction-group', '#type-field', '#amount-field', '#tax-field'];
+
+  /**
+   * Over til linjer. Typen, beløpet og mva-koden som alt er valgt, blir første
+   * linje, så det bilaget allerede foreslo ikke må skrives inn på nytt, og en
+   * tom andre linje står klar.
+   */
+  function openSplit(lines?: LineValues[]): void {
+    splitting = true;
+    lineList.replaceChildren();
+    if (lines !== undefined && lines.length > 0) {
+      for (const line of lines) addLine(line);
+    } else {
+      const amount = form.querySelector<HTMLInputElement>('input[name="gross_amount"]');
+      if (typeSelect.value !== '') {
+        addLine({
+          type_code: typeSelect.value,
+          gross_amount: amount?.value ?? '',
+          tax_code: taxSelect.value || null,
+        });
+      } else {
+        addLine();
+      }
+      addLine();
+    }
+    setSingleFields(false);
+    updateSum();
+  }
+
+  /** Tilbake til én linje, med det skjemaet hadde før det ble delt opp. */
+  function closeSplit(): void {
+    splitting = false;
+    lineList.replaceChildren();
+    linesSum.textContent = '';
+    setSingleFields(true);
+  }
+
+  /**
+   * Viser eller skjuler feltene for én linje, og slår dem av mens de er skjult:
+   * et skjult felt som er påkrevd, stopper skjemaet uten å vise hvorfor, og et
+   * avslått felt kommer ikke med i det som sendes.
+   */
+  function setSingleFields(visible: boolean): void {
+    for (const selector of SINGLE_ONLY) show(el(selector), visible);
+    show(splitRow, visible);
+    show(linesBox, !visible);
+    for (const input of form.querySelectorAll<HTMLInputElement>('input[name="direction"]')) {
+      input.disabled = !visible;
+    }
+    typeSelect.disabled = !visible;
+    taxSelect.disabled = !visible;
+    accountSelect.disabled = !visible;
+    const amount = form.querySelector<HTMLInputElement>('input[name="gross_amount"]');
+    if (amount !== null) amount.disabled = !visible;
+    // Kontovalget for én linje vises bare når typen har et alternativ; det
+    // bestemmer fillAccounts, og den får siste ord når skjemaet går tilbake.
+    if (visible) {
+      fillAccounts(selectedType());
+    } else {
+      show(el('#account-field'), false);
+    }
+  }
+
+  /** Linjene som det API-et vil ha dem, eller en setning om hva som mangler. */
+  function compositeLines(): CompositeEntry['lines'] | string {
+    const items = lineItems();
+    if (items.length < 2) return 'Et oppdelt bilag trenger minst to linjer.';
+    const lines: CompositeEntry['lines'] = [];
+    for (const [index, item] of items.entries()) {
+      const type = item.querySelector<HTMLSelectElement>('select.line-type-select')?.value ?? '';
+      const raw = item.querySelector<HTMLInputElement>('input.line-amount')?.value ?? '';
+      const tax = item.querySelector<HTMLSelectElement>('select.line-tax')?.value ?? '';
+      const account = item.querySelector<HTMLSelectElement>('select.line-account-select')?.value ?? '';
+      const own = catalogue.types.find((entry) => entry.code === type)?.account_number;
+      if (type === '') return `Velg hva linje ${index + 1} gjaldt.`;
+      const amount = normaliseAmount(raw);
+      if (amount === null || amount === '0' || amount.startsWith('-') || Number(amount) === 0) {
+        return `Skriv beløpet på linje ${index + 1}, større enn null.`;
+      }
+      lines.push({
+        type_code: type,
+        gross_amount: amount,
+        tax_code: tax || null,
+        // Bare når personen valgte en annen konto enn typens egen.
+        account_number: account !== '' && account !== own ? account : null,
+        description: item.dataset.description ?? null,
+      });
+    }
+    return lines;
+  }
+
+  el<HTMLButtonElement>('#split-open').addEventListener('click', () => {
+    openSplit();
+    lineList.querySelector<HTMLSelectElement>('li:last-child select')?.focus();
+  });
+  el<HTMLButtonElement>('#split-close').addEventListener('click', () => {
+    closeSplit();
+  });
+  el<HTMLButtonElement>('#line-add').addEventListener('click', () => {
+    addLine().querySelector('select')?.focus();
+    updateSum();
+  });
+
   /** Which kind of party the money's direction implies: we pay suppliers. */
   function preferredPartyType(): Party['party_type'] {
     // Before a direction is known, a supplier: most bilag are purchases.
-    return currentDirection() === 'inn' ? 'kunde' : 'leverandor';
+    return movement() === 'inn' ? 'kunde' : 'leverandor';
+  }
+
+  /**
+   * Hvilken vei pengene gikk: radioknappen for én linje, og det linjene går i
+   * for et oppdelt bilag. Et melkeoppgjør er penger inn selv om tre av fire
+   * linjer er trekk.
+   */
+  function movement(): Direction | null {
+    return splitting ? netOf(readLines()).direction : currentDirection();
   }
 
   /**
@@ -1839,6 +2294,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
   el<HTMLButtonElement>('#cancel-edit-button').addEventListener('click', () => {
     endEdit();
+    closeSplit();
     form.reset();
     clearFile();
     clearMarks();
@@ -1908,6 +2364,21 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
     const list = document.createElement('dl');
     list.className = 'detail';
+    if (entry.type_code === COMPOSITE_TYPE) {
+      list.append(
+        pair('Motpart', entry.party_name ?? 'ingen'),
+        pair('Type', `Sammensatt bilag, ${entry.parts.length} linjer`),
+        pair('Netto', kroner(entry.net_amount)),
+        pair('Mva', entry.vat_amount === '0.00' ? 'ingen' : kroner(entry.vat_amount)),
+        pair('Betalt via', entry.payment_account === '1900' ? 'Kontant' : 'Bankkonto'),
+        pair('Ført av', authorOf(entry)),
+        partList(entry.parts),
+      );
+      if (bilag.length > 0) list.append(fileList(bilag));
+      holder.append(list);
+      row.append(holder);
+      return row;
+    }
     list.append(
       pair('Motpart', entry.party_name ?? 'ingen'),
       pair('Type', entry.type_label ?? '-'),
@@ -1927,6 +2398,39 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     holder.append(list);
     row.append(holder);
     return row;
+  }
+
+  /**
+   * Linjene i et sammensatt bilag, i den rekkefølgen de ble ført: hva, hvilken
+   * konto og mva-kode, og beløpet med fortegn for hvilken vei det gikk. Et
+   * melkeoppgjør leses her som det står på papiret, ikke som én sum.
+   */
+  function partList(parts: CashFlowPart[]): HTMLDivElement {
+    const wrap = document.createElement('div');
+    wrap.className = 'detail-lines';
+    const dt = document.createElement('dt');
+    dt.textContent = 'Linjer';
+    const dd = document.createElement('dd');
+    const lines = document.createElement('ul');
+    lines.className = 'detail-line-list';
+    for (const part of parts) {
+      const item = document.createElement('li');
+      const what = document.createElement('span');
+      what.textContent = part.type_label ?? part.description;
+      const where = document.createElement('span');
+      where.className = 'muted';
+      where.textContent =
+        `${part.account_number} ${part.account_description}` +
+        (part.tax_code !== null ? `, mva-kode ${part.tax_code}` : '');
+      const amount = document.createElement('span');
+      amount.className = part.direction === 'inn' ? 'amount-in' : 'amount-out';
+      amount.textContent = `${part.direction === 'inn' ? '+' : '−'} ${kroner(part.gross_amount)}`;
+      item.append(what, where, amount);
+      lines.append(item);
+    }
+    dd.append(lines);
+    wrap.append(dt, dd);
+    return wrap;
   }
 
   /**
@@ -2369,6 +2873,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     // rather than something done silently on their behalf.
     clearFile();
 
+    closeSplit();
     const direction = form.querySelector<HTMLInputElement>(
       `input[name="direction"][value="${entry.direction}"]`,
     );
@@ -2404,6 +2909,27 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     // 1900 is the cash account and 1920 the bank one; anything else is a
     // company with a kontoplan of its own, and bank is the safer assumption.
     if (method !== null) method.value = entry.payment_account === '1900' ? 'kontant' : 'bank';
+
+    // A composite entry comes back as its lines. The account and the text of a
+    // line travel with it only when they are not what the category would have
+    // given, so correcting one line does not quietly move another.
+    if (entry.type_code === COMPOSITE_TYPE) {
+      openSplit(
+        entry.parts.map((part) => {
+          const type = catalogue.types.find((candidate) => candidate.code === part.type_code);
+          return {
+            type_code: part.type_code ?? '',
+            gross_amount: part.gross_amount,
+            tax_code: part.tax_code,
+            account_number:
+              type !== undefined && type.account_number !== part.account_number
+                ? part.account_number
+                : null,
+            description: part.description !== entry.description ? part.description : null,
+          };
+        }),
+      );
+    }
   }
 
   async function refresh(): Promise<void> {
@@ -2529,7 +3055,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     try {
       const party = await createParty(company.id, {
         // Money out means we are the customer, so the other side is a supplier.
-        party_type: currentDirection() === 'ut' ? 'leverandor' : 'kunde',
+        party_type: movement() === 'ut' ? 'leverandor' : 'kunde',
         name,
       });
       parties = [...parties, party];
@@ -2608,8 +3134,29 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       // Tom når typen ikke har noe alternativ: da fører backend til typens konto.
       account_number: String(data.get('account_number') ?? '') || null,
     };
+    // Et oppdelt bilag sendes som linjer. Det som ikke kan leses, sies før
+    // noe sendes, i skjemaets egne ord: «linje 3» er lettere å finne enn et
+    // felt i en liste fra serveren.
+    const lines = splitting ? compositeLines() : null;
+    if (typeof lines === 'string') {
+      setStatus(formStatus, lines);
+      idle();
+      return;
+    }
     const saving = chosenParty().then((partyPk) => {
       values.party_id = partyPk;
+      if (lines !== null) {
+        const composite: CompositeEntry = {
+          occurred_on: values.occurred_on,
+          description: values.description,
+          payment_method: values.payment_method,
+          party_id: partyPk,
+          lines,
+        };
+        return edited === null
+          ? recordComposite(company.id, composite)
+          : editComposite(company.id, edited.id, composite);
+      }
       return edited === null
         ? recordCashFlow(company.id, values)
         : editCashFlow(company.id, edited.id, values);
@@ -2654,6 +3201,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           'ok',
         );
         endEdit();
+        closeSplit();
         form.reset();
         clearFile();
         descriptionBox.value = '';

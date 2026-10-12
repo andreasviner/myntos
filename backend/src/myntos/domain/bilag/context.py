@@ -118,6 +118,11 @@ class BilagContext:
     #: category menu is narrowed to it as well (see the endpoint), so this line
     #: is about the sentence the model writes, "Kjøp av" or "Salg av".
     direction: str | None = None
+    #: Whether the books have the farming add-on. Told to the model as a fact
+    #: about the company, because the one thing it most needs to know about a
+    #: farm's paperwork is the thing no single document says: that a settlement
+    #: with Tine's name at the top is the farm's own sale.
+    farm: bool = False
 
     @classmethod
     def build(
@@ -130,6 +135,7 @@ class BilagContext:
         vat_registered: bool | None = None,
         note: str | None = None,
         direction: str | None = None,
+        farm: bool = False,
     ) -> BilagContext:
         """Assemble one, clipping every part on the way in.
 
@@ -145,6 +151,7 @@ class BilagContext:
             vat_registered=vat_registered,
             note=_clip(note, MAX_NOTE_CHARS),
             direction=direction if direction in _DIRECTION_SAID else None,
+            farm=farm,
         )
 
     @property
@@ -178,9 +185,17 @@ class BilagContext:
             lines.append(f"Brukeren har valgt: {_DIRECTION_SAID[self.direction]}")
         if self.note is not None:
             lines.append(f"Brukerens egen forklaring på bilaget: {self.note}")
-        if not lines:
+        # The farm line is fixed text and sits outside the ceiling: it is the
+        # same few hundred characters on every bilag, so it cannot grow the way
+        # a formål or a note can, and clipping it would cut the one sentence
+        # the add-on is there to say. Last, beside the note, as a statement
+        # about this company rather than about the register's data.
+        if not lines and not self.farm:
             return ""
-        return "\n".join(lines)[:MAX_CONTEXT_CHARS]
+        block = "\n".join(lines)[:MAX_CONTEXT_CHARS]
+        if self.farm:
+            block = f"{block}\n{_FARM_SAID}" if block else _FARM_SAID
+        return block
 
 
 #: The two answers to "which way did the money go", as the model is told them.
@@ -190,6 +205,17 @@ _DIRECTION_SAID = {
     "ut": "penger ut, altså et kjøp eller en annen betaling fra selskapet",
     "inn": "penger inn, altså et salg eller en annen innbetaling til selskapet",
 }
+
+
+#: What a farm's model is told. Fixed text, never assembled from anything a user
+#: typed. Two facts the paperwork of a farm turns on: a settlement from the
+#: buyer is a sale, and milk, slaughter animals and grain are sold at 25 %.
+_FARM_SAID = (
+    "Landbruk: selskapet driver jord- eller skogbruk. Oppgjør og avregninger fra Tine, "
+    "Nortura, Felleskjøpet, mølla, slakteriet eller tømmerkjøperen er salg kjøperen har "
+    "skrevet ut for selskapet, altså penger inn. Melk til meieri, slaktedyr og korn har "
+    "25 % mva."
+)
 
 
 #: The empty context. Passing this is exactly equivalent to passing nothing, and

@@ -44,7 +44,11 @@ validated live in TT02, settlement onto 2740, spesifikasjon (uttak, tap på
 krav, justering, tilbakeføring), VAT registration with an effective date. SAF-T
 1.30/1.40 export. Bank import from camt.053 with confirmed matching. Opening
 balance (typed or saldobalanse CSV), year-end closing and reopening for AS and
-ENK, an editable kontoplan.
+ENK, an editable kontoplan. Composite entries: one payment split into lines,
+each with its own category and VAT (a settlement with deductions, a payout less
+fees, a receipt with two rates). The farming add-on (landbruk): NIBIO's
+accounts, farm categories with the farm VAT rates, settlements read as sales
+([landbruk.md](landbruk.md)).
 
 ---
 
@@ -79,6 +83,8 @@ ENK, an editable kontoplan.
 | 20 | **Accruals (periodisering)** | Spread an income or cost over months from the invoice or purchase | Fiken, Tripletex, eAccounting Smart, PowerOffice | Prepaid rent and annual subscriptions are common even in micro companies |
 | 21 | **Period locking and an event log** | Lock months after MVA filing or reconciliation; unlock with history; who did what and when, exportable | Fiken, Tripletex | Myntos locks years; auditors and accountants expect month locks and a log |
 | 22 | **Deadline reminders** | MVA, a-melding, skattemelding, årsregnskap, aksjonærregister, forskuddsskatt: on the front page, by e-mail, as a calendar feed | Fiken (calendar URL), Tripletex (client deadline list) | Missed deadlines cost tilleggsskatt and gebyr; this is what "ro i regnskapet" means |
+| 23a | **Manual journal entries (manuelt bilag)** | A voucher typed as accounts and debit/credit, with no bank line: the accountant's year-end adjustments (inventory and livestock change, accruals, depreciation until #7 exists, reclassifications), with the same review-then-post step as the opening balance | All of them | Found on 2026-10-12 with the farm pilot: every year-end adjustment is one, and Myntos can only post through the register, the opening balance and the closing. Without it the accountant finishes the year in another program |
+| 23b | **Two VAT returns in one company (næringer)** | A næring per line or per account, and a return per næring: primærnæring yearly beside alminnelig every two months, each settled on its own account | Fiken (by e-mail to support), Tripletex, Duett, DNB Regnskap | A farm (or a fisherman) with more than 30 000 kr of other business must file both (mval § 15-1 (1)); Myntos has one `vat_category` per company |
 | 23 | **Accountant and auditor access** | A read-only revisor role; a regnskapsfører seeing all clients at once with status, deadlines and outstanding bilag; client list from Altinn (`altinn:clientdelegations/myclients.read`) | Fiken (partners), Tripletex (Byrå account), PowerOffice, Conta (free) | Half of small companies use an accountant; the accountant picks the program |
 
 ## Tier 3 — Daily convenience
@@ -132,7 +138,7 @@ way Myntos's own rules would not allow.
 |---|---|---|---|
 | 56 | Stock and logistics (warehouses, purchase orders, goods receipt, stock counts, barcode) | Tripletex (from 248 kr/mo; Rackbeat), eAccounting (149 kr), Fiken (count only) | Retail, wholesale |
 | 57 | Webshop and POS integrations (Shopify, WooCommerce, Zettle, PCKasse, …) | Fiken and Tripletex via partners | Retail (needs 54) |
-| 58 | Primary industry (næringstyper, primærnæring melding, skogfond, Landbrukets Dataflyt) | Fiken, Tripletex | Farming, fishing |
+| 58 | Primary industry: started as the landbruk add-on (ROADMAP Phase L); what is left for farms is in the section below. Fishing (råfisklag settlements, 11,11 %) has nothing yet | Fiken, Tripletex, Duett | Farming, fishing |
 | 59 | Associations (kontingent, momskompensasjon) | Fiken | Lag og foreninger |
 | 60 | Group companies (intercompany ledgers, consolidation, group view) | Tripletex (consolidation planned) | Konsern |
 | 61 | DA/ANS deltakerfastsetting, NUF, SA and other company forms in year-end | Fiken, Tripletex | The year-end refuses them today by name |
@@ -143,6 +149,27 @@ way Myntos's own rules would not allow.
 | 66 | Control forms and checklists | Tripletex (Komplett) | Trades, construction |
 | 67 | Capacity and resource planning | Tripletex (Komplett) | Consultancies |
 | 68 | Climate accounting (spend-based emissions) | Tripletex via partners, PowerOffice (1 195 kr/yr), Finago | Reporting duty for larger firms |
+
+## Landbruk: what is left for a farm
+
+The add-on is built ([landbruk.md](landbruk.md), ROADMAP Phase L); this is
+the rest, from the pilot with Reime Gard (an ENK) and the competitors' landbruk
+modules, in the order the pilot needs it. **Law** means a farm cannot do
+without it. Several rest on general items above, which come first.
+
+| Feature | Law or wish | Who has it | Rests on |
+| --- | --- | --- | --- |
+| Two VAT returns (primærnæring + alminnelig) | Law above 30 000 kr of other business | Fiken, Tripletex, Duett, DNB | 23b |
+| Year-end count of livestock and feed at Skattedirektoratet's yearly rates (takseringsregler), the change booked on 4690/1450, `buskap` in the næringsspesifikasjon | Law | Duett (values), Tripletex (autofiks), Fiken (by hand) | 23a |
+| Fixed assets with saldogruppe h at 6 % for husdyrbygg, and investeringstilskudd reducing cost (§ 14-42) | Law | Duett, Tripletex | 7 |
+| Næringsspesifikasjon for a farm ENK, with the jordbrukskonto card (§ 14-82: 85 % back in 2025, 80 % from 2026) and skogOgToemmerkonto (§ 14-81) | Law | Tripletex, Fiken ("ikke alltid helt riktig"), Duett | 2 |
+| Jordbruksfradrag basis and estimate (2025: 95 800 + 38 %, max 200 850; 2026: max 208 900), and the spouse split | Law (Skatteetaten computes it from the basis) | Duett, Tripletex (estimate) | 2 |
+| Private uttak and kår at takseringsregler rates, with the list bokføringsforskriften § 3-1 nr. 5 asks for; kår via a-melding | Law | Tripletex, Duett | 14 for kår |
+| Driftsgrenregnskap (melk, storfe, sau) as a dimension; quantities (litres, kg, head) per line | Wish | Duett, Tripletex, PowerOffice, DNB | 37 |
+| Settlements and tilskudd from Landbrukets Dataflyt, coded | Wish, ~325 000–505 000 kr a year to join ([integrations/landbrukets-dataflyt.md](integrations/landbrukets-dataflyt.md)) | Duett, Tripletex, PowerOffice, DNB, Eika | The owner's decision |
+| EHF from Felleskjøpet and Tine with posting proposals | Wish (EHF itself is law from 2030) | Duett, Tripletex | 13 |
+| Accounts report and bank report to Dataflyt, NIBIO and the bank | Wish | Tripletex, Duett, PowerOffice | Dataflyt |
+| Backup of the bilag archive, EHF originals and SAF-T to the farm's own OneDrive or SharePoint | Wish | – | 44 |
 
 ---
 

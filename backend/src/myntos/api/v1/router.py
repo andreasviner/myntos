@@ -15,6 +15,7 @@ from myntos.api.v1 import (
     faktura,
     health,
     kontoplan,
+    landbruk,
     members,
     mva,
     mva_justering,
@@ -41,6 +42,7 @@ api_router.include_router(account.router)
 api_router.include_router(bank.router)
 api_router.include_router(arsoppgjor.router)
 api_router.include_router(kontoplan.router)
+api_router.include_router(landbruk.router)
 api_router.include_router(mva_justering.router)
 api_router.include_router(agent.router)
 api_router.include_router(approvals.router)
