@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -38,7 +39,7 @@ from fastapi.testclient import TestClient
 
 from myntos.core.clock import utc_now
 from myntos.main import create_app
-from tests.conftest import register, write
+from tests.conftest import agent_header, assert_key_refused, insert_mva_filing, register, write
 
 # Two real orgnrs, so the check digits hold and both creations succeed.
 MINE = "910000004"
@@ -260,9 +261,184 @@ def _a_member(client: TestClient, company_id: int) -> tuple[int, Callable[[], No
     return user_id, readable
 
 
+def _a_filing(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """An MVA-melding filing, already sent, with an Altinn instance on it.
+
+    Written straight into the database rather than through ``/kontroll``,
+    which would need ID-porten and Skatteetaten's validation standing up. The
+    row is the thing the wall protects; how it got there is not. Sent, so that
+    every route on it, the receipt fetch included, gets as far as the lookup.
+    """
+    filing_id = insert_mva_filing(
+        client,
+        company_id,
+        year=THIS_YEAR - 1,
+        index=1,
+        status="sendt",
+        fastsatt="1250.00",
+        altinn_instance_id="50001337/6c9e1b1a-3a3c-4a1e-9b3f-2f0a7d5c8e11",
+    )
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/mva/innsendinger/{filing_id}")
+        assert owner.status_code == 200, owner.text
+
+    return filing_id, readable
+
+
+CAMT_MARCH = (Path(__file__).parent / "fixtures" / "bank" / "camt053_v02_mars.xml").read_bytes()
+
+
+def _imported(client: TestClient, company_id: int) -> dict[str, Any]:
+    """A March statement imported into ``company_id``'s books.
+
+    Both companies are created with the same kontonummer, the one the fixture
+    is for, so the same file imports into either: which is the point, because a
+    statement only one of them could hold would prove nothing about the filter.
+    """
+    response = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company_id}/bank/kontoutskrifter",
+        files={"file": ("mars.xml", CAMT_MARCH, "application/xml")},
+    )
+    assert response.status_code == 201, response.text
+    body: dict[str, Any] = response.json()
+    return body
+
+
+def _a_statement(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    statement_id = int(_imported(client, company_id)["statements"][0]["id"])
+
+    def readable() -> None:
+        owner = client.get(
+            f"/api/v1/companies/{company_id}/bank/kontoutskrifter/{statement_id}/fil"
+        )
+        assert owner.status_code == 200, owner.text
+        assert owner.content == CAMT_MARCH
+
+    return statement_id, readable
+
+
+def _a_bank_line(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """The 49-krone fee, which no voucher explains, so every route reaches its lookup."""
+    _imported(client, company_id)
+    lines = client.get(f"/api/v1/companies/{company_id}/bank/linjer").json()
+    line_id = int(next(line["id"] for line in lines if line["amount"] == "49.00"))
+
+    def readable() -> None:
+        listed = client.get(f"/api/v1/companies/{company_id}/bank/linjer")
+        assert listed.status_code == 200, listed.text
+        assert line_id in {line["id"] for line in listed.json()}
+
+    return line_id, readable
+
+
+def _an_account(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """An account somebody added to the other company's kontoplan.
+
+    Added rather than seeded, so it has no postings and no lock: a DELETE aimed
+    at it would succeed for its owner, and the only thing left to refuse it
+    here is the company filter.
+    """
+    response = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company_id}/kontoplan",
+        json={"number": "6820", "description": "Hemmelig konto"},
+    )
+    assert response.status_code == 201, response.text
+    account_id = int(
+        next(item for item in response.json()["accounts"] if item["number"] == "6820")["id"]
+    )
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/kontoplan")
+        assert owner.status_code == 200, owner.text
+        assert account_id in {item["id"] for item in owner.json()["accounts"]}
+
+    return account_id, readable
+
+
+def _an_adjustment(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """An uttak in the other company's books, which a reversal would undo."""
+    response = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company_id}/mva/spesifikasjoner",
+        json={
+            "spesifikasjon": "uttak",
+            "occurred_on": f"{THIS_YEAR}-03-14",
+            "tax_code": "3",
+            "amount": "1000.00",
+            "description": "Varer til eget bruk",
+        },
+    )
+    assert response.status_code == 201, response.text
+    adjustment_id = int(response.json()["id"])
+
+    def readable() -> None:
+        owner = client.get(
+            f"/api/v1/companies/{company_id}/mva/spesifikasjoner", params={"aar": THIS_YEAR}
+        )
+        assert owner.status_code == 200, owner.text
+        assert adjustment_id in {item["id"] for item in owner.json()["entries"]}
+
+    return adjustment_id, readable
+
+
 # Keyed by the path parameter's own name, because that is what the schema hands
 # over and what a new route will spell out. A name missing from here is a
 # failure below, never a skip.
+def _an_agent_key(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """A key made for the other client's books: access to them, by another name.
+
+    The one sub-resource that is itself a way in. Stopping the sibling's key
+    through this company's URL would be an outage for the other client; reading
+    it would say who in the other client lets which agent in.
+    """
+    switched = write(
+        client, "PUT", f"/api/v1/companies/{company_id}/agent-access", json={"enabled": True}
+    )
+    assert switched.status_code == 200, switched.text
+    made = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company_id}/agent-keys",
+        json={"name": "Klient Tos agent", "scopes": ["read"]},
+    )
+    assert made.status_code == 201, made.text
+    key_id = int(made.json()["key"]["id"])
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/agent-keys")
+        assert owner.status_code == 200, owner.text
+        assert key_id in [key["id"] for key in owner.json()]
+
+    return key_id, readable
+
+
+def _an_approval(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """A payment the sibling's agent asked to post, waiting for its person.
+
+    Approving it through this company's URL would post a voucher in the other
+    client's books; reading it would show the other client's payment and the
+    receipt that came with it.
+    """
+    header = agent_header(client, company_id, scopes=("read", "write"), approval_scopes=("post",))
+    held = client.post(
+        f"/api/v1/companies/{company_id}/cashflow", json=_CASHFLOW_BODY, headers=header
+    )
+    assert held.status_code == 202, held.text
+    approval_id = int(held.json()["approval_id"])
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/godkjenninger/{approval_id}")
+        assert owner.status_code == 200, owner.text
+
+    return approval_id, readable
+
+
 FACTORIES: dict[str, Callable[[TestClient, int], tuple[int, Callable[[], None]]]] = {
     "document_id": _a_document,
     "voucher_id": _a_voucher,
@@ -274,6 +450,21 @@ FACTORIES: dict[str, Callable[[TestClient, int], tuple[int, Callable[[], None]]]
     # wrong: the id is global, so a member of one company is a perfectly real
     # user id to hand a route about another.
     "user_id": _a_member,
+    # What a company told Skatteetaten it owes, and the receipt for it.
+    "filing_id": _a_filing,
+    # The bank's own statement of a client's account, and each movement on it.
+    "statement_id": _a_statement,
+    "line_id": _a_bank_line,
+    # The kontoplan: an account the sibling added, renamed or grouped here
+    # would change what the other client's næringsspesifikasjon says.
+    "account_id": _an_account,
+    # An uttak or tap på krav, which is a line in the other client's melding.
+    "adjustment_id": _an_adjustment,
+    # A key an agent works through. Stopping it is access management.
+    "key_id": _an_agent_key,
+    # What a key asked to do and waits for its person: approving the sibling's
+    # would post in the other client's books.
+    "approval_id": _an_approval,
 }
 
 
@@ -325,6 +516,10 @@ REQUESTS: dict[tuple[str, str], dict[str, Any]] = {
     },
     ("POST", f"{_COMPANIES}/cashflow/{{voucher_id}}/reversal"): {},
     ("GET", f"{_COMPANIES}/dokument/{{attachment_id}}"): {},
+    # The fixture attachment is a PDF, which has no thumbnail, so the owner gets
+    # a 404 here too. The wall on this route is tested with a photograph in
+    # test_bilag_images.py; this entry keeps the sibling check walking it.
+    ("GET", f"{_COMPANIES}/dokument/{{attachment_id}}/miniatyr"): {},
     ("GET", f"{_COMPANIES}/faktura/{{document_id}}"): {},
     ("PATCH", f"{_COMPANIES}/faktura/{{document_id}}"): {"json": _FAKTURA_BODY},
     ("DELETE", f"{_COMPANIES}/faktura/{{document_id}}"): {},
@@ -339,9 +534,50 @@ REQUESTS: dict[tuple[str, str], dict[str, Any]] = {
     ("PATCH", f"{_COMPANIES}/bankkontoer/{{bank_account_id}}"): {"json": _BANK_ACCOUNT_BODY},
     ("DELETE", f"{_COMPANIES}/bankkontoer/{{bank_account_id}}"): {},
     ("DELETE", f"{_COMPANIES}/invitations/{{invitation_id}}"): {},
+    ("DELETE", f"{_COMPANIES}/agent-keys/{{key_id}}"): {},
+    ("GET", f"{_COMPANIES}/godkjenninger/{{approval_id}}"): {},
+    ("DELETE", f"{_COMPANIES}/godkjenninger/{{approval_id}}"): {},
+    ("GET", f"{_COMPANIES}/godkjenninger/{{approval_id}}/fil"): {"params": {"id": 1}},
+    ("POST", f"{_COMPANIES}/godkjenninger/{{approval_id}}/godkjenn"): {},
+    ("POST", f"{_COMPANIES}/godkjenninger/{{approval_id}}/avvis"): {"json": {}},
+    ("POST", f"{_COMPANIES}/godkjenninger/{{approval_id}}/vedlegg"): {
+        "files": {"file": ("kvittering.pdf", PDF_BYTES, "application/pdf")}
+    },
     ("POST", f"{_COMPANIES}/invitations/{{invitation_id}}/send-again"): {},
     ("PATCH", f"{_COMPANIES}/members/{{user_id}}"): {"json": {"role": "viewer"}},
     ("DELETE", f"{_COMPANIES}/members/{{user_id}}"): {},
+    ("GET", f"{_COMPANIES}/mva/innsendinger/{{filing_id}}"): {},
+    ("GET", f"{_COMPANIES}/mva/innsendinger/{{filing_id}}/melding.xml"): {},
+    ("GET", f"{_COMPANIES}/mva/innsendinger/{{filing_id}}/dokument"): {
+        "params": {"type": "kvittering"}
+    },
+    # The figure the sibling's filing carries, confirmed: a body the route would
+    # accept from the filing's owner, so the only thing left to refuse it is
+    # the company filter on the lookup.
+    ("POST", f"{_COMPANIES}/mva/innsendinger/{{filing_id}}/send"): {
+        "json": {"fastsatt_merverdiavgift": "1250.00", "bekreftet": True}
+    },
+    ("POST", f"{_COMPANIES}/mva/innsendinger/{{filing_id}}/tilbakemelding"): {},
+    ("GET", f"{_COMPANIES}/bank/kontoutskrifter/{{statement_id}}/fil"): {},
+    # Any voucher id in the body: the line is looked up first, through the
+    # company, and that lookup is the thing being refused.
+    ("POST", f"{_COMPANIES}/bank/linjer/{{line_id}}/avstemming"): {"json": {"voucher_id": 1}},
+    ("DELETE", f"{_COMPANIES}/bank/linjer/{{line_id}}/avstemming"): {},
+    ("POST", f"{_COMPANIES}/bank/linjer/{{line_id}}/bilag"): {
+        "json": {"type_code": "bankgebyr", "description": "Kontohold"}
+    },
+    ("PATCH", f"{_COMPANIES}/kontoplan/{{account_id}}"): {"json": {"description": "Rettet"}},
+    ("DELETE", f"{_COMPANIES}/kontoplan/{{account_id}}"): {},
+    # A pair that is in the published list, for a year both companies have, so
+    # the grouping check passes and only the company filter can refuse it.
+    ("PUT", f"{_COMPANIES}/kontoplan/{{account_id}}/gruppering"): {
+        "json": {
+            "year": THIS_YEAR,
+            "grouping_category": "annenDriftskostnad",
+            "grouping_code": "6350",
+        }
+    },
+    ("POST", f"{_COMPANIES}/mva/spesifikasjoner/{{adjustment_id}}/reversering"): {},
 }
 
 
@@ -445,6 +681,57 @@ def test_no_route_reaches_a_sibling_companys_records(
         f"{method} {path} answered {response.status_code} for a sibling company's "
         f"{parameter}: {response.text[:200]}"
     )
+
+
+@pytest.mark.parametrize(("method", "path", "parameter"), _sub_resource_routes())
+def test_no_route_reaches_a_sibling_companys_records_with_a_key(
+    client: TestClient, method: str, path: str, parameter: str
+) -> None:
+    """The narrow wall again, with a key for the caller's own company (rule 9).
+
+    The key is pinned to Klient En and the URL names Klient En, so the key's
+    own gate lets the request through: what is left is the same ``company_id``
+    filter the session version tests. A route a key may not call at all
+    answers that instead, before any id is read.
+    """
+    mine, theirs = _two_companies(client)
+    smuggled, readable_by_its_owner = FACTORIES[parameter](client, theirs["id"])
+    readable_by_its_owner()
+    header = agent_header(client, mine["id"])
+
+    url = path.replace("{company_id}", str(mine["id"])).replace(f"{{{parameter}}}", str(smuggled))
+    response = write(client, method, url, headers=header, **REQUESTS[(method, path)])
+
+    assert_key_refused(response, method, path)
+
+
+def _company_routes() -> list[tuple[str, str]]:
+    schema = create_app().openapi()
+    return [
+        (method.upper(), path)
+        for path, operations in sorted(schema["paths"].items())
+        if "{company_id}" in path
+        for method in sorted(operations)
+        if method in {"get", "post", "patch", "put", "delete"}
+    ]
+
+
+@pytest.mark.parametrize(("method", "path"), _company_routes())
+def test_a_key_opens_no_company_but_its_own(client: TestClient, method: str, path: str) -> None:
+    """A key for Klient En cannot open Klient To, though its person can.
+
+    The membership join would let this through: the person behind the key is
+    a member of both. Only the key's own pin stands in the way, and the answer
+    is the 404 a stranger gets, so an agent cannot even learn that its person
+    keeps other books (docs/agents-and-api.md rule 3).
+    """
+    mine, theirs = _two_companies(client)
+    header = agent_header(client, mine["id"])
+
+    url = re.sub(r"\{[^}]+\}", "1", path.replace("{company_id}", str(theirs["id"])))
+    response = write(client, method, url, json={}, headers=header)
+
+    assert_key_refused(response, method, path)
 
 
 def test_a_sibling_companys_records_stay_out_of_the_listings(client: TestClient) -> None:

@@ -10,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -62,14 +62,68 @@ class Settings(BaseSettings):
     login_max_failed_attempts: int = 10
     login_lockout_minutes: int = 15
     invitation_lifetime_days: int = 7
+    # How long a "confirm your address" link works. Two days rather than the
+    # invitation's seven: nothing is lost when it dies, because the person it was
+    # sent to is signed in and can ask for another with one click.
+    email_verification_lifetime_hours: int = 48
+    # How long a password-reset link works. Short on purpose: the link is a
+    # credential sitting in an inbox, and whoever asked for it is waiting for it
+    # right now. A link found in a mailbox tomorrow should already be dead.
+    password_reset_lifetime_minutes: int = 30
+    # Per account and per kind of message, in any rolling hour. The reset
+    # request is anonymous, so without this anybody can make Myntos mail a
+    # stranger as often as they can press a button; it is the mail-side twin of
+    # the login lockout above, and like it, it bounds one known address rather
+    # than a sender (that belongs at the edge).
+    account_mail_max_per_hour: int = 3
+
+    # --- Keys for agents and integrations (docs/agents-and-api.md) ---
+    # What a person copies off the Tilgang page and pastes into a conversation
+    # with their agent. It is good for one exchange and nothing else, and the
+    # day is for the person who makes the key in the evening and connects the
+    # agent the next morning; a pasted key that was never used dies on its own.
+    agent_connection_key_lifetime_hours: int = 24
+    # Short, because it is the one credential the agent sends on every request,
+    # so it is the one most likely to end up in a log, a trace or a transcript.
+    agent_access_token_lifetime_minutes: int = 15
+    # A refresh chain nobody has used for this long is dead. An agent that is
+    # in daily use never notices; one that was set up once and forgotten stops
+    # being a standing way into the books.
+    agent_refresh_idle_days: int = 30
+    # And a key dies at this age however busy it is, so every key is re-issued,
+    # and re-read by a person on the Tilgang page, at least once a year.
+    agent_key_lifetime_days: int = 365
+    # Per key. Generous for an agent doing real work, small next to what a key
+    # copied into a script that loops would do. Counted in the process, which
+    # is exact with the one uvicorn process this deployment runs; with more
+    # workers it becomes a limit per worker.
+    agent_key_requests_per_minute: int = 120
+    # Refusals that only a confused or a stolen key produces (another
+    # company's id, a route no key may call, a scope it was not given) within
+    # ten minutes before the key is stopped. An agent that reads the
+    # documentation hits a handful while it learns; a key being used to probe
+    # hits this many in seconds.
+    agent_key_refusals_before_suspension: int = 20
+    # How long a request that waits for its person's approval keeps waiting.
+    # Long enough for somebody who looks at Myntos once a week; short enough
+    # that nobody approves, in March, a payment their agent proposed against
+    # the books as they stood at Christmas. Expired requests are not run.
+    agent_approval_lifetime_days: int = 14
+    # The most a waiting request may carry, body and files together. Stored in
+    # the database until it is decided, so it is bounded; a bilag is at most
+    # 25 MB (MAX_ATTACHMENT_BYTES), and a request carrying more than one of
+    # those should be several requests.
+    agent_approval_max_bytes: int = 30 * 1024 * 1024
 
     # --- Outgoing email (optional; nothing below is required to run) ---
     #
     # Two transports, and a deployment picks one by configuring it. Left unset,
     # Myntos sends nothing at all and says so: an invitation still produces a
     # link for the inviter to pass on by hand, which is what happened before
-    # there was any mail at all. A half-configured deployment is treated as
-    # unconfigured rather than as one that fails on the first invitation.
+    # there was any mail at all. Address confirmation and password reset are
+    # simply not offered then, because both are a link only an inbox can carry.
+    # A half-configured deployment is treated as unconfigured rather than as one
+    # that fails on the first invitation.
     #
     # `mail_from` belongs to both, because the sender is a fact about the
     # product rather than about the wire.
@@ -153,15 +207,45 @@ class Settings(BaseSettings):
     # Derived from the tenant unless set explicitly.
     microsoft_well_known_url: str | None = None
 
-    # Vipps MobilePay Login. Needs a merchant agreement, not just an app
-    # registration; client id and secret come from portal.vippsmobilepay.com.
-    vipps_client_id: str | None = None
-    vipps_client_secret: SecretStr | None = None
-    vipps_redirect_uri: str | None = None
-    # Test: https://apitest.vipps.no/access-management-1.0/access/.well-known/openid-configuration
-    vipps_well_known_url: str = (
-        "https://api.vipps.no/access-management-1.0/access/.well-known/openid-configuration"
-    )
+    # BankID, through any OpenID Connect broker; Idura (formerly Criipto, part of
+    # Stø, which runs BankID) is the documented one. docs/ARCHITECTURE.md,
+    # "Federated providers", has the values and the pages they were read from.
+    # Offered only when the issuer, the client id, the redirect URI and one
+    # client credential are all set. This is never ID-porten: Digdir's terms do
+    # not allow ID-porten as a private service's own login.
+    #
+    # The broker's issuer, e.g. https://myntos.test.idura.broker in Idura's
+    # sandbox. The discovery document is read from
+    # {issuer}/.well-known/openid-configuration, as OIDC Discovery 1.0 § 4
+    # defines it. A bare domain is taken to mean https://{domain}, because that
+    # is how Idura's dashboard shows it.
+    bankid_issuer: str | None = None
+    bankid_client_id: str | None = None
+    bankid_redirect_uri: str | None = None
+    # Client authentication. ``private_key_jwt`` when a key is set, which Idura
+    # recommends and supports (token_endpoint_auth_methods_supported lists
+    # client_secret_basic, client_secret_post and private_key_jwt): the key is
+    # read exactly like the ID-porten one (myntos.auth.signing_keys), and its
+    # public half is registered as the application's client JWKS. A secret
+    # works too, for a broker or an application set up with one.
+    bankid_jwk_path: Path | None = None
+    bankid_jwk: SecretStr | None = None
+    bankid_kid: str | None = None
+    bankid_client_secret: SecretStr | None = None
+    # Which BankID. Idura's values: ``urn:grn:authn:no:bankid:substantial`` for
+    # BankID Biometrics, the app (assurance level substantial), and
+    # ``urn:grn:authn:no:bankid`` for the classic code-device authenticators
+    # (level high). Idura's page also names ``…:bankid:high`` for those, but
+    # its discovery document does not list it, so it is not the example here.
+    # Substantial is the default: this is a login to a bookkeeping program, not
+    # a signature, and every filing still demands its own ID-porten login at
+    # the high level.
+    bankid_acr_values: str = "urn:grn:authn:no:bankid:substantial"
+    # Never more than identity. Idura releases the name with ``openid`` alone;
+    # a broker that needs ``profile`` for it can have it here. Never ``ssn``:
+    # see myntos.auth.oidc.providers.bankid_profile for why the fødselsnummer
+    # is not asked for.
+    bankid_scope: str = "openid"
 
     # --- Maskinporten (docs/integrations/maskinporten.md) ---
     maskinporten_client_id: str | None = None
@@ -223,15 +307,16 @@ class Settings(BaseSettings):
 
     # --- Altinn (token exchange + instance APIs) ---
     altinn_platform_base_url: str = "https://platform.tt02.altinn.no"
-    # Altinn 3 apps, one absolute URL each: the app id differs between
-    # environments (``…-etm2`` in test, ``…-v1`` in production) and so does the
-    # host, which is why these are configuration and not constants. The org
+    # Altinn 3 apps, one absolute URL each: the host differs between
+    # environments, which is why these are configuration and not constants. The
+    # MVA app id is ``…-v1`` in test as well as production; ``…-etm2`` was once
+    # documented for test and answers 418 on tt02. The org
     # prefix is part of the path — ``skd`` for Skatteetaten, ``brg`` for
     # Brønnøysundregistrene.
     # Test: https://skd.apps.tt02.altinn.no/skd/formueinntekt-skattemelding-v2
     # Prod: https://skd.apps.altinn.no/skd/formueinntekt-skattemelding-v2
     altinn_skattemelding_app_url: str | None = None
-    # Test: https://skd.apps.tt02.altinn.no/skd/mva-melding-innsending-etm2
+    # Test: https://skd.apps.tt02.altinn.no/skd/mva-melding-innsending-v1
     # Prod: https://skd.apps.altinn.no/skd/mva-melding-innsending-v1
     altinn_mva_app_url: str | None = None
 
@@ -260,7 +345,10 @@ class Settings(BaseSettings):
     # ID-porten plane (skattemelding) — test: https://idporten-api-test.sits.no
     #                                   prod: https://idporten.api.skatteetaten.no
     skatteetaten_idporten_api_base_url: str | None = None
-    # MVA validation — test: https://idporten-api-sbstest.sits.no
+    # MVA validation — test: https://idporten-api-test.sits.no. Skatteetaten
+    #                  documents idporten-api-sbstest.sits.no, which resets
+    #                  every connection after the TLS handshake (mva.md,
+    #                  Endpoints); the -test host answers the same path.
     #                  prod: https://idporten.api.skatteetaten.no
     skatteetaten_mva_api_base_url: str | None = None
 
@@ -315,6 +403,29 @@ class Settings(BaseSettings):
     def idporten_key_file(self) -> Path | None:
         """The ID-porten key file as an absolute path, or ``None``."""
         return _repo_relative(self.idporten_jwk_path)
+
+    @field_validator("bankid_jwk_path", mode="before")
+    @classmethod
+    def _blank_path_is_unset(cls, value: object) -> object:
+        """Read ``BANKID_JWK_PATH=`` as unset, not as the current directory.
+
+        Pydantic turns an empty string into ``Path('.')``, which is truthy and
+        resolves to the repository root: a deployment that copied the blank
+        line from ``.env.example`` would have "a key" that is a directory.
+        """
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @property
+    def bankid_key_material(self) -> bytes | None:
+        """The BankID client key given inline, or ``None``."""
+        return _key_material(self.bankid_jwk)
+
+    @property
+    def bankid_key_file(self) -> Path | None:
+        """The BankID client key file as an absolute path, or ``None``."""
+        return _repo_relative(self.bankid_jwk_path)
 
     @property
     def session_cookie_secure(self) -> bool:

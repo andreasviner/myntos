@@ -50,10 +50,10 @@ const sections = [
     id: 'saft',
     kicker: 'Lovkrav',
     title: 'SAF-T-eksport',
-    status: 'underveis' as const,
-    body: 'SAF-T Financial er ikke en periodisk innlevering, men filen Skatteetaten ber om ved bokettersyn. Datamodellen i Myntos er formet etter den fra første linje, slik at eksporten blir en projeksjon av regnskapet framfor en oversettelse i etterkant.',
+    status: 'virker' as const,
+    body: 'SAF-T Financial er ikke en periodisk innlevering, men filen Skatteetaten ber om ved bokettersyn. Datamodellen i Myntos er formet etter den fra første linje, så eksporten er en projeksjon av regnskapet og ikke en oversettelse i etterkant. Filen lages bare når kontrollen ikke finner noe som ville stoppet den hos revisor.',
     points: [
-      'Kontoplan med næringsspesifikasjon per regnskapsår, med historikk',
+      'Kontoplan med næringsspesifikasjon per regnskapsår, kontrollert mot Skatteetatens liste',
       'Versjonsstyrt eksport: v1.30 og v1.40, valgt på regnskapsår',
       'Egen kryssreferansesjekk i tillegg til XSD-validering',
     ],
@@ -80,6 +80,21 @@ const sections = [
       'Roller: eier, administrator, medlem og leser',
       'Invitasjoner er engangslenker, lagret hashet',
       'Et selskap i en annen organisasjon finnes ikke for deg',
+    ],
+  },
+  {
+    id: 'ki-agenter',
+    kicker: 'API',
+    title: 'Din egen KI-assistent, og dine egne programmer',
+    // Underveis og ikke «virker»: å koble til virker, men assistenten har bare
+    // beskrivelsen av hver adresse å gå etter, ikke en ferdig oppskrift for hver
+    // oppgave. Se docs/agents-and-api.md, «Gaps».
+    status: 'underveis' as const,
+    body: 'Alt programmet gjør, er et API, og nettsiden er bare den første som bruker det. Et selskap kan slå på nøkler, og da kan ChatGPT, Claude, en modell du kjører selv eller et program dere har laget, lese og føre i regnskapet med din tilgang. Myntos sender ingenting til modellen; assistenten henter selv, og modellen du velger avgjør hvor opplysningene havner.',
+    points: [
+      'Nøkkelen du limer inn i samtalen virker bare én gang, så kopien der er ufarlig',
+      'Ingen nøkkel kan sende noe til Skatteetaten, flytte penger eller endre kontonummer',
+      'Bilag ført av assistenten står med navnet ditt og nøkkelens',
     ],
   },
   {

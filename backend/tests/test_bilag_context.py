@@ -19,14 +19,14 @@ from myntos.domain.bilag.context import (
 from myntos.domain.ledger.cashflow import CashFlowDirection
 
 
-def test_nothing_known_renders_nothing():
+def test_nothing_known_renders_nothing() -> None:
     """An absent context has to reproduce the prompt we sent before it existed."""
     assert NO_CONTEXT.is_empty
     assert classification.preamble(NO_CONTEXT) == ""
     assert classification.preamble(None) == ""
 
 
-def test_the_register_answer_reaches_the_prompt():
+def test_the_register_answer_reaches_the_prompt() -> None:
     context = BilagContext.build(
         purpose=["Utvikling og salg av programvare", "og det som står i forbindelse med dette"],
         activity=["Utvikling av programvare"],
@@ -41,7 +41,7 @@ def test_the_register_answer_reaches_the_prompt():
     assert "Mva-registrert: ja" in rendered
 
 
-def test_not_being_in_the_vat_register_is_said_plainly():
+def test_not_being_in_the_vat_register_is_said_plainly() -> None:
     """A company outside the register may not reclaim input VAT.
 
     Rendered as a sentence rather than as a missing line, because "nothing was
@@ -51,11 +51,11 @@ def test_not_being_in_the_vat_register_is_said_plainly():
     assert "nei, ikke i Merverdiavgiftsregisteret" in rendered
 
 
-def test_an_unknown_vat_status_says_nothing_rather_than_guessing():
+def test_an_unknown_vat_status_says_nothing_rather_than_guessing() -> None:
     assert "Mva-registrert" not in BilagContext.build(vat_registered=None).render()
 
 
-def test_the_users_note_is_labelled_as_the_users():
+def test_the_users_note_is_labelled_as_the_users() -> None:
     """The state's register and a sentence somebody typed are not equal evidence.
 
     Labelling them apart is what lets the model weigh them apart; run together
@@ -70,13 +70,13 @@ def test_the_users_note_is_labelled_as_the_users():
     assert rendered.index("Vedtektsfestet formål") < rendered.index("Brukerens egen")
 
 
-def test_the_note_is_clipped():
+def test_the_note_is_clipped() -> None:
     context = BilagContext.build(note="x" * (MAX_NOTE_CHARS * 3))
     assert context.note is not None
     assert len(context.note) == MAX_NOTE_CHARS
 
 
-def test_the_whole_block_is_clipped_even_when_every_part_fits():
+def test_the_whole_block_is_clipped_even_when_every_part_fits() -> None:
     """Two ceilings, not one sum.
 
     A later field could otherwise widen the total silently, and the total is
@@ -93,12 +93,12 @@ def test_the_whole_block_is_clipped_even_when_every_part_fits():
     assert len(context.render()) <= MAX_CONTEXT_CHARS
 
 
-def test_whitespace_is_collapsed_so_a_pasted_paragraph_costs_what_it_says():
+def test_whitespace_is_collapsed_so_a_pasted_paragraph_costs_what_it_says() -> None:
     context = BilagContext.build(note="  linje  én\n\n\n   linje to   ")
     assert context.note == "linje én linje to"
 
 
-def test_the_context_goes_above_the_document_and_stays_out_of_it():
+def test_the_context_goes_above_the_document_and_stays_out_of_it() -> None:
     """The separation the whole design rests on.
 
     `excerpt` is the document, and the document is what every quoted answer is
@@ -117,7 +117,20 @@ def test_the_context_goes_above_the_document_and_stays_out_of_it():
     assert prompt.index("Oppdiktet") < prompt.index("Totalt 315,00 kr")
 
 
-def test_an_empty_note_is_the_same_as_no_note():
+def test_an_empty_note_is_the_same_as_no_note() -> None:
     """A user who tabs through the box must not change the prompt."""
     assert BilagContext.build(note="   ").is_empty
     assert BilagContext.build(note=None).is_empty
+
+
+def test_the_direction_the_user_clicked_is_said_as_theirs() -> None:
+    """Same standing as the note: about this payment, from the person who made it."""
+    said = BilagContext.build(direction="ut").render()
+
+    assert said.startswith("Brukeren har valgt: penger ut")
+
+
+def test_only_the_two_directions_can_be_said() -> None:
+    """A fixed sentence or nothing, never whatever string arrived."""
+    assert BilagContext.build(direction="sideveis").direction is None
+    assert BilagContext.build(direction="sideveis").is_empty

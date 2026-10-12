@@ -1,0 +1,366 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Uttak og justering | Myntos"
+  description="Uttak, tap på krav, justering og tilbakeføring av merverdiavgift, slik mva-meldingen spesifiserer dem."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow"><a href="/mva/">Mva</a> · Uttak og justering</p>
+      <h1 data-session-company></h1>
+      <p class="muted orgnr" id="orgnr"></p>
+    </div>
+    <div class="head-actions year-nav" role="group" aria-label="Regnskapsår">
+      <button type="button" class="btn btn-ghost btn-small" id="year-prev" aria-label="Året før"
+        >‹</button
+      >
+      <span class="year" id="year"></span>
+      <button type="button" class="btn btn-ghost btn-small" id="year-next" aria-label="Året etter"
+        >›</button
+      >
+    </div>
+  </header>
+
+  <p class="lead">
+    Fire ting endrer hva selskapet skylder i merverdiavgift uten at penger går gjennom banken, og
+    mva-meldingen viser hver av dem på en egen linje. Det du fører her, kommer med i meldingen for
+    perioden datoen hører til.
+  </p>
+
+  <p class="status" id="page-status" hidden></p>
+  <div class="empty" id="loading">Henter …</div>
+
+  <div id="content" hidden>
+    <section class="card" id="form-card" hidden>
+      <h2 class="card-title">Før en mva-justering</h2>
+      <form id="adjust-form" novalidate>
+        <label class="field">
+          <span>Hva gjelder det?</span>
+          <select name="spesifikasjon" id="kind-select">
+            <option value="uttak">Uttak: varer eller tjenester tatt ut av virksomheten</option>
+            <option value="tapPåKrav">Tap på krav: en kunde som aldri betalte</option>
+            <option value="justering">Justering for kapitalvare</option>
+            <option value="tilbakeføringAvInngåendeMerverdiavgift"
+              >Tilbakeføring for personbil eller fast eiendom</option
+            >
+          </select>
+          <span class="field-hint" id="kind-hint"></span>
+        </label>
+        <div class="field-row">
+          <label class="field">
+            <span>Dato</span>
+            <input type="date" name="occurred_on" id="date-input" />
+          </label>
+          <label class="field">
+            <span>Mva-kode</span>
+            <select name="tax_code" id="code-select"></select>
+          </label>
+        </div>
+        <div class="field-row">
+          <label class="field" id="direction-field" hidden>
+            <span>Retning</span>
+            <select name="direction">
+              <option value="skyldig">Fradrag tilbakeføres (du skylder)</option>
+              <option value="fradrag">Mer fradrag (til gode)</option>
+            </select>
+          </label>
+          <label class="field">
+            <span id="amount-label">Beløp</span>
+            <input type="text" name="amount" inputmode="decimal" placeholder="0,00" />
+            <span class="field-hint" id="amount-hint"></span>
+          </label>
+          <label class="field">
+            <span>Motkonto</span>
+            <input type="text" name="account_number" inputmode="numeric" maxlength="4" id="account-input" />
+            <span class="field-hint">Kontonummeret fra <a href="/kontoplan/">kontoplanen</a>.</span>
+          </label>
+        </div>
+        <label class="field">
+          <span>Tekst</span>
+          <input type="text" name="description" maxlength="255" />
+        </label>
+        <button class="btn btn-primary" type="submit" id="adjust-submit">Før</button>
+        <p class="status" id="form-status" hidden></p>
+      </form>
+    </section>
+
+    <section class="card">
+      <p class="status" id="table-status" hidden></p>
+      <div class="table-scroll">
+        <table class="data">
+          <thead>
+            <tr>
+              <th>Bilag</th>
+              <th>Dato</th>
+              <th>Hva</th>
+              <th>Kode</th>
+              <th class="num">Grunnlag</th>
+              <th class="num">Mva</th>
+              <th>Konto</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="entries"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="entries-empty" hidden>Ingenting ført for året.</p>
+    </section>
+  </div>
+</BaseLayout>
+
+<style>
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .orgnr {
+    margin: 0.2rem 0 0;
+  }
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--muted);
+    margin: 0 0 0.4rem;
+  }
+  .year-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .year {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    min-width: 3.5rem;
+    text-align: center;
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    listAdjustments,
+    recordAdjustment,
+    reverseAdjustment,
+    type AdjustmentList,
+    type Company,
+    type Spesifikasjon,
+  } from '../lib/api';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import { isoDate, kroner, orgnummer, todayIso } from '../lib/format';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const tableStatus = el<HTMLParagraphElement>('#table-status');
+  const formStatus = el<HTMLParagraphElement>('#form-status');
+  const form = el<HTMLFormElement>('#adjust-form');
+  const kindSelect = el<HTMLSelectElement>('#kind-select');
+  const codeSelect = el<HTMLSelectElement>('#code-select');
+
+  let company: Company;
+  let year = new Date().getFullYear();
+  let listing: AdjustmentList | null = null;
+
+  const LABELS: Record<Spesifikasjon, string> = {
+    uttak: 'Uttak',
+    tapPåKrav: 'Tap på krav',
+    justering: 'Justering',
+    tilbakeføringAvInngåendeMerverdiavgift: 'Tilbakeføring',
+  };
+
+  // Hva beløpet betyr, per slag. Det er her de fire skiller seg mest, og et
+  // beløp tolket feil er en melding som er feil med en fjerdedel.
+  const AMOUNTS: Record<Spesifikasjon, { label: string; hint: string; kind: string }> = {
+    uttak: {
+      label: 'Verdi uten mva',
+      hint: 'Det varen eller tjenesten ville kostet om den var solgt. Mvaen regnes ut og legges til.',
+      kind:
+        'Uttak skattlegges som om det var solgt. Motkontoen er privatkontoen når eieren tok det, ' +
+        'eller kostnadskontoen når det var en gave.',
+    },
+    tapPåKrav: {
+      label: 'Kravet som er tapt, med mva',
+      hint: 'Beløpet kunden skyldte. Mvaen som lå i det, trekkes fra igjen.',
+      kind:
+        'Når et krav er endelig tapt, får du tilbake mvaen du betalte på salget. Velg koden etter ' +
+        'satsen salget hadde.',
+    },
+    justering: {
+      label: 'Mva-beløpet',
+      hint: 'Selve justeringsbeløpet, uten grunnlag.',
+      kind:
+        'Den årlige justeringen av fradraget på en kapitalvare når bruken har endret seg ' +
+        '(merverdiavgiftsloven kapittel 9).',
+    },
+    tilbakeføringAvInngåendeMerverdiavgift: {
+      label: 'Mva-beløpet',
+      hint: 'Fradraget som skal betales tilbake.',
+      kind: 'Fradraget på en personbil eller en fast eiendom som skal tilbakeføres i sin helhet.',
+    },
+  };
+
+  const mayWrite = (): boolean => canInCompany(company, 'ledger:write');
+
+  function chosenKind(): Spesifikasjon {
+    return kindSelect.value as Spesifikasjon;
+  }
+
+  function applyKind(): void {
+    const kind = chosenKind();
+    const known = listing?.kinds.find((item) => item.spesifikasjon === kind);
+    codeSelect.replaceChildren(
+      ...(known?.tax_codes ?? []).map((code) => {
+        const node = document.createElement('option');
+        node.value = code;
+        node.textContent = code;
+        return node;
+      }),
+    );
+    el<HTMLInputElement>('#account-input').placeholder = known?.default_account ?? '';
+    el('#amount-label').textContent = AMOUNTS[kind].label;
+    el('#amount-hint').textContent = AMOUNTS[kind].hint;
+    el('#kind-hint').textContent = AMOUNTS[kind].kind;
+    show(el('#direction-field'), kind === 'justering');
+  }
+
+  function render(): void {
+    if (listing === null) return;
+    el('#year').textContent = String(year);
+    show(el('#form-card'), mayWrite());
+    applyKind();
+    const body = el<HTMLTableSectionElement>('#entries');
+    body.replaceChildren();
+    for (const entry of listing.entries) {
+      const row = document.createElement('tr');
+      if (entry.reversed_by_id !== null || entry.is_reversal) row.dataset.reversed = 'true';
+      const cells = [
+        entry.voucher_no,
+        isoDate(entry.occurred_on),
+        (entry.is_reversal ? 'Reversering: ' : '') + LABELS[entry.spesifikasjon],
+        entry.tax_code,
+        entry.grunnlag === null ? '' : kroner(entry.grunnlag),
+        kroner(entry.merverdiavgift),
+        `${entry.account_number} ${entry.account_description}`,
+      ];
+      cells.forEach((text, index) => {
+        const cell = document.createElement('td');
+        cell.textContent = text;
+        if (index === 4 || index === 5) cell.className = 'num';
+        row.append(cell);
+      });
+      const actions = document.createElement('td');
+      if (mayWrite() && !entry.is_reversal && entry.reversed_by_id === null) {
+        const undo = document.createElement('button');
+        undo.type = 'button';
+        undo.className = 'btn btn-ghost btn-small';
+        undo.textContent = 'Reverser';
+        undo.addEventListener('click', () => {
+          if (!window.confirm(`Reversere bilag ${entry.voucher_no}? Begge står igjen i regnskapet.`)) return;
+          void reverseAdjustment(company.id, entry.id)
+            .then(refresh)
+            .catch((error: unknown) => {
+              setStatus(tableStatus, error instanceof ApiError ? error.message : 'Ble ikke reversert.');
+            });
+        });
+        actions.append(undo);
+      }
+      row.append(actions);
+      body.append(row);
+    }
+    show(el('#entries-empty'), listing.entries.length === 0);
+  }
+
+  async function refresh(): Promise<void> {
+    el('#year').textContent = String(year);
+    setStatus(pageStatus, '');
+    try {
+      listing = await listAdjustments(company.id, year);
+      render();
+      show(el('#content'), true);
+    } catch (error: unknown) {
+      show(el('#content'), false);
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet føringene.');
+    }
+  }
+
+  kindSelect.addEventListener('change', applyKind);
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    const kind = chosenKind();
+    // Komma er desimaltegnet folk skriver; backend vil ha punktum.
+    let amount = String(data.get('amount') ?? '').replace(/\s/g, '').replace(',', '.');
+    if (kind === 'justering' && data.get('direction') === 'fradrag' && amount !== '') {
+      amount = `-${amount.replace(/^-/, '')}`;
+    }
+    const submit = el<HTMLButtonElement>('#adjust-submit');
+    submit.disabled = true;
+    setStatus(formStatus, '');
+    void recordAdjustment(company.id, {
+      spesifikasjon: kind,
+      occurred_on: String(data.get('occurred_on') ?? ''),
+      tax_code: String(data.get('tax_code') ?? ''),
+      amount,
+      description: String(data.get('description') ?? '').trim(),
+      account_number: String(data.get('account_number') ?? '').trim() || null,
+    })
+      .then(async (entry) => {
+        form.reset();
+        el<HTMLInputElement>('#date-input').value = todayIso();
+        setStatus(formStatus, `Ført som bilag ${entry.voucher_no}.`, 'ok');
+        await refresh();
+      })
+      .catch((error: unknown) => {
+        setStatus(formStatus, error instanceof ApiError ? error.message : 'Ble ikke ført.');
+      })
+      .finally(() => {
+        submit.disabled = false;
+      });
+  });
+
+  function changeYear(step: number): void {
+    year += step;
+    void refresh();
+  }
+
+  el('#year-prev').addEventListener('click', () => changeYear(-1));
+  el('#year-next').addEventListener('click', () => changeYear(1));
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      const current = currentCompany(companies);
+      if (current === undefined) return;
+      company = current;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      el<HTMLInputElement>('#date-input').value = todayIso();
+      await refresh();
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet selskapet.');
+    } finally {
+      el('#loading').hidden = true;
+    }
+  });
+</script>

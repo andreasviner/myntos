@@ -1,0 +1,425 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+{/* Godkjenning: det en KI-agent eller et program med nøkkel har bedt om å få
+    gjøre, og som venter på at personen sier ja eller nei.
+
+    En nøkkel der personen har valgt «Spør meg først» gjør ikke ting selv. Hver
+    slik forespørsel lagres hos Myntos og står her til den godkjennes, avvises,
+    trekkes tilbake eller går ut etter 14 dager. Godkjent blir den sendt på nytt
+    nøyaktig slik agenten sendte den, som nøkkelen, gjennom alle kontrollene
+    ruten gjør, mot regnskapet slik det står da. Se docs/agents-and-api.md
+    regel 13.
+
+    Det samme for en KI-assistent og for et skript noen har skrevet mot API-et:
+    en nøkkel er en nøkkel, og siden kan ikke se forskjell på dem.
+
+    Å sende mva-meldingen kan ingen nøkkel. En agent kan be om det, og da står
+    det her med en knapp til MVA-siden, der personen sender selv med sin egen
+    ID-porten-innlogging. */}
+
+<BaseLayout
+  title="Godkjenning | Myntos"
+  description="Det KI-agenter og programmer med nøkkel venter på at du godkjenner."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Godkjenning</p>
+      <h1 data-session-company></h1>
+      <p class="muted orgnr" id="orgnr"></p>
+    </div>
+  </header>
+
+  <p class="lead">
+    Her står det en KI-agent eller et program med nøkkel har bedt om å få gjøre i regnskapet, og som
+    venter på deg. Ingenting av det er gjort før du godkjenner det. Hva hver nøkkel får gjøre selv og
+    hva den må spørre om, velger du når du lager den under
+    <a href="/organisasjon/#tilgang">Innstillinger for selskapet → Tilgang</a>.
+  </p>
+
+  <p class="status" id="page-status" hidden></p>
+  <div class="empty" id="loading">Henter …</div>
+
+  <section id="content" hidden aria-live="polite">
+    <h2>Venter på deg</h2>
+    <p class="card-hint" id="ingen-venter" hidden>
+      Ingenting venter på godkjenning. Når en agent med «Spør meg først» ber om noe, står det her.
+    </p>
+    {/* Kortene bygges i skriptet; stilene står under :global(), forankret i
+        listen som er i markupen (docs/frontend-conventions.md). */}
+    <div class="liste" id="venter"></div>
+
+    <h2 id="avgjort-tittel" hidden>Avgjort</h2>
+    <div class="liste" id="avgjort"></div>
+  </section>
+</BaseLayout>
+
+<script>
+  import {
+    ApiError,
+    approveRequest,
+    declineRequest,
+    fetchApprovalFile,
+    listApprovals,
+    type Approval,
+    type Company,
+  } from '../lib/api';
+  import {
+    approvalHeading,
+    approvalStateLabel,
+    isFinal,
+    isWaiting,
+    outcomeText,
+    pageFor,
+    requestFields,
+  } from '../lib/approvals';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import { fileSize, isoDate, orgnummer } from '../lib/format';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  let company: Company;
+
+  function node<K extends keyof HTMLElementTagNameMap>(
+    tag: K,
+    className: string,
+    text?: string,
+  ): HTMLElementTagNameMap[K] {
+    const element = document.createElement(tag);
+    element.className = className;
+    if (text !== undefined) element.textContent = text;
+    return element;
+  }
+
+  function dato(value: string): string {
+    return isoDate(value.slice(0, 10));
+  }
+
+  /** Det agenten sendte, som felt og verdi, bak en utvidelse. */
+  function details(approval: Approval): HTMLElement | null {
+    const rows = requestFields(approval.body ?? approval.form);
+    if (rows.length === 0) return null;
+    const box = node('details', 'detaljer');
+    box.append(node('summary', '', 'Det som blir sendt'));
+    const list = node('dl', 'felt');
+    for (const [name, value] of rows) {
+      list.append(node('dt', '', name), node('dd', value.includes('\n') ? 'blokk' : '', value));
+    }
+    box.append(list);
+    return box;
+  }
+
+  /** Filene som følger forespørselen: kvitteringen personen skal se før de sier ja. */
+  function files(approval: Approval): HTMLElement | null {
+    if (approval.files.length === 0) return null;
+    const list = node('ul', 'filer');
+    for (const file of approval.files) {
+      const item = node('li', '');
+      const label = `${file.filename} (${fileSize(file.size)})`;
+      if (file.available) {
+        const open = node('button', 'btn-link', label);
+        open.type = 'button';
+        open.addEventListener('click', () => {
+          void fetchApprovalFile(company.id, approval.id, file.id).then((blob) => {
+            if (blob === null) {
+              setStatus(pageStatus, 'Filen er ikke lagret her lenger.');
+              return;
+            }
+            window.open(URL.createObjectURL(blob), '_blank', 'noopener');
+          });
+        });
+        item.append(open);
+      } else {
+        item.textContent = label;
+      }
+      list.append(item);
+    }
+    return list;
+  }
+
+  function waitingCard(approval: Approval): HTMLElement {
+    const card = node('article', 'card foresporsel');
+    card.id = `godkjenning-${approval.id}`;
+    card.append(node('h3', '', approvalHeading(approval)));
+
+    const meta = node(
+      'p',
+      'meta',
+      `${approval.key_name} er ${approval.is_own ? 'din nøkkel' : `${approval.person_name} sin nøkkel`}` +
+        ` · bedt om ${dato(approval.created_at)} · går ut ${dato(approval.expires_at)}`,
+    );
+    card.append(meta);
+
+    if (approval.kind === 'request' && isFinal(approval)) {
+      card.append(
+        node(
+          'p',
+          'endelig',
+          'Dette kan ikke angres når det er gjort, bare rettes med en ny postering.',
+        ),
+      );
+    }
+    if (approval.note !== null) {
+      // Agentens egne ord, og derfor merket som det: en agent leser tekst
+      // skrevet av fremmede (regel 7), og forklaringen er dens påstand, ikke
+      // Myntos sin. Det som faktisk blir sendt står under.
+      const note = node('blockquote', 'notat');
+      note.append(node('span', 'notat-hvem', 'Agentens forklaring: '), document.createTextNode(approval.note));
+      card.append(note);
+    }
+    const page = pageFor(approval.path);
+    if (page !== null) {
+      const link = node('a', 'side', `Se ${page.label}`);
+      link.href = page.href;
+      const line = node('p', '');
+      line.append(link);
+      card.append(line);
+    }
+    const fileList = files(approval);
+    if (fileList !== null) card.append(fileList);
+    const shown = details(approval);
+    if (shown !== null) card.append(shown);
+
+    const status = node('p', 'status');
+    status.hidden = true;
+    const actions = node('div', 'knapper');
+
+    if (approval.kind === 'filing') {
+      const go = node('a', 'btn btn-primary', 'Gå til MVA-siden');
+      go.href = '/mva/';
+      actions.append(go);
+    } else if (approval.is_own) {
+      const approve = node('button', 'btn btn-primary', 'Godkjenn');
+      approve.type = 'button';
+      approve.addEventListener('click', () => {
+        approve.disabled = true;
+        approve.textContent = 'Utfører …';
+        void approveRequest(company.id, approval.id)
+          .then(async (done) => {
+            setStatus(status, outcomeText(done), done.status === 'done' ? 'ok' : undefined);
+            await refresh();
+          })
+          .catch((error: unknown) => {
+            approve.disabled = false;
+            approve.textContent = 'Godkjenn';
+            setStatus(status, error instanceof ApiError ? error.message : 'Det ble ikke utført.');
+          });
+      });
+      actions.append(approve);
+    } else {
+      actions.append(node('span', 'muted', `Venter på ${approval.person_name}.`));
+    }
+
+    // Avvise kan nøkkelens person, og den som styrer tilgangen, slik de kan
+    // stoppe en kollegas nøkkel.
+    if (approval.is_own || canInCompany(company, 'member:manage')) {
+      const decline = node('button', 'btn btn-ghost', 'Avvis');
+      decline.type = 'button';
+      const why = node('div', 'avvis');
+      why.hidden = true;
+      const reason = node('textarea', '');
+      reason.rows = 2;
+      reason.maxLength = 1000;
+      reason.placeholder = 'Hvorfor? (valgfritt, agenten får lese det)';
+      const confirm = node('button', 'btn btn-primary', 'Avvis forespørselen');
+      confirm.type = 'button';
+      why.append(reason, confirm);
+      decline.addEventListener('click', () => {
+        why.hidden = false;
+        reason.focus();
+      });
+      confirm.addEventListener('click', () => {
+        confirm.disabled = true;
+        const text = reason.value.trim();
+        void declineRequest(company.id, approval.id, text === '' ? null : text)
+          .then(() => refresh())
+          .catch((error: unknown) => {
+            confirm.disabled = false;
+            setStatus(status, error instanceof ApiError ? error.message : 'Den ble ikke avvist.');
+          });
+      });
+      actions.append(decline);
+      card.append(actions, why, status);
+    } else {
+      card.append(actions, status);
+    }
+    return card;
+  }
+
+  function decidedRow(approval: Approval): HTMLElement {
+    const row = node('div', 'avgjort');
+    row.id = `godkjenning-${approval.id}`;
+    row.append(node('span', 'avgjort-hva', approvalHeading(approval)));
+    const when = approval.decided_at ?? approval.expires_at;
+    const outcome =
+      approval.status === 'done' || approval.status === 'failed' || approval.status === 'running'
+        ? outcomeText(approval)
+        : approvalStateLabel(approval.status);
+    const reason = approval.decision_note === null ? '' : ` («${approval.decision_note}»)`;
+    row.append(node('span', `avgjort-utfall utfall-${approval.status}`, `${outcome}${reason}`));
+    row.append(node('span', 'avgjort-dato', dato(when)));
+    return row;
+  }
+
+  async function refresh(): Promise<void> {
+    const all = await listApprovals(company.id);
+    const waiting = all.filter(isWaiting);
+    const decided = all.filter((item) => !isWaiting(item));
+    el('#venter').replaceChildren(...waiting.map(waitingCard));
+    show(el('#ingen-venter'), waiting.length === 0);
+    el('#avgjort').replaceChildren(...decided.slice(0, 50).map(decidedRow));
+    show(el('#avgjort-tittel'), decided.length > 0);
+    show(el('#content'), true);
+  }
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      const current = currentCompany(companies);
+      if (current === undefined) return;
+      company = current;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      await refresh();
+      // Lenkene fra API-et og e-postene peker på én forespørsel.
+      const target = window.location.hash.slice(1);
+      if (target.startsWith('godkjenning-')) {
+        document.getElementById(target)?.scrollIntoView({ block: 'start' });
+      }
+    } catch (error: unknown) {
+      setStatus(
+        pageStatus,
+        error instanceof ApiError ? error.message : 'Vi fikk ikke hentet forespørslene.',
+      );
+    } finally {
+      el('#loading').hidden = true;
+    }
+  });
+</script>
+
+<style>
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .orgnr {
+    margin: 0.2rem 0 0;
+  }
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--muted);
+    margin: 0 0 0.4rem;
+  }
+  .liste {
+    display: grid;
+    gap: 1rem;
+    margin-bottom: 2rem;
+  }
+  .liste :global(.foresporsel h3) {
+    margin: 0 0 0.3rem;
+  }
+  .liste :global(.meta) {
+    margin: 0 0 0.6rem;
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  .liste :global(.endelig) {
+    margin: 0 0 0.6rem;
+    font-weight: 600;
+  }
+  .liste :global(.notat) {
+    margin: 0 0 0.8rem;
+    padding: 0.5rem 0.8rem;
+    border-left: 3px solid var(--border-strong);
+    background: var(--surface-2);
+    overflow-wrap: anywhere;
+  }
+  .liste :global(.notat-hvem) {
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .liste :global(.filer) {
+    margin: 0 0 0.8rem;
+    padding-left: 1.2rem;
+  }
+  .liste :global(.detaljer) {
+    margin: 0 0 1rem;
+  }
+  .liste :global(.detaljer summary) {
+    cursor: pointer;
+    color: var(--muted);
+  }
+  .liste :global(.felt) {
+    display: grid;
+    grid-template-columns: minmax(8rem, max-content) minmax(0, 1fr);
+    gap: 0.3rem 1rem;
+    margin: 0.6rem 0 0;
+    font-size: 0.9rem;
+  }
+  .liste :global(.felt dt) {
+    color: var(--muted);
+    font-family: var(--font-numeric);
+  }
+  .liste :global(.felt dd) {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  .liste :global(.felt dd.blokk) {
+    white-space: pre-wrap;
+    font-family: var(--font-numeric);
+  }
+  .liste :global(.knapper) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .liste :global(.avvis) {
+    display: grid;
+    gap: 0.5rem;
+    margin-top: 0.8rem;
+    max-width: 32rem;
+  }
+  .liste :global(.avgjort) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    gap: 0.4rem 1rem;
+    padding: 0.6rem 0;
+    border-top: 1px solid var(--border);
+    font-size: 0.92rem;
+  }
+  .liste :global(.avgjort-dato) {
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .liste :global(.utfall-failed),
+  .liste :global(.utfall-running) {
+    font-weight: 600;
+  }
+  @media (max-width: 40rem) {
+    .liste :global(.avgjort) {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>

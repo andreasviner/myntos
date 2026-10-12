@@ -6,13 +6,17 @@ ledger's SAF-T VAT codes — is built in the MVA milestone
 travels: validate, then instance, then the two ``process/next`` calls, then the
 three documents that come back and have to be kept.
 
-**Everything here needs a person.** The validation and submission scopes
-(``skatteetaten:mvameldingvalidering``, ``skatteetaten:mvameldinginnsending``)
-are ID-porten scopes, not Maskinporten ones; Maskinporten is accepted only for
-the MVA read and information APIs. So the ID-porten access token is a required
-argument on every method, and the Altinn app takes the token exchanged from it —
-a raw ID-porten token against the app answers 401, which is the confusing
-symptom of a missing exchange rather than a permissions problem.
+**Everything here needs a person.** Validation takes the ID-porten scope
+``skatteetaten:mvameldingvalidering``, and Maskinporten is accepted only for the
+MVA read and information APIs. Everything after validation goes through the
+Altinn app on the token exchanged from the same login, which needs
+``altinn:instances.read`` and ``altinn:instances.write`` and nothing from
+Skatteetaten. The scope that used to be named for it,
+``skatteetaten:mvameldinginnsending``, is retired on Skatteetaten's own
+instruction (docs/integrations/mva.md, scope audit), and asking for it now fails
+the whole ID-porten login with ``invalid_scope``. A raw ID-porten token against
+the app answers 401, which is the confusing symptom of a missing exchange rather
+than a permissions problem.
 
 **Three documents, all of them worth keeping.** Once the process has ended the
 instance carries a ``valideringsresultat`` (XML), a ``betalingsinformasjon``
@@ -36,10 +40,10 @@ from myntos.integrations.altinn.instances import (
     InstanceRef,
 )
 
-# ID-porten scopes. Ordered from Skatteetaten one at a time; a client that has
-# not been granted one cannot even start the authorization that asks for it.
+# The one Skatteetaten scope the MVA flow needs, on the ID-porten client. A
+# client that has not been granted it cannot even start the authorization that
+# asks for it.
 VALIDATION_SCOPE = "skatteetaten:mvameldingvalidering"
-SUBMISSION_SCOPE = "skatteetaten:mvameldinginnsending"
 
 # The app's data types. The metadata element goes up first: it names the
 # taxpayer, the period, the category and the innsendingstype, and the melding is
@@ -60,6 +64,15 @@ ATTACHMENT_DATA_TYPE = "binaerVedlegg"
 #   https://skatteetaten.github.io/mva-meldingen/documentation/api/
 XML_CONTENT_TYPE = "text/xml"
 VALIDATION_CONTENT_TYPE = "application/xml"
+# And a third case: the envelope is PUT into the element the app created, and
+# Skatteetaten's guide shows application/xml for that one call.
+ENVELOPE_CONTENT_TYPE = "application/xml"
+
+# The names the two XML documents go up under. Altinn rejects duplicate
+# filenames within an instance, and the envelope's vedlegg list has to name the
+# melding's file, so both are fixed rather than generated.
+ENVELOPE_FILENAME = "konvolutt.xml"
+MELDING_FILENAME = "mva-melding.xml"
 
 # The three documents to persist with the period's bilag once the process ends.
 FEEDBACK_DATA_TYPES = ("valideringsresultat", "betalingsinformasjon", "kvittering")
@@ -169,31 +182,51 @@ class MvaMeldingClient:
 
     async def upload_melding(
         self,
-        ref: InstanceRef,
+        instance: Instance,
         *,
         altinn_token: str,
         metadata: bytes,
         melding: bytes,
     ) -> None:
-        """Upload the metadata and then the melding, in that order.
+        """Fill in the envelope, then upload the melding, in that order.
 
         The order is the app's: ``mvaMeldingInnsending`` states who is filing,
         for which period, in which category and as which innsendingstype, and the
         melding is interpreted against it.
+
+        The envelope is **replaced**, not uploaded. The app creates it, empty,
+        together with the instance, and its data type allows exactly one; a POST
+        beside it is refused. Taking the :class:`Instance` rather than a bare
+        reference is what lets this find the element to overwrite. Only if the
+        app did not create one, which no version seen so far does, is it
+        uploaded instead.
         """
+        existing = instance.element_of_type(METADATA_DATA_TYPE)
+        if existing is not None:
+            await self._app.replace_data(
+                instance.ref,
+                token=altinn_token,
+                element_id=existing.id,
+                content=metadata,
+                content_type=ENVELOPE_CONTENT_TYPE,
+                filename=ENVELOPE_FILENAME,
+            )
+        else:
+            await self._app.upload_data(
+                instance.ref,
+                token=altinn_token,
+                data_type=METADATA_DATA_TYPE,
+                content=metadata,
+                content_type=XML_CONTENT_TYPE,
+                filename=ENVELOPE_FILENAME,
+            )
         await self._app.upload_data(
-            ref,
-            token=altinn_token,
-            data_type=METADATA_DATA_TYPE,
-            content=metadata,
-            content_type=XML_CONTENT_TYPE,
-        )
-        await self._app.upload_data(
-            ref,
+            instance.ref,
             token=altinn_token,
             data_type=MELDING_DATA_TYPE,
             content=melding,
             content_type=XML_CONTENT_TYPE,
+            filename=MELDING_FILENAME,
         )
 
     async def upload_attachments(

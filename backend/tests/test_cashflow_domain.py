@@ -317,11 +317,11 @@ def test_split_gross_rejects_sub_ore_input() -> None:
 # --- What may be a bilag ------------------------------------------------------
 
 
-def test_a_pdf_is_recognised_by_its_bytes():
+def test_a_pdf_is_recognised_by_its_bytes() -> None:
     assert bilag_service.validate_document(b"%PDF-1.7\n%...") == "application/pdf"
 
 
-def test_a_photograph_is_a_bilag_now():
+def test_a_photograph_is_a_bilag_now() -> None:
     """Most of a small company's purchases are documented by a phone camera.
 
     Bokføringsforskriften § 5-1 says what documentation must contain, never what
@@ -335,7 +335,7 @@ def test_a_photograph_is_a_bilag_now():
     assert bilag_service.validate_document(b"RIFF\x00\x00\x00\x00WEBP") == "image/webp"
 
 
-def test_the_upload_does_not_get_to_say_what_it_is():
+def test_the_upload_does_not_get_to_say_what_it_is() -> None:
     """A .png that is really a script is refused on its bytes, not its name.
 
     The old check trusted the PDF magic number for exactly this reason, and
@@ -346,25 +346,34 @@ def test_the_upload_does_not_get_to_say_what_it_is():
         bilag_service.validate_document(b"<?php system($_GET[0]); ?>")
 
 
-def test_a_webp_needs_the_tag_and_not_just_the_container():
+def test_a_webp_needs_the_tag_and_not_just_the_container() -> None:
     """RIFF alone is also a WAV, an AVI and a handful of other things."""
     with pytest.raises(UnsupportedDocumentError):
         bilag_service.validate_document(b"RIFF\x00\x00\x00\x00WAVE")
 
 
-def test_a_fallback_name_gets_the_right_extension():
+def test_a_fallback_name_gets_the_right_extension() -> None:
     """A PNG stored as "bilag.pdf" is a row an auditor downloads and cannot open."""
     assert bilag_service.sanitise_filename("", content_type="image/png") == "bilag.png"
     assert bilag_service.sanitise_filename("", content_type="application/pdf") == "bilag.pdf"
 
 
-def test_the_archive_and_the_reader_accept_the_same_formats():
+def test_the_archive_and_the_reader_accept_the_same_formats() -> None:
     """A bilag that can be filed and never read would be a trap.
 
     The two lists live in different modules for good reasons — one is about what
     we keep for five years, the other about what Løynd can transcribe — and this
     is what stops them drifting apart.
+
+    The rule is no longer that they are the same list. HEIC is kept by the
+    archive and not opened by Løynd, so it is read through a JPEG copy instead
+    (``READ_AS``); what has to hold is that every accepted image reaches Løynd
+    one way or the other, and that nothing is converted into a format Løynd
+    does not take either.
     """
+    from myntos.domain.bilag.models import READ_AS
     from myntos.integrations.loynd import IMAGE_CONTENT_TYPES
 
-    assert ACCEPTED_CONTENT_TYPES - {PDF_CONTENT_TYPE} == IMAGE_CONTENT_TYPES
+    images = ACCEPTED_CONTENT_TYPES - {PDF_CONTENT_TYPE}
+    assert images == IMAGE_CONTENT_TYPES | set(READ_AS)
+    assert set(READ_AS.values()) <= IMAGE_CONTENT_TYPES

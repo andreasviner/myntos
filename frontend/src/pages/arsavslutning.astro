@@ -1,0 +1,454 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Årsavslutning | Myntos"
+  description="Avslutt et regnskapsår: årets resultat over på egenkapitalen, året låst og neste år åpnet."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Årsavslutning</p>
+      {/* Selskapet er overskriften: å låse et år er noe man gjør med ett
+          bestemt regnskap, og navnet skal stå der knappen står. */}
+      <h1 data-session-company></h1>
+      <p class="muted orgnr" id="orgnr"></p>
+    </div>
+    <div class="head-actions year-nav" role="group" aria-label="Regnskapsår">
+      <button type="button" class="btn btn-ghost btn-small" id="year-prev" aria-label="Året før">‹</button>
+      <span class="year" id="year"></span>
+      <button type="button" class="btn btn-ghost btn-small" id="year-next" aria-label="Året etter">›</button>
+    </div>
+  </header>
+
+  <p class="lead">
+    Når et år er over, føres resultatet over på egenkapitalen og året låses, så neste år starter med
+    riktig balanse. Et aksjeselskap og et enkeltpersonforetak gjør dette ulikt, og Myntos velger
+    ut fra organisasjonsformen i Enhetsregisteret. Du ser alt som blir ført før du bekrefter.
+  </p>
+
+  <p class="status" id="page-status" hidden></p>
+  <div class="empty" id="loading">Henter …</div>
+
+  <section class="card" id="plan" hidden aria-live="polite">
+    <h2 class="card-title" id="plan-title"></h2>
+    <div class="summary">
+      <div class="setting"><span class="setting-label">Inntekter</span><span class="figure" id="revenue"></span></div>
+      <div class="setting"><span class="setting-label">Kostnader</span><span class="figure" id="costs"></span></div>
+      <div class="setting"><span class="setting-label">Resultat før skatt</span><span class="figure" id="before-tax"></span></div>
+      <div class="setting"><span class="setting-label">Årsresultat</span><span class="figure" id="result"></span></div>
+      <div class="setting"><span class="setting-label">Organisasjonsform</span><span class="figure" id="form"></span></div>
+    </div>
+
+    {/* Bare for aksjeselskap: et ENK betaler ikke skatt selv. Myntos regner
+        ikke ut skatten; den som avslutter året, oppgir den. */}
+    <label class="field" id="tax-field" hidden>
+      <span>Betalbar skatt for året</span>
+      <input type="text" id="tax" inputmode="decimal" placeholder="0,00" />
+      <span class="field-hint">
+        Føres som kostnad på 8300 og gjeld på 2500 før resultatet disponeres. Myntos beregner ikke
+        skatten, og heller ikke utsatt skatt.
+      </span>
+    </label>
+
+    <ul class="findings" id="errors" hidden></ul>
+    <ul class="findings notes" id="notes" hidden></ul>
+
+    <h3 class="sub" id="lines-title">Dette blir ført per 31. desember</h3>
+    <div class="table-scroll">
+      <table class="lines">
+        <thead>
+          <tr><th>Konto</th><th>Tekst</th><th class="num">Debet</th><th class="num">Kredit</th></tr>
+        </thead>
+        <tbody id="lines"></tbody>
+      </table>
+    </div>
+    <p class="card-hint" id="no-lines" hidden>
+      Resultatet er null, så ingenting føres. Året låses likevel.
+    </p>
+
+    <div id="confirm-block" hidden>
+      <label class="check">
+        <input type="checkbox" id="confirm" />
+        <span>
+          Jeg har gått gjennom tallene og posteringene over. Etter avslutningen kan ingenting føres
+          i året, for noen av dem som har tilgang til regnskapet.
+        </span>
+      </label>
+      <div class="actions">
+        <button type="button" class="btn btn-primary" id="close" disabled></button>
+      </div>
+    </div>
+    <p class="card-hint" id="no-permission" hidden>
+      Det er eier eller administrator av selskapet som avslutter et regnskapsår.
+    </p>
+    <p class="status" id="plan-status" hidden></p>
+  </section>
+
+  {/* Gjenåpning: lov, men alltid med begrunnelse, og aldri en sletting. */}
+  <section class="card" id="reopen" hidden>
+    <h2 class="card-title">Året er avsluttet</h2>
+    <p id="closed-at"></p>
+    <div id="reopen-form" hidden>
+      <p>
+        Trenger du å føre noe i året, kan det gjenåpnes. Avslutningen blir da reversert, ikke
+        slettet, og gjenåpningen loggføres med navn og begrunnelse. Er årsregnskapet fastsatt, skal
+        feilen i stedet rettes i inneværende år.
+      </p>
+      <label class="field">
+        <span>Begrunnelse</span>
+        <textarea id="reason" rows="3" maxlength="1000"></textarea>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="not-adopted" />
+        <span>Årsregnskapet for året er ikke fastsatt.</span>
+      </label>
+      <div class="actions">
+        <button type="button" class="btn btn-ghost" id="reopen-button">Gjenåpne året</button>
+      </div>
+      <p class="status" id="reopen-status" hidden></p>
+    </div>
+  </section>
+
+  <section class="card" id="log-card" hidden>
+    <h2 class="card-title">Logg</h2>
+    <ul class="history" id="log"></ul>
+  </section>
+</BaseLayout>
+
+<style>
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .orgnr {
+    margin: 0.2rem 0 0;
+  }
+  .year-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .year {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    min-width: 3.5rem;
+    text-align: center;
+  }
+  .card + .card {
+    margin-top: 1rem;
+  }
+  .summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem 2.5rem;
+    margin-bottom: 1rem;
+  }
+  .setting {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .setting-label {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .figure {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+  .sub {
+    font-size: 1rem;
+    margin: 1rem 0 0.5rem;
+  }
+  .lines {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+  }
+  .lines th,
+  .lines td {
+    text-align: left;
+    padding: 0.35rem 0.5rem;
+    border-bottom: 1px solid var(--border, #ddd);
+  }
+  .lines .num {
+    text-align: right;
+  }
+  .findings {
+    margin: 0.75rem 0;
+    padding-left: 1.2rem;
+    color: var(--negative);
+  }
+  .findings.notes {
+    color: var(--muted);
+  }
+  .check {
+    display: flex;
+    gap: 0.5rem;
+    align-items: flex-start;
+    margin-top: 1rem;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+  }
+  .history {
+    padding-left: 1.2rem;
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    closeYear,
+    getClosingPlan,
+    listFinancialYears,
+    reopenYear,
+    type ClosingPlan,
+    type Company,
+    type FinancialYearStatus,
+    type PlannedLine,
+  } from '../lib/api';
+  import { normaliseAmount } from '../lib/amount';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import { kroner, orgnummer } from '../lib/format';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const planStatus = el<HTMLParagraphElement>('#plan-status');
+  const taxInput = el<HTMLInputElement>('#tax');
+  const confirm = el<HTMLInputElement>('#confirm');
+  const closeButton = el<HTMLButtonElement>('#close');
+
+  let company: Company;
+  let years: FinancialYearStatus[] = [];
+  let year = new Date().getFullYear() - 1;
+  let plan: ClosingPlan | null = null;
+
+  function cell(text: string, numeric = false): HTMLTableCellElement {
+    const td = document.createElement('td');
+    td.textContent = text;
+    if (numeric) td.className = 'num';
+    return td;
+  }
+
+  function row(line: PlannedLine): HTMLTableRowElement {
+    const tr = document.createElement('tr');
+    tr.append(
+      cell(line.account_number),
+      cell(line.description),
+      cell(Number(line.debit) === 0 ? '' : kroner(line.debit), true),
+      cell(Number(line.credit) === 0 ? '' : kroner(line.credit), true),
+    );
+    return tr;
+  }
+
+  function list(target: HTMLElement, messages: string[]): void {
+    target.replaceChildren(
+      ...messages.map((message) => {
+        const item = document.createElement('li');
+        item.textContent = message;
+        return item;
+      }),
+    );
+    show(target, messages.length > 0);
+  }
+
+  /** Skatten slik backend skal lese den, eller null når feltet ikke kan leses. */
+  function tax(): string | null {
+    return normaliseAmount(taxInput.value);
+  }
+
+  function renderLog(status: FinancialYearStatus | undefined): void {
+    const events = status?.events ?? [];
+    show(el('#log-card'), events.length > 0);
+    el('#log').replaceChildren(
+      ...events.map((event) => {
+        const item = document.createElement('li');
+        const when = new Date(event.occurred_at).toLocaleString('nb-NO');
+        item.textContent =
+          event.action === 'avsluttet'
+            ? `${when}: avsluttet, årsresultat ${kroner(event.result ?? '0')}`
+            : `${when}: gjenåpnet. «${event.reason ?? ''}»`;
+        return item;
+      }),
+    );
+  }
+
+  function renderPlan(current: ClosingPlan): void {
+    plan = current;
+    // Spurt her, når kortet tegnes, og ikke tatt vare på: selskapet på skjermen
+    // kan ha byttet siden forrige gang.
+    const mayClose = canInCompany(company, 'ledger:close');
+    el('#plan-title').textContent = current.closed ? `Regnskapsåret ${current.year} er avsluttet` : `Avslutte ${current.year}`;
+    el('#revenue').textContent = kroner(current.revenue);
+    el('#costs').textContent = kroner(current.costs);
+    el('#before-tax').textContent = kroner(current.result_before_tax);
+    el('#result').textContent = kroner(current.result);
+    el('#form').textContent = current.organisation_form ?? 'ukjent';
+    show(el('#tax-field'), current.organisation_form === 'AS' && !current.closed);
+
+    const findings = current.closed ? [] : current.findings;
+    list(el('#errors'), findings.filter((f) => f.severity === 'feil').map((f) => f.message));
+    list(el('#notes'), findings.filter((f) => f.severity === 'merknad').map((f) => f.message));
+
+    const lines = [...current.tax_lines, ...current.disposition_lines];
+    el('#lines').replaceChildren(...lines.map(row));
+    show(el('#lines-title'), !current.closed);
+    show(el('.lines', el('#plan')), !current.closed && lines.length > 0);
+    show(el('#no-lines'), !current.closed && lines.length === 0 && current.closable);
+
+    show(el('#confirm-block'), !current.closed && mayClose);
+    show(el('#no-permission'), !current.closed && !mayClose);
+    closeButton.textContent = `Avslutt ${current.year}`;
+    closeButton.disabled = !(current.closable && confirm.checked);
+
+    // Gjenåpning gjelder bare det siste avsluttede året: et senere avsluttet år
+    // bygger på dette. Backend håndhever det; her skjules knappen.
+    const laterClosed = years.some((y) => y.year > current.year && y.closed);
+    show(el('#reopen'), current.closed);
+    el('#closed-at').textContent = current.closed_at
+      ? `Avsluttet ${new Date(current.closed_at).toLocaleString('nb-NO')}.`
+      : '';
+    show(el('#reopen-form'), current.closed && mayClose && !laterClosed);
+  }
+
+  async function refresh(): Promise<void> {
+    el('#year').textContent = String(year);
+    setStatus(planStatus, '');
+    const status = years.find((y) => y.year === year);
+    renderLog(status);
+    if (status === undefined) {
+      show(el('#plan'), false);
+      show(el('#reopen'), false);
+      setStatus(pageStatus, `Selskapet har ikke noe regnskapsår ${year} i Myntos.`);
+      return;
+    }
+    setStatus(pageStatus, '');
+    const amount = tax();
+    if (amount === null) {
+      setStatus(planStatus, 'Skattebeløpet kan ikke leses.');
+      return;
+    }
+    try {
+      renderPlan(await getClosingPlan(company.id, year, amount));
+      show(el('#plan'), true);
+    } catch (error: unknown) {
+      show(el('#plan'), false);
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet året.');
+    }
+  }
+
+  async function reload(): Promise<void> {
+    years = await listFinancialYears(company.id);
+    await refresh();
+  }
+
+  function changeYear(step: number): void {
+    year += step;
+    taxInput.value = '';
+    confirm.checked = false;
+    void refresh();
+  }
+
+  el('#year-prev').addEventListener('click', () => changeYear(-1));
+  el('#year-next').addEventListener('click', () => changeYear(1));
+  // Planen hentes på nytt når skatten endres, så det som vises alltid er det
+  // backend vil føre.
+  taxInput.addEventListener('change', () => {
+    confirm.checked = false;
+    void refresh();
+  });
+  confirm.addEventListener('change', () => {
+    closeButton.disabled = !(plan?.closable === true && confirm.checked);
+  });
+
+  closeButton.addEventListener('click', () => {
+    const amount = tax();
+    if (amount === null || plan === null) return;
+    closeButton.disabled = true;
+    closeYear(company.id, plan.year, amount)
+      .then(async (closed) => {
+        confirm.checked = false;
+        await reload();
+        const numbers = closed.vouchers.map((v) => v.voucher_no).join(' og ');
+        setStatus(
+          pageStatus,
+          `Regnskapsåret ${closed.year} er avsluttet${numbers ? ` med bilag ${numbers}` : ''}, og ${closed.year + 1} er åpnet.`,
+          'ok',
+        );
+      })
+      .catch((error: unknown) => {
+        closeButton.disabled = false;
+        setStatus(planStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke avsluttet året.');
+      });
+  });
+
+  el('#reopen-button').addEventListener('click', () => {
+    const status = el<HTMLParagraphElement>('#reopen-status');
+    const reason = el<HTMLTextAreaElement>('#reason').value.trim();
+    if (!el<HTMLInputElement>('#not-adopted').checked) {
+      setStatus(status, 'Bekreft at årsregnskapet ikke er fastsatt.');
+      return;
+    }
+    const button = el<HTMLButtonElement>('#reopen-button');
+    button.disabled = true;
+    reopenYear(company.id, year, reason)
+      .then(async () => {
+        el<HTMLTextAreaElement>('#reason').value = '';
+        el<HTMLInputElement>('#not-adopted').checked = false;
+        await reload();
+        setStatus(pageStatus, `Regnskapsåret ${year} er gjenåpnet. Avslutningen er reversert.`, 'ok');
+      })
+      .catch((error: unknown) => {
+        setStatus(status, error instanceof ApiError ? error.message : 'Vi fikk ikke gjenåpnet året.');
+      })
+      .finally(() => {
+        button.disabled = false;
+      });
+  });
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      const current = currentCompany(companies);
+      if (current === undefined) return;
+      company = current;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      years = await listFinancialYears(company.id);
+      // Det første åpne året, som er det som står for tur. Har selskapet
+      // bare ett år, er det det.
+      const next = years.find((y) => !y.closed);
+      year = next?.year ?? years[years.length - 1]?.year ?? year;
+      await refresh();
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet selskapet.');
+    } finally {
+      el('#loading').hidden = true;
+    }
+  });
+</script>

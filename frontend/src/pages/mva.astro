@@ -1,0 +1,908 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Mva-melding | Myntos"
+  description="Se mva-meldingen for hver termin, kontroller den hos Skatteetaten og send den inn."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Mva-melding</p>
+      {/* Selskapet er overskriften, slik som på oversikten: en mva-melding
+          sendes for ett bestemt organisasjonsnummer, og det skal stå der man
+          ser det før man trykker på noe. */}
+      <h1 data-session-company></h1>
+      <p class="muted orgnr" id="orgnr"></p>
+    </div>
+    <div class="head-actions year-nav" role="group" aria-label="År">
+      <button type="button" class="btn btn-ghost btn-small" id="year-prev" aria-label="Året før"
+        >‹</button
+      >
+      <span class="year" id="year"></span>
+      <button type="button" class="btn btn-ghost btn-small" id="year-next" aria-label="Året etter"
+        >›</button
+      >
+    </div>
+  </header>
+
+  <p class="lead">
+    Meldingen bygges av det du har ført, kode for kode, og du ser hver linje før noe sendes.
+    Skatteetaten kontrollerer den først. Den sendes bare når du bekrefter beløpet du så.
+    Uttak, tap på krav og justeringer føres <a href="/mva-justeringer/">på en egen side</a> og kommer
+    med på egne linjer.
+  </p>
+
+  <p class="status" id="page-status" hidden></p>
+
+  {/* Egen markering og ikke en statuslinje, fordi den må lenke til stedet det
+      rettes. Står ikke registreringen riktig, er alt under feil, ikke bare
+      knappen. */}
+  <p class="status" id="not-registered" data-tone="error" hidden>
+    Selskapet er ikke merket som registrert i Merverdiavgiftsregisteret, og da sendes det ingen
+    mva-melding. Er det feil, rett det under <a href="/organisasjon/#selskap">Selskapet</a>.
+  </p>
+
+  <div class="empty" id="loading">Henter …</div>
+
+  <div id="content" hidden>
+    <div class="card settings">
+      <div class="setting">
+        <span class="setting-label">Terminlengde</span>
+        <select id="period-type" hidden></select>
+        <span id="period-type-text"></span>
+      </div>
+      <div class="setting">
+        <span class="setting-label">Meldingstype</span>
+        <select id="category" hidden></select>
+        <span id="category-text"></span>
+      </div>
+      <p class="card-hint setting-hint">
+        Annenhver måned er det vanlige. Månedlig og årlig termin får man etter søknad hos
+        Skatteetaten, så velg det bare når de har sagt ja.
+      </p>
+      <p class="status" id="settings-status" hidden></p>
+    </div>
+
+    <div class="card">
+      <div class="table-scroll">
+        <table class="data">
+          <thead>
+            <tr>
+              <th>Termin</th>
+              <th>Frist</th>
+              <th class="num">Beløp</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="periods"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <section class="card period" id="period" hidden aria-live="polite">
+      <div class="period-head">
+        <div>
+          <h2 class="card-title" id="period-title"></h2>
+          <p class="card-hint" id="period-dates"></p>
+        </div>
+        <a class="btn btn-ghost btn-small" id="period-xml" href="#">Last ned XML</a>
+      </div>
+
+      <ul class="blockers" id="blockers" hidden></ul>
+      <p class="status" id="changed" data-tone="error" hidden>
+        Regnskapet for terminen er endret etter at meldingen ble sendt. Tallene under er slik de er
+        nå. Send en ny melding for terminen, så erstatter den den forrige.
+      </p>
+      <p class="status" id="unreconciled" data-tone="error" hidden></p>
+
+      <div class="table-scroll">
+        <table class="data lines">
+          <thead>
+            <tr>
+              <th>Kode</th>
+              <th>Hva</th>
+              <th class="num">Grunnlag</th>
+              <th class="num">Sats</th>
+              <th class="num">Mva</th>
+            </tr>
+          </thead>
+          <tbody id="lines"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="lines-empty" hidden>
+        Ingenting å rapportere i terminen. Meldingen skal likevel sendes, med null.
+      </p>
+
+      <dl class="totals">
+        <dt>Utgående mva</dt>
+        <dd id="total-out"></dd>
+        <dt>Inngående mva</dt>
+        <dd id="total-in"></dd>
+        <dt id="total-label"></dt>
+        <dd class="grand" id="total"></dd>
+      </dl>
+
+      <div class="actions" id="actions">
+        <p class="card-hint" id="not-configured" hidden>
+          Innsending fra Myntos er ikke satt opp her. Last ned meldingen som XML og last den opp i
+          Skatteetatens portal for mva-meldingen.
+        </p>
+        <a class="btn btn-primary" id="login" href="#" hidden>Logg inn med ID-porten</a>
+        <form id="check-form" novalidate hidden>
+          <label class="field">
+            <span>Merknad til Skatteetaten <span class="muted">(valgfritt)</span></span>
+            <textarea name="merknad" rows="2" maxlength="4000"></textarea>
+            <span class="field-hint">
+              Bare hvis et tall trenger en forklaring. Kontrollen sier fra når den vil ha en.
+            </span>
+          </label>
+          <button class="btn btn-primary" type="submit" id="check">Kontroller hos Skatteetaten</button>
+          <p class="card-hint">Kontrollen sender ingenting inn. Du ser svaret før du bestemmer deg.</p>
+        </form>
+        <p class="status" id="action-status" hidden></p>
+      </div>
+
+      {/* Innsendingen er et steg og ikke en dialog: den kan ikke trekkes
+          tilbake, bare erstattes av en ny melding. Kortet viser meldingen slik
+          den ble kontrollert, Skatteetatens svar, og hvem den sendes for. */}
+      <div class="review" id="review" hidden>
+        <h3>Send inn</h3>
+        <p id="review-verdict"></p>
+        <ul class="findings" id="review-findings" hidden></ul>
+        <label class="check">
+          <input type="checkbox" id="confirm" />
+          <span id="confirm-text"></span>
+        </label>
+        <button class="btn btn-primary" type="button" id="submit" disabled></button>
+        <p class="status" id="submit-status" hidden></p>
+      </div>
+
+      <div id="history" hidden>
+        <h3>Meldinger for terminen</h3>
+        <ol class="filings" id="filings"></ol>
+      </div>
+    </section>
+  </div>
+</BaseLayout>
+
+<style>
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .orgnr {
+    margin: 0.2rem 0 0;
+  }
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--muted);
+    margin: 0 0 0.4rem;
+  }
+  .year-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .year {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    min-width: 3.5rem;
+    text-align: center;
+  }
+  .settings {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem 2rem;
+    align-items: center;
+    margin-bottom: 1.5rem;
+  }
+  .setting {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .setting-label {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .setting-hint {
+    flex-basis: 100%;
+    margin: 0;
+  }
+  .period {
+    margin-top: 1.5rem;
+  }
+  .period-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+  .blockers {
+    margin: 0.5rem 0 1rem;
+    padding-left: 1.2rem;
+    color: var(--negative);
+  }
+  .totals {
+    display: grid;
+    grid-template-columns: max-content max-content;
+    justify-content: end;
+    gap: 0.3rem 1.5rem;
+    margin: 1rem 0 1.5rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .totals dt {
+    color: var(--muted);
+  }
+  .totals dd {
+    margin: 0;
+    text-align: right;
+  }
+  .totals .grand {
+    font-weight: 700;
+    font-size: 1.15rem;
+  }
+  .actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    align-items: flex-start;
+    max-width: 36rem;
+  }
+  .actions form {
+    width: 100%;
+  }
+  .actions textarea {
+    width: 100%;
+  }
+  .review {
+    margin-top: 1.5rem;
+    padding: 1rem 1.2rem;
+    border: 2px solid var(--accent);
+    border-radius: var(--radius-small);
+    max-width: 40rem;
+  }
+  .review h3,
+  #history h3 {
+    margin-top: 0;
+  }
+  .check {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    margin: 0.8rem 0;
+  }
+  .check input {
+    margin-top: 0.25rem;
+  }
+  .findings {
+    padding-left: 1.2rem;
+    margin: 0.5rem 0;
+  }
+  .findings li {
+    margin-bottom: 0.35rem;
+  }
+  #history {
+    margin-top: 2rem;
+  }
+  .filings {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 0.75rem;
+  }
+  .filings > li {
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-small);
+    padding: 0.75rem 1rem;
+  }
+  .filing-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+    align-items: baseline;
+  }
+  .filing-meta {
+    margin: 0.35rem 0 0;
+    font-size: 0.9rem;
+  }
+  .filing-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1rem;
+    margin-top: 0.5rem;
+  }
+  .badge[data-tone='ok'] {
+    background: var(--accent-soft);
+    color: var(--positive);
+  }
+  .badge[data-tone='error'] {
+    background: var(--danger-bg);
+    color: var(--negative);
+  }
+  tr[data-open='true'] td {
+    background: var(--surface-2);
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    checkMvaPeriod,
+    fetchMvaFeedback,
+    getGovernmentLoginStatus,
+    getMvaOverview,
+    getMvaPeriod,
+    governmentLoginStartUrl,
+    mvaDocumentUrl,
+    mvaFiledXmlUrl,
+    mvaPeriodXmlUrl,
+    submitMvaFiling,
+    updateMvaSettings,
+    type Company,
+    type GovernmentLoginStatus,
+    type MvaFiling,
+    type MvaFilingStatus,
+    type MvaOverview,
+    type MvaPeriod,
+    type MvaPeriodRow,
+    type MvaSettings,
+  } from '../lib/api';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import { isoDate, kroner, orgnummer } from '../lib/format';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const settingsStatus = el<HTMLParagraphElement>('#settings-status');
+  const actionStatus = el<HTMLParagraphElement>('#action-status');
+  const submitStatus = el<HTMLParagraphElement>('#submit-status');
+  const periodTypeSelect = el<HTMLSelectElement>('#period-type');
+  const categorySelect = el<HTMLSelectElement>('#category');
+  const checkForm = el<HTMLFormElement>('#check-form');
+  const checkButton = el<HTMLButtonElement>('#check');
+  const confirmBox = el<HTMLInputElement>('#confirm');
+  const submitButton = el<HTMLButtonElement>('#submit');
+
+  let company: Company;
+  let year = new Date().getFullYear();
+  let open: { year: number; termin: number } | null = null;
+  let period: MvaPeriod | null = null;
+  let government: GovernmentLoginStatus = {
+    available: false,
+    logged_in: false,
+    pid: null,
+    acr: null,
+    expires_at: null,
+    linked: false,
+    linked_name: null,
+    linked_at: null,
+  };
+
+  // Tillatelsene spørres der de brukes, aldri tatt vare på: selskapet på
+  // skjermen kan endre seg, og da gjelder svaret for det forrige.
+  const mayWrite = (): boolean => canInCompany(company, 'ledger:write');
+  const mayManage = (): boolean => canInCompany(company, 'organization:manage');
+
+  const STATUS_TEXT: Record<MvaFilingStatus, string> = {
+    validert: 'Kontrollert, ikke sendt',
+    avvist: 'Avvist i kontrollen',
+    sendt: 'Sendt, venter på kvittering',
+    mottatt: 'Sendt og mottatt',
+    feilet: 'Stoppet underveis',
+  };
+  const STATUS_TONE: Partial<Record<MvaFilingStatus, string>> = {
+    mottatt: 'ok',
+    sendt: 'ok',
+    avvist: 'error',
+    feilet: 'error',
+  };
+
+  const DOCUMENT_TEXT: Record<string, string> = {
+    kvittering: 'Kvittering (PDF)',
+    betalingsinformasjon: 'Betalingsinformasjon',
+    valideringsresultat: 'Kontrollresultat',
+  };
+
+  /** Beløpet uten fortegn. Fortegnet sier om det er å betale eller til gode, og det står i ordet. */
+  function unsigned(amount: string): string {
+    return kroner(amount.replace(/^-/, ''));
+  }
+
+  function owes(amount: string): boolean {
+    return !amount.startsWith('-');
+  }
+
+  function cell(text: string, className?: string): HTMLTableCellElement {
+    const td = document.createElement('td');
+    if (className !== undefined) td.className = className;
+    td.textContent = text;
+    return td;
+  }
+
+  function badge(text: string, tone?: string): HTMLSpanElement {
+    const span = document.createElement('span');
+    span.className = 'badge';
+    span.textContent = text;
+    if (tone !== undefined) span.dataset.tone = tone;
+    return span;
+  }
+
+  function dateTime(value: string): string {
+    return new Date(value).toLocaleString('nb-NO', { dateStyle: 'medium', timeStyle: 'short' });
+  }
+
+  // --- Innstillinger ---------------------------------------------------------
+
+  function fillSelect(select: HTMLSelectElement, choices: { value: string; label: string }[], value: string): void {
+    select.replaceChildren(
+      ...choices.map((choice) => {
+        const option = document.createElement('option');
+        option.value = choice.value;
+        option.textContent = choice.label;
+        return option;
+      }),
+    );
+    select.value = value;
+  }
+
+  function renderSettings(settings: MvaSettings): void {
+    const label = (choices: { value: string; label: string }[], value: string): string =>
+      choices.find((choice) => choice.value === value)?.label ?? value;
+    fillSelect(periodTypeSelect, settings.period_types, settings.period_type);
+    fillSelect(categorySelect, settings.categories, settings.category);
+    el('#period-type-text').textContent = label(settings.period_types, settings.period_type);
+    el('#category-text').textContent = label(settings.categories, settings.category);
+    // Et valg bare når det finnes et: én kategori å velge mellom er ikke et spørsmål.
+    const manage = mayManage();
+    show(periodTypeSelect, manage);
+    show(el('#period-type-text'), !manage);
+    show(categorySelect, manage && settings.categories.length > 1);
+    show(el('#category-text'), !(manage && settings.categories.length > 1));
+  }
+
+  function saveSettings(payload: { period_type?: string; category?: string }): void {
+    periodTypeSelect.disabled = true;
+    categorySelect.disabled = true;
+    void updateMvaSettings(company.id, payload)
+      .then(async () => {
+        setStatus(settingsStatus, 'Lagret.', 'ok');
+        open = null;
+        history.replaceState(null, '', '/mva/');
+        await refresh();
+      })
+      .catch((error: unknown) => {
+        setStatus(settingsStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke lagret.');
+      })
+      .finally(() => {
+        periodTypeSelect.disabled = false;
+        categorySelect.disabled = false;
+      });
+  }
+
+  periodTypeSelect.addEventListener('change', () => saveSettings({ period_type: periodTypeSelect.value }));
+  categorySelect.addEventListener('change', () => saveSettings({ category: categorySelect.value }));
+
+  // --- Terminene ---------------------------------------------------------------
+
+  function statusOf(row: MvaPeriodRow): HTMLElement {
+    if (row.status !== null) {
+      const node = badge(STATUS_TEXT[row.status], STATUS_TONE[row.status]);
+      if (row.changed_since_filed) {
+        const wrap = document.createElement('span');
+        wrap.append(node, ' ', badge('Endret etter innsending', 'error'));
+        return wrap;
+      }
+      return node;
+    }
+    return badge(row.is_over ? 'Ikke sendt' : 'Pågår');
+  }
+
+  function renderOverview(overview: MvaOverview): void {
+    el('#year').textContent = String(overview.year);
+    show(el('#not-registered'), !overview.vat_registered);
+    renderSettings(overview.settings);
+
+    const body = el<HTMLTableSectionElement>('#periods');
+    body.replaceChildren();
+    for (const row of overview.periods) {
+      const tr = document.createElement('tr');
+      tr.dataset.open = String(open !== null && open.year === row.year && open.termin === row.termin);
+      const amount = cell(
+        row.fastsatt_merverdiavgift === '0.00'
+          ? kroner('0')
+          : `${unsigned(row.fastsatt_merverdiavgift)} ${owes(row.fastsatt_merverdiavgift) ? 'å betale' : 'til gode'}`,
+        'num',
+      );
+      const status = document.createElement('td');
+      status.append(statusOf(row));
+      const action = document.createElement('td');
+      const link = document.createElement('a');
+      link.className = 'btn-link';
+      link.href = `#${row.year}-${row.termin}`;
+      link.textContent = 'Se meldingen';
+      action.append(link);
+      tr.append(cell(row.label), cell(isoDate(row.deadline)), amount, status, action);
+      body.append(tr);
+    }
+  }
+
+  // --- Én termin ---------------------------------------------------------------
+
+  function renderLines(current: MvaPeriod): void {
+    const body = el<HTMLTableSectionElement>('#lines');
+    body.replaceChildren();
+    for (const line of current.lines) {
+      const tr = document.createElement('tr');
+      const what = cell(line.description);
+      if (line.side === 'inngaaende') {
+        const note = document.createElement('span');
+        note.className = 'muted';
+        note.textContent = ' (fradrag)';
+        what.append(note);
+      }
+      tr.append(
+        cell(line.mva_kode),
+        what,
+        cell(line.grunnlag === null ? '' : kroner(line.grunnlag), 'num'),
+        cell(line.sats_percent === null ? '' : `${line.sats_percent.replace('.', ',').replace(/,00$/, '')} %`, 'num'),
+        cell(kroner(line.merverdiavgift), 'num'),
+      );
+      body.append(tr);
+    }
+    show(el('#lines-empty'), current.lines.length === 0);
+    el('#total-out').textContent = kroner(current.output_vat);
+    el('#total-in').textContent = kroner(current.input_vat);
+    el('#total-label').textContent = owes(current.fastsatt_merverdiavgift) ? 'Å betale' : 'Til gode';
+    el('#total').textContent = unsigned(current.fastsatt_merverdiavgift);
+  }
+
+  function renderBlockers(current: MvaPeriod): void {
+    const list = el<HTMLUListElement>('#blockers');
+    list.replaceChildren(
+      ...current.blockers.map((blocker) => {
+        const item = document.createElement('li');
+        item.textContent = blocker.message;
+        return item;
+      }),
+    );
+    show(list, current.blockers.length > 0);
+    show(el('#changed'), current.changed_since_filed);
+    const difference = current.reconciliation.difference;
+    show(el('#unreconciled'), difference !== '0.00');
+    if (difference !== '0.00') {
+      setStatus(
+        el('#unreconciled'),
+        `Meldingen og mva-kontoene 2700 og 2710 er ikke enige: de skiller seg med ${unsigned(difference)}. ` +
+          'Noe er ført på en mva-konto uten mva-kode. Finn bilaget før meldingen sendes.',
+      );
+    }
+  }
+
+  function renderActions(current: MvaPeriod): void {
+    const here = `/mva/#${current.year}-${current.termin}`;
+    const canAct = mayWrite() && current.blockers.length === 0;
+    // Begge må være på plass: ID-porten for å vite hvem som sender, og
+    // Skatteetatens app for å ha noe å sende til.
+    const configured = government.available && current.submission_available;
+    show(el('#not-configured'), !configured);
+    const login = el<HTMLAnchorElement>('#login');
+    login.href = governmentLoginStartUrl(here);
+    show(login, canAct && configured && !government.logged_in);
+    show(checkForm, canAct && configured && government.logged_in);
+  }
+
+  function findingsList(target: HTMLElement, filing: MvaFiling): void {
+    target.replaceChildren(
+      ...filing.findings.map((finding) => {
+        const item = document.createElement('li');
+        const code = finding.mva_kode !== null ? `Kode ${finding.mva_kode}: ` : '';
+        item.textContent = `${code}${finding.melding}` + (finding.detaljer ? ` (${finding.detaljer})` : '');
+        return item;
+      }),
+    );
+    show(target, filing.findings.length > 0);
+  }
+
+  function renderReview(current: MvaPeriod): void {
+    const latest = current.filings[0];
+    const review = el('#review');
+    const ready =
+      latest !== undefined && latest.status === 'validert' && latest.matches_ledger === true && mayWrite();
+    show(review, ready || (latest !== undefined && latest.status === 'avvist'));
+    if (latest === undefined) return;
+    findingsList(el('#review-findings'), latest);
+    const verdict = el('#review-verdict');
+    if (latest.status === 'avvist') {
+      verdict.textContent =
+        'Skatteetaten ville avvist denne meldingen. Rett det kontrollen peker på, og kontroller på nytt.';
+      show(confirmBox.parentElement as HTMLElement, false);
+      show(submitButton, false);
+      return;
+    }
+    if (!ready) return;
+    verdict.textContent =
+      latest.validation_status === 'ingen avvik'
+        ? 'Skatteetaten fant ingenting å utsette på meldingen.'
+        : `Skatteetaten sier «${latest.validation_status}». Meldingen kan sendes, men den kan bli fulgt opp.`;
+    const amount = `${unsigned(latest.fastsatt_merverdiavgift)} ${owes(latest.fastsatt_merverdiavgift) ? 'å betale' : 'til gode'}`;
+    el('#confirm-text').textContent =
+      `Jeg har gått gjennom meldingen og vil sende den inn for ${company.name} ` +
+      `(${orgnummer(company.orgnr)}), ${latest.period_label}: ${amount}.`;
+    confirmBox.checked = false;
+    show(confirmBox.parentElement as HTMLElement, true);
+    show(submitButton, true);
+    submitButton.textContent = `Send inn mva-meldingen (${amount})`;
+    submitButton.disabled = true;
+    submitButton.dataset.filing = String(latest.id);
+    submitButton.dataset.amount = latest.fastsatt_merverdiavgift;
+  }
+
+  function documentLink(filing: MvaFiling, dataType: string, filename: string): HTMLAnchorElement {
+    const link = document.createElement('a');
+    link.className = 'btn-link';
+    link.href = mvaDocumentUrl(company.id, filing.id, dataType);
+    link.textContent = DOCUMENT_TEXT[dataType] ?? filename;
+    return link;
+  }
+
+  function renderHistory(current: MvaPeriod): void {
+    const list = el<HTMLOListElement>('#filings');
+    list.replaceChildren();
+    for (const filing of current.filings) {
+      const item = document.createElement('li');
+      const head = document.createElement('div');
+      head.className = 'filing-head';
+      const amount = document.createElement('strong');
+      amount.textContent = `${unsigned(filing.fastsatt_merverdiavgift)} ${owes(filing.fastsatt_merverdiavgift) ? 'å betale' : 'til gode'}`;
+      head.append(badge(STATUS_TEXT[filing.status], STATUS_TONE[filing.status]), amount);
+      item.append(head);
+
+      const meta = document.createElement('p');
+      meta.className = 'filing-meta muted';
+      const parts = [`Kontrollert ${dateTime(filing.validated_at)}`];
+      if (filing.submitted_at !== null) {
+        parts.push(
+          `sendt ${dateTime(filing.submitted_at)}` +
+            (filing.submitted_by_name !== null ? ` av ${filing.submitted_by_name}` : ''),
+        );
+      }
+      meta.textContent = parts.join(', ');
+      item.append(meta);
+
+      if (filing.payment_kid !== null || filing.payment_due !== null) {
+        const pay = document.createElement('p');
+        pay.className = 'filing-meta';
+        const bits: string[] = [];
+        if (filing.payment_amount !== null) bits.push(`Beløp ${kroner(filing.payment_amount)}`);
+        if (filing.payment_due !== null) bits.push(`frist ${isoDate(filing.payment_due)}`);
+        if (filing.payment_account !== null) bits.push(`til konto ${filing.payment_account}`);
+        if (filing.payment_kid !== null) bits.push(`KID ${filing.payment_kid}`);
+        pay.textContent = `${bits.join(', ')}. Betalingen føres som «Oppgjør av mva-melding til Skatteetaten».`;
+        item.append(pay);
+      }
+      if (filing.error !== null) {
+        const error = document.createElement('p');
+        error.className = 'filing-meta';
+        error.textContent =
+          'Innsendingen stoppet underveis. Sjekk i Altinn om meldingen ligger der før du prøver igjen. ' +
+          `Feilen: ${filing.error}`;
+        item.append(error);
+      }
+
+      const links = document.createElement('div');
+      links.className = 'filing-links';
+      const xml = document.createElement('a');
+      xml.className = 'btn-link';
+      xml.href = mvaFiledXmlUrl(company.id, filing.id);
+      xml.textContent = 'Meldingen (XML)';
+      links.append(xml);
+      for (const document_ of filing.documents) {
+        links.append(documentLink(filing, document_.data_type, document_.filename));
+      }
+      if (filing.status === 'sendt' && mayWrite()) {
+        if (government.logged_in) {
+          const fetch = document.createElement('button');
+          fetch.type = 'button';
+          fetch.className = 'btn-link';
+          fetch.textContent = 'Hent kvittering';
+          fetch.addEventListener('click', () => {
+            fetch.disabled = true;
+            void fetchMvaFeedback(company.id, filing.id)
+              .then(() => openPeriod(filing.year, filing.termin))
+              .catch((error: unknown) => {
+                setStatus(actionStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet kvitteringen.');
+                fetch.disabled = false;
+              });
+          });
+          links.append(fetch);
+        } else if (government.available) {
+          const login = document.createElement('a');
+          login.className = 'btn-link';
+          login.href = governmentLoginStartUrl(`/mva/#${filing.year}-${filing.termin}`);
+          login.textContent = 'Logg inn med ID-porten for å hente kvitteringen';
+          links.append(login);
+        }
+      }
+      item.append(links);
+      list.append(item);
+    }
+    show(el('#history'), current.filings.length > 0);
+  }
+
+  function renderPeriod(current: MvaPeriod): void {
+    period = current;
+    el('#period-title').textContent = current.label;
+    el('#period-dates').textContent =
+      `${isoDate(current.start)} til ${isoDate(current.end)}. Frist for melding og betaling ${isoDate(current.deadline)}.`;
+    el<HTMLAnchorElement>('#period-xml').href = mvaPeriodXmlUrl(company.id, current.year, current.termin);
+    renderBlockers(current);
+    renderLines(current);
+    renderActions(current);
+    renderReview(current);
+    renderHistory(current);
+    show(el('#period'), true);
+  }
+
+  async function openPeriod(chosenYear: number, termin: number): Promise<void> {
+    open = { year: chosenYear, termin };
+    setStatus(actionStatus, '');
+    setStatus(submitStatus, '');
+    try {
+      renderPeriod(await getMvaPeriod(company.id, chosenYear, termin));
+      for (const row of document.querySelectorAll<HTMLTableRowElement>('#periods tr')) {
+        const link = row.querySelector<HTMLAnchorElement>('a');
+        row.dataset.open = String(link?.getAttribute('href') === `#${chosenYear}-${termin}`);
+      }
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet terminen.');
+    }
+  }
+
+  // --- Kontroll og innsending ----------------------------------------------------
+
+  checkForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (period === null) return;
+    const current = period;
+    const merknad = String(new FormData(checkForm).get('merknad') ?? '').trim();
+    checkButton.disabled = true;
+    setStatus(actionStatus, 'Sender meldingen til kontroll …', 'ok');
+    void checkMvaPeriod(company.id, current.year, current.termin, merknad === '' ? null : merknad)
+      .then(async () => {
+        setStatus(actionStatus, '');
+        await openPeriod(current.year, current.termin);
+        el('#review').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      })
+      .catch((error: unknown) => {
+        setStatus(actionStatus, error instanceof ApiError ? error.message : 'Kontrollen feilet.');
+      })
+      .finally(() => {
+        checkButton.disabled = false;
+      });
+  });
+
+  confirmBox.addEventListener('change', () => {
+    submitButton.disabled = !confirmBox.checked;
+  });
+
+  submitButton.addEventListener('click', () => {
+    if (period === null || !confirmBox.checked) return;
+    const current = period;
+    const filingId = Number(submitButton.dataset.filing);
+    const amount = submitButton.dataset.amount ?? '';
+    submitButton.disabled = true;
+    confirmBox.disabled = true;
+    setStatus(submitStatus, 'Sender inn …', 'ok');
+    void submitMvaFiling(company.id, filingId, amount)
+      .then(async (filing) => {
+        setStatus(
+          submitStatus,
+          filing.status === 'mottatt'
+            ? 'Meldingen er sendt, og kvitteringen er lagret.'
+            : 'Meldingen er sendt. Kvitteringen kommer litt senere.',
+          'ok',
+        );
+        await refresh();
+      })
+      .catch(async (error: unknown) => {
+        setStatus(submitStatus, error instanceof ApiError ? error.message : 'Innsendingen feilet.');
+        // Uansett hva som gikk galt, er det backend som vet hvor langt den
+        // kom. Terminen hentes på nytt så skjermen viser det.
+        await openPeriod(current.year, current.termin);
+      })
+      .finally(() => {
+        confirmBox.disabled = false;
+      });
+  });
+
+  // --- År og adresse -----------------------------------------------------------
+
+  function fromHash(): { year: number; termin: number } | null {
+    const match = /^#(\d{4})-(\d{1,2})$/.exec(window.location.hash);
+    return match === null ? null : { year: Number(match[1]), termin: Number(match[2]) };
+  }
+
+  async function refresh(): Promise<void> {
+    renderOverview(await getMvaOverview(company.id, year));
+    if (open !== null && open.year === year) await openPeriod(open.year, open.termin);
+    else show(el('#period'), false);
+  }
+
+  function changeYear(step: number): void {
+    year += step;
+    open = null;
+    history.replaceState(null, '', '/mva/');
+    void refresh().catch((error: unknown) => {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet året.');
+    });
+  }
+
+  el('#year-prev').addEventListener('click', () => changeYear(-1));
+  el('#year-next').addEventListener('click', () => changeYear(1));
+
+  window.addEventListener('hashchange', () => {
+    const wanted = fromHash();
+    if (wanted === null) return;
+    if (wanted.year !== year) {
+      year = wanted.year;
+      open = wanted;
+      void refresh();
+      return;
+    }
+    void openPeriod(wanted.year, wanted.termin);
+  });
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      const current = currentCompany(companies);
+      if (current === undefined) return;
+      company = current;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+
+      // Stille ved feil: statusen bestemmer bare hvilke knapper som tilbys,
+      // og meldingen kan leses og lastes ned uten den.
+      government = await getGovernmentLoginStatus().catch(() => government);
+
+      const wanted = fromHash();
+      if (wanted !== null) {
+        year = wanted.year;
+        open = wanted;
+      }
+      await refresh();
+      el('#loading').hidden = true;
+      el('#content').hidden = false;
+    } catch (error: unknown) {
+      el('#loading').hidden = true;
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet mva-meldingene.');
+    }
+  });
+</script>

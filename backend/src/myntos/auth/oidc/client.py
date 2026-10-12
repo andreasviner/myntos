@@ -1,9 +1,9 @@
 """A provider-agnostic OpenID Connect client.
 
-One flow, several providers. The differences between Google, Microsoft and
-Vipps are data — scopes, extra authorization parameters, how the issuer is
-checked, which claims carry the email — and live in :mod:`.providers`. The
-protocol itself is here, once.
+One flow, several providers. The differences between Google, Microsoft and the
+BankID broker are data — scopes, extra authorization parameters, how the issuer
+is checked, which claims carry the email, whether there is an email at all —
+and live in :mod:`.providers`. The protocol itself is here, once.
 
 The flow, and why each piece is there:
 
@@ -14,7 +14,9 @@ The flow, and why each piece is there:
    verifier). All three are stored in
    :class:`~myntos.domain.identity.models.OAuthLoginAttempt`.
 2. The provider redirects back with a code; the backend exchanges it for tokens
-   over TLS, authenticating with the client secret.
+   over TLS, authenticating as the client: with a ``private_key_jwt``
+   assertion when a key is configured (the BankID broker recommends it, and no
+   secret then exists to leak), with the client secret otherwise.
 3. The ID token's signature, issuer, audience, expiry and nonce are all
    verified before a single claim is trusted.
 
@@ -45,6 +47,7 @@ from urllib.parse import urlencode
 import httpx
 import jwt
 
+from myntos.auth.signing_keys import SigningKey, client_assertion
 from myntos.core.clock import utc_now
 
 # Discovery documents and key sets are stable for hours and every provider asks
@@ -53,6 +56,18 @@ from myntos.core.clock import utc_now
 _METADATA_TTL = timedelta(hours=1)
 
 _HTTP_TIMEOUT = httpx.Timeout(10.0)
+
+_CLIENT_ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+
+
+def _http() -> httpx.AsyncClient:
+    """The HTTP client one request to a provider runs on.
+
+    Its own function for the reason the ID-porten client has one: it is the
+    seam a test replaces with a stub broker, so the whole flow (discovery, key
+    set, token request, signature) runs for real against it.
+    """
+    return httpx.AsyncClient(timeout=_HTTP_TIMEOUT)
 
 
 class OidcError(Exception):
@@ -75,10 +90,15 @@ class OidcProfile:
     say it at all unless configured to — which is why deriving this value is
     each provider's own job in :mod:`.providers`, and why every one of them
     treats absence as *not verified*.
+
+    ``email`` is ``None`` for a provider that identifies a person without
+    knowing how to reach them (BankID). Such a profile can never be matched to
+    an account by address, verified or not; see
+    :attr:`ProviderConfig.asserts_email`.
     """
 
     subject: str
-    email: str
+    email: str | None
     email_verified: bool
     full_name: str | None
 
@@ -139,15 +159,30 @@ class ProviderConfig:
     label: str
     scope: str
     client_id: str
-    client_secret: str
     redirect_uri: str
     well_known_url: str
+    # The client credential: a secret, or a key for ``private_key_jwt``. At
+    # least one; the key wins when both are set, because the point of having
+    # one is that no shared secret crosses the wire.
+    client_secret: str | None = None
+    signing_key: SigningKey | None = None
     # Provider-specific query parameters on the authorization request.
     authorization_params: dict[str, str] = field(default_factory=dict)
     # Compares the token's issuer against the discovered one. Not always
     # equality: Microsoft's multi-tenant discovery document carries a template.
     issuer_matches: Callable[[str, dict[str, Any]], bool] = exact_issuer
     profile_from: Callable[[dict[str, Any]], OidcProfile] = default_profile
+    # Whether this provider says how to reach the person. False for BankID,
+    # which says who they are and nothing else; every rule that finds or makes
+    # an account by address is then off, and the callback follows
+    # myntos.domain.identity.provider_signup instead.
+    asserts_email: bool = True
+
+    def __post_init__(self) -> None:
+        if self.client_secret is None and self.signing_key is None:
+            raise ProviderNotConfiguredError(
+                f"{self.code} has neither a client secret nor a signing key"
+            )
 
 
 class OidcClient:
@@ -171,17 +206,35 @@ class OidcClient:
     def redirect_uri(self) -> str:
         return self._config.redirect_uri
 
+    @property
+    def asserts_email(self) -> bool:
+        return self._config.asserts_email
+
+    async def _get(self, url: str, what: str) -> dict[str, Any]:
+        """GET a JSON document from the provider, or raise :class:`OidcError`.
+
+        An unreachable provider is an ``OidcError`` like any other failure, so
+        the browser lands back on our page with a marker instead of on a 500.
+        """
+        try:
+            async with _http() as http:
+                response = await http.get(url)
+        except httpx.HTTPError as error:
+            raise OidcError(f"could not reach {self._config.code} for its {what}") from error
+        if response.status_code != httpx.codes.OK:
+            raise OidcError(
+                f"could not read the {what} for {self._config.code} ({response.status_code})"
+            )
+        try:
+            document: dict[str, Any] = response.json()
+        except ValueError as error:
+            raise OidcError(f"the {what} for {self._config.code} was not JSON") from error
+        return document
+
     async def _get_metadata(self) -> dict[str, Any]:
         if self._metadata is not None and utc_now() - self._metadata_fetched_at < _METADATA_TTL:
             return self._metadata
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as http:
-            response = await http.get(self._config.well_known_url)
-        if response.status_code != httpx.codes.OK:
-            raise OidcError(
-                f"could not read the discovery document for {self._config.code} "
-                f"({response.status_code})"
-            )
-        metadata: dict[str, Any] = response.json()
+        metadata = await self._get(self._config.well_known_url, "discovery document")
         for required in ("authorization_endpoint", "token_endpoint", "jwks_uri", "issuer"):
             if required not in metadata:
                 raise OidcError(f"discovery document is missing '{required}'")
@@ -193,13 +246,7 @@ class OidcClient:
         if self._jwks is not None and not refresh:
             return self._jwks
         metadata = await self._get_metadata()
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as http:
-            response = await http.get(str(metadata["jwks_uri"]))
-        if response.status_code != httpx.codes.OK:
-            raise OidcError(
-                f"could not read the key set for {self._config.code} ({response.status_code})"
-            )
-        jwks: dict[str, Any] = response.json()
+        jwks = await self._get(str(metadata["jwks_uri"]), "key set")
         self._jwks = jwks
         return jwks
 
@@ -221,22 +268,46 @@ class OidcClient:
         }
         return f"{metadata['authorization_endpoint']}?{urlencode(query)}"
 
+    def _client_authentication(self, *, issuer: str) -> dict[str, str]:
+        """The client's own credential on the token request.
+
+        The assertion's ``aud`` is the issuer: Idura's guide asks for "your
+        Idura Verify domain", which is its issuer, and ID-porten asks for the
+        same. A secret goes in the body (``client_secret_post``), which every
+        provider here accepts.
+        """
+        if self._config.signing_key is not None:
+            return {
+                "client_assertion_type": _CLIENT_ASSERTION_TYPE,
+                "client_assertion": client_assertion(
+                    self._config.signing_key,
+                    client_id=self._config.client_id,
+                    audience=issuer,
+                ),
+            }
+        # Only reachable with a secret: ProviderConfig refuses neither.
+        return {"client_secret": str(self._config.client_secret)}
+
     async def exchange_code(self, *, code: str, code_verifier: str, nonce: str) -> OidcProfile:
         """Trade an authorization code for a verified :class:`OidcProfile`."""
         metadata = await self._get_metadata()
-        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as http:
-            response = await http.post(
-                str(metadata["token_endpoint"]),
-                data={
-                    "grant_type": "authorization_code",
-                    "code": code,
-                    "redirect_uri": self._config.redirect_uri,
-                    "client_id": self._config.client_id,
-                    "client_secret": self._config.client_secret,
-                    "code_verifier": code_verifier,
-                },
-                headers={"Accept": "application/json"},
-            )
+        form = {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": self._config.redirect_uri,
+            "client_id": self._config.client_id,
+            "code_verifier": code_verifier,
+            **self._client_authentication(issuer=str(metadata["issuer"])),
+        }
+        try:
+            async with _http() as http:
+                response = await http.post(
+                    str(metadata["token_endpoint"]),
+                    data=form,
+                    headers={"Accept": "application/json"},
+                )
+        except httpx.HTTPError as error:
+            raise OidcError(f"could not reach {self._config.code} to redeem the code") from error
         if response.status_code != httpx.codes.OK:
             # The body carries a machine-readable reason but can echo request
             # parameters; report nothing but the status.
@@ -244,7 +315,10 @@ class OidcClient:
                 f"{self._config.code} rejected the authorization code ({response.status_code})"
             )
 
-        payload: dict[str, Any] = response.json()
+        try:
+            payload: dict[str, Any] = response.json()
+        except ValueError as error:
+            raise OidcError(f"{self._config.code}'s token response was not JSON") from error
         id_token = payload.get("id_token")
         if not isinstance(id_token, str):
             raise OidcError("token response contained no id_token")

@@ -58,6 +58,11 @@ MVA-registered and 53 are in Foretaksregisteret. Examples:
 - MVA-registered ENK with innehaver: `311186191` / `08869698742`
 - MVA-registered AS with daglig leder: `311124226` / `05849898878`
 
+"MVA-registered" is Tenor's flag only. Skatteetaten's TT02 MVA register does
+not hold either of them, so an MVA-melding validation for them fails on
+`meldingskategori` whatever the period
+([mva.md](../docs/integrations/mva.md#running-the-validation-live-and-where-it-stands)).
+
 Both register flags drive real behaviour: `registrertIMvaregisteret` decides
 whether output VAT is booked at all, and `registrertIForetaksregisteret` whether
 a salgsdokument must carry the word "Foretaksregisteret" together with the
@@ -71,8 +76,9 @@ cd backend && uv run python -m myntos.auth.digdir_check \
 ```
 
 `08866995401` is daglig leder of AS `314067630`, and that is what makes it work:
-`digdir:skattemelding` grants a person their Altinn rights over a company, and a
-role in Enhetsregisteret is such a right. The response is committed as
+Skatteetaten checks the person's Altinn rights over the company, and a role in
+Enhetsregisteret is such a right. No `digdir:skattemelding` is needed for it;
+that was assumed until 2026-10-09, when the fetch ran without it and worked. The response is committed as
 `skattemelding-314067630-2025.xml` - 714 bytes, the only real one we have.
 
 Nobody's **own** melding has been served yet. Every person here answers
@@ -88,9 +94,11 @@ as the rule until production turned out to exchange tokens without it.
 
 ## Still missing
 
-- **An entity that is both MVA-registered and has a melding.** `314067630` has
-  the skattemelding but no MVA registration, so the MVA-melding path has no
-  end-to-end candidate yet.
+- **An organisation TT02's MVA register holds with an alminnelig filing duty.**
+  The MVA path itself ran end to end on 2026-10-10 with `05849898878` for
+  `311124226`, and the only finding was that the register does not know the
+  company. Ask Skatteetaten's SBS support which test organisations it holds, or
+  to register one, rather than trying more Tenor entities.
 - **A `harSelskapsmeldingUtkast` entity.** Nothing in 799 has one.
 - **Anything for 2026.** Every `testinnsendingSkattEnhet` row for 2026 is empty,
   and `manglendeGrunnlagsdata` on those rows lists what the synthetic population

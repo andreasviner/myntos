@@ -37,7 +37,11 @@ def create_company(
     *,
     orgnr: str = ORGNR,
     name: str = "Nordmann Consulting AS",
+    vat_registered: bool = True,
 ) -> dict[str, Any]:
+    # Registered by default, because most of what this file tests is how VAT
+    # is split. An unregistered company gets no split at all
+    # (myntos.domain.ledger.vatstatus), and the tests about that say so.
     response = write(
         client,
         "POST",
@@ -47,6 +51,7 @@ def create_company(
             "orgnr": orgnr,
             "name": name,
             "first_financial_year": THIS_YEAR,
+            "vat_registered": vat_registered,
         },
     )
     assert response.status_code == 201, response.text
@@ -359,7 +364,10 @@ def test_every_cost_category_has_a_refund_that_matches_it(client: TestClient) ->
     by_code = {entry["code"]: entry for entry in catalogue["types"]}
 
     refunds = {code: entry for code, entry in by_code.items() if code.startswith("refusjon_")}
-    assert len(refunds) == 16
+    # Seventeen since border VAT got a category of its own: Tolletaten does pay
+    # import VAT back, on goods returned or over-declared, and that refund
+    # reduces the deduction exactly like any other.
+    assert len(refunds) == 17
     for code, entry in refunds.items():
         cost = by_code[code.removeprefix("refusjon_")]
         assert entry["direction"] == "inn"
@@ -1124,7 +1132,9 @@ def test_a_receipt_with_none_of_our_words_still_fills_the_form(
     assert suggestion["currency_code"] == "GBP"
     assert suggestion["foreign_amount"] == "2137.00"
     assert suggestion["gross_amount"] is None
-    assert suggestion["tax_code"] is None
+    # No Norwegian VAT on a GBP receipt, so 0 rather than empty: an empty code
+    # becomes the category's 25 % in the form.
+    assert suggestion["tax_code"] == "0"
     # The separator is a non-breaking space; the part worth asserting on is that
     # the sentence names the total in the currency the document actually used.
     assert any("137,00 GBP" in warning for warning in suggestion["warnings"])
@@ -2313,6 +2323,84 @@ def test_the_files_are_reported_before_the_proposal_exists(
     name, payload = events[0]
     assert name == "dokumenter"
     assert payload == [{"filename": "uskarp.png", "content_type": "image/png", "chars": 0}]
+
+
+def _stream_many(client: TestClient, company_id: int, count: int) -> list[Any]:
+    """Every frame for ``count`` screenshots, each with bytes of its own."""
+    response = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company_id}/cashflow/forslag/strom",
+        files=[
+            ("files", (f"ordre{n}.png", png_bytes() + bytes([n]), "image/png"))
+            for n in range(count)
+        ],
+    )
+    assert response.status_code == 200, response.text
+    events: list[Any] = []
+    event: str | None = None
+    for line in response.text.splitlines():
+        if line.startswith("event: "):
+            event = line[len("event: ") :]
+        elif line.startswith("data: ") and event is not None:
+            events.append((event, json.loads(line[len("data: ") :])))
+    return events
+
+
+def _an_order_per_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A full page of text from every file, different on every line."""
+
+    async def page(*, content: bytes, filename: str, content_type: str) -> Any:
+        del content, content_type
+        text = "\n".join(f"{filename} linje {n} vare {n * 7}" for n in range(120))
+        return loynd.ExtractedDocument(text=text)
+
+    async def one(**_: Any) -> str:
+        return "1"
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "extract_file", page)
+    stub_loynd(monkeypatch, one)
+
+
+def test_a_long_bilag_is_said_while_the_user_waits(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Before the questions, because "this takes a while" is useless afterwards.
+
+    And again with the proposal, where what matters is that the model read each
+    part of a long text less closely.
+    """
+    _an_order_per_file(monkeypatch)
+    company = signed_in_company(client)
+    events = _stream_many(client, company["id"], 8)
+
+    names = [name for name, _ in events]
+    assert names[:2] == ["dokumenter", "advarsel"]
+    assert "lengre tid" in events[1][1]["melding"]
+    suggestion = events[-1][1]
+    assert any("leser lange tekster mindre nøye" in w for w in suggestion["warnings"])
+
+
+def test_a_bilag_past_the_ceiling_says_what_the_model_did_not_see(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _an_order_per_file(monkeypatch)
+    company = signed_in_company(client)
+    events = _stream_many(client, company["id"], 20)
+
+    suggestion = events[-1][1]
+    assert any("de første 28 000 tegnene" in w for w in suggestion["warnings"])
+
+
+def test_an_ordinary_bilag_is_not_called_long(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _an_order_per_file(monkeypatch)
+    company = signed_in_company(client)
+    events = _stream_many(client, company["id"], 2)
+
+    assert "advarsel" not in [name for name, _ in events]
 
 
 def test_a_file_we_cannot_read_is_refused_before_the_stream_opens(

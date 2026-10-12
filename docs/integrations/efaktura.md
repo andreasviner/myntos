@@ -242,9 +242,80 @@ Things that bite:
   rejects unqualified *attribute* names, and `currencyID`, `schemeID` and
   `unitCode` are all unqualified. The root is built with a literal `xmlns`
   attribute instead.
-- **Zero-rate categories need a reason** (BR-E-10, BR-G-10, BR-AE-10, BR-Z-09).
+- **Zero-rate categories need a reason** (BR-E-10, BR-G-10, BR-AE-10) —
+  **except `Z`, which must not have one** (BR-Z-10): a zero rate is a rate, not
+  an exemption. The PDF prints the reason for `Z` anyway; the XML leaves it out.
 - **Category `O` cannot be mixed** (BR-O-11). Norwegian *unntatt* omsetning is
   therefore mapped to `E`, which is mixable, not to `O`.
+- **One `cbc:Note`** (PEPPOL-EN16931-R002). The markings (Foretaksregisteret,
+  omvendt avgiftsplikt, Kreditnota) and the free text are joined into it, one
+  per line. A kreditnota for an AS used to carry three and would have been
+  refused.
+- **A buyer reference or an order reference is mandatory** (PEPPOL-EN16931-R003),
+  though nothing in § 5-1 asks for either and most small buyers never give one.
+  When the document has neither, `BuyerReference` says `Ikke oppgitt` — not the
+  buyer's name or our invoice number, because BT-10 is the *buyer's* routing key
+  and a plausible value that is not theirs would be routed on as if it were.
+- **Foretaksregisteret is a tax registration, to Peppol.** NO-R-002 reads the
+  word from `PartyTaxScheme` with scheme `TAX` (BT-32), not from a note. It is
+  written there and in the note.
+- **A seller outside Merverdiavgiftsregisteret states its orgnr as BT-32.** Its
+  lines are category `E`, and BR-E-02 refuses an `E` line from a seller with no
+  tax identifier at all. The orgnr is the identifier Skatteetaten knows it by;
+  XRechnung does the same for the German Kleinunternehmer with the Steuernummer.
+  A seller in Foretaksregisteret already has the marking in that slot, and
+  UBL-SR-13 allows one.
+- **No buyer orgnr, no Peppol document** (PEPPOL-EN16931-R010). The buyer's
+  `EndpointID` is mandatory, and for a buyer without a Norwegian orgnr — a
+  consumer, or typically a foreign business — there is nothing honest to put in
+  it. The XML is still produced (it is the frozen record of what was issued),
+  but it fails R010, and the compliance check is what stops it being sent to a
+  business: a warning now, blocking from 2027-01-01. The validation test pins
+  both halves, so the refusal cannot be loosened by making the XML look valid.
+
+### Validation against the published rule sets
+
+`backend/tests/test_faktura_ehf_validation.py` runs what the real code path
+produces — company, draft, issue and kreditnota over HTTP, then the frozen XML
+off the download endpoint — through the three validators an access point runs:
+
+| Layer | Artefact | Version |
+| --- | --- | --- |
+| Syntax | OASIS UBL 2.1 XSD (lxml) | UBL 2.1 OS |
+| Semantic model | CEN EN 16931 UBL Schematron, CEN's own compiled XSLT (Saxon-HE) | 1.3.16 |
+| Peppol + Norwegian rules | Peppol BIS Billing 3.0 Schematron, compiled with SchXslt (Saxon-HE) | 3.0.21 |
+
+Vendored unmodified under `backend/tests/fixtures/ehf/`, with sources,
+licences and checksums in the README there. SAF-T output is validated the same
+way, against vendored schemas with the official examples as a control
+([saf-t.md](saf-t.md#what-myntos-does-built-2026-10-09), **Tests**).
+
+Shapes covered: every rate and zero category on one invoice, zero-rated alone,
+fractional quantities with a four-decimal price and a discount, reverse charge,
+a kreditnota referencing its invoice, payment means with and without KID, a
+seller outside the VAT register, a seller in Foretaksregisteret, and the
+buyer-without-orgnr case above.
+
+Two controls keep the test honest. Every official Peppol example (and the
+Norwegian national example) must pass — if one fails, the validator is broken,
+not the generator. And a deliberately broken document must fail at each layer
+(BR-CO-16, PEPPOL-EN16931-R010, an XSD sequence error), because a validator
+that passes everything is worse than none.
+
+**When Peppol publishes a new release** (twice a year, May and November), drop
+the new `.sch` and examples in a new versioned directory, point the test at it,
+and fix what fires. The release notes say which CEN version it adopts.
+
+### Warnings left standing
+
+Fatal findings are all fixed. One warning is accepted, and the test fails on
+any other:
+
+- **NO-R-002** ("most invoice issuers are required to append
+  Foretaksregisteret") fires for every seller *not* in Foretaksregisteret.
+  § 5-1-2 requires the word only of the forms registered there (AS, ASA, NUF);
+  an enkeltpersonforetak outside the register that wrote it would be stating
+  something untrue on its own invoice.
 
 The XML is **frozen at issue** and stored on the row. From 2027 it *is* the sales
 document for a business customer; a document rebuilt on every download is one
@@ -279,9 +350,8 @@ bytes, and UTF-8 produces mojibake on exactly æ, ø and å.
   the format the seller's bank agreed. A seller in that position types their own.
 - **No document-level discounts or charges**; `tax_exclusive` is kept distinct
   from `line_total` in `DocumentTotals` so adding them is not a schema change.
-- **No validation against the official XSD or the Peppol Schematron.** Element
-  order and the business rules that bite are covered by `tests/test_faktura_ehf.py`,
-  but vendoring the schemas and validating against them — as planned for SAF-T
-  in phase 3 — would be stronger.
+- **A buyer without a Norwegian orgnr cannot be addressed in Peppol** (above).
+  Foreign buyers need their own Peppol participant id (another EAS scheme) on
+  the party before their EHF can validate or be sent.
 - **Exemption thresholds from the 2026 law are not implemented**, because they
   are not settled.

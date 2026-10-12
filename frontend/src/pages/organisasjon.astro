@@ -1,5 +1,6 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
+import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
 ---
 
 {/* Selskapet: hvem det er, og hvem som har tilgang til regnskapet.
@@ -87,6 +88,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
               står registrert skal se det med én gang; den som kom for å rette
               én ting retter den der den står, og lar resten være. */}
           <dl class="org-felt" id="selskap-felt"></dl>
+          {/* Kontoplanen er regnskapets og ikke selskapets opplysninger, men det
+              er her man leter etter oppsettet, og mva-registreringen over
+              bestemmer hva typene i den foreslår. */}
+          <p class="card-hint">
+            Kontoene og hvilken post i næringsspesifikasjonen hver av dem havner i, står i
+            <a href="/kontoplan/">kontoplanen</a>.
+          </p>
 
           {/* --- Kontonummer ------------------------------------------------
 
@@ -152,9 +160,19 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         <div class="card">
           <div class="org-kort-head">
             <h3 id="medlemmer-tittel">Medlemmer</h3>
-            <button type="button" class="btn btn-ghost btn-small" id="invite-vis" hidden>
-              Inviter en kollega
-            </button>
+            {/* «Inviter en KI» står ved siden av «Inviter en kollega», fordi en
+                nøkkel er tilgang til regnskapet på samme måte som et
+                medlemskap, bare for et program i stedet for en person. Den
+                åpner et vindu: første gang med det man må vite før nøkler slås
+                på, deretter rett på skjemaet. Se docs/agents-and-api.md. */}
+            <div class="org-knapperad">
+              <button type="button" class="btn btn-ghost btn-small" id="agent-vis" hidden>
+                Inviter en KI
+              </button>
+              <button type="button" class="btn btn-ghost btn-small" id="invite-vis" hidden>
+                Inviter en kollega
+              </button>
+            </div>
           </div>
           <div class="table-scroll">
             <table class="data org-medlemmer">
@@ -255,6 +273,222 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             </table>
           </div>
         </div>
+
+        {/* --- KI-agenter og API-nøkler ---------------------------------------
+
+            Nøklene står her, under medlemmene, og ikke på KI-siden: KI-siden
+            handler om hva Myntos selv sender til Løynd, og dette er det
+            motsatte, at selskapets eget verktøy henter regnskapet. Det samme
+            for en KI-assistent og for et skript noen har skrevet mot API-et:
+            en nøkkel er en nøkkel.
+
+            Kortet står bare når nøkler er slått på. Før det er det ingenting å
+            liste, og det man må lese før man slår dem på, står i vinduet
+            «Inviter en KI» åpner, ikke på siden hver gang. */}
+        <div class="card org-agent" id="agenter" hidden>
+          <div class="org-kort-head">
+            <h3 id="agent-tittel">KI-agenter og API-nøkler</h3>
+          </div>
+          <p class="status" id="agent-status" hidden></p>
+          {/* Det agentene venter på, med lenke dit det avgjøres. */}
+          <p class="org-agent-venter" id="agent-venter" hidden>
+            <a href="/godkjenning/" id="agent-venter-lenke"></a>
+          </p>
+          <p class="card-hint" id="agent-tom" hidden>
+            Ingen nøkler ennå. Trykk «Inviter en KI» for å lage en.
+          </p>
+          <div class="table-scroll" id="agent-tabell" hidden>
+            <table class="data org-agenter">
+              <thead>
+                <tr>
+                  <th>Nøkkel</th>
+                  <th>Får gjøre</th>
+                  <th id="agent-hvem-kol">Laget av</th>
+                  <th>Sist brukt</th>
+                  <th>Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="agent-nokler"></tbody>
+            </table>
+          </div>
+
+          {/* Å slå av er trygt, men det stopper hver nøkkel for godt, og
+              agentene til alle i selskapet slutter å virke. Derfor et trinn
+              som sier det, ikke en knapp som bare gjør det. */}
+          <div class="org-agent-av" id="agent-av-trinn" hidden>
+            <button class="btn-link" type="button" id="agent-av-vis">
+              Slå av nøkler for selskapet
+            </button>
+            <div id="agent-av-bekreft" hidden>
+              <p class="card-hint">
+                Alle nøklene stopper med en gang, også kollegenes, og de kan ikke slås på igjen.
+                Det de venter på godkjenning for, blir aldri utført. Agentene må få nye nøkler hvis
+                dere slår det på senere.
+              </p>
+              <div class="org-knapperad">
+                <button class="btn btn-primary" type="button" id="agent-av">Slå av</button>
+                <button class="btn btn-ghost" type="button" id="agent-av-avbryt">Avbryt</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* --- Vinduet «Inviter en KI» ------------------------------------------
+
+            Et <dialog> med showModal(): fokus holdes inne, Escape lukker, og
+            resten av siden er utilgjengelig så lenge det står. Fire tilstander,
+            én synlig om gangen:
+
+            - samtykke: nøkler er av, og man kan slå dem på. Det regel 8 krever
+              at noen har lest: hva agenten ser, at modellen bak den bestemmer
+              hvor dataene havner, og at det er selskapets eget ansvar.
+            - av-spor: nøkler er av, og man kan ikke slå dem på.
+            - skjema: navn og rettigheter.
+            - ny: teksten som limes inn, vist én gang.
+
+            Rettighetene er tegnet her og ikke i skriptet, fra RIGHTS og MODES i
+            lib/agentkeys.ts, så ordene på skjermen og ordene som testes er de
+            samme. */}
+        <dialog class="org-dialog" id="agent-dialog" aria-labelledby="agent-dialog-tittel">
+          <div class="org-dialog-head">
+            <h3 id="agent-dialog-tittel">Inviter en KI eller et program</h3>
+            <button type="button" class="org-dialog-lukk" id="agent-lukk" aria-label="Lukk">
+              ×
+            </button>
+          </div>
+          <p class="status" id="agent-dialog-status" hidden></p>
+
+          <div id="agent-samtykke" hidden>
+            <p class="card-hint">
+              Med en nøkkel kan din egen KI-assistent, for eksempel ChatGPT, Claude eller en modell du
+              kjører selv, lese og føre i regnskapet for deg. Den samme nøkkelen lar et program eller
+              et skript du eller en utvikler har laget, koble seg til Myntos.
+              <span id="agent-av-tekst">Nøkler er slått av for dette selskapet.</span>
+            </p>
+            <p class="org-agent-ingress">Før du slår det på:</p>
+            <ul class="org-agent-punkter">
+              <li>
+                Agenten kan lese hele regnskapet, også opplysninger om kunder, leverandører og
+                ansatte.
+              </li>
+              <li>
+                Modellen bak agenten bestemmer hvor opplysningene havner. En modell du kjører selv,
+                holder dem hos deg. ChatGPT og Claude sender dem til OpenAI og Anthropic, gjerne utenfor
+                EØS. Myntos sjekker ikke hvilken modell som brukes, så valget og ansvaret er
+                selskapets.
+              </li>
+              <li>
+                Du velger for hver nøkkel hva den får gjøre selv, og hva den må spørre deg om først.
+                Det den spør om, godkjenner eller avviser du under Godkjenning.
+              </li>
+              <li>
+                Ingen nøkkel kan sende noe til Skatteetaten, flytte penger, endre kontonummer eller
+                bestemme hvem som har tilgang, uansett hva den får lov til. Mva-meldingen sender du
+                alltid selv.
+              </li>
+            </ul>
+            <label class="org-agent-check">
+              <input type="checkbox" id="agent-forstaar" />
+              <span id="agent-forstaar-tekst">Jeg har lest dette og vil slå på nøkler.</span>
+            </label>
+            <div class="org-knapperad">
+              <button type="button" class="btn btn-primary" id="agent-paa" disabled>
+                Slå på nøkler
+              </button>
+              <button type="button" class="btn btn-ghost" data-agent-lukk>Avbryt</button>
+            </div>
+          </div>
+
+          <div id="agent-av-spor" hidden>
+            <p class="card-hint">
+              Nøkler for KI-agenter og API er slått av for dette selskapet. Bare en eier eller
+              administrator kan slå dem på. Spør en av dem.
+            </p>
+            <button type="button" class="btn btn-ghost" data-agent-lukk>Lukk</button>
+          </div>
+
+          <form id="agent-form" class="org-agent-skjema" novalidate hidden>
+            <label class="field">
+              <span>Navn på nøkkelen</span>
+              <input type="text" name="name" maxlength="64" autocomplete="off" />
+              <span class="field-hint">
+                Det du vil kjenne den igjen på, for eksempel «Claude på jobb-PC» eller «Fakturaskript».
+                Navnet står ved hvert bilag den fører.
+              </span>
+            </label>
+
+            {/* Bare når det er et valg. En leser kan bare gi en nøkkel som
+                leser, og da er det ingenting å spørre om. */}
+            <fieldset class="org-agent-rettigheter" id="agent-rettigheter" hidden>
+              <legend>Hva skal den få gjøre?</legend>
+              <div class="org-agent-rett">
+                <div>
+                  <strong>Lese</strong>
+                  <span class="field-hint">Ser hele regnskapet. Det gjør hver nøkkel.</span>
+                </div>
+                <span class="org-agent-fast">Alltid</span>
+              </div>
+              {
+                RIGHTS.map((right) => (
+                  <div class="org-agent-rett">
+                    <div>
+                      <strong>{right.label}</strong>
+                      <span class="field-hint">{right.hint}</span>
+                    </div>
+                    <div class="org-agent-valg" role="radiogroup" aria-label={right.label}>
+                      {MODES.map((mode) => (
+                        <label>
+                          <input
+                            type="radio"
+                            name={right.scope}
+                            value={mode.value}
+                            checked={mode.value === DEFAULT_MODE}
+                          />
+                          <span>{mode.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              }
+              <div class="org-agent-rett">
+                <div>
+                  <strong>Sende til Skatteetaten</strong>
+                  <span class="field-hint">
+                    Mva-meldingen og skattemeldingen. Den kan be deg om det, og du sender selv på
+                    MVA-siden, med din egen ID-porten-innlogging.
+                  </span>
+                </div>
+                <span class="org-agent-fast">Aldri selv</span>
+              </div>
+            </fieldset>
+            <p class="card-hint" id="agent-bare-lese" hidden>
+              Rollen din lar deg bare lese regnskapet, så nøkkelen kan bare lese.
+            </p>
+
+            <div class="org-knapperad org-form-knapper">
+              <button class="btn btn-primary" type="submit" id="agent-lag">Lag nøkkelen</button>
+              <button class="btn btn-ghost" type="button" data-agent-lukk>Avbryt</button>
+            </div>
+          </form>
+
+          {/* Vises én gang. Bare et hash av nøkkelen lagres, så den kan ikke
+              vises igjen, og det skal den heller ikke: den virker bare én gang
+              uansett. */}
+          <div id="agent-ny" hidden>
+            <p class="card-hint">
+              <strong>Kopier teksten og lim den inn i samtalen med agenten, eller gi den til
+              programmet.</strong> Nøkkelen vises bare nå. Den virker én gang: agenten bytter den
+              ut med en gang, og etter det kan ingen bruke kopien. Den må brukes innen et døgn.
+            </p>
+            <div class="org-kopirad">
+              <textarea id="agent-lim" rows="3" readonly></textarea>
+              <button class="btn btn-ghost" type="button" id="agent-kopier">Kopier</button>
+            </div>
+            <button class="btn btn-primary" type="button" data-agent-lukk>Ferdig</button>
+          </div>
+        </dialog>
       </section>
 
       {/* --- Fra Enhetsregisteret --------------------------------------------
@@ -687,6 +921,143 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     }
   }
 
+  /* --- KI-agenter og API-nøkler -------------------------------------------- */
+
+  .org-agent-ingress {
+    margin: 1rem 0 0.4rem;
+    font-weight: 600;
+  }
+  .org-agent-punkter {
+    margin: 0 0 1rem;
+    padding-left: 1.2rem;
+  }
+  .org-agent-punkter li + li {
+    margin-top: 0.4rem;
+  }
+  .org-agent-check {
+    display: flex;
+    gap: 0.6rem;
+    align-items: flex-start;
+    margin: 0 0 0.9rem;
+  }
+  .org-agent-check input {
+    margin-top: 0.25rem;
+    flex: none;
+  }
+  .org-agent-venter {
+    margin: 0 0 0.8rem;
+    font-weight: 600;
+  }
+  .org-agent-av {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
+
+  /* Vinduet. Bredt nok til at rettighetene står på én linje hver på en
+     vanlig skjerm, og aldri bredere enn skjermen på en telefon. */
+  .org-dialog {
+    width: min(40rem, calc(100vw - 2rem));
+    max-height: calc(100vh - 2rem);
+    padding: 1.4rem 1.5rem 1.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: inherit;
+    overflow-y: auto;
+  }
+  .org-dialog::backdrop {
+    background: rgb(0 0 0 / 0.45);
+  }
+  .org-dialog-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.6rem;
+  }
+  .org-dialog-head h3 {
+    margin: 0;
+  }
+  .org-dialog-lukk {
+    flex: none;
+    border: 0;
+    background: none;
+    color: var(--muted);
+    font-size: 1.5rem;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .org-agent-skjema .field {
+    display: block;
+    margin-bottom: 1rem;
+  }
+  .org-agent-rettigheter {
+    margin: 0 0 0.6rem;
+    padding: 0;
+    border: 0;
+  }
+  .org-agent-rettigheter legend {
+    margin-bottom: 0.4rem;
+    font-weight: 600;
+  }
+  .org-agent-rett {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.4rem 1rem;
+    padding: 0.7rem 0;
+    border-top: 1px solid var(--border);
+  }
+  .org-agent-rett > div:first-child {
+    flex: 1 1 14rem;
+  }
+  .org-agent-rett .field-hint {
+    display: block;
+    margin-top: 0.1rem;
+  }
+  .org-agent-fast {
+    color: var(--muted);
+    font-size: 0.9rem;
+    padding-top: 0.1rem;
+  }
+  .org-agent-valg {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+  .org-agent-valg label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.6rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-pill);
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+  .org-agent-valg label:has(input:checked) {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    font-weight: 600;
+  }
+  .org-agent-valg label:has(input:disabled) {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .org-dialog .org-kopirad {
+    align-items: flex-start;
+    margin-bottom: 1rem;
+  }
+  .org-dialog .org-kopirad textarea {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--font-numeric);
+    font-size: 0.85rem;
+    resize: vertical;
+  }
+
   /* --- Registeret ---------------------------------------------------------- */
 
   .org-roller td {
@@ -1027,7 +1398,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     inviteMember,
     listInvitations,
     getCompanyRegister,
+    createAgentKey,
+    listAgentKeys,
+    listApprovals,
     listMembers,
+    setAgentAccess,
+    stopAgentKey,
     refreshCompany,
     removeMember,
     resendInvitation,
@@ -1035,6 +1411,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     updateBankAccount,
     updateCompany,
     verifyCompany,
+    type AgentKey,
     type BankAccount,
     type Company,
     type GovernmentLoginStatus,
@@ -1045,8 +1422,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     type RegisterAnswer,
     type RegisteredRoleWithAccess,
   } from '../lib/api';
+  import {
+    DEFAULT_MODE,
+    MODES,
+    isLive,
+    pasteText,
+    rightsLabel,
+    scopesFor,
+    settleModes,
+    stateLabel,
+    type Mode,
+  } from '../lib/agentkeys';
+  import { isWaiting } from '../lib/approvals';
   import { currentCompany, loadCompanies, mountChromeCompanyMenu } from '../lib/company';
-  import { el, setStatus, show } from '../lib/dom';
+  import { clearStatus, el, setStatus, show } from '../lib/dom';
   import { isoDate, kontonummer, kroner, orgnummer } from '../lib/format';
   import { canInCompany, loadSession, redirectToLogin, setActiveCompany } from '../lib/session';
 
@@ -1523,6 +1912,38 @@ import BaseLayout from '../layouts/BaseLayout.astro';
               lagre: ([value]) => lagreSelskap(company, { vat_registered: value === 'true' }),
             }
           : undefined,
+      },
+      // Registreringen gjelder fra en dato. Et kjøp før den datoen gir ikke
+      // fradrag, uansett når det føres inn, og føringene får mva-kode 0 til da.
+      // Tomt betyr «for så langt tilbake regnskapet går». Endrer bare nye
+      // føringer: det som er bokført, står som det ble bokført.
+      {
+        nokkel: 'vat_registered_from',
+        navn: 'Registrert fra',
+        vis: !company.vat_registered
+          ? ''
+          : company.vat_registered_from !== null
+            ? isoDate(company.vat_registered_from)
+            : 'Fra regnskapets start',
+        rediger:
+          may && company.vat_registered
+            ? {
+                felter: [
+                  {
+                    navn: 'Registrert fra',
+                    verdi: company.vat_registered_from ?? '',
+                    plassholder: 'ÅÅÅÅ-MM-DD',
+                  },
+                ],
+                hjelp:
+                  'Datoen registreringen i Merverdiavgiftsregisteret gjelder fra. Kjøp før den gir ' +
+                  'ikke fradrag. La feltet stå tomt hvis selskapet var registrert da regnskapet startet.',
+                lagre: ([value]) =>
+                  lagreSelskap(company, {
+                    vat_registered_from: (value ?? '') === '' ? null : (value ?? null),
+                  }),
+              }
+            : undefined,
       },
       {
         nokkel: 'in_foretaksregisteret',
@@ -2952,6 +3373,275 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     });
   }
 
+  // --- KI-agenter og API-nøkler ------------------------------------------------------
+  //
+  // Personens ende av docs/agents-and-api.md: slå på, lag en nøkkel, gi den til
+  // agenten eller programmet, se hva som ble av den. Selve byttet av nøkkelen
+  // gjør agenten mot API-et; siden her ser aldri noe annet enn
+  // tilkoblingsnøkkelen, og bare én gang.
+
+  const agentStatus = el<HTMLParagraphElement>('#agent-status');
+  const agentBody = el<HTMLTableSectionElement>('#agent-nokler');
+  const agentDialog = el<HTMLDialogElement>('#agent-dialog');
+  const dialogStatus = el<HTMLParagraphElement>('#agent-dialog-status');
+  const agentForm = el<HTMLFormElement>('#agent-form');
+  const paste = el<HTMLTextAreaElement>('#agent-lim');
+
+  // Spurt hver gang, aldri husket, av samme grunn som mayManage(): selskapet
+  // kan ha blitt byttet ut med et nyere svar siden sist.
+  const agentsOn = (): boolean => selskap?.agent_access_enabled === true;
+  const mayWriteWithKey = (): boolean => canInCompany(selskap, 'ledger:write');
+
+  /** Legg et nytt svar om selskapet inn der resten av siden leser det. */
+  function nyttSelskap(saved: Company): void {
+    companies = companies.map((item) => (item.id === saved.id ? saved : item));
+    if (selskap?.id === saved.id) selskap = saved;
+  }
+
+  function sistBrukt(key: AgentKey): string {
+    if (key.last_used_at === null) return 'Aldri';
+    const dag = isoDate(key.last_used_at.slice(0, 10));
+    return key.last_used_client === null ? dag : `${dag}, ${key.last_used_client}`;
+  }
+
+  function renderAgentKeys(keys: AgentKey[]): void {
+    agentBody.replaceChildren();
+    // Hvem som laget nøkkelen står bare når listen har andres nøkler i seg,
+    // og det har den bare for den som styrer tilgangen. «Deg» på hver rad i
+    // ens egen liste svarer ikke på noe.
+    const andres = keys.some((key) => !key.is_own);
+    show(el('#agent-hvem-kol'), andres);
+    for (const key of keys) {
+      const row = document.createElement('tr');
+      const hvem = cell(key.is_own ? 'Deg' : key.person_name);
+      hvem.hidden = !andres;
+
+      const handling = document.createElement('td');
+      if (isLive(key)) {
+        const stopp = document.createElement('button');
+        stopp.type = 'button';
+        stopp.className = 'btn-link';
+        stopp.textContent = 'Stopp';
+        stopp.addEventListener('click', () => {
+          stopp.disabled = true;
+          void stopAgentKey(bokene().id, key.id)
+            .then(async () => {
+              setStatus(agentStatus, `Nøkkelen «${key.name}» er stoppet.`, 'ok');
+              await refreshAgents();
+            })
+            .catch((error: unknown) => {
+              stopp.disabled = false;
+              setStatus(
+                agentStatus,
+                error instanceof ApiError ? error.message : 'Nøkkelen ble ikke stoppet.',
+              );
+            });
+        });
+        handling.append(stopp);
+      }
+
+      row.append(
+        cell(key.name),
+        cell(rightsLabel(key)),
+        hvem,
+        cell(sistBrukt(key)),
+        cell(stateLabel(key)),
+        handling,
+      );
+      agentBody.append(row);
+    }
+    show(el('#agent-tabell'), keys.length > 0);
+    show(el('#agent-tom'), keys.length === 0);
+  }
+
+  /** «2 forespørsler venter på godkjenning», med lenke dit, når noe venter. */
+  async function showWaiting(company: Company): Promise<void> {
+    const waiting = (await listApprovals(company.id, 'pending')).filter(isWaiting);
+    const line = el('#agent-venter');
+    show(line, waiting.length > 0);
+    el('#agent-venter-lenke').textContent =
+      waiting.length === 1
+        ? '1 forespørsel venter på godkjenning'
+        : `${waiting.length} forespørsler venter på godkjenning`;
+  }
+
+  /** Kortet med nøklene står bare når nøkler er slått på. */
+  function showAgents(): void {
+    const on = agentsOn();
+    show(el('#agenter'), on);
+    show(el('#agent-vis'), selskap !== null && canInCompany(selskap, 'ledger:read'));
+    show(el('#agent-av-trinn'), on && mayManage());
+  }
+
+  async function refreshAgents(): Promise<void> {
+    showAgents();
+    if (!agentsOn() || selskap === null) return;
+    const company = selskap;
+    renderAgentKeys(await listAgentKeys(company.id));
+    // For seg selv: en liste over ventende forespørsler som ikke kom, skal
+    // ikke ta nøklene med seg.
+    void showWaiting(company).catch(() => show(el('#agent-venter'), false));
+  }
+
+  function reportAgents(error: unknown, fallback: string): void {
+    setStatus(agentStatus, error instanceof ApiError ? error.message : fallback);
+  }
+
+  function reportInDialog(error: unknown, fallback: string): void {
+    setStatus(dialogStatus, error instanceof ApiError ? error.message : fallback);
+  }
+
+  /** Hvilken av de fire tilstandene vinduet står i. */
+  function showPane(pane: 'samtykke' | 'av-spor' | 'skjema' | 'ny'): void {
+    show(el('#agent-samtykke'), pane === 'samtykke');
+    show(el('#agent-av-spor'), pane === 'av-spor');
+    show(agentForm, pane === 'skjema');
+    show(el('#agent-ny'), pane === 'ny');
+  }
+
+  function checkedMode(name: 'write' | 'post'): Mode {
+    const picked = agentForm.querySelector<HTMLInputElement>(`input[name="${name}"]:checked`);
+    return (picked?.value as Mode | undefined) ?? DEFAULT_MODE;
+  }
+
+  /**
+   * Hold «Bokføre» innenfor «Forberede», slik backend krever.
+   *
+   * Valgene for «Bokføre» som rekker lenger enn «Forberede» er ikke bare
+   * flyttet bort fra, men slått av, så skjemaet viser hva som går an i stedet
+   * for å rette på det etterpå.
+   */
+  function syncModes(): void {
+    const write = checkedMode('write');
+    const settled = settleModes(write, checkedMode('post'));
+    const order = MODES.map((mode) => mode.value);
+    for (const input of agentForm.querySelectorAll<HTMLInputElement>('input[name="post"]')) {
+      input.disabled = order.indexOf(input.value as Mode) < order.indexOf(write);
+      input.checked = input.value === settled.post;
+    }
+  }
+
+  function prepareForm(): void {
+    agentForm.reset();
+    const offered = mayWriteWithKey();
+    show(el('#agent-rettigheter'), offered);
+    show(el('#agent-bare-lese'), !offered);
+    syncModes();
+    showPane('skjema');
+  }
+
+  /**
+   * Åpne vinduet i den tilstanden selskapet står i.
+   *
+   * Første gang, mens nøkler er av, er det samtykket: det man må vite før de
+   * slås på. Står de på, går det rett på skjemaet.
+   */
+  function openAgentDialog(): void {
+    clearStatus(dialogStatus);
+    const company = bokene();
+    el('#agent-forstaar-tekst').textContent =
+      `Jeg har lest dette og vil slå på nøkler for ${company.name}.`;
+    el('#agent-av-tekst').textContent = `Nøkler er slått av for ${company.name}.`;
+    if (agentsOn()) prepareForm();
+    else showPane(mayManage() ? 'samtykke' : 'av-spor');
+    agentDialog.showModal();
+  }
+
+  function wireAgents(): void {
+    el<HTMLButtonElement>('#agent-vis').addEventListener('click', openAgentDialog);
+    el<HTMLButtonElement>('#agent-lukk').addEventListener('click', () => agentDialog.close());
+    for (const button of agentDialog.querySelectorAll<HTMLButtonElement>('[data-agent-lukk]')) {
+      button.addEventListener('click', () => agentDialog.close());
+    }
+    // Nøkkelen skal ikke bli liggende på siden etter at den er levert: tømt,
+    // ikke bare skjult, så den ikke står i en fane noen glemmer å lukke. Også
+    // når vinduet lukkes med Escape.
+    agentDialog.addEventListener('close', () => {
+      paste.value = '';
+      agentForm.reset();
+      clearStatus(dialogStatus);
+    });
+
+    const understood = el<HTMLInputElement>('#agent-forstaar');
+    const switchOn = el<HTMLButtonElement>('#agent-paa');
+    understood.addEventListener('change', () => {
+      switchOn.disabled = !understood.checked;
+    });
+    switchOn.addEventListener('click', () => {
+      switchOn.disabled = true;
+      clearStatus(dialogStatus);
+      void setAgentAccess(bokene().id, true)
+        .then(async (saved) => {
+          nyttSelskap(saved);
+          understood.checked = false;
+          // Rett videre til skjemaet: det var en nøkkel personen ville lage.
+          prepareForm();
+          setStatus(dialogStatus, 'Nøkler er slått på. Nå kan du lage en.', 'ok');
+          await refreshAgents();
+        })
+        .catch((error: unknown) => {
+          switchOn.disabled = !understood.checked;
+          reportInDialog(error, 'Nøkler ble ikke slått på.');
+        });
+    });
+
+    for (const input of agentForm.querySelectorAll<HTMLInputElement>('input[type="radio"]')) {
+      input.addEventListener('change', syncModes);
+    }
+
+    const submit = el<HTMLButtonElement>('#agent-lag');
+    agentForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const name = String(new FormData(agentForm).get('name') ?? '').trim();
+      if (name === '') {
+        setStatus(dialogStatus, 'Gi nøkkelen et navn, så du kjenner den igjen i listen.');
+        return;
+      }
+      const chosen = mayWriteWithKey()
+        ? scopesFor(checkedMode('write'), checkedMode('post'))
+        : scopesFor('no', 'no');
+      submit.disabled = true;
+      clearStatus(dialogStatus);
+      void createAgentKey(bokene().id, name, chosen.scopes, chosen.approvalScopes)
+        .then(async (issued) => {
+          paste.value = pasteText(bokene().name, issued.connection_key, import.meta.env.SITE);
+          showPane('ny');
+          await refreshAgents();
+        })
+        .catch((error: unknown) => reportInDialog(error, 'Nøkkelen ble ikke laget.'))
+        .finally(() => {
+          submit.disabled = false;
+        });
+    });
+
+    el<HTMLButtonElement>('#agent-kopier').addEventListener('click', () => {
+      void navigator.clipboard.writeText(paste.value).then(
+        () => setStatus(dialogStatus, 'Kopiert. Lim det inn i samtalen med agenten.', 'ok'),
+        // Utklippstavlen kan være sperret; å markere teksten virker likevel.
+        () => paste.select(),
+      );
+    });
+
+    const offStep = el('#agent-av-bekreft');
+    el<HTMLButtonElement>('#agent-av-vis').addEventListener('click', () => show(offStep, true));
+    el<HTMLButtonElement>('#agent-av-avbryt').addEventListener('click', () => show(offStep, false));
+    const switchOff = el<HTMLButtonElement>('#agent-av');
+    switchOff.addEventListener('click', () => {
+      switchOff.disabled = true;
+      void setAgentAccess(bokene().id, false)
+        .then(async (saved) => {
+          nyttSelskap(saved);
+          show(offStep, false);
+          setStatus(agentStatus, 'Nøkler er slått av, og alle nøklene er stoppet.', 'ok');
+          await refreshAgents();
+        })
+        .catch((error: unknown) => reportAgents(error, 'Nøkler ble ikke slått av.'))
+        .finally(() => {
+          switchOff.disabled = false;
+        });
+    });
+  }
+
   // --- Oppstart -------------------------------------------------------------------
 
   void loadSession().then(async (session) => {
@@ -3025,6 +3715,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     wireEierskap();
     wireVarsel();
     wireRegister();
+    wireAgents();
 
     applyPermissions();
     showRegister();
@@ -3038,6 +3729,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     // in, still unconfirmed, and still showing the warning that sent them.
     resumeConfirm();
 
+    // For seg selv, så en nøkkelliste som ikke kom ikke tar medlemmene med seg.
+    void refreshAgents().catch((error: unknown) =>
+      reportAgents(error, 'Vi fikk ikke hentet nøklene.'),
+    );
+
     try {
       await refresh();
       el('#loading').hidden = true;
@@ -3049,6 +3745,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       // moment the section exists on screen. Only for the anchors we send
       // people to: honouring an arbitrary hash would be a scroll nobody asked
       // for.
+      // Nøklene har sin egen adresse: e-postene om en nøkkel, KI-siden og
+      // teksten agenten får sender folk hit for å se nøklene, ikke selskapet.
+      if (window.location.hash === '#tilgang') {
+        el('#tilgang').scrollIntoView({ block: 'start' });
+      }
       if (window.location.hash === '#selskap' && !el('#selskap').hidden) {
         el('#selskap').scrollIntoView({ block: 'start' });
         // The anchor is used for two different errands. The header's company

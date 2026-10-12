@@ -13,7 +13,7 @@ import pytest
 from myntos.integrations.loynd import LoyndUnavailableError, _delta
 
 
-def test_a_content_delta_is_the_text_in_it():
+def test_a_content_delta_is_the_text_in_it() -> None:
     line = 'data: {"choices":[{"index":0,"delta":{"content":"Kjøp av"}}]}'
     assert _delta(line) == ["Kjøp av"]
 
@@ -40,11 +40,11 @@ def test_a_content_delta_is_the_text_in_it():
         'data: {"choices":[{"delta":{"content":""}}]}',
     ],
 )
-def test_everything_that_is_not_content_is_nothing(line: str):
+def test_everything_that_is_not_content_is_nothing(line: str) -> None:
     assert _delta(line) == []
 
 
-def test_a_models_monologue_is_not_its_answer():
+def test_a_models_monologue_is_not_its_answer() -> None:
     """`reasoning_content` has its own channel, and it is not the description.
 
     Streaming it into the field would type a model's thinking into the text
@@ -54,7 +54,7 @@ def test_a_models_monologue_is_not_its_answer():
     assert _delta(line) == []
 
 
-def test_a_failure_after_the_first_byte_is_raised():
+def test_a_failure_after_the_first_byte_is_raised() -> None:
     """The status line is already spent by then, so the error arrives as a frame.
 
     Raising is what lets the caller keep the pieces that did arrive and stop

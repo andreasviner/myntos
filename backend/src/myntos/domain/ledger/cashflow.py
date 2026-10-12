@@ -140,7 +140,7 @@ _BASE: tuple[CashFlowType, ...] = (
         label="Salg med 12 % mva",
         direction=CashFlowDirection.INN,
         account_number="3020",
-        default_tax_code="32",
+        default_tax_code="33",
         note="Persontransport, overnatting, kino, museer og idrettsarrangement.",
     ),
     CashFlowType(
@@ -247,6 +247,25 @@ _BASE: tuple[CashFlowType, ...] = (
         account_number="4000",
         default_tax_code="1",
         note="Varer for videresalg eller innsatsvarer i produksjonen.",
+    ),
+    CashFlowType(
+        code="mva_innforsel",
+        # Named for the bill people actually hold. The freight forwarder's
+        # "tollpass" or Tolletaten's own bill is the only paper this payment
+        # comes with, and "innførselsmerverdiavgift" is not a word anyone types.
+        label="Mva betalt ved innførsel (tollpass)",
+        direction=CashFlowDirection.UT,
+        # Straight to inngående mva. The whole amount is the tax, so nothing
+        # reaches the income statement; the goods themselves were a separate
+        # payment to the seller abroad.
+        account_number="2710",
+        default_tax_code="14",
+        note=(
+            "Merverdiavgift du betalte da varene kom inn i landet, på regningen fra "
+            "speditøren eller Tolletaten. Hele beløpet er avgift og føres til fradrag. "
+            "Selve varene betalte du til selgeren, og de føres for seg. Er det mat og "
+            "drikke, velg kode 15."
+        ),
     ),
     CashFlowType(
         code="fremmed_tjeneste",

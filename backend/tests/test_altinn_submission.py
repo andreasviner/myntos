@@ -88,6 +88,8 @@ class StubAltinn:
         self.exchange_quoted = True
         self.data_elements: list[dict[str, Any]] = []
         self.downloads: dict[str, bytes] = {}
+        # PUTs into an existing element: (element id, content type, body).
+        self.replacements: list[tuple[str, str, bytes]] = []
 
     def instance_body(self, *, ended: bool = False) -> dict[str, Any]:
         return {
@@ -136,6 +138,16 @@ class StubAltinn:
             )
             self.data_elements.append(element)
             return httpx.Response(201, json=element)
+
+        if method == "PUT" and "/data/" in path:
+            element_id = path.rsplit("/", 1)[-1]
+            self.replacements.append(
+                (element_id, request.headers.get("content-type", ""), request.content)
+            )
+            for element in self.data_elements:
+                if element["id"] == element_id:
+                    return httpx.Response(200, json=element)
+            return httpx.Response(404, text="no such element")
 
         if method == "PUT" and path.endswith("/process/next"):
             self.process_calls += 1
@@ -652,18 +664,37 @@ async def test_the_mva_validation_api_takes_the_id_porten_token_directly(
     assert seen["content_type"] == "application/xml"
 
 
-async def test_the_metadata_goes_up_before_the_melding(altinn: StubAltinn) -> None:
-    """The app reads the melding in the light of who is filing, for which period."""
+async def test_the_envelope_is_filled_in_before_the_melding_goes_up(altinn: StubAltinn) -> None:
+    """The app reads the melding in the light of who is filing, for which period.
+
+    And the envelope is the element the app made when the instance was created,
+    so it is PUT into that element rather than POSTed beside it, which the app
+    refuses (the data type allows one). This used to POST, and every stub
+    accepted it.
+    """
+    altinn.data_elements.append(
+        {
+            "id": "envelope-1",
+            "dataType": METADATA_DATA_TYPE,
+            "contentType": "application/xml",
+            "size": 0,
+            "filename": None,
+        }
+    )
+    instance = await _mva().create_instance(altinn_token="altinn-token", organisation_number=ORGNR)
     await _mva().upload_melding(
-        InstanceRef.parse(INSTANCE_ID),
+        instance,
         altinn_token="altinn-token",
         metadata=b"<mvaMeldingInnsending/>",
         melding=b"<mvaMeldingDto/>",
     )
-    assert [data_type for data_type, _, _, _ in altinn.uploads] == [
-        METADATA_DATA_TYPE,
-        MELDING_DATA_TYPE,
-    ]
+    assert altinn.replacements == [("envelope-1", "application/xml", b"<mvaMeldingInnsending/>")]
+    assert [data_type for data_type, _, _, _ in altinn.uploads] == [MELDING_DATA_TYPE]
+    # The vedlegg list in the envelope names this file, and Altinn compares.
+    assert 'filename="mva-melding.xml"' in (altinn.uploads[0][3] or "")
+    order = [call for call in altinn.calls if "/data" in call[1]]
+    assert order[0][0] == "PUT"
+    assert order[1][0] == "POST"
 
 
 async def test_the_three_receipt_documents_are_fetched_together(altinn: StubAltinn) -> None:

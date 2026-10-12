@@ -1,12 +1,13 @@
 # Cloudflare
 
-Cloudflare hosts the **frontend and the document bucket**. It does not host the
-backend.
+Cloudflare hosts the **frontend and the document bucket**, and sends the
+account mail. It does not host the backend.
 
 | Component | Where | Notes |
 | --- | --- | --- |
 | Frontend (Astro) | **Workers + static assets** | Config in `frontend/wrangler.jsonc`, custom domain `myntos.no`. Deploy with `pnpm run deploy` from `frontend/`, or `./update.sh --frontend-only`. Pages is maintenance-mode; don't use it. |
 | Bilag PDFs | **R2, `jurisdiction=eu`** | `wrangler r2 bucket create <name> --jurisdiction eu`. Jurisdiction is **immutable after creation** and uses the dedicated S3 endpoint `https://<ACCOUNT_ID>.eu.r2.cloudflarestorage.com`. Location *hints* are not a compliance mechanism. |
+| Account mail | **Email Sending**, on `myntos.no` | Address confirmation, password reset and invitations, sent by the backend through `send_raw` with `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_EMAIL_TOKEN` (`core/config.py`, `core/mail.py`). `wrangler email sending enable` wrote and maintains the SPF, DKIM and DMARC records. Unlike R2 it makes **no EEA promise**, which is why no message carries accounting data: [ARCHITECTURE.md § What the mail provider sees](../../docs/ARCHITECTURE.md#what-the-mail-provider-sees). |
 
 ## The backend used to live here
 
@@ -30,5 +31,6 @@ in Postgres and R2.
 
 ## Cost expectations
 
-Only Workers and R2 now. Egress NA/EU $0.025/GB with 1 TB included. The
-container line item (roughly $7-27/month depending on instance type) is gone.
+Only Workers, R2 and Email Sending now. Egress NA/EU $0.025/GB with 1 TB
+included. The container line item (roughly $7-27/month depending on instance
+type) is gone.

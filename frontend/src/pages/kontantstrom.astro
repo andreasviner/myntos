@@ -115,7 +115,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             name="document"
             id="file-input"
             multiple
-            accept="application/pdf,.pdf,image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif"
+            accept="application/pdf,.pdf,image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif,.png,.jpg,.jpeg,.webp,.gif,.heic,.heif"
           />
           <label class="dropzone-cta" for="file-input">
             <svg class="dropzone-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -132,6 +132,24 @@ import BaseLayout from '../layouts/BaseLayout.astro';
               Dra filene hit, eller velg dem. PDF og bilder, så mange som bilaget trenger.
             </span>
           </label>
+
+          {/*
+            Kamera for den som står med kvitteringen i hånda. Et eget felt,
+            fordi `capture` på hovedfeltet ville åpnet kameraet direkte og
+            stengt veien til PDF-er og bilder som allerede ligger på telefonen.
+            Vises bare på berøringsskjerm: på en PC åpner `capture` en vanlig
+            filvelger, og da er knappen bare en dårligere kopi av den over.
+          */}
+          <input
+            class="visually-hidden"
+            type="file"
+            id="camera-input"
+            accept="image/jpeg,image/heic,image/heif,image/png,image/webp"
+            capture="environment"
+          />
+          <p class="dropzone-camera">
+            <label class="btn-link" for="camera-input">Ta bilde av kvitteringen</label>
+          </p>
 
           <ul class="dropzone-files" id="drop-files" hidden></ul>
           <p class="dropzone-more" id="drop-more" hidden>
@@ -151,9 +169,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         </p>
 
         <div class="fields" id="form-fields" hidden>
+          {/* Ingen retning er valgt på forhånd. «Penger inn» sto avkrysset mens
+              bilaget ble lest, med «Salg» og 25 % utgående mva under, og for en
+              faktura fra MA-3D så det ut som svaret i fire sekunder. Retningen
+              kommer fra bilaget eller fra brukeren, aldri fra en standard. */}
           <div class="direction" role="group" aria-label="Retning">
             <label>
-              <input type="radio" name="direction" value="inn" checked />
+              {/* Påkrevd, så nettleseren peker på retningen før den peker på en
+                  kategoriliste som er tom fordi retningen mangler. */}
+              <input type="radio" name="direction" value="inn" required />
               <span>Penger inn</span>
             </label>
             <label>
@@ -187,25 +211,76 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             </label>
           </div>
 
-          <label class="field" data-field="party_id">
-            <span>
+          {/* En div og ikke en label: lista under boksen er ikke lov inne i
+              en label, og boksen får navnet sitt fra overskriften i stedet. */}
+          <div class="field" data-field="party_id">
+            <span id="party-label">
               Motpart <span class="muted">(valgfritt)</span>
               <span class="tag" data-tag hidden></span>
             </span>
-            <select name="party_id" id="party-select"></select>
-            {/* Egen linje for navnet bilaget oppga, slik at den faste
+            {/* Én boks: skriv et navn, eller velg fra lista. Det var en liste
+                med en egen tekstboks under for nye navn, som viste samme navn
+                to ganger. Da bilaget fra MA-3D foreslo kjøperen, var det
+                boksen under lista som måtte rettes, og den så ut som en kopi. */}
+            <div class="combo">
+              <input
+                type="text"
+                id="party-input"
+                name="party_name"
+                role="combobox"
+                aria-labelledby="party-label"
+                aria-autocomplete="list"
+                aria-controls="party-list"
+                aria-expanded="false"
+                autocomplete="off"
+                maxlength="255"
+                placeholder="Skriv et navn, eller velg fra lista"
+              />
+              <button
+                type="button"
+                class="combo-toggle"
+                id="party-toggle"
+                aria-label="Vis motpartene dine"
+                aria-controls="party-list"
+                aria-expanded="false"
+                tabindex="-1"
+              >
+                <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                  <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6"></path>
+                </svg>
+              </button>
+              <ul
+                class="combo-list"
+                id="party-list"
+                role="listbox"
+                aria-labelledby="party-label"
+                hidden
+              >
+              </ul>
+            </div>
+            {/* Egen linje for hva som skjer med et nytt navn, slik at den faste
                 hjelpeteksten med lenken til /parter blir stående. */}
             <span class="field-hint" id="party-note" hidden></span>
             <span class="field-hint">
               Føringen går fint uten. <a href="/parter/">Se motpartene dine</a>.
             </span>
-          </label>
+          </div>
 
           <div class="field-row">
             <label class="field" data-field="tax_code">
               <span>Mva-kode <span class="tag" data-tag hidden></span></span>
               <select name="tax_code" id="tax-select"></select>
               <span class="field-hint">Foreslått ut fra typen. Endre hvis fakturaen sier noe annet.</span>
+            </label>
+            {/* Bare når kontoplanen har en annen konto av samme slag som typens
+                egen: et valg med ett alternativ er ikke et spørsmål. */}
+            <label class="field" data-field="account_number" id="account-field" hidden>
+              <span>Konto</span>
+              <select name="account_number" id="account-select"></select>
+              <span class="field-hint">
+                Typen fører hit. Kontoene du har lagt til i <a href="/kontoplan/">kontoplanen</a>
+                kan velges i stedet.
+              </span>
             </label>
             <label class="field">
               <span>Betalt via</span>
@@ -506,13 +581,31 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     font-size: 0.84rem;
     color: var(--muted);
   }
+  .dropzone-camera {
+    margin: 0;
+    padding: 0 0.8rem 0.6rem;
+    text-align: center;
+    font-size: 0.9rem;
+  }
+  /* Kameraknappen gir bare mening der det finnes et kamera å peke med. */
+  @media (pointer: fine) {
+    .dropzone-camera {
+      display: none;
+    }
+  }
   .dropzone-files {
     list-style: none;
     margin: 0;
     padding: 0.4rem 0.8rem 0;
     text-align: left;
   }
-  .dropzone-files li {
+  /* Radene i fillisten bygges av skriptet, og Astro avgrenser stiler ved å
+     stemple `data-astro-cid-*` på elementene i malen, som en node fra
+     createElement aldri får. `.dropzone-files li` kompilerte derfor til en
+     regel ingen rad traff, og lista sto som «(184 kB)Fjernikke lest» uten et
+     mellomrom. Forankret i lista, som står i malen, og nådd med `:global()`:
+     samme mønster som /faktura/. */
+  .dropzone-files :global(li) {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -526,7 +619,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     padding: 0.3rem 0.8rem 0.7rem;
     font-size: 0.9rem;
   }
-  .file-name {
+  .dropzone-files :global(.file-name) {
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -535,10 +628,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   /* Filer som ikke ga tekst. Ikke en feil — bilaget er lastet opp og lagres —
      men brukeren må se hvilken av seks som ikke ble lest, ikke bare at én ikke
      ble det. */
-  .dropzone-files li[data-unread] .file-name {
+  .dropzone-files :global(li[data-unread] .file-name) {
     color: var(--muted);
   }
-  .file-note {
+  .dropzone-files :global(.file-note) {
     font-size: 0.82rem;
     color: var(--muted);
   }
@@ -697,6 +790,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     margin-top: 1.25rem;
   }
 
+  /* Knappen sier hva som skjer mens den er opptatt, så teksten må kunne
+     leses: halvgjennomsiktig og «ikke tillatt» er for en knapp som venter på
+     brukeren, ikke for en som brukeren venter på. */
+  #entry-submit[aria-busy='true'] {
+    opacity: 0.85;
+    cursor: progress;
+  }
+
   /* --- Felt som er fylt ut for deg ------------------------------------------- */
 
   .tag {
@@ -721,6 +822,66 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     background: var(--gold-soft);
     border-color: var(--gold);
     color: var(--gold);
+  }
+  .combo {
+    position: relative;
+  }
+  .combo input {
+    padding-right: 2.5rem;
+  }
+  .combo-toggle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 2.5rem;
+    display: grid;
+    place-items: center;
+    border: 0;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .combo-list {
+    position: absolute;
+    z-index: 20;
+    top: calc(100% + 0.25rem);
+    left: 0;
+    right: 0;
+    max-height: 16rem;
+    overflow-y: auto;
+    margin: 0;
+    padding: 0.25rem 0;
+    list-style: none;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-small);
+    box-shadow: var(--shadow-lifted);
+  }
+  .combo-list [role='option'] {
+    padding: 0.45rem 0.75rem;
+    cursor: pointer;
+  }
+  .combo-list [role='option']:hover,
+  .combo-list [role='option'][aria-selected='true'] {
+    background: var(--accent-soft);
+  }
+  .combo-list .combo-number {
+    color: var(--muted);
+    font-family: var(--font-numeric);
+    font-size: 0.85em;
+    margin-right: 0.5rem;
+  }
+  .combo-list .combo-group,
+  .combo-list .combo-empty {
+    padding: 0.45rem 0.75rem 0.2rem;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .combo-list .combo-group {
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
   }
   .field[data-suggested='true'] input,
   .field[data-suggested='true'] select {
@@ -771,7 +932,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   import {
     ApiError,
     documentUrl,
-    getCatalogue,
+    fetchThumbnail,
+    getCompanyCatalogue,
     getSummary,
     interpretDocumentStreaming,
     listCashFlow,
@@ -783,7 +945,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     uploadDocument,
     type CashFlowEntry,
     type CashFlowType,
-    type Catalogue,
+    type CompanyCatalogue,
     type Company,
     type Direction,
     type FieldSource,
@@ -795,6 +957,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   } from '../lib/api';
   import { authorOf, namesAuthors } from '../lib/authors';
   import { currentCompany, loadCompanies } from '../lib/company';
+  import { partiesMatching, resolveParty } from '../lib/counterparty';
   import {
     foldCorrections,
     foldNote,
@@ -804,6 +967,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   } from '../lib/corrections';
   import { el, setStatus, show } from '../lib/dom';
   import { fileSize, isoDate, kroner, todayIso } from '../lib/format';
+  import { settleLimited } from '../lib/parallel';
   import { can, loadSession, redirectToLogin } from '../lib/session';
 
   /**
@@ -812,7 +976,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
    * dialog that refuses a file the backend would have taken.
    */
   const ATTACHMENT_ACCEPT =
-    'application/pdf,.pdf,image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif';
+    'application/pdf,.pdf,image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif,.png,.jpg,.jpeg,.webp,.gif,.heic,.heif';
 
   const pageStatus = el<HTMLParagraphElement>('#page-status');
   const formStatus = el<HTMLParagraphElement>('#form-status');
@@ -820,7 +984,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   const content = el<HTMLDivElement>('#content');
   const typeSelect = el<HTMLSelectElement>('#type-select');
   const taxSelect = el<HTMLSelectElement>('#tax-select');
-  const partySelect = el<HTMLSelectElement>('#party-select');
+  const accountSelect = el<HTMLSelectElement>('#account-select');
+  const partyInput = el<HTMLInputElement>('#party-input');
+  const partyToggle = el<HTMLButtonElement>('#party-toggle');
+  const partyList = el<HTMLUListElement>('#party-list');
   const typeNote = el<HTMLSpanElement>('#type-note');
   const form = el<HTMLFormElement>('#entry-form');
   const formCard = el<HTMLDivElement>('#form-card');
@@ -829,6 +996,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   const cancelEdit = el<HTMLParagraphElement>('#cancel-edit');
   const submit = el<HTMLButtonElement>('#entry-submit');
   const fileInput = el<HTMLInputElement>('#file-input');
+  const cameraInput = el<HTMLInputElement>('#camera-input');
   const dropzone = el<HTMLDivElement>('#dropzone');
   const dropFiles = el<HTMLUListElement>('#drop-files');
   const dropMore = el<HTMLParagraphElement>('#drop-more');
@@ -842,22 +1010,27 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   const manualRow = el<HTMLParagraphElement>('#manual-row');
   const body = el<HTMLTableSectionElement>('#entries');
 
-  let catalogue: Catalogue;
+  let catalogue: CompanyCatalogue;
   let company: Company;
   let parties: Party[] = [];
-  // Navnet bilaget oppga, når ingen registrert motpart svarer til det. Det
-  // ligger i listen som sitt eget valg, slik at feltet viser hvem betalingen
-  // var med i stedet for «ingen valgt».
-  let unregistered: string | null = null;
+  // Feltene brukeren har endret selv siden bilaget ble valgt. En ny lesing
+  // fyller ikke disse: å svare på spørsmålet i beskrivelsen leser bilaget på
+  // nytt, og da skrev svaret motparten brukeren nettopp hadde rettet tilbake
+  // til den gale. Tømmes når bilaget tømmes.
+  const touched = new Set<string>();
   let mayWrite = false;
   // Om registeret skal si hvem som førte hva. Avgjort én gang per lasting, over
   // hele listen og ikke per rad: merket betyr «det er flere hender i denne
   // boken», og det er en egenskap ved registeret. Regelen står i lib/authors.ts.
   let marksAuthor = false;
 
-  // Verdien det ene valget som ikke peker på en rad i registeret har. Ikke et
-  // tall, slik at den aldri kan forveksles med en id.
-  const NEW_PARTY = 'ny';
+  // Motparten som ble valgt fra lista, eller som bilaget traff i registeret.
+  // Teksten i boksen er ellers det som teller, men to motparter kan hete det
+  // samme, og da er det valget og ikke navnet som sier hvilken.
+  let pickedParty: Party | null = null;
+  // Det lista viser akkurat nå, og hvilken rad piltastene står på.
+  let listed: Party[] = [];
+  let active = -1;
 
   function option(value: string, label: string): HTMLOptionElement {
     const node = document.createElement('option');
@@ -883,9 +1056,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     return td;
   }
 
-  function currentDirection(): Direction {
+  /** The direction showing, or `null` before the bilag or the user has said. */
+  function currentDirection(): Direction | null {
     const checked = form.querySelector<HTMLInputElement>('input[name="direction"]:checked');
-    return checked?.value === 'ut' ? 'ut' : 'inn';
+    if (checked?.value === 'ut') return 'ut';
+    if (checked?.value === 'inn') return 'inn';
+    return null;
   }
 
   function selectedType(): CashFlowType | undefined {
@@ -921,6 +1097,17 @@ import BaseLayout from '../layouts/BaseLayout.astro';
    */
   function fillTypes(): void {
     const direction = currentDirection();
+    if (direction === null) {
+      // Ingen kategori og ingen mva-kode før retningen er kjent. Lista for
+      // «inn» er salg, og den første med sin 25 % var det som sto her før.
+      const waiting = option('', 'Velg penger inn eller ut først');
+      waiting.disabled = true;
+      typeSelect.replaceChildren(waiting);
+      typeSelect.value = '';
+      taxSelect.value = '';
+      typeNote.textContent = '';
+      return;
+    }
     const entries = catalogue.types.filter((t) => t.direction === direction);
     typeSelect.replaceChildren();
 
@@ -938,7 +1125,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       }
       typeSelect.append(group);
     }
-    applyType();
+    // Nothing chosen until something chooses: the bilag, or the user. The first
+    // entry used to be selected by default, so the form showed «Varekjøp» and
+    // 25 % for the seconds a read took, which looked like the answer.
+    const waiting = option('', 'Velg type');
+    waiting.disabled = true;
+    typeSelect.prepend(waiting);
+    typeSelect.value = '';
+    taxSelect.value = '';
+    typeNote.textContent = '';
   }
 
   /** A label that has lost its prefix, given its capital letter back. */
@@ -946,44 +1141,127 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     return label.charAt(0).toUpperCase() + label.slice(1);
   }
 
+  /** Which kind of party the money's direction implies: we pay suppliers. */
+  function preferredPartyType(): Party['party_type'] {
+    // Before a direction is known, a supplier: most bilag are purchases.
+    return currentDirection() === 'inn' ? 'kunde' : 'leverandor';
+  }
+
   /**
-   * Fill the counterparty list, with the group the direction implies on top.
+   * The registered party the box stands for, or `null` for a new name.
+   *
+   * What was picked counts only while the box still says its name; typing
+   * over it is choosing again. Otherwise the text decides, by the rule in
+   * lib/counterparty.ts.
+   */
+  function partyChoice(): Party | null {
+    if (pickedParty !== null && partyInput.value.trim() === pickedParty.name) return pickedParty;
+    return resolveParty(partyInput.value, parties, preferredPartyType());
+  }
+
+  /** Put a name in the box, and say which registered party it is, if one. */
+  function setPartyText(text: string, party: Party | null): void {
+    partyInput.value = text;
+    pickedParty = party;
+    closePartyList();
+    showPartyNote();
+  }
+
+  /**
+   * Refresh what depends on the register and the direction.
+   *
+   * Called wherever the list used to be rebuilt: the parties arrived, the
+   * direction flipped, the form was reset. The list itself is drawn when it
+   * opens, so only an open one needs drawing again.
+   */
+  function fillParties(): void {
+    if (!partyList.hidden) openPartyList(partyInput.value);
+    showPartyNote();
+  }
+
+  /**
+   * Show the registered parties matching `query`, the group the direction
+   * implies on top.
    *
    * Both groups stay available: a refund from a supplier is money in, and a
    * credit note to a customer is money out, so filtering one away would make
    * ordinary corrections impossible to record properly.
    */
-  function fillParties(): void {
-    const previous = partySelect.value;
-    partySelect.replaceChildren(option('', 'ingen valgt'));
-
-    // Øverst, fordi det er den motparten bilaget faktisk handler om. Bare
-    // navnet står der: nummeret lages av registeret og organisasjonsnummeret
-    // blir stående tomt, som er alt et bilag fra en du møter én gang er verdt
-    // å lagres under.
-    if (unregistered !== null) {
-      const group = document.createElement('optgroup');
-      group.label = 'Ikke registrert';
-      group.append(option(NEW_PARTY, unregistered));
-      partySelect.append(group);
-    }
-
+  function openPartyList(query: string): void {
+    const matching = partiesMatching(query, parties);
     const groups: [string, Party[]][] = [
-      ['Kunder', parties.filter((party) => party.party_type === 'kunde')],
-      ['Leverandører', parties.filter((party) => party.party_type === 'leverandor')],
+      ['Kunder', matching.filter((party) => party.party_type === 'kunde')],
+      ['Leverandører', matching.filter((party) => party.party_type === 'leverandor')],
     ];
-    if (currentDirection() === 'ut') groups.reverse();
+    if (currentDirection() !== 'inn') groups.reverse();
 
+    partyList.replaceChildren();
+    listed = [];
+    active = -1;
     for (const [label, members] of groups) {
       if (members.length === 0) continue;
-      const group = document.createElement('optgroup');
-      group.label = label;
+      const heading = document.createElement('li');
+      heading.className = 'combo-group';
+      heading.setAttribute('role', 'presentation');
+      heading.textContent = label;
+      partyList.append(heading);
       for (const party of members) {
-        group.append(option(String(party.id), `${party.party_id}: ${party.name}`));
+        const row = document.createElement('li');
+        row.id = `party-option-${party.id}`;
+        row.setAttribute('role', 'option');
+        row.setAttribute('aria-selected', 'false');
+        row.dataset.index = String(listed.length);
+        const number = document.createElement('span');
+        number.className = 'combo-number';
+        number.textContent = party.party_id;
+        row.append(number, party.name);
+        partyList.append(row);
+        listed.push(party);
       }
-      partySelect.append(group);
     }
-    partySelect.value = previous;
+    if (listed.length === 0) {
+      const empty = document.createElement('li');
+      empty.className = 'combo-empty';
+      empty.setAttribute('role', 'presentation');
+      // Ikke en feil: et navn ingen er registrert under, blir en ny motpart.
+      empty.textContent =
+        query.trim() === ''
+          ? 'Ingen registrerte motparter ennå. Skriv navnet, så lagres det når du fører.'
+          : 'Ingen registrerte motparter passer. Navnet lagres som ny motpart når du fører.';
+      partyList.append(empty);
+    }
+    partyList.hidden = false;
+    partyInput.setAttribute('aria-expanded', 'true');
+    partyToggle.setAttribute('aria-expanded', 'true');
+  }
+
+  function closePartyList(): void {
+    partyList.hidden = true;
+    active = -1;
+    partyInput.removeAttribute('aria-activedescendant');
+    partyInput.setAttribute('aria-expanded', 'false');
+    partyToggle.setAttribute('aria-expanded', 'false');
+  }
+
+  /** Move the keyboard's place in the open list, and keep it in view. */
+  function moveActive(step: number): void {
+    if (listed.length === 0) return;
+    active = (active + step + listed.length) % listed.length;
+    for (const row of partyList.querySelectorAll<HTMLElement>('[role="option"]')) {
+      const isActive = row.dataset.index === String(active);
+      row.setAttribute('aria-selected', String(isActive));
+      if (isActive) {
+        partyInput.setAttribute('aria-activedescendant', row.id);
+        row.scrollIntoView({ block: 'nearest' });
+      }
+    }
+  }
+
+  /** The user chose a registered party: theirs now, not the bilag's. */
+  function pickParty(party: Party): void {
+    touched.add('party_id');
+    markField('party_id', null);
+    setPartyText(party.name, party);
   }
 
   /** Show the type's note and preselect the VAT code it assumes. */
@@ -991,6 +1269,32 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     const entry = selectedType();
     typeNote.textContent = entry?.note ?? '';
     if (entry !== undefined) taxSelect.value = entry.default_tax_code;
+    fillAccounts(entry);
+  }
+
+  /**
+   * Typens egen konto først, så alle andre aktive kontoer av samme slag i
+   * selskapets kontoplan. Bare samme slag: en kostnad flyttet over i balansen er
+   * nettopp feilen en type finnes for å hindre, og backend nekter den også.
+   */
+  function fillAccounts(entry: CashFlowType | undefined): void {
+    accountSelect.replaceChildren();
+    if (entry === undefined || entry.account_type == null) {
+      show(el('#account-field'), false);
+      return;
+    }
+    const own = catalogue.accounts.find((account) => account.number === entry.account_number);
+    accountSelect.append(
+      option(entry.account_number, `${entry.account_number}${own ? ` ${own.description}` : ''}`),
+    );
+    const others = catalogue.accounts.filter(
+      (account) => account.account_type === entry.account_type && account.number !== entry.account_number,
+    );
+    for (const account of others) {
+      accountSelect.append(option(account.number, `${account.number} ${account.description}`));
+    }
+    accountSelect.value = entry.account_number;
+    show(el('#account-field'), others.length > 0);
   }
 
   // --- Bilaget som fyller ut skjemaet ----------------------------------------
@@ -1028,7 +1332,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
    */
   function showPartyNote(): void {
     const note = el<HTMLSpanElement>('#party-note');
-    const isNew = partySelect.value === NEW_PARTY;
+    const isNew = partyInput.value.trim() !== '' && partyChoice() === null;
     note.textContent = isNew ? 'Ny motpart. Navnet lagres når du fører.' : '';
     note.hidden = !isNew;
   }
@@ -1063,9 +1367,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   /** Put a proposal into the form, and say which parts of it came from where. */
   function applySuggestion(suggestion: InvoiceSuggestion, { keepDescription = false } = {}): void {
     clearMarks();
-    // What the last read named is not evidence about this one, and the list is
-    // rebuilt below either way.
-    unregistered = null;
 
     /**
      * Mark one field with where its value came from.
@@ -1081,26 +1382,43 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       markField(name, SOURCE_LABEL[source], source);
     };
 
-    const direction = form.querySelector<HTMLInputElement>(
-      `input[name="direction"][value="${suggestion.direction}"]`,
-    );
-    if (direction !== null) direction.checked = true;
+    // A field the user has changed is theirs. The read still fills every other
+    // field, but on a touched one it is a proposal that arrived too late, not
+    // an answer that overrules them.
+    const proposes = (name: string): boolean => !touched.has(name);
+
+    if (proposes('direction')) {
+      const direction = form.querySelector<HTMLInputElement>(
+        `input[name="direction"][value="${suggestion.direction}"]`,
+      );
+      if (direction !== null) direction.checked = true;
+    }
     // The lists depend on the direction, so they are rebuilt before anything is
-    // selected in them.
+    // selected in them. Rebuilding the type list forgets its selection, so a
+    // category the user picked is put back rather than lost to the rebuild.
+    const keptType = typeSelect.value;
+    const keptTax = taxSelect.value;
     fillTypes();
     fillParties();
+    if (!proposes('type_code')) {
+      typeSelect.value = keptType;
+      applyType();
+    }
+    if (!proposes('tax_code')) taxSelect.value = keptTax;
 
-    if (suggestion.type_code !== null) {
+    if (proposes('type_code') && suggestion.type_code !== null) {
       typeSelect.value = suggestion.type_code;
       applyType();
       mark('type_code');
     }
-    // After applyType, which sets the type's own default.
-    if (suggestion.tax_code !== null) {
+    // After applyType, which sets the type's own default. And not under a
+    // category the user chose: the proposed code belongs to the proposed
+    // category, and the user's choice already set its own default.
+    if (proposes('type_code') && proposes('tax_code') && suggestion.tax_code !== null) {
       taxSelect.value = suggestion.tax_code;
       mark('tax_code');
     }
-    if (suggestion.occurred_on !== null) {
+    if (proposes('occurred_on') && suggestion.occurred_on !== null) {
       el<HTMLInputElement>('#date-input').value = suggestion.occurred_on;
       mark('occurred_on');
     }
@@ -1108,7 +1426,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     // the total on the document is not that number. It is in the warnings below
     // instead, where it belongs — next to the sentence saying why the field is
     // the one thing the user has to look up.
-    if (suggestion.gross_amount !== null) {
+    if (proposes('gross_amount') && suggestion.gross_amount !== null) {
       const amount = form.querySelector<HTMLInputElement>('input[name="gross_amount"]');
       if (amount !== null) amount.value = suggestion.gross_amount;
       mark('gross_amount');
@@ -1126,8 +1444,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     } else if (keepDescription) {
       markField('description', 'Din tekst');
     }
-    if (suggestion.party_id !== null) {
-      partySelect.value = String(suggestion.party_id);
+    if (!proposes('party_id')) {
+      // Left as the user set it. This is the case that used to be stuck: the
+      // bilag named the buyer, the user picked something else, answered the
+      // model's question in the description box, and the re-read that answer
+      // triggered put the buyer back.
+    } else if (suggestion.party_id !== null) {
+      const party = parties.find((candidate) => candidate.id === suggestion.party_id) ?? null;
+      setPartyText(party?.name ?? suggestion.counterparty_name ?? '', party);
       mark('party_id');
     } else if (suggestion.counterparty_name !== null && suggestion.sources.party_id !== undefined) {
       // Named on the bilag, not in the register, and that is a perfectly
@@ -1136,18 +1460,19 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       // registered party, which is a wordy way of showing the one thing the
       // field is for and then not showing it.
       //
-      // Now the name is the choice. Picking something else, or "ingen valgt",
-      // is still one click away.
+      // Now the name is in the box, which the user can write over: the
+      // proposal can be the wrong party, and the right one is usually printed
+      // a few lines further down the same page.
       //
       // Only when the proposal is marked, which is the backend saying the name
       // is one it would stand behind as a party. A name it read but will not
       // vouch for is still in `counterparty_name`, and stays out of a list
       // whose entries turn into rows in the register.
-      unregistered = suggestion.counterparty_name;
-      fillParties();
-      partySelect.value = NEW_PARTY;
+      setPartyText(suggestion.counterparty_name, null);
       mark('party_id');
-      showPartyNote();
+    } else {
+      // What the previous read named is not evidence about this one.
+      setPartyText('', null);
     }
 
     // Said out loud, because the alternative is a form that came back half
@@ -1310,6 +1635,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         delete (row as HTMLElement).dataset.unread;
         continue;
       }
+      // Kalt to ganger per lesing, når filene er lest og når forslaget er
+      // ferdig, og det sto «ikke lest» to ganger etter hver fil.
+      if ((row as HTMLElement).dataset.unread === 'true') continue;
       (row as HTMLElement).dataset.unread = 'true';
       const note = document.createElement('span');
       note.className = 'file-note';
@@ -1356,15 +1684,26 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     // written into one of them while we wait. A form that appeared only at the
     // end would leave the typing happening somewhere the user cannot see.
     revealFields();
+    // Only a direction the user clicked. One a previous read proposed is the
+    // backend's own reading, and sending it back would present it as theirs.
+    const retning = touched.has('direction') ? (currentDirection() ?? undefined) : undefined;
     try {
       const suggestion = await interpretDocumentStreaming(
         company.id,
         chosen,
         keepDescription ? descriptionBox.value : undefined,
         {
+          retning,
           onDocuments: (documents) => {
             if (read !== reads) return;
             markRead(documents);
+          },
+          onNotice: (message) => {
+            // Et langt bilag sies fra om mens man venter, i samme linje som
+            // spinneren, fordi «dette tar litt tid» ikke er verdt noe når
+            // ventetiden er over.
+            if (read !== reads) return;
+            readingText.textContent = message;
           },
           onDescription: (piece) => {
             // A stale read must not type into the box. Two reads can overlap —
@@ -1422,10 +1761,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     chosen = [];
     showFiles();
     clearMarks();
-    // No bilag, no name off one. Rebuilt so the choice disappears from the
-    // list rather than lingering as something the form would go and register.
-    unregistered = null;
-    fillParties();
+    // No bilag, no name off one, so nothing lingers as something the form would
+    // go and register. And nothing the user changed is theirs any more: the
+    // next bilag starts from what it says.
+    touched.clear();
+    setPartyText('', null);
     askList.hidden = true;
     askList.replaceChildren();
     written = '';
@@ -1451,6 +1791,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
   fileInput.addEventListener('change', () => {
     addFiles(fileInput.files);
+  });
+  cameraInput.addEventListener('change', () => {
+    addFiles(cameraInput.files);
+    // Tømt av samme grunn som filfeltet: neste bilde skal også gi en hendelse.
+    cameraInput.value = '';
   });
 
   el<HTMLButtonElement>('#file-clear').addEventListener('click', clearFile);
@@ -1553,7 +1898,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
    * kolonner gjorde registeret uleselig for det ene tilfellet der noen lurte
    * på hvilken mva-kode som ble brukt.
    */
-  function detailRow(entry: CashFlowEntry): HTMLTableRowElement {
+  function detailRow(entry: CashFlowEntry, bilag: AttachmentInfo[]): HTMLTableRowElement {
     const row = document.createElement('tr');
     row.className = 'detail-row';
     row.hidden = true;
@@ -1577,10 +1922,53 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       // Merket oppe på raden er det som kommer og går.
       pair('Ført av', authorOf(entry)),
     );
+    if (bilag.length > 0) list.append(fileList(bilag));
 
     holder.append(list);
     row.append(holder);
     return row;
+  }
+
+  /**
+   * Filene bilaget består av, én lenke per fil, med miniatyr der det finnes en.
+   *
+   * Her og ikke på raden. Ti skjermbilder av en AliExpress-ordre sto som ti
+   * miniatyrer i registeret, og den ene føringen ble høyere enn skjermen: en
+   * fil er noe man slår opp om én føring, akkurat som mva-koden, ikke noe man
+   * skummer nedover. Miniatyrene hentes først når detaljlinjen åpnes.
+   */
+  function fileList(bilag: AttachmentInfo[]): HTMLDivElement {
+    const wrap = document.createElement('div');
+    wrap.className = 'detail-files';
+    const dt = document.createElement('dt');
+    dt.textContent = bilag.length === 1 ? 'Bilagsfil' : `Bilagsfiler (${bilag.length})`;
+    const dd = document.createElement('dd');
+    const files = document.createElement('ul');
+    files.className = 'bilag-files';
+    for (const attachment of bilag) {
+      const link = document.createElement('a');
+      link.className = 'bilag-file';
+      link.href = documentUrl(company.id, attachment.id);
+      link.title = attachment.filename;
+      // Plassen står der også for en PDF, som ikke får miniatyr, så merkene
+      // står under hverandre og ikke hopper etter hvilken fil som er et bilde.
+      const thumb = document.createElement('span');
+      thumb.className = 'bilag-thumb';
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.textContent = `${kindOf(attachment.content_type)} ${fileSize(attachment.byte_size)}`;
+      const name = document.createElement('span');
+      name.className = 'bilag-name';
+      name.textContent = attachment.filename;
+      link.append(thumb, badge, name);
+      if (attachment.content_type.startsWith('image/')) watchForThumbnail(thumb, attachment.id);
+      const item = document.createElement('li');
+      item.append(link);
+      files.append(item);
+    }
+    dd.append(files);
+    wrap.append(dt, dd);
+    return wrap;
   }
 
   /** Én føring: selve linjen, detaljlinjen under, og en måte å lukke begge på. */
@@ -1615,23 +2003,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       row.hidden = true;
     }
 
-    const detail = detailRow(entry);
-
-    const documents = document.createElement('td');
-    for (const attachment of bilag) {
-      const link = document.createElement('a');
-      link.href = documentUrl(company.id, attachment.id);
-      link.className = 'badge';
-      // What the file is, not what most files are. Nine screenshots of an
-      // AliExpress order were all labelled "PDF", which is the register
-      // describing the bilag wrongly in the one column that describes it.
-      link.textContent = `${kindOf(attachment.content_type)} ${fileSize(attachment.byte_size)}`;
-      link.title = attachment.filename;
-      documents.append(link, document.createTextNode(' '));
-    }
-    if (bilag.length === 0 && mayWrite && !isReversed) {
-      documents.append(uploadControl(entry));
-    }
+    const detail = detailRow(entry, bilag);
 
     const actions = document.createElement('td');
     actions.className = 'row-actions';
@@ -1641,15 +2013,49 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     info.className = 'btn-link';
     info.textContent = 'Vis info';
     info.setAttribute('aria-expanded', 'false');
+    // Knappene som åpner detaljlinjen: «Vis info», og merket for flere filer.
+    const openers: HTMLButtonElement[] = [info];
     const setDetail = (open: boolean): void => {
       detail.hidden = !open;
       info.textContent = open ? 'Skjul info' : 'Vis info';
-      info.setAttribute('aria-expanded', String(open));
+      for (const opener of openers) opener.setAttribute('aria-expanded', String(open));
     };
     info.addEventListener('click', () => {
       setDetail(detail.hidden);
     });
     actions.append(info);
+
+    // Ett merke per føring, aldri ett per fil: hvor mange filer bilaget har,
+    // sier ingenting om hvor viktig føringen er, og skal ikke bestemme hvor
+    // mye plass den tar. Selve filene står i detaljlinjen.
+    const documents = document.createElement('td');
+    const [only] = bilag;
+    if (bilag.length === 1 && only !== undefined) {
+      // Én fil er filen: merket lenker rett til den, som før.
+      const link = document.createElement('a');
+      link.href = documentUrl(company.id, only.id);
+      link.className = 'badge';
+      // What the file is, not what most files are. Nine screenshots of an
+      // AliExpress order were all labelled "PDF", which is the register
+      // describing the bilag wrongly in the one column that describes it.
+      link.textContent = `${kindOf(only.content_type)} ${fileSize(only.byte_size)}`;
+      link.title = only.filename;
+      documents.append(link);
+    } else if (bilag.length > 1) {
+      const files = document.createElement('button');
+      files.type = 'button';
+      files.className = 'badge';
+      files.textContent = `${bilag.length} FILER`;
+      files.title = `Vis de ${bilag.length} filene`;
+      files.setAttribute('aria-expanded', 'false');
+      files.addEventListener('click', () => {
+        setDetail(detail.hidden);
+      });
+      openers.push(files);
+      documents.append(files);
+    } else if (mayWrite && !isReversed) {
+      documents.append(uploadControl(entry));
+    }
 
     if (mayWrite && !isReversed && !entry.is_reversal) {
       // "Rediger" first, because it is what someone who spotted a mistake is
@@ -1685,9 +2091,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       who.textContent = `Ført av ${authorOf(entry)}`;
       what.append(who);
     }
+    // Datoen og bilagsnummeret brytes ikke. «2026-» over «0004» er et
+    // bilagsnummer som ikke kan leses i ett blikk, og det er beskrivelsen, ikke
+    // datoen, som skal gi plass når raden blir trang.
+    when.classList.add('nowrap');
     row.append(
       when,
-      cell(entry.voucher_no),
+      cell(entry.voucher_no, 'nowrap'),
       what,
       cell(
         kroner(entry.gross_amount),
@@ -1804,6 +2214,50 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   }
 
   /** A per-row "add the bilag" control, for one that arrives after the entry. */
+  /**
+   * Henter miniatyren når plassen til den faktisk kommer på skjermen.
+   *
+   * Ikke ved tegning: registeret lister hundre føringer, og en miniatyr som
+   * ikke er laget ennå koster serveren et bilde å dekode. Miniatyrene står i
+   * detaljlinjene, som er skjult til noen åpner dem, og ber derfor ikke om
+   * noe før det.
+   */
+  const thumbnailWatcher =
+    'IntersectionObserver' in window
+      ? new IntersectionObserver((seen) => {
+          for (const item of seen) {
+            if (!item.isIntersecting) continue;
+            thumbnailWatcher?.unobserve(item.target);
+            const target = item.target as HTMLElement;
+            void showThumbnail(target, Number(target.dataset.attachment));
+          }
+        })
+      : null;
+
+  function watchForThumbnail(slot: HTMLElement, attachmentId: number): void {
+    slot.dataset.attachment = String(attachmentId);
+    if (thumbnailWatcher === null) {
+      void showThumbnail(slot, attachmentId);
+      return;
+    }
+    thumbnailWatcher.observe(slot);
+  }
+
+  async function showThumbnail(slot: HTMLElement, attachmentId: number): Promise<void> {
+    const picture = await fetchThumbnail(company.id, attachmentId).catch(() => null);
+    if (picture === null) return;
+    const image = document.createElement('img');
+    // Tom alt-tekst: lenken har allerede filnavnet som tittel og merket som
+    // tekst, og en skjermleser trenger ikke høre det to ganger.
+    image.alt = '';
+    image.decoding = 'async';
+    const url = URL.createObjectURL(picture);
+    image.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
+    image.addEventListener('error', () => URL.revokeObjectURL(url), { once: true });
+    image.src = url;
+    slot.append(image);
+  }
+
   function uploadControl(entry: CashFlowEntry): HTMLLabelElement {
     const label = document.createElement('label');
     label.className = 'btn-link';
@@ -1883,7 +2337,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       'føringen motpostert og den rettede lagt inn, slik bokføringsloven krever. ' +
       'Regnskapet viser da alle tre.';
     editingNote.hidden = false;
-    submit.textContent = 'Lagre endringer';
+    submit.textContent = idleLabel();
     cancelEdit.hidden = false;
     formTitle.textContent = `Rediger bilag ${entry.voucher_no}`;
     setStatus(formStatus, '');
@@ -1894,9 +2348,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   function endEdit(): void {
     editing = null;
     editingNote.hidden = true;
-    submit.textContent = 'Registrer betaling';
+    submit.textContent = idleLabel();
     cancelEdit.hidden = true;
     formTitle.textContent = 'Registrer en betaling';
+  }
+
+  /** Hva knappen heter når ingenting er underveis, i den modusen skjemaet er i. */
+  function idleLabel(): string {
+    return editing === null ? 'Registrer betaling' : 'Lagre endringer';
   }
 
   /** Put a posted entry back into the form, ready to be corrected and re-posted. */
@@ -1926,6 +2385,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       applyType();
     }
     if (entry.tax_code !== null) taxSelect.value = entry.tax_code;
+    // Ført på en konto personen valgte, ikke typens egen.
+    if ([...accountSelect.options].some((item) => item.value === entry.account_number)) {
+      accountSelect.value = entry.account_number;
+    }
     el<HTMLInputElement>('#date-input').value = entry.occurred_on;
 
     const amount = form.querySelector<HTMLInputElement>('input[name="gross_amount"]');
@@ -1934,7 +2397,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     // further down. Editing an entry has to fill in the one that exists.
     descriptionBox.value = entry.description;
     readWith = entry.description;
-    partySelect.value = entry.party_id === null ? '' : String(entry.party_id);
+    const party = parties.find((candidate) => candidate.id === entry.party_id) ?? null;
+    setPartyText(party?.name ?? '', party);
 
     const method = form.querySelector<HTMLSelectElement>('select[name="payment_method"]');
     // 1900 is the cash account and 1920 the bank one; anything else is a
@@ -1955,12 +2419,29 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   form.addEventListener('change', (event) => {
     const target = event.target;
     if (target instanceof HTMLInputElement && target.name === 'direction') {
+      touched.add('direction');
       fillTypes();
       fillParties();
       // Both lists just changed under the proposal, so neither may keep
       // claiming to hold what the document said.
       markField('type_code', null);
       markField('tax_code', null);
+      // And the bilag is read again with the user's answer, so the category,
+      // the VAT code and the description come from the right side of the
+      // ledger instead of being left for them to redo. A read already under
+      // way is abandoned: `reads` drops its answer when it arrives. The
+      // category list was just rebuilt for the new direction, so the category
+      // is the read's to fill again rather than the user's.
+      touched.delete('type_code');
+      touched.delete('tax_code');
+      if (chosen.length > 0) {
+        const typed = descriptionBox.value.trim();
+        // The user's own sentence is context; one the model is writing or
+        // wrote is output, and is written again.
+        const theirs =
+          typed !== '' && descriptionBox.value !== readWith && descriptionBox.value !== written;
+        void readDocuments({ keepDescription: theirs });
+      }
     }
     if (target === typeSelect) {
       // applyType resets the VAT code to the new type's default.
@@ -1971,31 +2452,85 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     // claiming to be one.
     if (target instanceof HTMLElement) {
       const field = target.closest<HTMLElement>('.field[data-field]');
-      if (field !== null) markField(field.dataset.field ?? '', null);
+      if (field !== null) {
+        markField(field.dataset.field ?? '', null);
+        // And a later read of the same bilag leaves it alone. See `touched`.
+        touched.add(field.dataset.field ?? '');
+      }
     }
-    // Last, because the line above has just taken the proposal mark off the
-    // field the user touched, and this one belongs to the choice, not the mark.
-    if (target === partySelect) showPartyNote();
+  });
+
+  // Per keystroke rather than on change: the list narrows while the name is
+  // being written, and a re-read that lands mid-word must already know the
+  // field is the user's.
+  partyInput.addEventListener('input', () => {
+    touched.add('party_id');
+    markField('party_id', null);
+    pickedParty = null;
+    openPartyList(partyInput.value);
+    showPartyNote();
+  });
+
+  partyInput.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (partyList.hidden) openPartyList('');
+      moveActive(event.key === 'ArrowDown' ? 1 : -1);
+    } else if (event.key === 'Enter' && !partyList.hidden && active >= 0) {
+      // Picks the row, and does not submit the form.
+      event.preventDefault();
+      const party = listed[active];
+      if (party !== undefined) pickParty(party);
+    } else if (event.key === 'Escape' && !partyList.hidden) {
+      event.preventDefault();
+      closePartyList();
+    }
+  });
+
+  partyInput.addEventListener('blur', closePartyList);
+
+  // The arrow lists everyone, not just what matches the box: with a name
+  // already in it, a filtered list would show that name and nothing to pick
+  // instead, which is the one time the list is wanted.
+  partyToggle.addEventListener('click', () => {
+    if (partyList.hidden) {
+      partyInput.focus();
+      openPartyList('');
+    } else {
+      closePartyList();
+    }
+  });
+
+  // Mousedown, not click, keeps the focus in the box, so its blur does not
+  // close the list before the click lands.
+  partyList.addEventListener('mousedown', (event) => event.preventDefault());
+  partyToggle.addEventListener('mousedown', (event) => event.preventDefault());
+  partyList.addEventListener('click', (event) => {
+    const row = (event.target as HTMLElement).closest<HTMLElement>('[role="option"]');
+    const party = row === null ? undefined : listed[Number(row.dataset.index)];
+    if (party !== undefined) pickParty(party);
   });
 
   /**
-   * The party the voucher points at, registering the name from the bilag first
-   * if that is the choice showing.
+   * The party the voucher points at, registering the name in the box first
+   * when no registered party has it.
    *
    * Only the name goes in. The number is generated and the organisasjonsnummer
    * stays empty, because a name is what the bilag actually said, and a party
    * with nothing but a name is still a party the next bilag can be matched
    * against.
    */
-  async function chosenParty(picked: string): Promise<number | null> {
-    if (picked === '') return null;
-    if (picked !== NEW_PARTY) return Number(picked);
-    if (unregistered === null) return null;
+  async function chosenParty(): Promise<number | null> {
+    const registered = partyChoice();
+    if (registered !== null) return registered.id;
+    // The box, not the proposal: it is the one the user can correct.
+    const name = partyInput.value.trim();
+    if (name === '') return null;
     try {
       const party = await createParty(company.id, {
         // Money out means we are the customer, so the other side is a supplier.
         party_type: currentDirection() === 'ut' ? 'leverandor' : 'kunde',
-        name: unregistered,
+        name,
       });
       parties = [...parties, party];
       return party.id;
@@ -2005,11 +2540,40 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       // next to a payment that has nothing wrong with it.
       throw new ApiError(
         error instanceof ApiError ? error.status : 0,
-        `Vi fikk ikke lagt ${unregistered} inn som motpart, så betalingen er ikke ført. ` +
+        `Vi fikk ikke lagt ${name} inn som motpart, så betalingen er ikke ført. ` +
           'Velg «ingen valgt» og før den, eller prøv igjen.',
         null,
       );
     }
+  }
+
+  /**
+   * Hvor mange av bilagets filer som lastes opp samtidig.
+   *
+   * De gikk én og én, og ti filer tok åtte sekunder bak en knapp som ikke sa
+   * noe. Ventetiden var ikke båndbredde, men rundturer: hver opplasting slår
+   * opp økten, medlemskapet og bilaget, skriver til R2 og lagrer raden, og ti
+   * slike i kø er ti ganger den samme ventingen. Fire, ikke ti, fordi
+   * databasen har fem faste tilkoblinger, og registeret som hentes etterpå og
+   * kollegers forespørsler skal ikke stå i kø bak én persons skjermbilder.
+   *
+   * Prisen er rekkefølgen: filene kan havne i arkivet i en annen rekkefølge
+   * enn de ble valgt i. Den sier ingenting om bilaget, og registeret viser et
+   * antall, ikke en rekke.
+   */
+  const UPLOADS_AT_ONCE = 4;
+
+  /** Knappen sier hva den venter på, så et trykk aldri ser ut som et heng. */
+  function busy(text: string): void {
+    submit.disabled = true;
+    submit.setAttribute('aria-busy', 'true');
+    submit.textContent = text;
+  }
+
+  function idle(): void {
+    submit.disabled = false;
+    submit.removeAttribute('aria-busy');
+    submit.textContent = idleLabel();
   }
 
   form.addEventListener('submit', (event) => {
@@ -2020,7 +2584,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     // five screenshots of a FINN purchase nowhere at all.
     const attaching = [...chosen];
 
-    submit.disabled = true;
+    busy(editing === null ? 'Fører betalingen …' : 'Lagrer endringene …');
     setStatus(formStatus, '');
     // Captured before the request, because the handler below ends edit mode.
     const edited = editing;
@@ -2041,8 +2605,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       // Filled in below: the one choice that is not a row in the register has
       // to become one before the voucher can point at it.
       party_id: null as number | null,
+      // Tom når typen ikke har noe alternativ: da fører backend til typens konto.
+      account_number: String(data.get('account_number') ?? '') || null,
     };
-    const saving = chosenParty(String(data.get('party_id') ?? '')).then((partyPk) => {
+    const saving = chosenParty().then((partyPk) => {
       values.party_id = partyPk;
       return edited === null
         ? recordCashFlow(company.id, values)
@@ -2054,14 +2620,24 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         // upload must therefore not read as a failed registration. Each is
         // attached on its own and a failure names the file, because "the
         // document was rejected" about six of them says nothing actionable.
-        const rejected: string[] = [];
-        for (const file of attaching) {
-          try {
-            await uploadDocument(company.id, entry.id, file);
-          } catch {
-            rejected.push(file.name);
-          }
-        }
+        const count = attaching.length;
+        const progress = (done: number): void => {
+          busy(
+            count === 1
+              ? 'Laster opp dokumentet …'
+              : `Laster opp dokumentene … ${done} av ${count}`,
+          );
+        };
+        if (count > 0) progress(0);
+        const results = await settleLimited(
+          attaching,
+          UPLOADS_AT_ONCE,
+          (file) => uploadDocument(company.id, entry.id, file),
+          progress,
+        );
+        const rejected = attaching
+          .filter((_, index) => results[index]?.status === 'rejected')
+          .map((file) => file.name);
         if (rejected.length > 0) {
           setStatus(
             pageStatus,
@@ -2084,7 +2660,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         el<HTMLInputElement>('#date-input').value = todayIso();
         fillTypes();
         fillParties();
-        await refresh();
+        // Ledig før registeret er hentet: betalingen er ført, og neste bilag
+        // skal ikke vente på at listen tegnes. Ikke i en `finally` heller, som
+        // ville sluppet knappen løs midt i lesingen av et bilag som ble lagt
+        // til i mellomtiden.
+        idle();
+        // Egen feilmelding, fordi feilen under gjelder føringen. Et register
+        // som ikke ble hentet, sa «Vi fikk ikke ført betalingen» om en betaling
+        // som var ført, og det neste brukeren gjør da, er å føre den på nytt.
+        await refresh().catch(() => {
+          setStatus(
+            pageStatus,
+            'Betalingen er ført, men registeret under ble ikke oppdatert. Last siden på nytt.',
+          );
+        });
       })
       .catch((error: unknown) => {
         setStatus(
@@ -2095,9 +2684,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
               ? 'Vi fikk ikke ført betalingen.'
               : 'Vi fikk ikke lagret endringen. Den opprinnelige føringen står som før.',
         );
-      })
-      .finally(() => {
-        submit.disabled = false;
+        idle();
       });
   });
 
@@ -2107,8 +2694,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       return;
     }
     try {
-      const [companies, loaded] = await Promise.all([loadCompanies(), getCatalogue()]);
-      catalogue = loaded;
+      const companies = await loadCompanies();
 
       if (companies.length === 0) {
         // Nothing to book into yet; the overview is where a company is created.
@@ -2119,6 +2705,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       const current = currentCompany(companies);
       if (current === undefined) return;
       company = current;
+      // Selskapets egen katalog, ikke den felles: standardkoden følger
+      // mva-registreringen, og en type med deaktivert konto tilbys ikke.
+      catalogue = await getCompanyCatalogue(company.id);
 
       el('#company-name').textContent = company.name;
       mayWrite = can(session, company.organization_id, 'ledger:write');

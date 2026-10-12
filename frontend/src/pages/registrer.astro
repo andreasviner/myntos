@@ -5,7 +5,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
 <BaseLayout
   title="Opprett konto | Myntos"
-  description="Opprett en Myntos-konto med e-post, Google, Microsoft eller Vipps, og inviter kollegaer inn i samme organisasjon."
+  description="Opprett en Myntos-konto med e-post, Google, Microsoft eller BankID, og inviter kollegaer inn i samme organisasjon."
 >
   <div class="auth-page">
     <h1>Opprett konto</h1>
@@ -78,7 +78,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
 <script>
   import { ApiError, getProviders, registerAccount } from '../lib/api';
-  import { renderProviderButtons } from '../lib/providers';
+  import { CALLBACK_ERRORS, renderProviderButtons } from '../lib/providers';
   import { el, setStatus } from '../lib/dom';
   import { rememberAuth, safeNext } from '../lib/session';
 
@@ -112,9 +112,26 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     el<HTMLInputElement>('[name="full_name"]').value = invitedName;
   }
 
-  // Signing up and signing in are the same call for every provider; the
-  // backend creates the account the first time it sees a subject.
-  void renderProviderButtons(next);
+  // En registrering med leverandør som feilet, kommer tilbake hit med en fast
+  // kode, aldri leverandørens egen tekst.
+  const callbackError = params.get('error');
+  if (callbackError !== null) {
+    setStatus(status, CALLBACK_ERRORS[callbackError] ?? 'Registreringen feilet. Prøv en gang til.');
+  }
+
+  // Google og Microsoft oppretter kontoen første gang de ser en ny bruker, med
+  // adressen de selv oppgir. BankID har ingen adresse å gi, så «signup» sender
+  // en ukjent BankID videre til /fullfor-registrering/, der man skriver den inn.
+  //
+  // En konto laget med BankID logger bare inn med BankID: vilkårene til BankID
+  // forbyr å bruke en BankID-innlogging til å sette opp et passord eller en
+  // annen innlogging hos oss (docs/integrations/bankid.md). Det står rett under
+  // knappen, fordi det er noe man skal vite før man trykker.
+  void renderProviderButtons(next, 'signup', {
+    bankid:
+      'En konto du oppretter med BankID, logger bare inn med BankID. ' +
+      'Du kan bytte til e-post og passord senere, under «Din konto».',
+  });
 
   // The minimum length comes from the backend that enforces it, so the hint
   // cannot end up promising a rule the server does not apply. Both requests hit

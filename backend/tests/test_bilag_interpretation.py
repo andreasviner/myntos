@@ -28,7 +28,7 @@ from myntos.domain.bilag.interpretation import (
     read,
     suggest,
 )
-from myntos.domain.ledger.cashflow import CashFlowDirection
+from myntos.domain.ledger.cashflow import CASH_FLOW_TYPES, CashFlowDirection
 
 TODAY = date(2026, 8, 13)
 OWN_ORGNR = "910000012"
@@ -708,8 +708,40 @@ def test_foreign_vat_is_never_proposed_as_norwegian_input_vat() -> None:
     suggestion = only(text)
 
     assert suggestion.type_code == "datakostnad"
-    assert suggestion.tax_code is None
+    # Proposed as 0 rather than left empty: the form fills an empty code with
+    # the category's default, and that is 25 % for "datakostnad".
+    assert suggestion.tax_code == "0"
     assert any("innførselsmva" in warning for warning in suggestion.warnings)
+
+
+def test_goods_from_abroad_are_not_given_the_categorys_25_percent() -> None:
+    """MA-3D's pro forma invoice: 1 790 EUR, "VAT 0,00 €", import VAT to follow.
+
+    Left without a code it came back as "1: Inngående mva, høy sats (25 %)",
+    the default for Varekjøp, which deducts a fifth of the amount as VAT the
+    seller never charged. The import VAT is a separate bill from the freight
+    forwarder, and the warning says so.
+    """
+    text = (
+        "FjordLab Design, d.o.o.\nDate of issue: 03.10.2026\nJet Thruster JetX-100V4\n"
+        "Subtotal 1.790,00 €\nVAT 0,00 €\nTotal 1.790,00 €\n"
+    )
+    found = read(text, today=TODAY)
+    proposal = suggest(text, today=TODAY, own_orgnr=OWN_ORGNR, own_name=OWN_NAME, reading=found)
+    apply_type(proposal, reading=found, type_code="varekjop", source=FieldSource.MODEL)
+
+    assert proposal.tax_code == "0"
+    assert any("tollpass" in warning for warning in proposal.warnings)
+
+
+def test_the_tollpass_bill_in_foreign_currency_keeps_its_own_code() -> None:
+    """Filed as the import VAT itself, the bilag is that bill, and 14 is right."""
+    text = "Customs clearance\nDate 10.10.2026\nImport VAT EUR 447,50\nTotal EUR 447,50\n"
+    found = read(text, today=TODAY)
+    proposal = suggest(text, today=TODAY, own_orgnr=OWN_ORGNR, own_name=OWN_NAME, reading=found)
+    apply_type(proposal, reading=found, type_code="mva_innforsel", source=FieldSource.MODEL)
+
+    assert proposal.tax_code is None
 
 
 def test_a_field_says_where_it_came_from() -> None:
@@ -776,6 +808,9 @@ def test_the_file_title_names_the_seller_when_the_page_does_not() -> None:
 
     assert found.document_title == "eBay"
     assert found.seller_name == "eBay"
+    # And says so, because a title is also where a filename ends up, and the
+    # model gets to replace a name that came from nowhere better.
+    assert found.seller_named_by_title
 
 
 def test_the_title_never_outranks_a_name_on_the_page() -> None:
@@ -784,6 +819,46 @@ def test_the_title_never_outranks_a_name_on_the_page() -> None:
 
     assert found.document_title == "eBay"
     assert found.seller_name == "Telenor Norge AS"
+    assert not found.seller_named_by_title
+
+
+# The layout of MA-3D's pro forma invoice as Løynd transcribes it, with the
+# names changed: the bank-details block first, the buyer's address under it,
+# and the letterhead at the very bottom, past where the top-of-page guess looks.
+PRO_FORMA = """[Page 1]
+Payment details:
+Beneficiary´s Name: FJORDLAB DESIGN D.O.O.
+Beneficiary´s address: CESTA 84, 1211 LJUBLJANA, SLOVENIA
+Bank Name: OTP BANKA D.D.
+SWIFT code: KBMASI2X
+Bank account: SI56 0400 0027 9713 506
+
+Kari Nordmann
+7030 Trondheim
+Norway
+Description Price Qty Unit VAT Amount
+Jet Thruster JetX-100V4
+535,00 € 1 piece 535,00 €
+Subtotal 1.790,00 €
+VAT 0,00 €
+Total 1.790,00 €
+FjordLab Design, d.o.o.
+VAT ID: SI49294890
+Pro Forma Invoice No.: 26-0023
+Date of issue: Ljubljana, 03.10.2026
+"""  # noqa: RUF001 - the acute accent is what the invoice prints
+
+
+def test_the_beneficiary_of_the_payment_is_the_seller() -> None:
+    """Who the money goes to is a statement of who sold it, like "Sold by".
+
+    The file was saved under the buyer's name, so before this the title
+    fallback offered the buyer as the counterparty of their own purchase.
+    """
+    found = read(PRO_FORMA, today=TODAY, title="PI Kari Nordmann _26-0023")
+
+    assert found.seller_name == "FJORDLAB DESIGN D.O.O"
+    assert not found.seller_named_by_title
 
 
 def test_a_foreign_total_becomes_kroner_once_a_rate_is_supplied() -> None:
@@ -1154,3 +1229,143 @@ def test_an_item_line_with_no_price_beside_it_is_still_read() -> None:
     assert read(text, today=TODAY).item_text == (
         "NEW Apple Mac Studio M3 Ultra 28-Core 96GB RAM 1TB SSD 60-Core GPU"
     )
+
+
+def test_the_direction_the_user_chose_beats_the_documents() -> None:
+    """An invoice we issued reads as money in; the user says it went out.
+
+    Their word wins, the category is guessed from their side of it, and the
+    direction is not marked as a proposal, because nobody proposed it.
+    """
+    read_as = suggest(OWN_SALE, today=TODAY, own_orgnr=OWN_ORGNR, own_name=OWN_NAME)
+    assert read_as.direction is CashFlowDirection.INN
+
+    chosen = suggest(
+        OWN_SALE,
+        today=TODAY,
+        own_orgnr=OWN_ORGNR,
+        own_name=OWN_NAME,
+        direction=CashFlowDirection.UT,
+    )
+
+    assert chosen.direction is CashFlowDirection.UT
+    assert "direction" not in chosen.sources
+    if chosen.type_code is not None:
+        assert CASH_FLOW_TYPES[chosen.type_code].direction is CashFlowDirection.UT
+
+
+# --- One card charge for several orders (aliexpress2) ----------------------------
+
+VOEC_INVOICE = """Tax Invoice
+Invoice No. : NO011012026100500011117
+Invoice Date : 2026-10-05
+Sold By:  stemedu Official Store Alibaba.com Singapore E-Commerce Private Limited
+ITEMS Qty Price (tax excl.) Discount Tax Rate Tax Amount Amount (USD)   Amount (NOK)
+Order Number: 3076911632201854
+75kg 5M Diving Servos IP68 Waterproof
+1 42.21 - 25% 10.56 52.80 531
+Amount paid 52.80 531
+VAT%
+Taxable Base
+(in NOK)
+VAT
+(in NOK)
+25% 425 106
+Total 425 106
+Alibaba.com Singapore E-Commerce Private Limited is raising this invoice in accordance to
+the applicable tax laws for the low value goods supplied by 3rd party offshore sellers
+"""
+
+BANK_APP_CHARGE = """09:46
+Transaction
+Outgoing
+06.10.26
+-9 771,76 NOK
+ALIEXPRESSCOM
+From
+4214 33 41180
+Firmak
+Booked date
+06.10.26
+"""
+
+ORDER_SUMMARY = """AliExpress
+Summary
+Order ID:
+3076911632181854
+Subtotal:
+5 939 kr
+All discount:
+30,19 kr
+Total:
+5 908,81 kr
+Item detail
+Glitter 811H 42KW Spot Welder Ma
+5 939 kr
+x1
+"""
+
+
+def test_a_voec_invoice_is_read_for_what_was_paid() -> None:
+    """Not for "Total 425 106", which is a base of 425 and VAT of 106 side by side."""
+    reading = read(VOEC_INVOICE, today=date(2026, 10, 9))
+
+    assert reading.gross_amount == Decimal("531")
+
+
+def test_private_limited_is_not_a_vat_line() -> None:
+    """ "Private" contains "vat", and "3rd party" ends in a figure."""
+    reading = read(VOEC_INVOICE, today=date(2026, 10, 9))
+
+    assert reading.vat_amount != Decimal("3")
+
+
+def test_a_subtotal_above_a_discount_is_not_the_total() -> None:
+    reading = read(ORDER_SUMMARY, today=date(2026, 10, 9), has_letterhead=False)
+
+    assert reading.gross_amount == Decimal("5908.81")
+
+
+def test_a_bank_app_charge_covering_several_orders_is_the_bilag() -> None:
+    """The kontonummer is spaced and the amount carries no label, and it is still the bank.
+
+    Missing either made the nine orders compete for the total, and the largest
+    of them was a VAT summary read as 425 106 kroner.
+    """
+    text = (
+        f"{BANK_APP_CHARGE}\n--- Dokument 2: invoice.pdf ---\n{VOEC_INVOICE}"
+        f"\n--- Dokument 3: summary.png ---\n{ORDER_SUMMARY}"
+    )
+    reading = read(text, today=date(2026, 10, 9), has_letterhead=False)
+
+    assert reading.gross_amount == Decimal("9771.76")
+    assert reading.total_is_negative is True
+
+
+def test_an_unlabelled_bank_figure_smaller_than_the_purchase_is_another_movement() -> None:
+    """The FINN bilag: the owner's 3 000 beside a 3 565 receipt is not what it cost."""
+    text = (
+        "Outgoing payment\n1520.34.91244\n30 August 2026\n-NOK 3 000,00\n"
+        "\n--- Dokument 2: kvittering.png ---\nDu har betalt\nTotalt\n3 565 kr\n"
+    )
+    reading = read(text, today=date(2026, 9, 7), has_letterhead=False)
+
+    assert reading.gross_amount == Decimal("3565")
+
+
+def test_several_orders_are_not_described_by_the_first_one() -> None:
+    """Different numbers and different items: no single one of them is the bilag."""
+    text = (
+        f"{BANK_APP_CHARGE}\n--- Dokument 2: invoice.pdf ---\n{VOEC_INVOICE}"
+        f"\n--- Dokument 3: other.pdf ---\n"
+        + VOEC_INVOICE.replace("11117", "11110").replace("Diving Servos", "Copper Foil Tape")
+    )
+    reading = read(text, today=date(2026, 10, 9), has_letterhead=False)
+
+    assert reading.invoice_number is None
+    assert reading.item_text is None
+
+
+def test_a_camera_roll_name_says_nothing() -> None:
+    assert interpretation.is_camera_roll("IMG 9461")
+    assert not interpretation.is_camera_roll("Order details eBay")

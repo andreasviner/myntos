@@ -32,6 +32,19 @@ class Permission(enum.StrEnum):
     MEMBER_MANAGE = "member:manage"
     LEDGER_READ = "ledger:read"
     LEDGER_WRITE = "ledger:write"
+    # Closing a financial year, and reopening one. Apart from writing because
+    # it is a statement about the whole year rather than one more entry in it:
+    # it locks every colleague out of the year, and reopening changes books
+    # somebody may already have relied on. Admins and owners, like the other
+    # decisions about the company itself.
+    LEDGER_CLOSE = "ledger:close"
+    # Changing the kontoplan: adding, renaming and deactivating accounts and
+    # choosing their næringsspesifikasjon posts. Not part of ledger:write,
+    # because it changes what *every* member's entries default to and what the
+    # skattemelding says the books contain. A bookkeeper invited to post
+    # payments should not be able to move a cost account onto the balance
+    # sheet's grouping by accident; whoever administers the books may.
+    LEDGER_CHART = "ledger:chart"
 
 
 _VIEWER: frozenset[Permission] = frozenset(
@@ -45,6 +58,8 @@ _MEMBER: frozenset[Permission] = _VIEWER | {Permission.LEDGER_WRITE}
 _ADMIN: frozenset[Permission] = _MEMBER | {
     Permission.ORGANIZATION_MANAGE,
     Permission.MEMBER_MANAGE,
+    Permission.LEDGER_CLOSE,
+    Permission.LEDGER_CHART,
 }
 _OWNER: frozenset[Permission] = _ADMIN | {
     Permission.ORGANIZATION_DELETE,

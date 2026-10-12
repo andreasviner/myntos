@@ -1,7 +1,8 @@
 """Cloudflare R2 storage for bilag documents (production).
 
 R2 speaks the S3 API, so this is an S3 client narrowed to the two operations a
-bilag archive performs: put an object, get an object. There is no delete, here
+bilag archive performs: put an object, get an object (and put a thumbnail,
+which may land on one already there; see ``save_derived``). There is no delete, here
 or anywhere above it — bokføringsloven § 13 requires primary documentation to
 stay retrievable for five years after the financial year ends, and a delete
 path is how that requirement quietly stops being met.
@@ -24,7 +25,7 @@ import httpx
 
 from myntos.core.clock import utc_now
 from myntos.storage.base import ObjectNotFoundError, StorageError
-from myntos.storage.keys import new_key, validate_key
+from myntos.storage.keys import new_key, validate_derived_key, validate_key
 from myntos.storage.sigv4 import payload_hash, sign
 
 # R2 ignores the region but SigV4 does not: it is part of the signing scope, and
@@ -110,6 +111,13 @@ class R2DocumentStorage:
         if response.status_code not in (200, 201):
             raise StorageError(f"kunne ikke lagre dokumentet i R2 (HTTP {response.status_code})")
         return key
+
+    async def save_derived(self, key: str, *, content: bytes, content_type: str) -> None:
+        response = await self._send(
+            "PUT", validate_derived_key(key), body=content, content_type=content_type
+        )
+        if response.status_code not in (200, 201):
+            raise StorageError(f"kunne ikke lagre kopien i R2 (HTTP {response.status_code})")
 
     async def load(self, key: str) -> bytes:
         response = await self._send("GET", validate_key(key))

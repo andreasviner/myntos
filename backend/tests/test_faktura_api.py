@@ -154,7 +154,7 @@ def test_a_draft_can_be_changed_and_discarded(client: TestClient) -> None:
                     "description": "Rådgivning april",
                     "quantity": "2",
                     "unit_price": "1000.00",
-                    "tax_code": "32",
+                    "tax_code": "33",
                 }
             ]
         },
@@ -635,7 +635,7 @@ def test_the_catalogue_lists_the_sellable_codes_and_the_cutover_date(
     catalogue = client.get("/api/v1/faktura/katalog").json()
 
     codes = {option["tax_code"] for option in catalogue["tax_options"]}
-    assert codes == {"3", "31", "32", "5", "6", "52", "0"}
+    assert codes == {"3", "31", "33", "5", "6", "52", "0"}
     assert "1" not in codes  # inngående mva is not sellable
     assert catalogue["e_invoice_mandatory_from"] == "2027-01-01"
     assert {unit["code"] for unit in catalogue["units"]} >= {"EA", "HUR", "KGM"}

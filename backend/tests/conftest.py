@@ -18,8 +18,12 @@ Two details are deliberate:
   send it back — the tests would then be exercising a code path no browser uses.
 """
 
+import contextlib
+import functools
+import uuid
 from collections.abc import AsyncIterator, Iterator
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -29,16 +33,20 @@ import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from myntos.api.deps import get_document_storage, get_mailer
-from myntos.core.config import get_settings
+from myntos.api.deps import KEY_SCOPE_EXTENSION, get_document_storage, get_mailer
+from myntos.auth import agent_keys
+from myntos.core.config import Settings, get_settings
 from myntos.core.mail import Delivery, Mail
 from myntos.db.base import Base
 from myntos.db.session import get_session
+from myntos.domain.arsoppgjor import models as arsoppgjor_models  # noqa: F401  (registers tables)
+from myntos.domain.bank import models as bank_models  # noqa: F401  (registers tables)
 from myntos.domain.bilag import models as bilag_models  # noqa: F401  (registers tables)
 from myntos.domain.bilag import reading_cache
 from myntos.domain.faktura import models as faktura_models  # noqa: F401  (registers tables)
 from myntos.domain.identity import models as identity_models  # noqa: F401  (registers tables)
 from myntos.domain.ledger import models as ledger_models  # noqa: F401  (registers tables)
+from myntos.domain.mva import models as mva_models  # noqa: F401  (registers tables)
 from myntos.integrations import brreg, norgesbank
 from myntos.main import create_app
 from myntos.storage.local import LocalDocumentStorage
@@ -56,10 +64,17 @@ PASSWORD = "korrekt-hest-batteri-stift"
 def test_settings() -> Iterator[None]:
     """Pin the settings the API tests assume.
 
-    Environment variables outrank the repo-root ``.env``, so this holds whether
-    or not the developer running the suite has one.
+    No ``.env`` is read at all, so the suite gives the same answer on a
+    developer's machine, on the production box and in CI.
     """
     patcher = pytest.MonkeyPatch()
+    # The root of it. On the production box the repo-root .env is the live
+    # configuration, and reading it made a couple of hundred tests assert on a
+    # configured deployment where CI has an unconfigured one. Blanking settings
+    # one at a time (below) kept missing the newest, so the standing advice was
+    # to move .env aside before every run, and a run interrupted halfway left
+    # production without its configuration at the next restart.
+    patcher.setitem(Settings.model_config, "env_file", None)
     patcher.setenv("ENVIRONMENT", "test")
     patcher.setenv("CORS_ORIGINS", f'["{TEST_ORIGIN}"]')
     patcher.setenv("FRONTEND_BASE_URL", "https://app.example")
@@ -75,10 +90,13 @@ def test_settings() -> Iterator[None]:
     # credentials in their .env would see them fail while CI — which has none —
     # passes. The OIDC tests do not need these set: they replace the client
     # itself (`auth_endpoints._client_for`), not the configuration.
-    for provider in ("GOOGLE", "MICROSOFT", "VIPPS"):
+    for provider in ("GOOGLE", "MICROSOFT", "BANKID"):
         patcher.setenv(f"{provider}_CLIENT_ID", "")
         patcher.setenv(f"{provider}_CLIENT_SECRET", "")
         patcher.setenv(f"{provider}_REDIRECT_URI", "")
+    # BankID's issuer and key, which the BankID tests set for themselves.
+    for name in ("BANKID_ISSUER", "BANKID_JWK_PATH", "BANKID_JWK", "BANKID_KID"):
+        patcher.setenv(name, "")
     # And the government login, which is the same trap with higher stakes: this
     # repository's own .env holds a working ID-porten test client, so a suite
     # that read it would assert on a configured deployment here and an
@@ -115,6 +133,20 @@ def a_cold_reading_cache() -> Iterator[None]:
     reading_cache.CACHE.clear()
     yield
     reading_cache.CACHE.clear()
+
+
+@pytest.fixture(autouse=True)
+def fresh_key_counters() -> Iterator[None]:
+    """Every test counts its keys' requests and refusals from zero.
+
+    The counters live in the process (myntos.auth.agent_keys, rule 10) and are
+    keyed by key id, and every test's database hands out id 1 again. Without
+    this, the boundary tests' refusals would add up across tests until some
+    unrelated test's key was stopped for probing.
+    """
+    agent_keys.forget_counts()
+    yield
+    agent_keys.forget_counts()
 
 
 @pytest.fixture(autouse=True)
@@ -325,6 +357,98 @@ def join_company(
     return body or session
 
 
+ALL_SCOPES = ("read", "write", "post")
+
+
+@functools.cache
+def _declared_scopes() -> dict[tuple[str, str], str | None]:
+    schema = create_app().openapi()
+    return {
+        (method.upper(), path): operation.get(KEY_SCOPE_EXTENSION)
+        for path, operations in schema["paths"].items()
+        for method, operation in operations.items()
+    }
+
+
+def assert_key_refused(response: Any, method: str, path: str) -> None:
+    """What a key is answered on a route it must not reach (rule 9).
+
+    A route open to keys answers 404, exactly as it does a session: the id is
+    not this key's to know about. A route closed to keys answers 403
+    ``not_for_agent_keys`` before any id is looked at, which says nothing about
+    whether the id exists. Never a 2xx, and never anything else.
+    """
+    if _declared_scopes()[(method, path)] in (None, "none"):
+        assert response.status_code == 403, (
+            f"{method} {path} answered {response.status_code} to a key: {response.text[:200]}"
+        )
+        assert response.json()["code"] == "not_for_agent_keys", response.text[:200]
+    else:
+        assert response.status_code == 404, (
+            f"{method} {path} answered {response.status_code} to a key: {response.text[:200]}"
+        )
+
+
+def connection_key(
+    client: TestClient,
+    company_id: int,
+    *,
+    scopes: tuple[str, ...] = ALL_SCOPES,
+    approval_scopes: tuple[str, ...] = (),
+    name: str = "Testagent",
+) -> str:
+    """Switch keys on for a company, as whoever is signed in, and make one.
+
+    Returns the connection key the Tilgang page would show. The person signed
+    in needs ``member:manage`` for the switch, which every company's creator
+    has; tests about who may switch it do so themselves.
+    """
+    switched = write(
+        client, "PUT", f"/api/v1/companies/{company_id}/agent-access", json={"enabled": True}
+    )
+    assert switched.status_code == 200, switched.text
+    made = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company_id}/agent-keys",
+        json={"name": name, "scopes": list(scopes), "approval_scopes": list(approval_scopes)},
+    )
+    assert made.status_code == 201, made.text
+    key: str = made.json()["connection_key"]
+    return key
+
+
+def agent_tokens(client: TestClient, key: str) -> dict[str, Any]:
+    """Exchange a connection key, as an agent would, and return the answer."""
+    response = client.post(
+        "/api/v1/agent/token", json={"grant_type": "connection_key", "connection_key": key}
+    )
+    assert response.status_code == 200, response.text
+    body: dict[str, Any] = response.json()
+    return body
+
+
+def agent_header(
+    client: TestClient,
+    company_id: int,
+    *,
+    scopes: tuple[str, ...] = ALL_SCOPES,
+    approval_scopes: tuple[str, ...] = (),
+) -> dict[str, str]:
+    """An ``Authorization`` header for a fresh key on ``company_id``.
+
+    The whole round trip a person and their agent make: switch on, make the
+    key, exchange it. The client stays signed in as the person, so a test can
+    go on acting as either; a request carrying this header is the agent, since
+    a bearer token is read before the cookie.
+    """
+    tokens = agent_tokens(
+        client,
+        connection_key(client, company_id, scopes=scopes, approval_scopes=approval_scopes),
+    )
+    return {"Authorization": f"Bearer {tokens['access_token']}"}
+
+
 def write(client: TestClient, method: str, url: str, **kwargs: Any) -> Any:
     """A state-changing request carrying the ``Origin`` a browser would send.
 
@@ -333,3 +457,66 @@ def write(client: TestClient, method: str, url: str, **kwargs: Any) -> Any:
     """
     headers = {"Origin": TEST_ORIGIN, **kwargs.pop("headers", {})}
     return client.request(method, url, headers=headers, **kwargs)
+
+
+def insert_mva_filing(
+    client: TestClient,
+    company_id: int,
+    *,
+    year: int,
+    index: int,
+    status: str = "validert",
+    fastsatt: str = "0.00",
+    period_type: str = "toMaaneder",
+    content_hash: str = "0" * 64,
+    validation_xml: str = (
+        '<valideringsresultat xmlns="no:skatteetaten:fastsetting:avgift:mva:'
+        'valideringsresultat:v1"><avvikVedMeldingslevering>ingen avvik'
+        "</avvikVedMeldingslevering></valideringsresultat>"
+    ),
+    altinn_instance_id: str | None = None,
+) -> int:
+    """A filing row written straight into the app's database, and its id.
+
+    Through the app's own session factory and on the app's own event loop
+    (``client.portal``): the async engine's connections belong to that loop, and
+    a second one would deadlock on SQLite. Driving the dependency generator to
+    its end is what commits, exactly as a request would.
+
+    For tests that need a filing to exist without standing up ID-porten and
+    Skatteetaten's validation to produce one, such as the company wall.
+    """
+    from myntos.domain.mva.models import MvaFiling
+
+    override = client.app.dependency_overrides[get_session]  # type: ignore[attr-defined]
+
+    async def insert() -> int:
+        sessions = override()
+        session = await sessions.__anext__()
+        filing = MvaFiling(
+            company_id=company_id,
+            year=year,
+            period_type=period_type,
+            period_index=index,
+            category="alminnelig",
+            status=status,
+            reference=str(uuid.uuid4()),
+            melding_xml="<mvaMeldingDto/>",
+            content_hash=content_hash,
+            fastsatt_merverdiavgift=Decimal(fastsatt),
+            lines=[],
+            validation_status="ingen avvik",
+            validation_xml=validation_xml,
+            altinn_instance_id=altinn_instance_id,
+            documents=[],
+        )
+        session.add(filing)
+        await session.flush()
+        filing_id = int(filing.id)
+        with contextlib.suppress(StopAsyncIteration):
+            await sessions.__anext__()
+        return filing_id
+
+    portal = client.portal
+    assert portal is not None, "insert_mva_filing needs the client inside its with-block"
+    return portal.call(insert)

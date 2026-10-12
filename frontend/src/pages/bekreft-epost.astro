@@ -1,0 +1,78 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+{/* Bekreft e-post: siden lenken i bekreftelses-e-posten åpner.
+
+    Den bekrefter med én gang, uten et ekstra trykk. Bekreftelsen gir ingen
+    tilgang til noe og logger ingen inn, så det er ingenting å beskytte ved å
+    spørre først. Tokenet leses fra fragmentet og fjernes fra adresselinjen. */}
+
+<BaseLayout title="Bekreft e-post | Myntos" description="Bekreft e-postadressen til Myntos-kontoen din.">
+  <div class="auth-page">
+    <div class="empty" id="laster">Bekrefter adressen …</div>
+
+    <div id="bekreftet" hidden>
+      <h1>Adressen er bekreftet</h1>
+      <p class="lead">Takk. Nå vet vi at e-post til deg kommer fram.</p>
+      <a class="btn btn-primary" href="/">Til Myntos</a>
+    </div>
+
+    {/* Brukt, utløpt eller erstattet av en nyere: leseren kan ikke rette noe av
+        det, så siden sier hvor en ny lenke fås. */}
+    <div id="ugyldig" hidden>
+      <h1>Denne lenken virker ikke lenger</h1>
+      <p class="lead">
+        Den kan være brukt allerede, for gammel, eller erstattet av en nyere. Er du logget inn, kan
+        du be om en ny fra forsiden.
+      </p>
+      <a class="btn btn-ghost" href="/">Til forsiden</a>
+    </div>
+
+    <p class="status" id="status" hidden></p>
+  </div>
+</BaseLayout>
+
+<style>
+  .auth-page {
+    max-width: 32rem;
+    margin: 0 auto;
+  }
+</style>
+
+<script>
+  import { ApiError, verifyEmail } from '../lib/api';
+  import { el, setStatus, show } from '../lib/dom';
+  import { forgetFragment, tokenFromFragment } from '../lib/links';
+  import { loadSession } from '../lib/session';
+
+  const token = tokenFromFragment(window.location.hash);
+
+  function finish(which: '#bekreftet' | '#ugyldig'): void {
+    forgetFragment();
+    show(el('#laster'), false);
+    show(el(which), true);
+  }
+
+  if (token === null) {
+    finish('#ugyldig');
+  } else {
+    void verifyEmail(token)
+      .then(() => {
+        finish('#bekreftet');
+        // Hentes på nytt, så merknaden på forsiden forsvinner uten omlasting.
+        void loadSession(true);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof ApiError && error.code === 'invalid_email_token') {
+          finish('#ugyldig');
+          return;
+        }
+        show(el('#laster'), false);
+        setStatus(
+          el('#status'),
+          error instanceof ApiError ? error.message : 'Vi fikk ikke bekreftet adressen. Prøv å laste siden på nytt.',
+        );
+      });
+  }
+</script>

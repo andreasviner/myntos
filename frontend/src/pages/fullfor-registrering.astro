@@ -1,0 +1,193 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+{/* Siste steg i en registrering med BankID.
+
+    BankID sier hvem du er, men ikke hvordan vi når deg, og en konto trenger
+    en e-postadresse: invitasjoner sendes til den, og det er den som får lenken
+    til nytt passord. Backend holder derfor på BankID-svaret i en halvtime og
+    sender nettleseren hit, med en nøkkel i fragmentet (#token=…), slik at den
+    aldri havner i en serverlogg.
+
+    Navnet kommer fra BankID og kan ikke endres her: at BankID har bekreftet
+    det, er poenget. Adressen er bare det som skrives inn, så den er ubekreftet
+    til lenken i e-posten er åpnet.
+
+    Har adressen en konto fra før, avviser backend den i stedet for å koble
+    BankID til den kontoen. Ellers kunne hvem som helst med BankID ta over en
+    konto ved å skrive inn adressen. Man logger da inn som vanlig og bytter til
+    BankID fra «Din konto», der begge deler er bevist.
+
+    Kontoen som lages her, logger bare inn med BankID: ikke med passord, og ikke
+    med Google eller Microsoft. Det er BankIDs vilkår, ikke et valg vi har gjort
+    for å være strenge, og siden sier det før knappen (docs/integrations/
+    bankid.md). */}
+
+<BaseLayout
+  title="Fullfør registreringen | Myntos"
+  description="Skriv inn e-postadressen til den nye Myntos-kontoen din."
+>
+  <div class="auth-page">
+    <h1>Fullfør registreringen</h1>
+    <p class="lead" id="hilsen">Henter …</p>
+
+    <div class="card">
+      <p class="status" id="status" hidden></p>
+
+      <form id="signup-form" novalidate hidden>
+        <label class="field">
+          <span>E-postadresse</span>
+          <input type="email" name="email" autocomplete="email" required />
+          <span class="field-hint">
+            Vi sender en lenke hit for å bekrefte at adressen er din. BankID gir oss ingen adresse.
+          </span>
+        </label>
+        <label class="field">
+          <span>Navn på organisasjonen <span class="muted">(valgfritt)</span></span>
+          <input type="text" name="organization_name" autocomplete="organization" />
+          <span class="field-hint">Du kan endre dette senere.</span>
+        </label>
+        <p class="card-hint">
+          Kontoen logger bare inn med BankID, ikke med passord, Google eller Microsoft. Vil du
+          heller bruke e-post og passord senere, kan du bytte under «Din konto».
+        </p>
+        <button class="btn btn-primary btn-block" type="submit" id="submit">Opprett konto</button>
+      </form>
+
+      {/* Adressen har en konto fra før. Lenkene kan ikke stå i statusfeltet,
+          som bare tar tekst. */}
+      <p class="hjelp" id="finnes" hidden>
+        Er det din konto? <a href="/logg-inn/">Logg inn</a> som vanlig, og bytt til BankID under
+        «Din konto». Da blir BankID den eneste måten du logger inn på den. Eller skriv inn en
+        annen adresse.
+      </p>
+
+      {/* En nøkkel som er brukt, utløpt eller ødelagt kan ikke rettes her, så
+          siden peker tilbake til starten i stedet for å vise et skjema som bare
+          kan feile. */}
+      <div id="dead" hidden>
+        <p>Denne registreringen er utløpt eller allerede fullført. Start på nytt med BankID.</p>
+        <a class="btn btn-primary btn-block" href="/registrer/">Til registreringen</a>
+      </div>
+    </div>
+
+    {/* Samtykket står der kontoen faktisk opprettes, som på /registrer/. */}
+    <p class="consent" id="samtykke" hidden>
+      Ved å opprette en konto godtar du <a href="/vilkar/">bruksvilkårene</a> og
+      <a href="/personvern/">personvernerklæringen</a>.
+    </p>
+  </div>
+</BaseLayout>
+
+<style>
+  .auth-page {
+    max-width: 26rem;
+    margin: 0 auto;
+  }
+  .hjelp {
+    margin: 0.9rem 0 0;
+    font-size: 0.9rem;
+  }
+  .consent {
+    text-align: center;
+    margin-top: 1rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .consent a {
+    color: var(--muted);
+  }
+</style>
+
+<script>
+  import { ApiError, completeProviderSignup, lookupProviderSignup } from '../lib/api';
+  import { el, setStatus, show } from '../lib/dom';
+  import { forgetFragment, tokenFromFragment } from '../lib/links';
+  import { rememberAuth, safeNext } from '../lib/session';
+
+  const status = el<HTMLParagraphElement>('#status');
+  const form = el<HTMLFormElement>('#signup-form');
+  const submit = el<HTMLButtonElement>('#submit');
+  const greeting = el<HTMLParagraphElement>('#hilsen');
+
+  // Nøkkelen blir stående i adresselinjen til kontoen finnes: en omlasting
+  // midt i skrivingen skal ikke koste en ny tur gjennom BankID.
+  const token = tokenFromFragment(window.location.hash);
+  let next = '/';
+
+  function dead(): void {
+    forgetFragment();
+    show(form, false);
+    show(el('#finnes'), false);
+    show(el('#samtykke'), false);
+    setStatus(status, '');
+    greeting.textContent = 'Registreringen kan ikke fullføres herfra.';
+    show(el('#dead'), true);
+  }
+
+  if (token === null) {
+    dead();
+  } else {
+    void lookupProviderSignup(token)
+      .then((held) => {
+        // textContent: navnet kommer fra BankID via API-et.
+        greeting.textContent = `${held.provider_label} bekreftet at du er ${held.full_name}. Hvilken e-postadresse skal kontoen ha?`;
+        next = safeNext(held.redirect_to);
+        show(form, true);
+        show(el('#samtykke'), true);
+        el<HTMLInputElement>('input[name="email"]').focus();
+      })
+      .catch((error: unknown) => {
+        if (error instanceof ApiError && error.code === 'invalid_provider_signup') {
+          dead();
+          return;
+        }
+        greeting.textContent = '';
+        setStatus(
+          status,
+          error instanceof ApiError ? error.message : 'Vi fikk ikke hentet registreringen. Last siden på nytt.',
+        );
+      });
+  }
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (token === null) return;
+    const data = new FormData(form);
+    const email = String(data.get('email') ?? '').trim();
+    const organizationName = String(data.get('organization_name') ?? '').trim();
+    if (email === '') {
+      setStatus(status, 'Skriv inn e-postadressen kontoen skal ha.');
+      return;
+    }
+
+    submit.disabled = true;
+    setStatus(status, '');
+    show(el('#finnes'), false);
+    void completeProviderSignup({
+      token,
+      email,
+      organization_name: organizationName === '' ? null : organizationName,
+    })
+      .then(() => {
+        forgetFragment();
+        rememberAuth('inn');
+        window.location.href = next;
+      })
+      .catch((error: unknown) => {
+        if (error instanceof ApiError && error.code === 'invalid_provider_signup') {
+          dead();
+          return;
+        }
+        // En adresse som har konto fra før bruker ikke opp registreringen, så
+        // man kan prøve en annen uten å gå gjennom BankID igjen.
+        setStatus(
+          status,
+          error instanceof ApiError ? error.message : 'Vi fikk ikke opprettet kontoen. Prøv en gang til.',
+        );
+        show(el('#finnes'), error instanceof ApiError && error.code === 'email_already_registered');
+        submit.disabled = false;
+      });
+  });
+</script>

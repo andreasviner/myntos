@@ -281,10 +281,12 @@ def test_providers_endpoint_reports_nothing_unconfigured(client: TestClient) -> 
         "password": True,
         "password_min_length": get_settings().password_min_length,
         "providers": [],
+        # The test mailer counts as configured; see RecordingMailer.
+        "email_delivery": True,
     }
 
 
-@pytest.mark.parametrize("provider", ["google", "microsoft", "vipps"])
+@pytest.mark.parametrize("provider", ["google", "microsoft"])
 def test_provider_start_is_unavailable_without_configuration(
     client: TestClient, provider: str
 ) -> None:

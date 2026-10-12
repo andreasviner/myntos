@@ -6,8 +6,9 @@ and SUBMITTING both the MVA-melding and the skattemelding — Maskinporten
 The submission path therefore looks like:
 
 1. The frontend redirects the user to ID-porten (authorization-code flow,
-   scopes like ``openid skatteetaten:mvameldingvalidering
-   skatteetaten:mvameldinginnsending``).
+   scopes like ``openid skatteetaten:mvameldingvalidering`` plus at least one
+   ``altinn:*`` scope; ``skatteetaten:mvameldinginnsending`` is retired, see
+   docs/integrations/mva.md).
 2. The backend receives the ID-porten access token.
 3. The token is exchanged for an Altinn token at
    ``platform.altinn.no/authentication/api/v1/exchange/id-porten``.

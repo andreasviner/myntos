@@ -3,7 +3,7 @@ import ProviderButtons from '../components/ProviderButtons.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 ---
 
-<BaseLayout title="Logg inn | Myntos" description="Logg inn på Myntos med e-post, Google, Microsoft eller Vipps.">
+<BaseLayout title="Logg inn | Myntos" description="Logg inn på Myntos med e-post, Google, Microsoft eller BankID.">
   <div class="auth-page">
     <h1>Logg inn</h1>
     <p class="lead">Fortsett der du slapp.</p>
@@ -11,7 +11,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     <div class="card">
       <p class="status" id="status" hidden></p>
 
-      <ProviderButtons />
+      {/* Hjelpen som hører til «ingen konto er koblet til denne BankID-en».
+          Lenker kan ikke stå i statusfeltet, som bare tar tekst, så de står
+          her og vises når den feilen kommer tilbake. */}
+      <p class="status-help" id="bankid-hjelp" hidden>
+        <a href="/registrer/">Opprett en konto med BankID</a>, eller logg inn under og bytt til
+        BankID fra <a href="/konto/">Din konto</a>.
+      </p>
+
+      <ProviderButtons labelTemplate="Logg inn med %s" />
 
       <form id="login-form" novalidate>
         <label class="field">
@@ -24,6 +32,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         </label>
         <button class="btn btn-primary btn-block" type="submit" id="submit">Logg inn</button>
       </form>
+      {/* Skjult til /auth/providers sier at installasjonen sender e-post.
+          Uten e-post finnes det ingen lenke å sende, og en lenke hit som bare
+          kan ende i «vi sender ikke e-post» er verre enn ingen. */}
+      <p class="forgot" id="forgot" hidden><a href="/glemt-passord/">Glemt passordet?</a></p>
     </div>
 
     <p class="switch">
@@ -37,6 +49,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     max-width: 26rem;
     margin: 0 auto;
   }
+  .status-help {
+    margin: -0.25rem 0 1rem;
+    font-size: 0.9rem;
+  }
+  .forgot {
+    margin: 0.9rem 0 0;
+    text-align: center;
+    font-size: 0.9rem;
+  }
   .switch {
     text-align: center;
     margin-top: 1.25rem;
@@ -45,11 +66,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 </style>
 
 <script>
-  import { ApiError, login } from '../lib/api';
-  import { el, setStatus } from '../lib/dom';
+  import { ApiError, getProviders, login } from '../lib/api';
+  import { el, setStatus, show } from '../lib/dom';
   // The backend never reflects a provider's own error text, since it would be
   // attacker-influenced content rendered in our page, so the callback sends a
-  // fixed keyword and CALLBACK_ERRORS owns the wording.
+  // fixed keyword and CALLBACK_ERRORS owns the wording. That includes the two a
+  // BankID account produces: a Google or Microsoft login whose address belongs
+  // to one (email_belongs_to_bankid_account), and anything else that would
+  // give it a second way in (bankid_account). The BankID button is above, so
+  // the message only has to say which one to press.
   import { CALLBACK_ERRORS, renderProviderButtons } from '../lib/providers';
   import { rememberAuth, safeNext } from '../lib/session';
 
@@ -62,9 +87,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   const callbackError = params.get('error');
   if (callbackError !== null) {
     setStatus(status, CALLBACK_ERRORS[callbackError] ?? 'Innloggingen feilet. Prøv en gang til.');
+    show(el('#bankid-hjelp'), callbackError === 'no_linked_account');
   }
 
   void renderProviderButtons(next);
+
+  void getProviders()
+    .then(({ email_delivery: mailed }) => show(el('#forgot'), mailed))
+    .catch(() => {
+      // Lenken blir skjult. Uten svar vet vi ikke om den kan virke.
+    });
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();

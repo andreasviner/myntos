@@ -14,8 +14,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from myntos import __version__
-from myntos.api.errors import domain_error_handler, unhandled_error_middleware
+from myntos.api.errors import (
+    approval_held_handler,
+    domain_error_handler,
+    unhandled_error_middleware,
+)
 from myntos.api.v1.router import api_router
+from myntos.auth.approvals import ApprovalHeld
 from myntos.core.config import get_settings
 from myntos.core.security import security_headers_middleware
 from myntos.db.session import get_engine
@@ -92,6 +97,8 @@ def create_app() -> FastAPI:
     app.add_exception_handler(LedgerError, domain_error_handler)
     app.add_exception_handler(FakturaError, domain_error_handler)
     app.add_exception_handler(BrregError, domain_error_handler)
+    # Not an error: a key's request stored to wait for its person (rule 13).
+    app.add_exception_handler(ApprovalHeld, approval_held_handler)
 
     app.include_router(api_router, prefix="/api/v1")
     return app

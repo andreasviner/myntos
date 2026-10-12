@@ -41,7 +41,10 @@ POST `application/x-www-form-urlencoded` to the token endpoint with
 
 Response: `access_token` (self-contained JWT, **non-revocable**),
 `expires_in`, `scope`. Treat the token as opaque; cache in memory keyed by
-`(scopes, consumer_org)` until `expires_in − 30 s` — actual lifetimes vary
+`(scope, organization, systemuser_org, external_ref)` — the sorted scopes, the
+delegating organization, and the system user's customer and `externalRef`
+(`auth/maskinporten/client.py`), because a token carries its authority in its
+claims — until `expires_in − 30 s`. Actual lifetimes vary
 per scope (some 10 min, Skatteetaten's skattemelding scope issues 8 h tokens).
 
 ## Client registration & keys
@@ -65,10 +68,13 @@ The scope picker is filtered by API provider — select **Skatteetaten** and
 
 **Do not** add: `altinn:serviceowner/*` (service owners only — fails
 delegation checks for end-user systems), KRR scopes (contact register,
-irrelevant), or `skatteetaten:mvameldingvalidering` /
-`skatteetaten:mvameldinginnsending` — those are **ID-porten** scopes and
-belong on a separate ID-porten client, since MVA validation and submission
-require a logged-in person.
+irrelevant), or `skatteetaten:mvameldingvalidering`, which is an **ID-porten**
+scope and belongs on the separate ID-porten client, since MVA validation and
+submission require a logged-in person. The production Maskinporten client does
+carry it, and Maskinporten issues tokens for it (ROADMAP, phase 0b); that is
+harmless and unused, because validation always goes out on the person's token
+and no code path asks Maskinporten for it. (`skatteetaten:mvameldinginnsending`
+is retired altogether; see mva.md.)
 
 The Altinn scopes are available immediately. Skatteetaten's scopes can be
 *added* to the client in both environments, but they stay inert — the portal
@@ -94,9 +100,12 @@ providers read it when reviewing access requests.
 - Optionally support `x5c` with a Buypass/Commfides virksomhetssertifikat for
   enterprises that have one. Suppliers must never hold customers'
   certificates.
-- One Maskinporten client per deployment; never copy a client's key across
-  installations. Prefer separate clients per API over one client with many
-  scopes.
+- One Maskinporten client and one ID-porten client per environment, each
+  meant to hold only scopes some code path requests; never copy a client's key
+  across installations. Not one client per API: a Maskinporten token is already
+  requested with just the scope its call needs, so more clients would mean more
+  keys to rotate and no narrower token
+  ([ARCHITECTURE.md § Security model](../ARCHITECTURE.md#security-model)).
 
 ## Altinn token exchange
 
@@ -194,24 +203,31 @@ cd backend
 uv run python -m myntos.auth.digdir_check --person <synthetic fnr>
 ```
 
-## Representing a taxpayer: `digdir:skattemelding`
+## Representing a taxpayer
 
 **Verified working 2026-08-24**, and the single most useful thing in this
 document: a real skattemelding was fetched for AS `314067630` (income year 2025)
 by a TestID login as `08866995401`, its daglig leder. That is the product's own
 shape - a person logged in as themselves, reading a client company's melding.
 
-The recipe, all three parts required:
+The recipe, both parts required:
 
-1. `digdir:skattemelding` on the ID-porten client. Digdir brokers it against
-   Altinn's rights register: "lese og levere skattemelding for alle
-   organisasjoner som jeg har rettigheter for i Altinn".
-2. `skatteetaten:formueinntekt/skattemelding` in the *same* token. This one is
-   access to the API; the other is permission to act for somebody. Dropping it
-   turns every answer into a **403 with an empty body**, which is the signature
-   of a missing API scope and is worth recognising on sight.
-3. Real Altinn rights over the company. Being daglig leder in Enhetsregisteret
+1. `skatteetaten:formueinntekt/skattemelding` in the ID-porten token. Dropping
+   it turns every answer into a **403 with an empty body**, which is the
+   signature of a missing API scope and is worth recognising on sight.
+2. Real Altinn rights over the company. Being daglig leder in Enhetsregisteret
    is enough - no delegation has to be set up by hand for a role holder.
+   Skatteetaten checks them itself, against `app_skd_formueinntekt-skattemelding-v2`.
+
+**`digdir:skattemelding` is not part of it.** This section used to list it
+first, as the scope that "carries the Altinn rights", and the 2026-08-24 token
+did hold it. But that run removed only the Skatteetaten scope to see what broke;
+nobody removed this one. On **2026-10-09** the same fetch ran in TT02 with it
+absent from `IDPORTEN_SCOPES` and came back with the same 714-byte utkast.
+Skatteetaten's own onboarding guide (`docs/api-v2/README.md` in their repo)
+never mentions it either: the ID-porten client needs the skattemelding scope
+plus `altinn:instances.read`/`.write`, and nothing else. It took an untested
+step in a recipe to make it look like the one thing production was missing.
 
 Two things this does *not* do.
 
@@ -220,8 +236,8 @@ scopes still answers **400 `SME-EKSTERN-005`**, "Det er ikke mulig aa sjekke om
 paalogget bruker har noedvendige rettigheter til aa representere skattepliktig".
 Read it literally: there is no paalogget bruker in a machine token, so there are
 no rights to check. `consumer_org` does not help either (tried). Retrieval for a
-named taxpayer wants a person, or a delegation this organisation does not yet
-hold.
+named taxpayer wants a person, or a system user (see
+[Systembruker](#systembruker-acting-without-a-person-present) below).
 
 **It does not reach a person's own melding.** A fodselsnummer is not an
 organisation anybody holds Altinn rights for, so that path rests on
@@ -254,14 +270,15 @@ only say "trolig" where it could say "bekreftet"; nothing breaks, because
 [../register-access.md](../register-access.md).
 
 Also: **test and production are separate**. Adding a scope to a production client
-does nothing for `f8293b48`, which is a test client, and every verification in
-this repository runs against test.
+does nothing for `f8293b48`, which is a test client. The table below is the
+**test clients**; production's grants were checked separately (ROADMAP, phase
+0b).
 
 | Scope | Maskinporten `f8293b48` | ID-porten `5aa404aa` |
 | --- | --- | --- |
 | `altinn:instances.read` / `.write` | usable | n/a (comes via the exchange) |
 | `altinn:enduser` | n/a | **retired** - not in the picker, and not needed: any `altinn:*` scope gives the token its audience |
-| `digdir:skattemelding` | usable | usable |
+| `digdir:skattemelding` | usable | usable, **not needed** - see Representing a taxpayer |
 | `skatteetaten:formueinntekt/skattemelding` (+ `/eiendom`) | usable | usable |
 | `skatteetaten:mvameldingvalidering` | not registered | usable |
 | `altinn:accessmanagement/authorizedparties` | granted, **not on this client** | usable |
@@ -350,11 +367,6 @@ Four things learned doing it:
   registration is confirmed by reading the system back rather than by parsing
   that.
 
-`isVisible` false keeps the system out of Altinn's catalogue while it is being
-built. Vendor-initiated system-user requests still work, because the vendor
-generates the confirmation URL itself, so turning it on is a decision about
-being *found* rather than about being *usable*.
-
 `isVisible` controls being *found*, not being *usable*: an invisible system can
 still have system users, because the vendor generates the confirmation URL
 itself. Updating the registration is `PUT {vendor}/{system id}` with the **whole
@@ -441,8 +453,10 @@ so sharing one across customers would be acting with the wrong authority.
 - **New model (Altinn 3 systembruker):** vendor registers its system in the
   Altinn systemregister, customers approve a system-user request, tokens are
   requested with RAR `authorization_details` (`urn:altinn:systemuser`).
-  Access packages (tilgangspakker) replace Altinn roles through 2026
-  (skattemelding 2026-02-01, MVA 2026-04-15, Altinn 2 shutdown June 2026).
+  Access packages (tilgangspakker) arrived service by service through 2026
+  (skattemelding 2026-02-01, MVA 2026-04-15), Altinn 2 shut down 2026-06-19,
+  and Altinn roles stop counting in access checks on 2026-12-01, when the
+  packages replace them.
 
 ## Implementation (Python)
 
@@ -462,7 +476,9 @@ No maintained Python library exists, so this is a thin module over `PyJWT`
 | The companies a person may report for | `myntos.integrations.altinn.authorized_parties` |
 | Skattemelding fetch/validate/submit | `myntos.integrations.skatteetaten.client` |
 | MVA validation and submission | `myntos.integrations.skatteetaten.mva` |
-| Tests (Digdir and Altinn stubbed) | `tests/test_digdir_auth.py`, `tests/test_altinn_submission.py`, `tests/test_altinn_authorized_parties.py` |
+| Registering the system in Altinn's systemregister | `myntos.integrations.altinn.systemregister` |
+| System-user requests and approval polling | `myntos.integrations.altinn.systemuser` |
+| Tests (Digdir and Altinn stubbed) | `tests/test_digdir_auth.py`, `tests/test_altinn_submission.py`, `tests/test_altinn_authorized_parties.py`, `tests/test_altinn_systemregister.py`, `tests/test_altinn_systemuser.py` |
 
 Key handling: the private key is read from `MASKINPORTEN_JWK_PATH` (or an
 injected secret env var); never from the repo; never logged, and neither are

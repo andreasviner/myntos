@@ -19,7 +19,8 @@
  * or the one just picked from the menu.
  */
 
-import { listCompanies, type Company, type Session } from './api';
+import { listApprovals, listCompanies, type Company, type Session } from './api';
+import { isWaiting, waitingBadge } from './approvals';
 import { closeMenus } from './chrome';
 import { orgnummer } from './format';
 import { loadSession, rememberChrome, setActiveCompany, signedInHint } from './session';
@@ -83,11 +84,35 @@ export function bootstrapHeaderCompany(): void {
       // what the next page load paints and lays itself out from.
       rememberChrome(session, companies.length);
       mountChromeCompanyMenu(companies, current, session);
+      mountApprovalsLink(current);
     })
     // Silent: the header still carries whatever was stored the last time this
     // browser looked, which is the company it is about to be about anyway, and
     // an error banner about a subtitle would be louder than the thing it
     // describes.
+    .catch(() => undefined);
+}
+
+/**
+ * «Godkjenning» in the menu, for a company whose keys are switched on.
+ *
+ * Without keys there is nothing that could wait for approval, so the link is
+ * not shown at all. With them, one request for what waits, and the count only
+ * when it is more than nothing: a badge that always says 0 is a badge nobody
+ * reads (docs/frontend-conventions.md, a mark on every row is not a mark).
+ * Silent on failure, like the rest of the header.
+ */
+function mountApprovalsLink(current: Company | undefined): void {
+  const link = document.querySelector<HTMLElement>('[data-approvals]');
+  const badge = document.querySelector<HTMLElement>('[data-approvals-count]');
+  if (link === null || badge === null) return;
+  link.hidden = current?.agent_access_enabled !== true;
+  if (current === undefined || link.hidden) return;
+  void listApprovals(current.id, 'pending')
+    .then((found) => {
+      badge.textContent = waitingBadge(found.filter(isWaiting).length);
+      badge.hidden = badge.textContent === '';
+    })
     .catch(() => undefined);
 }
 

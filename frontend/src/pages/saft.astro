@@ -1,0 +1,254 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="SAF-T | Myntos"
+  description="Last ned SAF-T-filen for et regnskapsår, kontrollert før den lages."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">SAF-T</p>
+      {/* Selskapet er overskriften: filen er hele regnskapet til ett
+          organisasjonsnummer, og det skal stå der man ser det før man laster ned. */}
+      <h1 data-session-company></h1>
+      <p class="muted orgnr" id="orgnr"></p>
+    </div>
+    <div class="head-actions year-nav" role="group" aria-label="Regnskapsår">
+      <button type="button" class="btn btn-ghost btn-small" id="year-prev" aria-label="Året før"
+        >‹</button
+      >
+      <span class="year" id="year"></span>
+      <button type="button" class="btn btn-ghost btn-small" id="year-next" aria-label="Året etter"
+        >›</button
+      >
+    </div>
+  </header>
+
+  <p class="lead">
+    SAF-T er filen Skatteetaten ber om ved bokettersyn. Den sendes ikke inn fast: du laster den ned
+    når du blir bedt om det, og legger den ved skjema RF-1363 i Altinn. Myntos kontrollerer det
+    Skatteetatens skjema ikke ser før filen lages. Hvilken post hver konto havner i, velges i
+    <a href="/kontoplan/">kontoplanen</a>.
+  </p>
+
+  <p class="status" id="page-status" hidden></p>
+  <div class="empty" id="loading">Henter …</div>
+
+  <section class="card" id="content" hidden aria-live="polite">
+    <div class="summary">
+      <div class="setting">
+        <span class="setting-label">Bilag i året</span>
+        <span class="figure" id="entries"></span>
+      </div>
+      <div class="setting">
+        <span class="setting-label">Sum debet og kredit</span>
+        <span class="figure" id="totals"></span>
+      </div>
+      <div class="setting">
+        <span class="setting-label">Versjon</span>
+        {/* Et valg bare når det finnes et: fra 2027 godtas bare 1.40. */}
+        <select id="version" hidden></select>
+        <span class="figure" id="version-text"></span>
+      </div>
+    </div>
+
+    <ul class="findings" id="errors" hidden></ul>
+    <ul class="findings notes" id="notes" hidden></ul>
+    <p class="card-hint" id="clean" hidden>Kontrollen fant ingenting å utsette på året.</p>
+
+    <div class="actions">
+      <a class="btn btn-primary" id="download" href="#" hidden>Last ned SAF-T-filen</a>
+      <p class="status" id="blocked" data-tone="error" hidden>
+        Filen lages ikke før feilene over er rettet. Den ville passert skjemakontrollen i Altinn og
+        blitt avvist av revisor, og da er det bedre at den ikke finnes.
+      </p>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .orgnr {
+    margin: 0.2rem 0 0;
+  }
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--muted);
+    margin: 0 0 0.4rem;
+  }
+  .year-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .year {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    min-width: 3.5rem;
+    text-align: center;
+  }
+  .summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem 2.5rem;
+    margin-bottom: 1rem;
+  }
+  .setting {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .setting-label {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .figure {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+  .findings {
+    margin: 0.5rem 0 1rem;
+    padding-left: 1.2rem;
+    color: var(--negative);
+  }
+  .findings li + li {
+    margin-top: 0.3rem;
+  }
+  .findings.notes {
+    color: var(--muted);
+  }
+  .actions {
+    margin-top: 1rem;
+  }
+</style>
+
+<script>
+  import { ApiError, checkSaft, saftFileUrl, type Company, type SaftCheck, type SaftVersion } from '../lib/api';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import { kroner, orgnummer } from '../lib/format';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const versionSelect = el<HTMLSelectElement>('#version');
+  const download = el<HTMLAnchorElement>('#download');
+
+  let company: Company;
+  let year = new Date().getFullYear();
+  // null til personen har valgt selv: da bestemmer backend versjonen ut fra året.
+  let chosen: SaftVersion | null = null;
+
+  function list(target: HTMLElement, messages: string[]): void {
+    target.replaceChildren(
+      ...messages.map((message) => {
+        const item = document.createElement('li');
+        item.textContent = message;
+        return item;
+      }),
+    );
+    show(target, messages.length > 0);
+  }
+
+  function render(check: SaftCheck): void {
+    el('#entries').textContent = String(check.number_of_entries);
+    el('#totals').textContent = kroner(check.total_debit);
+
+    const several = check.versions.length > 1;
+    versionSelect.replaceChildren(
+      ...check.versions.map((version) => {
+        const option = document.createElement('option');
+        option.value = version;
+        option.textContent = version;
+        return option;
+      }),
+    );
+    versionSelect.value = check.version;
+    show(versionSelect, several);
+    el('#version-text').textContent = check.version;
+    show(el('#version-text'), !several);
+
+    const errors = check.findings.filter((finding) => finding.severity === 'feil');
+    const notes = check.findings.filter((finding) => finding.severity === 'merknad');
+    list(el('#errors'), errors.map((finding) => finding.message));
+    list(el('#notes'), notes.map((finding) => finding.message));
+    show(el('#clean'), check.findings.length === 0);
+
+    // Lese-tilgang er nok, med vilje: den som oftest trenger filen, er en
+    // revisor som bare har fått lese. Spurt her og ikke tatt vare på.
+    const mayRead = canInCompany(company, 'ledger:read');
+    download.href = saftFileUrl(company.id, check.year, chosen);
+    show(download, check.exportable && mayRead);
+    show(el('#blocked'), !check.exportable);
+  }
+
+  async function refresh(): Promise<void> {
+    el('#year').textContent = String(year);
+    setStatus(pageStatus, '');
+    try {
+      render(await checkSaft(company.id, year, chosen));
+      show(el('#content'), true);
+    } catch (error: unknown) {
+      show(el('#content'), false);
+      if (error instanceof ApiError && error.code === 'saft_year_not_found') {
+        setStatus(pageStatus, `Selskapet har ikke noe regnskap for ${year} i Myntos.`);
+        return;
+      }
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke kontrollert året.');
+    }
+  }
+
+  function changeYear(step: number): void {
+    year += step;
+    chosen = null;
+    void refresh();
+  }
+
+  el('#year-prev').addEventListener('click', () => changeYear(-1));
+  el('#year-next').addEventListener('click', () => changeYear(1));
+  versionSelect.addEventListener('change', () => {
+    chosen = versionSelect.value as SaftVersion;
+    void refresh();
+  });
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      const current = currentCompany(companies);
+      if (current === undefined) return;
+      company = current;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      await refresh();
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet selskapet.');
+    } finally {
+      el('#loading').hidden = true;
+    }
+  });
+</script>

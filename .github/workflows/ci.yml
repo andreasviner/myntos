@@ -50,6 +50,11 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      # The company wall's Vitest suite (src/lib/*.test.ts). It is the only test
+      # of the frontend's half of company isolation, so a build that skips it
+      # can ship a page that asks one company's endpoint with another's id.
+      - name: Tests (vitest)
+        run: pnpm test
       - name: Type-check (astro check)
         run: pnpm check
       - name: Build

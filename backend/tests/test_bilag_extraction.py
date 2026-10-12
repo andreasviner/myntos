@@ -196,6 +196,38 @@ def test_what_the_document_printed_is_not_overruled_by_the_model() -> None:
     assert filled == frozenset()
 
 
+def test_a_name_off_the_title_is_the_models_to_replace() -> None:
+    """A title is often the filename, and a filename is whatever the saver typed.
+
+    MA-3D's invoice was saved as "PI Andreas Lindeman _26-0023", and the buyer
+    reached the motpart field ahead of the seller the model had read off the
+    page, because a title-derived name counted as something the page printed.
+    """
+    reading = interpretation.read(
+        "Kvittering\nTotalt 500,00 kr", today=TODAY, title="PI Kari Nordmann _26-0023"
+    )
+    assert reading.seller_name is not None
+    assert "Kari Nordmann" in reading.seller_name
+    assert reading.seller_named_by_title
+
+    merged, filled = extraction.merge(
+        reading, extraction.Extraction(counterparty_name="FjordLab Design")
+    )
+
+    assert merged.seller_name == "FjordLab Design"
+    assert not merged.seller_named_by_title
+    assert filled == {"seller_name"}
+
+
+def test_the_prompt_tells_the_seller_from_the_buyer() -> None:
+    """ "The seller" alone let the model name whoever the invoice was addressed to."""
+    prompt = extraction.build_prompt("Total 1.790,00 €")
+
+    assert "Beneficiary" in prompt
+    assert "Bill to" in prompt
+    assert "filnavnet" in prompt
+
+
 def test_a_date_we_only_guessed_at_is_the_models_to_correct() -> None:
     """The earliest date on a receipt covering a period is not the receipt's date."""
     document = """Kvittering

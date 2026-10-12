@@ -22,12 +22,12 @@ unconfirmed books.
 import contextlib
 from collections.abc import Sequence
 from dataclasses import asdict
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, status
 from pydantic import BaseModel, Field, ValidationError
 
-from myntos.api.deps import CurrentCompany, CurrentUser, DbSession
+from myntos.api.deps import KEY_READ, CurrentCompany, CurrentUser, DbSession, key_write
 from myntos.api.v1.enhetsregisteret import RegisteredUnitResponse, RoleResponse
 from myntos.api.v1.skatt import authorized_parties_for
 from myntos.core.clock import as_utc, utc_now
@@ -79,6 +79,10 @@ class CompanyResponse(BaseModel):
     # What a salgsdokument has to be able to state about the seller — see
     # bokføringsforskriften § 5-1-2 and myntos.domain.faktura.
     vat_registered: bool
+    # The day the registration took effect, when later than the start of the
+    # books. Decides the VAT defaults of new entries dated before it; null is
+    # "registered for as long as these books go back".
+    vat_registered_from: date | None
     in_foretaksregisteret: bool
     organisation_form: str | None
     # Every account the company is paid into, primary first. A list and not a
@@ -90,6 +94,11 @@ class CompanyResponse(BaseModel):
     # Whether this company's bilag may be shown to a model. See
     # myntos.domain.ledger.models.Company.
     ki_enabled: bool
+    # Whether keys for agents and integrations may be made for and used in these
+    # books. Switched by PUT /companies/{id}/agent-access, never by the PATCH
+    # below: it is access, and it has its own permission. See
+    # myntos.domain.ledger.models.Company.
+    agent_access_enabled: bool
     # --- Copied from Enhetsregisteret ---
     # Refreshed by POST /companies/{id}/hent and by a confirmation. The register
     # is the authority for all of them, so these are a cache with a timestamp
@@ -161,6 +170,9 @@ class UpdateCompanyRequest(BaseModel):
     postal_code: str | None = Field(default=None, max_length=16)
     city: str | None = Field(default=None, max_length=128)
     vat_registered: bool | None = None
+    # Sent as null to clear it, which is why the route reads whether the key
+    # was present rather than whether it is None.
+    vat_registered_from: date | None = None
     in_foretaksregisteret: bool | None = None
     organisation_form: str | None = Field(default=None, max_length=16)
     ki_enabled: bool | None = None
@@ -177,6 +189,7 @@ def _company_response(company: Company, membership: CompanyMembership) -> Compan
         city=company.city,
         currency_code=company.currency_code,
         vat_registered=company.vat_registered,
+        vat_registered_from=company.vat_registered_from,
         in_foretaksregisteret=company.in_foretaksregisteret,
         organisation_form=company.organisation_form,
         # Sorted here rather than trusted from the relationship: the collection
@@ -196,6 +209,7 @@ def _company_response(company: Company, membership: CompanyMembership) -> Compan
             )
         ],
         ki_enabled=company.ki_enabled,
+        agent_access_enabled=company.agent_access_enabled,
         industry_code=company.industry_code,
         industry_description=company.industry_description,
         website=company.website,
@@ -513,7 +527,10 @@ async def read_register(context: CurrentCompany, db: DbSession) -> RegisterRespo
     )
 
 
-@router.post("/companies/{company_id}/hent")
+@router.post(
+    "/companies/{company_id}/hent",
+    openapi_extra=key_write("hente selskapets opplysninger fra Enhetsregisteret på nytt"),
+)
 async def refresh_company(context: CurrentCompany, db: DbSession) -> RefreshResponse:
     """Re-read everything Enhetsregisteret says about this company.
 
@@ -529,9 +546,18 @@ async def refresh_company(context: CurrentCompany, db: DbSession) -> RefreshResp
 
     The name is deliberately not touched — see
     :func:`myntos.domain.ledger.service.refresh_company_from_register`.
+
+    With a key, ``roles`` comes back empty. Signed in, each board member
+    carries whether they have access to these books, and who has access is
+    never a key's to read (docs/agents-and-api.md rule 5, the reason
+    ``GET …/register`` is closed to keys). The board itself is public: read it
+    from ``GET /api/v1/enhetsregisteret/{orgnr}/roller``.
     """
     require_permission(context.membership.role, Permission.ORGANIZATION_MANAGE)
-    return await _refresh(db, context.company, context.membership)
+    refreshed = await _refresh(db, context.company, context.membership)
+    if context.agent_key is not None:
+        refreshed.roles = []
+    return refreshed
 
 
 @router.post("/companies/{company_id}/bekreft")
@@ -585,8 +611,37 @@ async def verify_company(
     return _company_response(company, context.membership)
 
 
-@router.get("/companies/{company_id}")
+@router.get("/companies/{company_id}", openapi_extra=KEY_READ)
 async def get_company(context: CurrentCompany) -> CompanyResponse:
+    """One company's details, and what the caller may do with its books.
+
+    A company (selskap) is one set of books for one Norwegian business, and it
+    is what every other path under ``/companies/{company_id}/`` is about. This
+    is its record as the Selskapet page shows it: the name, the
+    organisasjonsnummer (``orgnr``, the nine digits Brønnøysundregistrene gives
+    every business), the address, and the facts every invoice has to repeat
+    about the seller:
+
+    - ``vat_registered`` and ``vat_registered_from``: whether the company is in
+      Merverdiavgiftsregisteret ("mva-registrert"), and from which day. An
+      unregistered company may not charge VAT on its invoices.
+    - ``in_foretaksregisteret``: whether every invoice must say
+      "Foretaksregisteret" and give the head office address.
+    - ``bank_accounts``: every kontonummer the company is paid into, eleven
+      digits, the main one ("hovedkonto") first. Empty is the ordinary state of
+      new books, and no invoice can be issued until there is one.
+
+    ``verified`` says whether somebody has proved through Altinn, with their
+    own ID-porten login, that they may act for this orgnr ("bekreftet").
+    Bookkeeping works either way. The fields copied from Enhetsregisteret are
+    as fresh as ``register_synced_at``; ``POST /companies/{company_id}/hent``
+    refreshes them. ``role`` and ``permissions`` are the caller's own on these
+    books: decide what to offer from ``permissions``, never from a role name.
+
+    Readable by every role, and by a key with the ``read`` scope. Changing the
+    details by hand, and any change to a kontonummer, is the person's to do in
+    the app; no key may. A company the caller cannot open answers 404.
+    """
     return _company_response(context.company, context.membership)
 
 
@@ -623,6 +678,11 @@ async def update_company(
         in_foretaksregisteret=payload.in_foretaksregisteret,
         organisation_form=payload.organisation_form,
         ki_enabled=payload.ki_enabled,
+        vat_registered_from=payload.vat_registered_from,
+        clear_vat_registered_from=(
+            "vat_registered_from" in payload.model_fields_set
+            and payload.vat_registered_from is None
+        ),
     )
     if company.orgnr != was:
         # The stored address, næringskode and contact details describe the orgnr

@@ -36,8 +36,8 @@ You are solely responsible for:
   filings, but the submission and its contents are legally yours;
 - meeting your own **deadlines, bookkeeping, retention (oppbevaringsplikt)
   and reporting obligations** under Norwegian law;
-- keeping **backups** of your data and safeguarding your own credentials and
-  Maskinporten keys.
+- keeping **backups** of your data and safeguarding your own login
+  credentials.
 
 ## 4. No liability
 

@@ -35,6 +35,10 @@ TENANT = "72f988bf-86f1-41af-91ab-2d7cd011db47"
 class StubProvider:
     """Stands in for a provider's authorization and token endpoints."""
 
+    # Google and Microsoft both carry an address. BankID, which does not, is
+    # tested against a stub broker instead, in test_auth_bankid.py.
+    asserts_email = True
+
     def __init__(self, code: str = "google") -> None:
         self.code = code
         self.profile = OidcProfile(

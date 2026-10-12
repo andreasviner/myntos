@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hand-built, in the shape Norwegian banks export camt.053.001.02. No real
+     bank data: the account is the test suite's own (1506.20.33158), and every
+     name and reference is invented. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <BkToCstmrStmt>
+    <GrpHdr>
+      <MsgId>TESTBANK-20260401-000001</MsgId>
+      <CreDtTm>2026-04-01T06:00:00+02:00</CreDtTm>
+    </GrpHdr>
+    <Stmt>
+      <Id>2026-03-15062033158</Id>
+      <ElctrncSeqNb>3</ElctrncSeqNb>
+      <CreDtTm>2026-04-01T06:00:00+02:00</CreDtTm>
+      <FrToDt>
+        <FrDtTm>2026-03-01T00:00:00+01:00</FrDtTm>
+        <ToDtTm>2026-03-31T23:59:59+02:00</ToDtTm>
+      </FrToDt>
+      <Acct>
+        <Id><IBAN>NO6515062033158</IBAN></Id>
+        <Ccy>NOK</Ccy>
+        <Svcr><FinInstnId><BIC>TESTNOKK</BIC></FinInstnId></Svcr>
+      </Acct>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>OPBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="NOK">10000.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-03-01</Dt></Dt>
+      </Bal>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="NOK">21201.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-03-31</Dt></Dt>
+      </Bal>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>CLAV</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="NOK">20000.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-03-31</Dt></Dt>
+      </Bal>
+      <TxsSummry>
+        <TtlNtries><NbOfNtries>3</NbOfNtries></TtlNtries>
+        <TtlCdtNtries><NbOfNtries>1</NbOfNtries><Sum>12500.00</Sum></TtlCdtNtries>
+        <TtlDbtNtries><NbOfNtries>2</NbOfNtries><Sum>1299.00</Sum></TtlDbtNtries>
+      </TxsSummry>
+      <Ntry>
+        <NtryRef>1</NtryRef>
+        <Amt Ccy="NOK">12500.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><Dt>2026-03-02</Dt></BookgDt>
+        <ValDt><Dt>2026-03-02</Dt></ValDt>
+        <AcctSvcrRef>9926030200001</AcctSvcrRef>
+        <BkTxCd><Domn><Cd>PMNT</Cd><Fmly><Cd>RCDT</Cd><SubFmlyCd>DMCT</SubFmlyCd></Fmly></Domn></BkTxCd>
+        <NtryDtls>
+          <TxDtls>
+            <Refs><EndToEndId>E2E-KUNDE-0001</EndToEndId></Refs>
+            <RltdPties>
+              <Dbtr><Nm>Fjordkunde AS</Nm></Dbtr>
+              <DbtrAcct><Id><Othr><Id>98765432103</Id></Othr></Id></DbtrAcct>
+            </RltdPties>
+            <RmtInf>
+              <Strd>
+                <CdtrRefInf>
+                  <Tp><CdOrPrtry><Cd>SCOR</Cd></CdOrPrtry></Tp>
+                  <Ref>000100000100234</Ref>
+                </CdtrRefInf>
+              </Strd>
+            </RmtInf>
+          </TxDtls>
+        </NtryDtls>
+        <AddtlNtryInf>Innbetaling</AddtlNtryInf>
+      </Ntry>
+      <Ntry>
+        <NtryRef>2</NtryRef>
+        <Amt Ccy="NOK">1250.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><Dt>2026-03-16</Dt></BookgDt>
+        <ValDt><Dt>2026-03-16</Dt></ValDt>
+        <AcctSvcrRef>9926031600002</AcctSvcrRef>
+        <NtryDtls>
+          <TxDtls>
+            <Refs><EndToEndId>NOTPROVIDED</EndToEndId></Refs>
+            <RltdPties>
+              <Cdtr><Nm>KONTORLAND AS</Nm></Cdtr>
+            </RltdPties>
+            <RmtInf><Ustrd>Ordre 4711</Ustrd><Ustrd>Kontorrekvisita</Ustrd></RmtInf>
+          </TxDtls>
+        </NtryDtls>
+        <AddtlNtryInf>Nettgiro</AddtlNtryInf>
+      </Ntry>
+      <Ntry>
+        <NtryRef>3</NtryRef>
+        <Amt Ccy="NOK">49.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts>BOOK</Sts>
+        <BookgDt><Dt>2026-03-31</Dt></BookgDt>
+        <ValDt><Dt>2026-03-31</Dt></ValDt>
+        <AcctSvcrRef>9926033100003</AcctSvcrRef>
+        <AddtlNtryInf>Kontohold mars</AddtlNtryInf>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>

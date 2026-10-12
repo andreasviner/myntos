@@ -64,6 +64,41 @@ def test_only_the_top_of_a_long_document_is_sent() -> None:
     assert "x" * (classification.MAX_DOCUMENT_CHARS + 1) not in prompt
 
 
+def test_every_document_on_a_bilag_is_shown() -> None:
+    """Each file gets its own allowance, so the last order is read like the first.
+
+    The first 2000 characters of nine AliExpress orders were the bank line and
+    two invoices, and the model described the purchase as one servo.
+    """
+    text = "\n\n".join(f"--- Dokument {n}: {n}.pdf ---\n" + f"vare{n} " * 400 for n in range(1, 6))
+    prompt = classification.build_prompt(text, classification.build_menu())
+
+    for n in range(1, 6):
+        assert f"vare{n}" in prompt
+
+
+def test_the_whole_bilag_stops_at_the_ceiling() -> None:
+    """Under 90 % of the context even at one character per token."""
+    text = "\n\n".join(f"--- Dokument {n}: {n}.pdf ---\n" + f"{n:02d}" * 1000 for n in range(1, 30))
+    shown, cut = classification.measure(text)
+
+    assert cut
+    assert shown == classification.MAX_BILAG_CHARS
+    assert len(classification.excerpt(text)) == classification.MAX_BILAG_CHARS
+
+
+def test_small_print_repeated_on_every_order_is_sent_once() -> None:
+    boilerplate = "1. Items are sold by a third-party seller, not AliExpress."
+    text = "\n".join(
+        f"--- Dokument {n}: {n}.png ---\nTotal:\n{n}00 kr\n{boilerplate}" for n in range(1, 4)
+    )
+    shown = classification.excerpt(text)
+
+    assert shown.count(boilerplate) == 1
+    # A short label is kept in every document: the figure under it needs it.
+    assert shown.count("Total:") == 3
+
+
 # --- Reading the answer -----------------------------------------------------------
 
 

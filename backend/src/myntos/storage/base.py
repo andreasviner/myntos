@@ -2,7 +2,9 @@
 
 Bookkeeping law requires vouchers to stay retrievable for the whole retention
 period, so implementations must be durable and must never overwrite or
-silently delete stored documents. Backends: local filesystem
+silently delete stored documents. Derived copies (thumbnails) are the one
+exception, and they are kept apart by key so the exception cannot reach an
+original. Backends: local filesystem
 (:mod:`myntos.storage.local`, development) and Cloudflare R2
 (:mod:`myntos.storage.r2`, production).
 """
@@ -34,4 +36,14 @@ class DocumentStorage(Protocol):
 
     async def load(self, key: str) -> bytes:
         """Return the stored document's content."""
+        ...
+
+    async def save_derived(self, key: str, *, content: bytes, content_type: str) -> None:
+        """Store a regenerable copy (a thumbnail) under ``key``, replacing any.
+
+        The one write that may overwrite, and it only accepts keys under the
+        derived prefix (:func:`myntos.storage.keys.validate_derived_key`), so it
+        cannot be pointed at a bilag. Two requests making the same thumbnail at
+        once is ordinary, and both results are the same picture.
+        """
         ...

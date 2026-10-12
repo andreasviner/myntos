@@ -233,6 +233,12 @@ _TOTAL_LABELS: tuple[tuple[str, ...], ...] = (
         # kontonummer in front of it.
         "betales til",
         "betales",
+        # What an AliExpress VOEC invoice calls the gross, in front of the
+        # foreign figure and the kroner one. Without it the bare "Total" below
+        # wins instead, and on those invoices "Total" heads the VAT summary:
+        # "Total 425 106" is a base of 425 and VAT of 106, which the
+        # thousands-separator reading takes for 425 106 kroner.
+        "amount paid",
         "amount due",
         "total due",
         "balance due",
@@ -266,11 +272,19 @@ _NOT_A_TOTAL = (
     "purregebyr",
     "grunnlag",
     "original",
+    # "Subtotal" contains "total", and is larger than the total whenever there
+    # was a discount: AliExpress prints "Subtotal: 5 939 kr" over "Total:
+    # 5 908,81 kr", and the largest labelled figure was taken.
+    "subtotal",
 )
 
 #: A Norwegian bank account number as it is printed, "1520.34.91244". Four
-#: digits, two, five, and the dots are how every Norwegian bank writes it.
-_KONTONUMMER = re.compile(r"\b\d{4}\.\d{2}\.\d{5}\b")
+#: digits, two, five, separated by dots or by spaces: the dots are how a
+#: statement writes it, and a bank app writes "4214 33 41180". Missing the
+#: spaced form meant the one screenshot that said what the card was charged
+#: was not recognised as the bank, and nine AliExpress orders were read as
+#: if they were nine separate claims on the account.
+_KONTONUMMER = re.compile(r"\b\d{4}([. ])\d{2}\1\d{5}\b")
 
 #: The heading `myntos.api.v1.cashflow` writes above each file when a bilag has
 #: more than one. Known here because the total is worked out per document and
@@ -381,6 +395,18 @@ _SELLER_LABELS = (
     "sold and shipped by",
     "bought from",
     "seller",
+    # Who the payment goes to, in the bank-details block a foreign invoice
+    # prints. It is the seller said as plainly as "Sold by", and on MA-3D's
+    # pro forma invoice it is the only statement of it: Løynd's transcription
+    # puts that block first and the buyer's address second, with the letterhead
+    # at the very bottom, so the top-of-page guess found nothing and the
+    # filename, "PI Andreas Lindeman _26-0023", named the buyer as the seller.
+    # Only the "name" form: a bare "Beneficiary" on a bank screenshot of money
+    # coming in is us.
+    "beneficiary's name",
+    "beneficiary´s name",  # noqa: RUF001
+    "beneficiary’s name",  # noqa: RUF001
+    "beneficiary name",
 )
 # The heading of the item table, in the words invoices and receipts actually
 # use. Matched as a substring, so "Quantity Item name Shipping service Item
@@ -482,9 +508,14 @@ _ADDRESS_LINE = re.compile(
 
 # The rates the seeded VAT codes know about, as fractions.
 _KNOWN_RATES = (Decimal("0.25"), Decimal("0.15"), Decimal("0.12"))
+#: The tollpass codes: the whole amount is the import VAT, paid on the freight
+#: forwarder's or Tolletaten's bill. A bilag in foreign currency filed under
+#: them is that bill, and its own code is the right one.
+_IMPORT_VAT_CODES = frozenset({"14", "15"})
+
 _TAX_CODE_BY_RATE: dict[CashFlowDirection, dict[Decimal, str]] = {
     CashFlowDirection.UT: {Decimal("0.25"): "1", Decimal("0.15"): "11", Decimal("0.12"): "13"},
-    CashFlowDirection.INN: {Decimal("0.25"): "3", Decimal("0.15"): "31", Decimal("0.12"): "32"},
+    CashFlowDirection.INN: {Decimal("0.25"): "3", Decimal("0.15"): "31", Decimal("0.12"): "33"},
 }
 _SALES_TYPE_BY_RATE = {
     Decimal("0.25"): "salg_hoy_sats",
@@ -711,6 +742,13 @@ class InvoiceReading:
     # Every organisasjonsnummer with a valid check digit, in the order printed.
     orgnrs: tuple[str, ...] = ()
     seller_name: str | None = None
+    # Whether ``seller_name`` is nothing but the file's title. A title is the
+    # weakest thing a name can be read from, because it is often the filename,
+    # and a filename is whatever the person who saved it typed: an invoice
+    # saved as "PI Andreas Lindeman _26-0023" names the buyer. So it fills the
+    # field only until the model has read the page, and the model's MOTPART
+    # replaces it. See :func:`myntos.domain.bilag.extraction.merge`.
+    seller_named_by_title: bool = False
     # Only looked for behind a "Kunde"-style label, and only useful when the
     # seller turns out to be us.
     buyer_name: str | None = None
@@ -735,6 +773,28 @@ class InvoiceReading:
     # the two questions it can answer: who sold this, and what the model should
     # be told the document is.
     document_title: str | None = None
+
+
+#: Labels this short are found inside ordinary words: "vat" in "Private
+#: Limited", "sum" in "Summary". Longer ones are left as substrings, because
+#: Norwegian compounds them and "Totalbeløp" has to keep finding "beløp".
+_WHOLE_WORD_LABEL = 3
+
+
+def _has_label(low: str, labels: tuple[str, ...]) -> bool:
+    """Whether the lowercased line carries one of ``labels``.
+
+    "Alibaba.com Singapore E-Commerce Private Limited is raising this invoice
+    ... by 3rd party offshore sellers" was read as VAT of 3 kroner, because
+    "private" contains "vat" and "3rd" ends in a figure.
+    """
+    for label in labels:
+        if len(label) <= _WHOLE_WORD_LABEL:
+            if re.search(rf"(?<!\w){re.escape(label)}(?!\w)", low):
+                return True
+        elif label in low:
+            return True
+    return False
 
 
 def _is_bare_amount(line: str) -> bool:
@@ -786,7 +846,7 @@ def _labelled_amounts(
     found_all: list[tuple[Decimal, bool]] = []
     for index, line in enumerate(lines):
         low = line.lower()
-        if not any(label in low for label in labels):
+        if not _has_label(low, labels):
             continue
         if any(word in low for word in exclude):
             continue
@@ -862,6 +922,31 @@ def _document_total(lines: list[str]) -> tuple[Decimal | None, bool | None]:
     return None, None
 
 
+#: A sign as the first thing on a line: the minus or plus a bank app prints in
+#: front of a transaction's amount.
+_LEADING_SIGN = re.compile(r"^\s*([-+\u2212\u2013])")
+
+
+def _signed_bare_amount(lines: list[str]) -> tuple[Decimal | None, bool | None]:
+    """The first line on a bank document that is a signed figure and nothing else.
+
+    A bank app does not label the amount of a transaction. It prints it large,
+    "-9 771,76 NOK", under "Outgoing" and over the merchant's name, and that line
+    is the only one on the screen that says what the account was charged. Read
+    only on a document already recognised as the bank's: on an invoice a line
+    that is nothing but a signed figure is a discount or a rounding, not the
+    total.
+    """
+    for line in lines:
+        sign = _LEADING_SIGN.match(line)
+        if sign is None or not _is_bare_amount(line):
+            continue
+        found = amounts_in(line)
+        if found and found[0] != 0:
+            return found[0], sign.group(1) != "+"
+    return None, None
+
+
 def _document_totals(lines: list[str]) -> dict[Decimal, bool | None]:
     """Each distinct total on the bilag, and which way it went.
 
@@ -888,17 +973,30 @@ def _document_totals(lines: list[str]) -> dict[Decimal, bool | None]:
     # this is every file, which is the single invoice case unchanged.
     banked = [group for group in groups if any(_KONTONUMMER.search(line) for line in group)]
 
-    def totals(chosen: list[list[str]]) -> dict[Decimal, bool | None]:
+    def totals(
+        chosen: list[list[str]], *, at_least: Decimal | None = None
+    ) -> dict[Decimal, bool | None]:
         sign_of: dict[Decimal, bool | None] = {}
         for group in chosen:
             value, negative = _document_total(group)
+            if value is None and at_least is not None:
+                value, negative = _signed_bare_amount(group)
+                # An unlabelled figure is believed as the charge only when it
+                # could be the charge for the documents beside it. Nine
+                # AliExpress orders adding up to 9 771 are inside a bank line of
+                # 9 771,76; the FINN bilag's bank line is the owner's 3 000,
+                # a different movement from the 3 565 purchase, and smaller
+                # than the receipt it sits next to.
+                if value is not None and value < at_least:
+                    value, negative = None, None
             if value is None:
                 continue
             if value not in sign_of or (sign_of[value] is None and negative is not None):
                 sign_of[value] = negative
         return sign_of
 
-    banked_totals = totals(banked)
+    others = [group for group in groups if group not in banked]
+    banked_totals = totals(banked, at_least=max(totals(others), default=Decimal(0)))
     if banked_totals:
         return banked_totals
 
@@ -998,7 +1096,7 @@ def _printed_rates(lines: list[str]) -> list[Decimal]:
     found: list[Decimal] = []
     for index, line in enumerate(lines):
         low = line.lower()
-        if not any(label in low for label in _VAT_LABELS):
+        if not _has_label(low, _VAT_LABELS):
             continue
         if any(word in low for word in _NOT_VAT):
             continue
@@ -1498,6 +1596,11 @@ def _clean_item(line: str) -> str | None:
     # perfectly well end in a part number.
     if len(cleaned.split()) == 1 and _LABEL_SUFFIX.search(cleaned) is not None:
         return None
+    # The same in two words. An AliExpress VOEC invoice prints "Order Number:
+    # 3076911632201854" as the first line under its item heading, and with the
+    # number stripped "Order Number" was the item every one of them sold.
+    if cleaned.casefold() in _NUMBER_LABELS:
+        return None
     # "F A K T U R A" passes every test above — it is the right length, it is
     # all letters, and it has no figures in it. It is also the word FAKTURA set
     # with letter spacing, and it reached the ledger as the description of a
@@ -1563,7 +1666,11 @@ def read(
     document_title = _clean_title(title)
     named_by_title = document_title if has_letterhead else None
     if not text.strip():
-        return InvoiceReading(document_title=document_title, seller_name=named_by_title)
+        return InvoiceReading(
+            document_title=document_title,
+            seller_name=named_by_title,
+            seller_named_by_title=named_by_title is not None,
+        )
 
     lines = [line.strip() for line in text.splitlines()]
     gross, gross_is_negative = _total(lines)
@@ -1598,8 +1705,28 @@ def read(
 
     invoice_date, due_date, date_is_labelled = _dates(lines, today=today)
     number, number_kind = _invoice_number(lines)
+    item_text = _item_text(lines)
+    # Several files naming different things are several orders, not one, and
+    # the first of each is no more the bilag than any other. One card charge for
+    # nine AliExpress orders was described as "Faktura NO0110…095, 5840-31ZY
+    # Worm gear reducer mot": the number of one invoice and the item of an
+    # unrelated order, neither of them what the 9 771,76 kroner paid for. A
+    # blank here leaves the description to the model, which is shown every
+    # document, and the number to the user. A bank screenshot names no item
+    # and no number, so the ordinary bilag (one invoice, its bank line) is not
+    # touched.
+    groups = _in_each_document(lines)
+    if len(groups) > 1:
+        numbers = {found for group in groups if (found := _invoice_number(group)[0])}
+        if len(numbers) > 1:
+            number, number_kind = None, None
+        items = {found for group in groups if (found := _item_text(group))}
+        if len(items) > 1:
+            item_text = None
     orgnrs = _orgnrs(text)
     low = text.lower()
+    printed_seller = _seller_name(lines, _seller_orgnr(orgnrs, own_orgnr), guess=has_letterhead)
+    seller_name = _a_name(printed_seller or named_by_title)
 
     return InvoiceReading(
         invoice_date=invoice_date,
@@ -1613,16 +1740,14 @@ def read(
         invoice_number=number,
         number_kind=number_kind,
         orgnrs=orgnrs,
-        seller_name=_a_name(
-            _seller_name(lines, _seller_orgnr(orgnrs, own_orgnr), guess=has_letterhead)
-            or named_by_title
-        ),
+        seller_name=seller_name,
+        seller_named_by_title=printed_seller is None and seller_name is not None,
         buyer_name=_buyer_name(lines),
         currency_code=_currency(text),
         is_credit_note="kreditnota" in low or "credit note" in low,
         total_is_negative=gross_is_negative,
         shows_a_return=_shows_a_return(_document_totals(lines)),
-        item_text=_item_text(lines),
+        item_text=item_text,
         document_title=document_title,
     )
 
@@ -1643,6 +1768,13 @@ _CAMERA_ROLL = re.compile(
     r"(?i)^(?:img|pxl|dsc|dcim|photo|foto|bilde|image|screenshot|skjermbilde|skjermdump)"
     r"[\s_.-]*\d"
 )
+
+
+def is_camera_roll(name: str) -> bool:
+    """Whether ``name`` is what a phone called a photo, and so says nothing."""
+    return _CAMERA_ROLL.match(name.strip()) is not None
+
+
 _TITLE_KIND = re.compile(
     r"(?i)^(?:order\s+details|order\s+confirmation|order|receipt|invoice|"
     r"ordrebekreftelse|kjøpsbekreftelse|kvittering|faktura|bilag|dokument|document|"
@@ -1976,6 +2108,26 @@ def apply_type(
         # and there is no code here that would make it deductible. The purchase
         # may owe Norwegian VAT the other way round, which is the user's to
         # settle and not something a form may assume on their behalf.
+        #
+        # But "no code" was not neutral. The form fills an empty code with the
+        # category's default, which is 25 % on nearly every purchase, so MA-3D's
+        # jet thrusters (1 790 EUR, "VAT 0,00 €") came back deducting 3 878
+        # kroner of VAT nobody had charged. The import VAT on them arrives later
+        # on the freight forwarder's bill and is its own entry. So a purchase is
+        # proposed at 0: true about this invoice, and the warning says where the
+        # rest goes. A category whose default is the import VAT itself keeps it.
+        default = entry.default_tax_code if entry is not None else None
+        if suggestion.direction is CashFlowDirection.UT and default not in _IMPORT_VAT_CODES:
+            suggestion.tax_code = NO_VAT_CODE
+            suggestion.mark("tax_code")
+            warn(
+                f"Bilaget er i {reading.currency_code}, så det er ingen norsk mva på det, og "
+                "mva-koden er satt til 0. Er det varer, kommer innførselsmvaen på en egen "
+                "regning fra speditøren eller Tolletaten: før den for seg som «Mva betalt ved "
+                "innførsel (tollpass)». Er det en tjeneste, kan kjøpet utløse omvendt "
+                "avgiftsplikt."
+            )
+            return
         warn(
             f"Bilaget er i {reading.currency_code}, så avgiften på det er ikke norsk inngående "
             "mva. Velg mva-kode selv. Kjøp fra utlandet kan utløse innførselsmva eller omvendt "
@@ -2085,6 +2237,7 @@ def suggest(
     parties: list[PartyHint] | None = None,
     reading: InvoiceReading | None = None,
     model_fields: frozenset[str] = frozenset(),
+    direction: CashFlowDirection | None = None,
 ) -> InvoiceSuggestion:
     """Propose form values for the invoice in ``text``.
 
@@ -2098,6 +2251,11 @@ def suggest(
     rather than the parser (see :mod:`myntos.domain.bilag.extraction`), so that
     the proposals built on them are marked as the model's rather than the
     document's.
+
+    ``direction`` is the user's, when they clicked one. It beats everything the
+    document suggests, the sign on a bank line included, because the person who
+    made the payment knows which way it went and every rule here is inference.
+    It is not marked as a proposal: the user chose it, and the form keeps it.
     """
     hints = parties or []
 
@@ -2173,6 +2331,12 @@ def suggest(
             CashFlowDirection.UT if found.total_is_negative else CashFlowDirection.INN
         )
         suggestion.mark("direction", source_of("gross_amount"))
+
+    # The user's word, after every inference and before the category, which is
+    # guessed from the direction: a sale by its rate, a purchase by its words.
+    if direction is not None:
+        suggestion.direction = direction
+        suggestion.sources.pop("direction", None)
 
     if suggestion.counterparty_name is None:
         suggestion.counterparty_name = other_name

@@ -1,0 +1,106 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+{/* Glemt passord: be om en lenke som setter et nytt.
+
+    Siden sier det samme uansett om adressen har en konto eller ikke, fordi
+    serveren gjør det. Alt annet ville gjort skjemaet til en måte å finne ut
+    hvem som har konto hos oss. Derfor står beskjeden i betingelsesform («Har
+    adressen en konto …»), og derfor er det ingen feilmelding for en ukjent
+    adresse.
+
+    En konto som logger inn med BankID, får aldri passord herfra: BankIDs
+    vilkår forbyr å bruke en BankID-innlogging til å sette opp eller gjenopprette
+    en innlogging hos oss. Den får en e-post som sier at den logger inn med
+    BankID, og svaret her er det samme. Derfor sier siden det til alle, før
+    noen har skrevet noe. */}
+
+<BaseLayout title="Glemt passord | Myntos" description="Få en lenke på e-post for å velge et nytt passord til Myntos.">
+  <div class="auth-page">
+    <h1>Glemt passordet?</h1>
+    <p class="lead">Skriv e-postadressen du logger inn med, så sender vi en lenke.</p>
+
+    <div class="card">
+      <p class="status" id="status" hidden></p>
+
+      <form id="forgot-form" novalidate>
+        <label class="field">
+          <span>E-postadresse</span>
+          <input type="email" name="email" autocomplete="username" required />
+        </label>
+        <button class="btn btn-primary btn-block" type="submit" id="submit">Send lenke</button>
+        <p class="card-hint">
+          Logger du inn med BankID, har kontoen ikke passord. Da får du en e-post om det i stedet,
+          og logger inn med BankID som før.
+        </p>
+      </form>
+
+      {/* Erstatter skjemaet når forespørselen er sendt, så ingen trykker igjen
+          og igjen i tro på at det første trykket ikke virket. */}
+      <div id="sent" hidden>
+        <p>
+          Har <strong id="sent-to"></strong> en konto hos Myntos, er e-posten på vei. Lenken i den
+          virker i en halvtime.
+        </p>
+        <p class="card-hint">
+          Ser du ingenting etter noen minutter, sjekk søppelpost, og at adressen er den du
+          registrerte deg med.
+        </p>
+      </div>
+    </div>
+
+    <p class="switch"><a href="/logg-inn/">Tilbake til innlogging</a></p>
+  </div>
+</BaseLayout>
+
+<style>
+  .auth-page {
+    max-width: 26rem;
+    margin: 0 auto;
+  }
+  .switch {
+    text-align: center;
+    margin-top: 1.25rem;
+    font-size: 0.95rem;
+  }
+</style>
+
+<script>
+  import { ApiError, forgotPassword } from '../lib/api';
+  import { el, setStatus, show } from '../lib/dom';
+
+  const status = el<HTMLParagraphElement>('#status');
+  const form = el<HTMLFormElement>('#forgot-form');
+  const submit = el<HTMLButtonElement>('#submit');
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const email = String(new FormData(form).get('email') ?? '').trim();
+    if (email === '') {
+      setStatus(status, 'Skriv e-postadressen du logger inn med.');
+      return;
+    }
+
+    submit.disabled = true;
+    setStatus(status, '');
+    void forgotPassword(email)
+      .then(() => {
+        el('#sent-to').textContent = email;
+        show(form, false);
+        show(el('#sent'), true);
+      })
+      .catch((error: unknown) => {
+        // 503 betyr at denne installasjonen ikke sender e-post i det hele tatt.
+        // Det gjelder alle adresser likt, så det kan sies rett ut.
+        const message =
+          error instanceof ApiError && error.status === 503
+            ? 'Denne installasjonen av Myntos sender ikke e-post, så passordet kan ikke tilbakestilles herfra. Kontakt den som drifter den.'
+            : error instanceof ApiError
+              ? error.message
+              : 'Vi fikk ikke sendt forespørselen. Prøv en gang til.';
+        setStatus(status, message);
+        submit.disabled = false;
+      });
+  });
+</script>

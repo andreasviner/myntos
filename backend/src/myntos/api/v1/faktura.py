@@ -32,7 +32,16 @@ from typing import Annotated
 from fastapi import APIRouter, Query, Response, status
 from pydantic import BaseModel, Field
 
-from myntos.api.deps import CurrentCompany, CurrentUser, DbSession, Storage
+from myntos.api.deps import (
+    KEY_PREVIEW,
+    KEY_READ,
+    CurrentCompany,
+    CurrentUser,
+    DbSession,
+    Storage,
+    key_post,
+    key_write,
+)
 from myntos.core.clock import utc_now
 from myntos.domain.faktura import compliance, drafting, kid
 from myntos.domain.faktura import pdf as faktura_pdf
@@ -405,7 +414,7 @@ def _faktura_response(
 # --- Endpoints -----------------------------------------------------------------------
 
 
-@router.get("/faktura/katalog")
+@router.get("/faktura/katalog", openapi_extra=KEY_READ)
 async def catalogue(user: CurrentUser) -> FakturaCatalogueResponse:
     """The VAT treatments and units an invoice line may use.
 
@@ -437,7 +446,7 @@ async def catalogue(user: CurrentUser) -> FakturaCatalogueResponse:
     )
 
 
-@router.get("/companies/{company_id}/faktura")
+@router.get("/companies/{company_id}/faktura", openapi_extra=KEY_READ)
 async def list_faktura(
     context: CurrentCompany,
     db: DbSession,
@@ -448,6 +457,24 @@ async def list_faktura(
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[FakturaResponse]:
+    """The company's invoice book: drafts, issued invoices and credit notes, newest first.
+
+    A *faktura* is a sales invoice and a *kreditnota* the credit note that
+    reverses one; both are in this one list and share one number series. Each
+    entry is the whole document: buyer, lines, VAT subtotals and totals (amounts
+    as decimal strings), and for a draft also ``violations``, what still stands
+    between it and a lawful invoice — the same findings as ``…/kontroll``. An
+    issued invoice that has been credited names its credit note in
+    ``credited_by_document_id``.
+
+    ``status=utkast`` lists only drafts: no number, not in the books, free to
+    change or discard. ``status=utstedt`` lists only issued documents: numbered,
+    posted, and final. ``limit`` (1 to 500, default 100) and ``offset`` page
+    through the rest.
+
+    Any role that may read the books may call it. Only this company's documents
+    are ever listed.
+    """
     require_permission(context.membership.role, Permission.LEDGER_READ)
     documents = await faktura_service.list_documents(
         db, company=context.company, status=status_filter, limit=limit, offset=offset
@@ -458,7 +485,11 @@ async def list_faktura(
     ]
 
 
-@router.post("/companies/{company_id}/faktura", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/companies/{company_id}/faktura",
+    status_code=status.HTTP_201_CREATED,
+    openapi_extra=key_write("lage et utkast til faktura"),
+)
 async def create_faktura(
     payload: CreateFakturaRequest, context: CurrentCompany, db: DbSession
 ) -> FakturaResponse:
@@ -489,7 +520,7 @@ async def create_faktura(
     return _faktura_response(document)
 
 
-@router.get("/companies/{company_id}/faktura/neste-nummer")
+@router.get("/companies/{company_id}/faktura/neste-nummer", openapi_extra=KEY_READ)
 async def next_number(
     context: CurrentCompany,
     db: DbSession,
@@ -529,7 +560,7 @@ async def next_number(
     )
 
 
-@router.post("/companies/{company_id}/faktura/linjeforslag")
+@router.post("/companies/{company_id}/faktura/linjeforslag", openapi_extra=KEY_PREVIEW)
 async def draft_faktura_lines(
     payload: LineDraftRequest, context: CurrentCompany
 ) -> LineDraftResponse:
@@ -596,8 +627,30 @@ async def draft_faktura_lines(
     )
 
 
-@router.get("/companies/{company_id}/faktura/{document_id}")
+@router.get("/companies/{company_id}/faktura/{document_id}", openapi_extra=KEY_READ)
 async def get_faktura(document_id: int, context: CurrentCompany, db: DbSession) -> FakturaResponse:
+    """One invoice or credit note, with its lines, VAT subtotals and totals.
+
+    ``status`` says where the document is in its life. ``utkast`` is a draft: it
+    has no number, is not in the books, and may be changed with PATCH or
+    discarded with DELETE. ``utstedt`` is issued: numbered, posted to the
+    ledger, and never changed again, because Norwegian bookkeeping rules
+    (bokføringsforskriften § 5-2-7) allow an issued invoice to be corrected only
+    by a kreditnota, ``POST …/kreditnota``.
+
+    For a draft, ``violations`` lists what the rules for a sales document
+    (bokføringsforskriften § 5-1) still find missing, each with a ``severity``:
+    ``blokkerende`` stops it being issued, ``advarsel`` is only worth knowing.
+    ``seller_bank_account`` is the kontonummer (bank account number) the
+    invoice tells the customer to pay into, taken from the company's own
+    accounts; null means the company has none, and then nothing can be issued.
+    ``payment_reference`` is the KID, the Norwegian payment reference, which
+    issuing sets when ``payment_reference_auto`` is true. Amounts are decimal
+    strings.
+
+    404 ``invoice_not_found`` when the id is not one of this company's
+    documents: list them with ``GET …/faktura`` to find the right one.
+    """
     require_permission(context.membership.role, Permission.LEDGER_READ)
     document = await faktura_service.get_document(
         db, company=context.company, document_pk=document_id
@@ -606,7 +659,10 @@ async def get_faktura(document_id: int, context: CurrentCompany, db: DbSession) 
     return _faktura_response(document, credited_by=credited.get(document.id))
 
 
-@router.patch("/companies/{company_id}/faktura/{document_id}")
+@router.patch(
+    "/companies/{company_id}/faktura/{document_id}",
+    openapi_extra=key_write("endre et fakturautkast"),
+)
 async def update_faktura(
     document_id: int,
     payload: UpdateFakturaRequest,
@@ -642,7 +698,9 @@ async def update_faktura(
 
 
 @router.delete(
-    "/companies/{company_id}/faktura/{document_id}", status_code=status.HTTP_204_NO_CONTENT
+    "/companies/{company_id}/faktura/{document_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    openapi_extra=key_write("slette et fakturautkast"),
 )
 async def delete_faktura(document_id: int, context: CurrentCompany, db: DbSession) -> None:
     """Discard a draft.
@@ -654,7 +712,7 @@ async def delete_faktura(document_id: int, context: CurrentCompany, db: DbSessio
     await faktura_service.delete_draft(db, company=context.company, document_pk=document_id)
 
 
-@router.get("/companies/{company_id}/faktura/{document_id}/kontroll")
+@router.get("/companies/{company_id}/faktura/{document_id}/kontroll", openapi_extra=KEY_READ)
 async def check_faktura(
     document_id: int, context: CurrentCompany, db: DbSession
 ) -> list[ViolationResponse]:
@@ -676,6 +734,7 @@ async def check_faktura(
 @router.post(
     "/companies/{company_id}/faktura/{document_id}/utsted",
     status_code=status.HTTP_201_CREATED,
+    openapi_extra=key_post("utstede en faktura"),
 )
 async def issue_faktura(
     document_id: int,
@@ -699,6 +758,7 @@ async def issue_faktura(
 @router.post(
     "/companies/{company_id}/faktura/{document_id}/kreditnota",
     status_code=status.HTTP_201_CREATED,
+    openapi_extra=key_post("lage en kreditnota"),
 )
 async def credit_faktura(
     document_id: int,
@@ -726,7 +786,7 @@ async def credit_faktura(
     return _faktura_response(document)
 
 
-@router.get("/companies/{company_id}/faktura/{document_id}/ehf")
+@router.get("/companies/{company_id}/faktura/{document_id}/ehf", openapi_extra=KEY_READ)
 async def download_ehf(document_id: int, context: CurrentCompany, db: DbSession) -> Response:
     """The e-invoice, exactly as it was frozen at issue.
 
@@ -752,7 +812,7 @@ async def download_ehf(document_id: int, context: CurrentCompany, db: DbSession)
     )
 
 
-@router.get("/companies/{company_id}/faktura/{document_id}/pdf")
+@router.get("/companies/{company_id}/faktura/{document_id}/pdf", openapi_extra=KEY_READ)
 async def download_pdf(document_id: int, context: CurrentCompany, db: DbSession) -> Response:
     """The readable copy.
 

@@ -19,7 +19,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -33,25 +33,35 @@ from myntos.domain.identity import access
 from myntos.domain.identity.errors import (
     AccountDisabledError,
     AccountLockedError,
+    BankidAccountError,
     EmailAlreadyRegisteredError,
+    EmailBelongsToBankidAccountError,
+    IdentityAlreadyLinkedError,
+    IdentityNotFoundError,
     InvalidCredentialsError,
     InvalidInvitationError,
     InvitationEmailMismatchError,
     InvitationNotFoundError,
+    LastSignInMethodError,
     NoPasswordSetError,
     NotAMemberError,
+    ReauthenticationFailedError,
+    ReauthenticationRequiredError,
     UnverifiedProviderEmailError,
 )
 from myntos.domain.identity.models import (
     CompanyMembership,
+    EmailTokenPurpose,
     IdentityProvider,
     Organization,
     OrganizationInvitation,
     OrganizationMembership,
     OrganizationRole,
     User,
+    UserEmailToken,
     UserGovernmentIdentity,
     UserIdentity,
+    UserSession,
 )
 
 # The ledger's *models* only, never its service: access to a set of books is an
@@ -100,6 +110,122 @@ def slugify(name: str) -> str:
 async def get_user_by_email(db: AsyncSession, email: str) -> User | None:
     user: User | None = await db.scalar(select(User).where(User.email == normalise_email(email)))
     return user
+
+
+# --- BankID accounts ------------------------------------------------------------
+#
+# BankID's merchant terms (Stø, April 2026, § 7.2) forbid ID-veksling without a
+# separate permission: using a BankID login to activate, restore or raise the
+# trust of a sign-in method of our own. Signing in with BankID every time is
+# ordinary authentication; an account BankID set up, or vouched for, being used
+# afterwards with a Myntos password is not. So BankID and every other way in are
+# mutually exclusive on an account, and docs/integrations/bankid.md has the
+# wording and the sources.
+#
+# An account is a BankID account when it has a bankid user_identity row, and
+# nothing else marks it. A flag beside the row would be a second answer to the
+# same question, and the day they disagreed one of them would be the one a
+# password path forgot to read.
+
+
+async def is_bankid_account(db: AsyncSession, user_id: int) -> bool:
+    """Whether BankID is how this account signs in, and therefore the only way.
+
+    Asked by every path that could give an account another way in, rather
+    than only by the ones that create a BankID link, so the rule holds for a
+    row written before it existed too: BankID sign-in was built on the same day
+    the rule was decided, and an account linked that morning may still hold a
+    password.
+    """
+    found = await db.scalar(
+        select(UserIdentity.id).where(
+            UserIdentity.user_id == user_id, UserIdentity.provider == IdentityProvider.BANKID
+        )
+    )
+    return found is not None
+
+
+async def _become_bankid_only(db: AsyncSession, user: User, *, keep: UserIdentity) -> None:
+    """Strip every way into ``user`` but the BankID link just made.
+
+    The password goes, every other provider goes, and so does any unspent
+    link that would set a password, because a reset mailed last week would
+    otherwise turn back into a way in. The lockout is lifted with the password
+    it was guarding. Ending the other sessions is the caller's job, beside the
+    session it has to spare, because sessions live in :mod:`myntos.auth`.
+    """
+    user.password_hash = None
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    await db.execute(
+        delete(UserIdentity).where(UserIdentity.user_id == user.id, UserIdentity.id != keep.id)
+    )
+    await db.execute(
+        update(UserEmailToken)
+        .where(
+            UserEmailToken.user_id == user.id,
+            UserEmailToken.purpose.in_(
+                (EmailTokenPurpose.RESET_PASSWORD, EmailTokenPurpose.SWITCH_TO_PASSWORD)
+            ),
+            UserEmailToken.consumed_at.is_(None),
+        )
+        .values(consumed_at=utc_now())
+    )
+    await db.flush()
+
+
+# How recently an account with no password must have signed in before it may
+# delete itself or switch to BankID. There is nothing to type, so a fresh login
+# is the proof: ten minutes is long enough to sign in with Google and come
+# back, and short enough that a laptop left open over lunch does not qualify.
+RECENT_LOGIN_WINDOW = timedelta(minutes=10)
+
+
+async def confirm_identity(
+    db: AsyncSession,
+    user: User,
+    *,
+    password: str | None,
+    session: UserSession,
+    action: str,
+) -> None:
+    """Make sure the person doing ``action`` is the account's owner, not their session.
+
+    For the two things a session alone may not do, because each is what a
+    stolen cookie would be used for and neither can be taken back by the
+    owner: deleting the account, and switching it to BankID, which removes the
+    password and every other way in and so would hand a hijacked session the
+    account for good. ``action`` completes "for å …" in the refusal.
+
+    An account with a password must give it, every time: a stolen cookie is
+    the threat, and a fresh login is no evidence against one. An account with
+    no password has nothing to type, so it must have signed in within
+    :data:`RECENT_LOGIN_WINDOW`, which means having just been through Google or
+    whichever provider it uses.
+
+    A wrong password counts towards the same lockout as a wrong login, so this
+    cannot become an unthrottled way to test guesses from a hijacked session.
+    """
+    now = utc_now()
+    if user.has_password:
+        if user.locked_until is not None and as_utc(user.locked_until) > now:
+            raise AccountLockedError("kontoen er midlertidig låst etter for mange forsøk")
+        if not password:
+            raise ReauthenticationRequiredError(f"skriv inn passordet ditt for å {action}")
+        if not verify_password(password, user.password_hash):
+            _record_failed_login(user)
+            # Committed for the reason authenticate_with_password commits: the
+            # request is about to fail, and its rollback would otherwise
+            # discard the counter that makes the lockout work.
+            await db.commit()
+            raise ReauthenticationFailedError("feil passord")
+        return
+    if now - as_utc(session.created_at) > RECENT_LOGIN_WINDOW:
+        minutes = int(RECENT_LOGIN_WINDOW.total_seconds() // 60)
+        raise ReauthenticationRequiredError(
+            f"logg ut og inn igjen for å {action}. Det må gjøres innen {minutes} minutter "
+            "etter innloggingen"
+        )
 
 
 async def _unique_slug(db: AsyncSession, name: str) -> str:
@@ -262,6 +388,13 @@ async def authenticate_with_password(db: AsyncSession, *, email: str, password: 
     if not user.is_active:
         raise AccountDisabledError("kontoen er deaktivert")
 
+    # Only reachable for a password that should not exist (see
+    # is_bankid_account), and asked only once the password is known to be
+    # right, so it changes nothing about what a stranger can learn. The
+    # password is correct and is still not a way in.
+    if await is_bankid_account(db, user.id):
+        raise BankidAccountError("kontoen logger inn med BankID, så logg inn med BankID")
+
     # Argon2 parameters may have been raised since this hash was made; the only
     # moment we hold the plaintext is right now.
     if user.password_hash is not None and needs_rehash(user.password_hash):
@@ -284,8 +417,17 @@ def _record_failed_login(user: User) -> None:
         user.failed_login_attempts = 0
 
 
-def change_password(user: User, *, current: str, new: str) -> None:
-    """Replace a user's password after re-checking the current one."""
+async def change_password(db: AsyncSession, user: User, *, current: str, new: str) -> None:
+    """Replace a user's password after re-checking the current one.
+
+    A BankID account is refused before anything else, by name: it has no
+    password to change, and "set one first" would be advice it cannot follow.
+    """
+    if await is_bankid_account(db, user.id):
+        raise BankidAccountError(
+            "kontoen logger inn med BankID og har ikke passord. Vil du heller logge inn med "
+            "e-post og passord, velg «Bytt til innlogging med e-post» under «Din konto»."
+        )
     if user.password_hash is None:
         raise NoPasswordSetError(
             "kontoen har ikke passord, så logg inn med Google, eller sett et passord først"
@@ -317,29 +459,44 @@ async def sign_in_with_provider(
       not. The account is fresh, so there is nobody to take over; what an
       unverified address still allows is squatting an address in order to
       collect an organization invitation sent to it, and that is equally open
-      through password signup until address verification exists (ROADMAP,
-      phase 1b). Refusing here would therefore buy no security while making
+      through password signup, which also creates the account before the
+      address is confirmed. What answers squatting is the reset link, which
+      reaches the real owner (myntos.domain.identity.email_tokens), not a
+      refusal at the door. Refusing here would therefore buy no security while making
       Microsoft sign-in impossible for anyone who has not switched on the
       ``xms_edov`` optional claim.
 
     ``email_verified_at`` is only stamped when the provider actually vouched,
     so the distinction survives in the record rather than being asserted by the
     act of signing in.
+
+    **A BankID account is never reached this way**, verified address or not
+    (:class:`EmailBelongsToBankidAccountError`): attaching Google to it would
+    give it a second way in, which BankID's terms forbid. The unverified case
+    is refused first, by the rule above, so a stranger with an address they do
+    not own learns no more than that an account exists, which that rule already
+    says.
+
+    Only for providers that assert an address. One that does not (BankID) has
+    nothing for the second and third rules to work with, and goes through
+    :func:`sign_in_with_linked_identity` and
+    :mod:`myntos.domain.identity.provider_signup` instead.
     """
-    identity = await db.scalar(
-        select(UserIdentity)
-        .where(
-            UserIdentity.provider == provider,
-            UserIdentity.subject == profile.subject,
-        )
-        .options(selectinload(UserIdentity.user))
-    )
+    if profile.email is None:
+        raise ValueError(f"{provider.value} asserts no email; it cannot sign in by address")
+
+    identity = await _identity_for(db, provider, profile.subject)
     now = utc_now()
 
     if identity is not None:
         user = identity.user
         if not user.is_active:
             raise AccountDisabledError("kontoen er deaktivert")
+        # A Google link left on an account that has since become a BankID
+        # account, which the switch to BankID deletes. See is_bankid_account
+        # for why it is asked here anyway.
+        if await is_bankid_account(db, user.id):
+            raise BankidAccountError("kontoen logger inn med BankID, så logg inn med BankID")
         identity.last_login_at = now
         identity.email_at_provider = normalise_email(profile.email)
         user.last_login_at = now
@@ -353,6 +510,13 @@ async def sign_in_with_provider(
         raise UnverifiedProviderEmailError(
             "det finnes allerede en konto med denne e-postadressen, og "
             f"{provider.value} har ikke bekreftet at adressen tilhører deg"
+        )
+    # Before anything on the account is touched: the callback commits even
+    # when it refuses, so a refusal that came after stamping the address would
+    # keep the stamp.
+    if existing is not None and await is_bankid_account(db, existing.id):
+        raise EmailBelongsToBankidAccountError(
+            "kontoen med denne e-postadressen logger inn med BankID. Logg inn med BankID i stedet."
         )
 
     if existing is None:
@@ -371,8 +535,8 @@ async def sign_in_with_provider(
         if not user.is_active:
             raise AccountDisabledError("kontoen er deaktivert")
         if user.email_verified_at is None:
-            # A verified provider assertion is stronger evidence than the
-            # confirmation email we never sent.
+            # A verified provider assertion is as good as the confirmation
+            # link, and the person need not go and click one.
             user.email_verified_at = now
 
     db.add(
@@ -395,6 +559,154 @@ async def sign_in_with_provider(
             name_is_placeholder=True,
         )
     return user, created
+
+
+async def _identity_for(
+    db: AsyncSession, provider: IdentityProvider, subject: str
+) -> UserIdentity | None:
+    """The link for one provider identity, with its account loaded."""
+    identity: UserIdentity | None = await db.scalar(
+        select(UserIdentity)
+        .where(UserIdentity.provider == provider, UserIdentity.subject == subject)
+        .options(selectinload(UserIdentity.user))
+    )
+    return identity
+
+
+async def sign_in_with_linked_identity(
+    db: AsyncSession, provider: IdentityProvider, subject: str
+) -> User | None:
+    """The account this provider identity is linked to, or ``None``.
+
+    The whole rule for a provider that asserts no address (BankID): the
+    ``sub`` is looked up, and nothing else is. There is no address to fall back
+    on and no account is ever created here; an identity linked to nothing is
+    the caller's to refuse or to hold for a signup, depending on which button
+    the person pressed.
+    """
+    identity = await _identity_for(db, provider, subject)
+    if identity is None:
+        return None
+    user = identity.user
+    if not user.is_active:
+        raise AccountDisabledError("kontoen er deaktivert")
+    now = utc_now()
+    identity.last_login_at = now
+    user.last_login_at = now
+    return user
+
+
+async def link_provider(
+    db: AsyncSession, user: User, provider: IdentityProvider, profile: OidcProfile
+) -> tuple[UserIdentity, bool]:
+    """Attach a provider identity to the account that is signed in.
+
+    Returns the identity and whether linking it made this a BankID account.
+
+    This is the one way a BankID reaches an existing account, and the reason it
+    is safe is that both halves were proved in the same flow: the person is
+    signed in to this account (the caller checks that the session finishing
+    the flow belongs to whoever started it), and has just authenticated as this
+    identity. A typed address proves neither, which is why
+    :mod:`myntos.domain.identity.provider_signup` never attaches to an
+    existing account by one.
+
+    **Linking BankID is a switch, not an addition.** The password and every
+    other provider go in the same transaction, because an account that BankID
+    vouched for must not go on opening with a password of ours (see
+    :func:`is_bankid_account`). The person was warned, and proved it was them,
+    before the flow started; the caller ends the other sessions and says so by
+    mail. The other direction is refused: nothing is linked to a BankID account.
+
+    Linking the identity that is already here is not an error: it is what
+    pressing the button twice looks like.
+    """
+    if provider is not IdentityProvider.BANKID and await is_bankid_account(db, user.id):
+        raise BankidAccountError(
+            "kontoen logger inn med BankID, og bare med BankID, så ingen annen innlogging kan "
+            "kobles til. Vil du heller bruke e-post, velg «Bytt til innlogging med e-post» først."
+        )
+    existing = await _identity_for(db, provider, profile.subject)
+    if existing is not None:
+        if existing.user_id == user.id:
+            return existing, False
+        raise IdentityAlreadyLinkedError(
+            "denne innloggingen er allerede koblet til en annen Myntos-konto. "
+            "Logg inn med den og fjern koblingen der først, eller bruk en annen."
+        )
+    other = await db.scalar(
+        select(UserIdentity.id).where(
+            UserIdentity.user_id == user.id, UserIdentity.provider == provider
+        )
+    )
+    if other is not None:
+        raise IdentityAlreadyLinkedError(
+            "kontoen er allerede koblet til en annen innlogging av samme slag. Fjern den først."
+        )
+
+    now = utc_now()
+    identity = UserIdentity(
+        user_id=user.id,
+        provider=provider,
+        subject=profile.subject,
+        email_at_provider=normalise_email(profile.email) if profile.email else None,
+        created_at=now,
+    )
+    db.add(identity)
+    # No IntegrityError handling, unlike signup: the two checks above answer
+    # every case a person can produce one at a time, and the unique constraints
+    # are the backstop for two tabs racing. Catching it here would hand the
+    # callback a session it could no longer commit, and the callback commits
+    # even on refusal, because the spent attempt has to stay spent.
+    await db.flush()
+    if provider is IdentityProvider.BANKID:
+        await _become_bankid_only(db, user, keep=identity)
+        return identity, True
+    return identity, False
+
+
+async def list_identities(db: AsyncSession, user_id: int) -> list[UserIdentity]:
+    """Every provider sign-in on the account, oldest first."""
+    rows = await db.scalars(
+        select(UserIdentity).where(UserIdentity.user_id == user_id).order_by(UserIdentity.id)
+    )
+    return list(rows)
+
+
+def can_remove_identity(user: User, identities: list[UserIdentity], identity: UserIdentity) -> bool:
+    """Whether ``identity``, one of ``identities``, may go and still leave a way in.
+
+    A password counts, and so does any other linked provider. A reset link
+    does not: it needs a deployment that sends mail, and an account should not
+    depend on that to stay reachable.
+
+    BankID never may. On a BankID account it is the only way in by rule, and
+    the way out is the switch to e-mail, which removes it only once the mailed
+    link has set a password.
+    """
+    if identity.provider is IdentityProvider.BANKID:
+        return False
+    return user.has_password or len(identities) > 1
+
+
+async def unlink_provider(db: AsyncSession, user: User, provider: IdentityProvider) -> None:
+    """Remove a provider sign-in, unless it is the last way into the account."""
+    identities = await list_identities(db, user.id)
+    target = next((row for row in identities if row.provider == provider), None)
+    if target is None:
+        raise IdentityNotFoundError("kontoen har ingen slik innlogging")
+    if target.provider is IdentityProvider.BANKID:
+        raise BankidAccountError(
+            "BankID er den eneste måten inn på kontoen og kan ikke fjernes direkte. Vil du heller "
+            "logge inn med e-post og passord, velg «Bytt til innlogging med e-post»."
+        )
+    if not can_remove_identity(user, identities, target):
+        raise LastSignInMethodError(
+            "dette er den eneste måten å logge inn på kontoen. Sett et passord eller "
+            "koble til en annen innlogging først."
+        )
+    await db.delete(target)
+    await db.flush()
 
 
 async def list_memberships(db: AsyncSession, user_id: int) -> list[OrganizationMembership]:

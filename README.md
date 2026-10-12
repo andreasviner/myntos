@@ -16,39 +16,45 @@ what it does.
 > you submit to Skatteetaten or any other authority. Read
 > [DISCLAIMER.md](DISCLAIMER.md) before using the software.
 
-> **Status: pre-alpha.** Accounts, organizations, customers and suppliers, and
-> the cash-flow register with its bilag archive work end to end. The
+> **Status: pre-alpha.** Accounts, organizations, customers and suppliers, the
+> cash-flow register with its bilag archive, invoicing, bank import, the
+> opening balance and year-end, and the SAF-T export work end to end. The
 > government integrations authenticate and read: Maskinporten and ID-porten
 > tokens, the Altinn exchange, fetching a skattemelding, and creating an
-> Altinn 3 instance are all verified against Skatteetaten's test
-> environment. **Nothing has been submitted**, and the SAF-T export does not
-> exist. Nothing here is ready for production bookkeeping. See
+> Altinn 3 instance are all verified against Skatteetaten's test environment.
+> Skatteetaten's MVA validation answered a melding Myntos built in TT02 on
+> 2026-10-10, and its only finding was about TT02's test data. The ID-porten
+> company confirmation runs in production. **Nothing has been submitted.**
+> Nothing here is ready for production bookkeeping. See
 > [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Features
 
 | Feature | Notes | Status |
 | --- | --- | --- |
-| Accounts and access | Email/password or Google sign-in; one account keeps books for as many companies as it likes, switched from any page, so a regnskapsfører holds one company per client. **Access is per company**: a colleague is invited to one set of books with a role, sees nothing of the account's other clients, and a subscription attaches to the books rather than to a person | Working |
+| Accounts and access | Email and password, or a federated provider: Google, Microsoft, and BankID through a broker (built, not yet switched on; an account that signs in with BankID signs in with nothing else, as BankID's terms require) ([docs/ARCHITECTURE.md § Federated providers](docs/ARCHITECTURE.md#federated-providers)); the address is confirmed by mail, a forgotten password is reset by mail, and `/konto/` lists where you are signed in and deletes the account while keeping the books ([docs/gdpr.md](docs/gdpr.md)). One account keeps books for as many companies as it likes, switched from any page, so a regnskapsfører holds one company per client. **Access is per company**: a colleague is invited to one set of books with a role, sees nothing of the account's other clients, and a subscription attaches to the books rather than to a person | Working |
 | Cash-flow register | Money in and out with a category that decides account and VAT code, gross-to-net split, immediate posting, corrections by reversal | Working |
 | Fakturering | Salgsdokument checked against bokføringsforskriften § 5-1 before it is issued, with each finding naming its paragraph; gapless machine numbering (a draft has no number, so discarding one leaves no hole); posted and archived on issue; corrected only by kreditnota | Working |
 | E-faktura (EHF / Peppol BIS Billing 3.0) | Generated and frozen at issue, ahead of the 2027-01-01 requirement in lov 19. juni 2026 nr. 39. **Transmission is not built** — that needs a Peppol access point; see [docs/integrations/efaktura.md](docs/integrations/efaktura.md) | Partly |
 | Double-entry ledger (hovedbok) | SAF-T-aligned data model from day one | Working |
-| Bilagsføring with PDF archive | PDFs attached to a posted voucher; append-only, validated by magic number, digest stored | Working |
-| Faktura read into the entry form | Upload the PDF first: date, amount, VAT, invoice number and counterparty are read out of the text layer; the category is chosen from a numbered menu by a small model hosted in Norway ([Løynd](https://loynd.no)), optional and off without a key. Nothing posts until the user confirms — see [/ki](https://myntos.no/ki/) | Working |
+| Bilagsføring with document archive | PDFs and photos (PNG, JPEG, WebP, GIF and HEIC) attached to a posted voucher; append-only, validated by magic number, digest stored, original kept byte for byte; a photo's thumbnail is made from a copy stripped of EXIF and GPS | Working |
+| Faktura read into the entry form | Upload the bilag first, a PDF or a photo, or several files for one bilag: date, amount, VAT, invoice number and counterparty are read out of the text layer, and photos and screenshots are transcribed by Løynd; the category is chosen from a numbered menu by a small model hosted in Norway ([Løynd](https://loynd.no)), optional and off without a key. Nothing posts until the user confirms — see [/ki](https://myntos.no/ki/) | Working |
 | An invoice that fills itself in | The buyer comes from Enhetsregisteret on the organisasjonsnummer (name, address, and the number an EHF invoice is addressed by); the KID is assigned at issue as kundenummer + fakturanummer + kontrollsiffer, so the bank's OCR file posts to the right kundereskontro; the lines can be copied from the last invoice to the same customer, or set up from a sentence describing the sale by the same Norwegian model. Every amount is still computed by the ledger, and § 5-1 is still checked at issue | Working |
 | Customers and suppliers | SAF-T parties with balance accounts, optional on any payment | Working |
+| Bank import | camt.053 statements at `/bank/`, checked against their own closing balance, archived and deduplicated; each movement matched to the voucher that books it, or posted as a new one through the register. See [docs/integrations/bank.md](docs/integrations/bank.md) | Working |
+| Opening balance and årsavslutning | `/inngaende-balanse/` brings books from another system in as one voucher (typed or a saldobalanse CSV, open items per party); `/arsavslutning/` closes a year for an AS or ENK, with tax and disposition, and reopens it only with a logged reason | Working |
+| Kontoplan | `/kontoplan/`: add, rename, deactivate and regroup accounts per year, and the VAT registration with the date it took effect, read on each entry's own date | Working |
 | Document storage | Local filesystem for development, Cloudflare R2 (`jurisdiction=eu`) for production | Working |
-| MVA-håndtering | VAT calculation on the standard SAF-T mva codes, automatic MVA-melding | Planned |
-| SAF-T Financial export | Required by law (bokføringsforskriften) for electronic bookkeeping | Planned |
+| MVA-håndtering | VAT calculation on the standard SAF-T mva codes, the MVA-melding per period at `/mva/`, uttak, tap på krav, justering and tilbakeføring at `/mva-justeringer/`, and the melding as XML for upload by hand. Skatteetaten's validation answered it in TT02 on 2026-10-10; filing through Altinn is built and not yet proven. See [docs/integrations/mva.md](docs/integrations/mva.md) | Working |
+| SAF-T Financial export | Required by law (bokføringsforskriften) for electronic bookkeeping. v1.30 and v1.40 at `/saft/`, behind a cross-reference check of our own. See [docs/integrations/saf-t.md](docs/integrations/saf-t.md) | Working |
 | Skattemelding + næringsspesifikasjon | Validate and submit via Skatteetaten's sluttbrukersystem APIs | Planned |
 | Årsregnskap to Regnskapsregisteret | Machine filing via Brønnøysundregistrene's Altinn 3 apps (system fills, user signs with ID-porten) | Planned |
-| Maskinporten + ID-porten auth | The JWT grant, the ID-porten authorization-code flow, the Altinn token exchange and the Altinn 3 instance lifecycle are implemented and tested against stubs. Maskinporten covers retrieval APIs; **submission legally requires an ID-porten login** (Skatteetaten policy, 2026), which is why `submit` takes a person's token as a required argument. The first thing that login buys before any submission: after logging in, the company-setup form lists the companies Altinn says you may report for, so a regnskapsfører picks clients from a list instead of typing an organisasjonsnummer per client. Unused until a client is registered with Digdir — see [docs/integrations/maskinporten.md](docs/integrations/maskinporten.md) | Working, not provisioned |
+| Maskinporten + ID-porten auth | The JWT grant, the ID-porten authorization-code flow, the Altinn token exchange and the Altinn 3 instance lifecycle are implemented, tested against stubs, and verified live in TT02 (docs/ROADMAP.md, phase 0b). Maskinporten covers retrieval APIs; **submission legally requires an ID-porten login** (Skatteetaten policy, 2026), which is why `submit` takes a person's token as a required argument. The first thing that login buys before any submission: after logging in, the company-setup form lists the companies Altinn says you may report for, so a regnskapsfører picks clients from a list instead of typing an organisasjonsnummer per client. Clients are registered with Digdir in test and in production — see [docs/integrations/maskinporten.md](docs/integrations/maskinporten.md) | Working |
 
 ## Tech stack
 
 - **Frontend:** [Astro](https://astro.build) 7 + TypeScript on Cloudflare Workers — [`frontend/`](frontend/)
-- **Backend:** Python 3.12 + [FastAPI](https://fastapi.tiangolo.com) + SQLAlchemy, containerized (target: Cloudflare Containers, EU jurisdiction) — [`backend/`](backend/)
+- **Backend:** Python 3.12 + [FastAPI](https://fastapi.tiangolo.com) + SQLAlchemy, self-hosted in Norway (uvicorn under systemd, Caddy for TLS); the frontend alone is on Cloudflare Workers — [`backend/`](backend/)
 - **Database:** PostgreSQL in an EEA region (migrations via Alembic) — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the legal storage rules
 - **Package managers:** [uv](https://docs.astral.sh/uv/) (Python), [pnpm](https://pnpm.io) (Node)
 
@@ -59,19 +65,19 @@ Myntos/
 ├── backend/                 # Python API (FastAPI, src layout)
 │   ├── src/myntos/
 │   │   ├── api/             # HTTP endpoints (versioned)
-│   │   ├── auth/            # Myntos login (passwords, sessions, Google) + Maskinporten/ID-porten
+│   │   ├── auth/            # Myntos login (passwords, sessions, federated OIDC login) + Maskinporten/ID-porten
 │   │   ├── core/            # Configuration, security, cross-cutting concerns
 │   │   ├── db/              # SQLAlchemy base, sessions (+ migrations/)
-│   │   ├── domain/          # Accounting core: ledger, bilag, faktura, mva, identity
-│   │   ├── integrations/    # Skatteetaten / Altinn / Brreg / Løynd API clients
+│   │   ├── domain/          # Accounting core: ledger, bilag, faktura, bank, mva, arsoppgjor, identity
+│   │   ├── integrations/    # Skatteetaten / Altinn / Brreg / Løynd / Norges Bank API clients
 │   │   ├── saft/            # SAF-T Financial export
 │   │   └── storage/         # Document storage for bilag (local / R2)
 │   ├── migrations/          # Alembic migrations
 │   └── tests/
 ├── frontend/                # Astro app (pnpm) — conventions in docs/frontend-conventions.md
 ├── docs/                    # Architecture, roadmap, integration guides
-├── infra/                   # Deployment (Cloudflare)
-└── .github/                 # CI, dependabot, PR template
+├── infra/                   # Cloudflare notes: the frontend Worker, R2, email sending
+└── .github/                 # CI, dependabot, PR template, CODEOWNERS
 ```
 
 ## Getting started
@@ -110,6 +116,7 @@ uv run mypy src tests
 uv run pytest
 
 cd ../frontend
+pnpm test                                      # Vitest over src/lib: the company wall
 pnpm check && pnpm build
 ```
 
@@ -152,9 +159,11 @@ Two Norwegian legal requirements shape the architecture:
 
 ## Contributing
 
-Myntos is not currently open to outside contributions. See
-[CONTRIBUTING.md](CONTRIBUTING.md) for development setup and the conventions
-used in this codebase.
+Bug reports and discussion are welcome. Code contributions need a signed CLA or
+copyright assignment first, because the licence is proprietary and could not
+cover code somebody else holds the copyright to. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for that, the development setup and the
+conventions used in this codebase.
 
 ## License
 
@@ -164,9 +173,7 @@ Andreas Lindeman, all rights reserved (see [LICENSE](LICENSE)). No right to
 use, copy, modify or redistribute is granted, and cloning the repository does
 not convey one.
 
-This is deliberate and temporary. An OSI license is irreversible for every
-snapshot it is applied to, so the choice is deferred until the shape of the
-project — and whether a hosted service is offered — is settled. The intent is
-to land on an open-source or source-available license (AGPL, BSL or FSL) before
-the first public release; see [docs/ROADMAP.md](docs/ROADMAP.md). Until then,
-please don't describe Myntos as open source — it isn't yet.
+This is settled (2026-10-10). Myntos is offered as a paid hosted service, and
+an open-source license would let anyone run the same service from the same
+code; see [docs/ROADMAP.md](docs/ROADMAP.md). Please don't describe Myntos as
+open source — it isn't.

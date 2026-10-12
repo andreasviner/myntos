@@ -47,6 +47,14 @@ def test_viewer_can_read_but_not_post() -> None:
     assert not has_permission(OrganizationRole.VIEWER, Permission.LEDGER_WRITE)
 
 
+def test_posting_does_not_include_changing_the_kontoplan() -> None:
+    """A bookkeeper who posts is not thereby the one who regroups the accounts."""
+    assert has_permission(OrganizationRole.MEMBER, Permission.LEDGER_WRITE)
+    assert not has_permission(OrganizationRole.MEMBER, Permission.LEDGER_CHART)
+    assert has_permission(OrganizationRole.ADMIN, Permission.LEDGER_CHART)
+    assert has_permission(OrganizationRole.OWNER, Permission.LEDGER_CHART)
+
+
 def test_member_cannot_manage_members() -> None:
     assert not has_permission(OrganizationRole.MEMBER, Permission.MEMBER_MANAGE)
     with pytest.raises(PermissionDeniedError):

@@ -224,6 +224,12 @@ export interface Providers {
   password_min_length: number;
   /** Only the providers this deployment has actually configured. */
   providers: ProviderSummary[];
+  /**
+   * Whether this deployment sends mail. Address confirmation and "forgot
+   * password" are offered only when it does: both are a link only an inbox
+   * can carry, and a button that can only fail is worse than none.
+   */
+  email_delivery: boolean;
 }
 
 export const getSession = (): Promise<Session> => request<Session>('/api/v1/auth/me');
@@ -293,10 +299,223 @@ export interface InvitationLookup {
 export const lookupInvitation = (token: string): Promise<InvitationLookup> =>
   json<InvitationLookup>('/api/v1/auth/invitations/lookup', 'POST', { token });
 
-/** Where to send the browser to start a federated sign-in flow. */
-export const providerStartUrl = (code: string, redirectTo: string): string =>
+// --- Links mailed to a person's own address ---------------------------------------
+//
+// Every token goes in a POST body, never a query string, for the reason the
+// invitation lookup gives. The pages read it from the fragment of the mailed
+// link (see lib/links.ts), which never reaches any server at all.
+
+/** Confirm an address with the link mailed to it. Signs nobody in. */
+export const verifyEmail = (token: string): Promise<void> =>
+  json<void>('/api/v1/auth/email/verify', 'POST', { token });
+
+/**
+ * Mail the signed-in account a fresh confirmation link; the previous one dies.
+ * A 429 `account_mail_rate_limited` is the hourly cap, and its message says so.
+ */
+export const sendVerificationMail = (): Promise<{ sent: boolean }> =>
+  request<{ sent: boolean }>('/api/v1/auth/email/verification', { method: 'POST' });
+
+/**
+ * Ask for a reset link. The answer is the same 202 whether or not the address
+ * has an account, so the page must say the same thing either way.
+ */
+export const forgotPassword = (email: string): Promise<void> =>
+  json<void>('/api/v1/auth/password/forgot', 'POST', { email });
+
+/**
+ * Set a new password with a reset link. Ends every session of that account.
+ *
+ * A 409 `bankid_account` is a link for an account that signs in with BankID,
+ * which a reset never gives a password: its way to one is the switch below.
+ */
+export const resetPassword = (token: string, newPassword: string): Promise<void> =>
+  json<void>('/api/v1/auth/password/reset', 'POST', { token, new_password: newPassword });
+
+// --- Switching between BankID and e-mail ------------------------------------------
+//
+// An account that signs in with BankID signs in with nothing else: BankID's
+// terms forbid using a BankID login to set up or restore a sign-in of our own
+// (docs/integrations/bankid.md). So both directions are a switch that takes the
+// other way in away, and neither is an ordinary link.
+
+/**
+ * Start switching the signed-in account to BankID, and get the BankID page to
+ * send the browser to.
+ *
+ * A POST, not a `providerStartUrl` link: when it completes, the password and
+ * any Google or Microsoft sign-in are gone and every other session is ended,
+ * so the backend wants the password first (`password` is ignored for an
+ * account without one, which needs a login in the last ten minutes instead).
+ * A 403 `reauthentication_required` or `reauthentication_failed` says which
+ * proof was missing.
+ */
+export const startBankidLink = (
+  password: string | null,
+  redirectTo: string,
+): Promise<{ authorization_url: string }> =>
+  json<{ authorization_url: string }>('/api/v1/auth/bankid/link', 'POST', {
+    password,
+    redirect_to: redirectTo,
+  });
+
+/**
+ * Mail a BankID account the link that moves it to e-mail and password.
+ *
+ * Nothing changes until the link is used; `email` is the address it went to,
+ * which is always the account's own. A 429 is the hourly cap.
+ */
+export const requestSwitchToEmail = (): Promise<{ sent: boolean; email: string }> =>
+  request<{ sent: boolean; email: string }>('/api/v1/account/switch-to-email', { method: 'POST' });
+
+/**
+ * Finish the switch with the mailed link: the password is set, BankID removed,
+ * and every session ended. A 400 `invalid_email_token` is every unusable link.
+ */
+export const confirmSwitchToEmail = (token: string, newPassword: string): Promise<void> =>
+  json<void>('/api/v1/auth/switch-to-email/confirm', 'POST', {
+    token,
+    new_password: newPassword,
+  });
+
+/**
+ * What a federated flow is started for, which the backend needs to know before
+ * the provider answers.
+ *
+ * `login` signs in a linked account. `signup` does the same, except that a
+ * BankID linked to nothing goes on to `/fullfor-registrering/` to ask for an
+ * address instead of being refused. `link` attaches Google or Microsoft to the
+ * account that is signed in, from `/konto/`. For Google and Microsoft, which
+ * carry an address, `login` and `signup` behave the same.
+ *
+ * BankID is never linked with `link`: the backend refuses it, because linking
+ * BankID is a switch that removes every other way in. `startBankidLink` is the
+ * way, and it asks for the password first.
+ */
+export type ProviderIntent = 'login' | 'signup' | 'link';
+
+/** Where to send the browser to start a federated flow. */
+export const providerStartUrl = (
+  code: string,
+  redirectTo: string,
+  intent: ProviderIntent = 'login',
+): string =>
   `${API_BASE_URL}/api/v1/auth/${encodeURIComponent(code)}/start` +
-  `?redirect_to=${encodeURIComponent(redirectTo)}`;
+  `?redirect_to=${encodeURIComponent(redirectTo)}` +
+  (intent === 'login' ? '' : `&intent=${intent}`);
+
+/** A BankID signup held by the backend while the person types an address. */
+export interface HeldProviderSignup {
+  provider: string;
+  provider_label: string;
+  /** From BankID. Shown, not editable: that BankID vouched for it is the point. */
+  full_name: string;
+  expires_at: string;
+  /** Where the person was going when they started, such as an invitation. */
+  redirect_to: string | null;
+}
+
+/** Read a held signup. A 400 `invalid_provider_signup` is every unusable token. */
+export const lookupProviderSignup = (token: string): Promise<HeldProviderSignup> =>
+  json<HeldProviderSignup>('/api/v1/auth/provider-signup/lookup', 'POST', { token });
+
+/**
+ * Create the account a held signup was waiting for, signed in.
+ *
+ * A 409 `email_already_registered` means the address has an account. The hold
+ * survives it, and that account is reached by signing in to it and switching it
+ * to BankID from `/konto/`, never from here.
+ *
+ * The account this makes signs in with BankID and nothing else.
+ */
+export const completeProviderSignup = (payload: {
+  token: string;
+  email: string;
+  organization_name?: string | null;
+}): Promise<Session> => json<Session>('/api/v1/auth/provider-signup', 'POST', payload);
+
+// --- The signed-in person's own account ---------------------------------------------
+
+/**
+ * One place the person is signed in.
+ *
+ * `device` is the backend's coarse "Firefox på Linux", or null when the browser
+ * said nothing it recognised. The raw user agent and the IP address are never
+ * sent: see backend/src/myntos/auth/devices.py for why.
+ */
+export interface AccountSession {
+  id: number;
+  created_at: string;
+  last_seen_at: string;
+  expires_at: string;
+  device: string | null;
+  current: boolean;
+}
+
+export const listAccountSessions = (): Promise<AccountSession[]> =>
+  request<AccountSession[]>('/api/v1/account/sessions');
+
+export const endAccountSession = (sessionId: number): Promise<void> =>
+  request<void>(`/api/v1/account/sessions/${sessionId}`, { method: 'DELETE' });
+
+export const endOtherAccountSessions = (): Promise<void> =>
+  request<void>('/api/v1/account/sessions/revoke-others', { method: 'POST' });
+
+/**
+ * One provider the person can sign in with. `removable` is the backend's
+ * answer to "would there still be a way in", so the page never offers a
+ * button it would refuse. Never true for BankID, which is left only by
+ * switching to e-mail.
+ */
+export interface AccountIdentity {
+  provider: string;
+  label: string;
+  linked_at: string;
+  last_login_at: string | null;
+  removable: boolean;
+}
+
+export const listAccountIdentities = (): Promise<AccountIdentity[]> =>
+  request<AccountIdentity[]>('/api/v1/account/identities');
+
+/**
+ * A 409 `last_sign_in_method` is the backend keeping a way into the account,
+ * and a 409 `bankid_account` is BankID, which is never removed this way.
+ */
+export const unlinkAccountIdentity = (provider: string): Promise<void> =>
+  request<void>(`/api/v1/account/identities/${encodeURIComponent(provider)}`, {
+    method: 'DELETE',
+  });
+
+/**
+ * What deleting the account would do to one set of books the person is on.
+ *
+ * `leaves`: their access goes and the books carry on. `deleted`: nothing was
+ * entered and nobody else is on them, so they go too. `blocks_*`: they are the
+ * last owner of books somebody still needs, and the deletion is refused until
+ * they hand them on.
+ */
+export type CompanyFate = 'leaves' | 'deleted' | 'blocks_members' | 'blocks_books';
+
+/**
+ * Carries `company_id` per row but lives outside `/companies/{id}/`, so the
+ * company wall in `request()` does not inspect it: it is a list of every set of
+ * books the person is on, by design, and none of it is painted as "this company".
+ */
+export interface ErasurePlan {
+  companies: { company_id: number; company_name: string; fate: CompanyFate }[];
+  keeps_name: boolean;
+  blocked: boolean;
+  requires_password: boolean;
+  recent_login_until: string | null;
+}
+
+export const getErasurePlan = (): Promise<ErasurePlan> =>
+  request<ErasurePlan>('/api/v1/account/erasure');
+
+/** Delete the account. `password` is required when the account has one. */
+export const eraseAccount = (password: string | null): Promise<void> =>
+  json<void>('/api/v1/account/erasure', 'POST', { password });
 
 // --- Companies ------------------------------------------------------------------
 
@@ -326,6 +545,12 @@ export interface Company {
   currency_code: string;
   /** Decides the "MVA" suffix after the orgnr, and whether VAT may be charged at all. */
   vat_registered: boolean;
+  /**
+   * The day the registration took effect, ISO date, when later than the start of
+   * the books. Entries dated before it get no VAT split. Null means "registered
+   * for as long as the books go back".
+   */
+  vat_registered_from: string | null;
   /** Decides the "Foretaksregisteret" marking every AS and NUF must carry. */
   in_foretaksregisteret: boolean;
   organisation_form: string | null;
@@ -347,6 +572,14 @@ export interface Company {
    * Løynd anywhere in the app, not merely a hidden button.
    */
   ki_enabled: boolean;
+  /**
+   * Whether keys for agents and integrations may be made for these books.
+   *
+   * Off until an owner or admin turns it on under Tilgang, after reading what
+   * it means. Turning it off stops every key, for good. Changed only through
+   * `setAgentAccess`, never through `updateCompany`.
+   */
+  agent_access_enabled: boolean;
   /**
    * Whether somebody has proved through Altinn that they may act for this orgnr.
    *
@@ -427,6 +660,8 @@ export const updateCompany = (
     postal_code?: string | null;
     city?: string | null;
     vat_registered?: boolean;
+    /** Null clears it; leaving the key out leaves it alone. */
+    vat_registered_from?: string | null;
     in_foretaksregisteret?: boolean;
     organisation_form?: string | null;
     ki_enabled?: boolean;
@@ -877,6 +1112,188 @@ export const removeMember = (companyId: number, userId: number): Promise<void> =
     method: 'DELETE',
   });
 
+// --- Keys for agents and integrations ------------------------------------------------
+//
+// A person's end of docs/agents-and-api.md: switch keys on for a company, make
+// one, see them, stop one. The agent's end (the token exchange) is never
+// called from here; the page only hands the person something to paste.
+
+/** What a key may attempt. `read` is always among them. */
+export type AgentScope = 'read' | 'write' | 'post';
+
+export interface AgentKey {
+  id: number;
+  company_id: number;
+  name: string;
+  /** What the key may do on its own. */
+  scopes: AgentScope[];
+  /**
+   * What it may only ask to do: each such request waits on /godkjenning/ for
+   * the key's person (docs/agents-and-api.md rule 13). Never overlaps `scopes`.
+   */
+  approval_scopes: AgentScope[];
+  /**
+   * `waiting`: made, not yet taken into use. `active`: in use. `stopped`: by a
+   * person or by Myntos (`revoked_reason` says which). `expired`: past a
+   * deadline nobody had to act on.
+   */
+  state: 'waiting' | 'active' | 'stopped' | 'expired';
+  person_name: string;
+  is_own: boolean;
+  created_at: string;
+  expires_at: string;
+  connection_key_expires_at: string;
+  exchanged_at: string | null;
+  last_used_at: string | null;
+  /** The agent's software, coarsely: "python-httpx", never a whole User-Agent. */
+  last_used_client: string | null;
+  revoked_at: string | null;
+  revoked_reason: string | null;
+}
+
+export interface IssuedAgentKey {
+  company_id: number;
+  key: AgentKey;
+  /** Shown once. Only its hash is stored, so it can never be shown again. */
+  connection_key: string;
+}
+
+export const listAgentKeys = (companyId: number): Promise<AgentKey[]> =>
+  request<AgentKey[]>(`/api/v1/companies/${companyId}/agent-keys`);
+
+export const createAgentKey = (
+  companyId: number,
+  name: string,
+  scopes: AgentScope[],
+  approvalScopes: AgentScope[] = [],
+): Promise<IssuedAgentKey> =>
+  json<IssuedAgentKey>(`/api/v1/companies/${companyId}/agent-keys`, 'POST', {
+    name,
+    scopes,
+    approval_scopes: approvalScopes,
+  });
+
+export const stopAgentKey = (companyId: number, keyId: number): Promise<void> =>
+  request<void>(`/api/v1/companies/${companyId}/agent-keys/${keyId}`, { method: 'DELETE' });
+
+/** Switch keys on or off for these books. Off stops every key for good. */
+export const setAgentAccess = (companyId: number, enabled: boolean): Promise<Company> =>
+  json<Company>(`/api/v1/companies/${companyId}/agent-access`, 'PUT', { enabled });
+
+// --- Requests that wait for approval -----------------------------------------------
+//
+// A key whose person chose «Spør meg først» does not write on its own: each
+// such request is stored and waits here until its person approves or declines
+// it (docs/agents-and-api.md rule 13). The same for an AI assistant and for a
+// program somebody wrote: a key is a key.
+
+/**
+ * `pending` waits. `done` ran, `failed` ran and was refused. `declined`,
+ * `withdrawn`, `expired` and `key_stopped` never ran. `running` is being run,
+ * or stopped mid-run.
+ */
+export type ApprovalState =
+  | 'pending'
+  | 'running'
+  | 'done'
+  | 'failed'
+  | 'declined'
+  | 'withdrawn'
+  | 'expired'
+  | 'key_stopped';
+
+export interface ApprovalFile {
+  id: number;
+  filename: string;
+  content_type: string;
+  size: number;
+  /** A bilag added for the voucher the request makes, rather than part of the request. */
+  attach: boolean;
+  /** Emptied once the request no longer waits: run, it is in the bilag archive. */
+  available: boolean;
+}
+
+export interface Approval {
+  id: number;
+  company_id: number;
+  kind: 'request' | 'filing';
+  status: ApprovalState;
+  scope: string;
+  /** The end of «<nøkkel> vil …», in bokmål: «føre en betaling». */
+  label: string;
+  /** The agent's own words about it. The agent's claim, not Myntos's. */
+  note: string | null;
+  method: string;
+  path: string;
+  query: string;
+  body: unknown;
+  form: Record<string, string[]> | null;
+  files: ApprovalFile[];
+  filing: { type: string; aar: number; termin: number } | null;
+  key_id: number;
+  key_name: string;
+  person_name: string;
+  is_own: boolean;
+  created_at: string;
+  expires_at: string;
+  decided_at: string | null;
+  decision_note: string | null;
+  result_status: number | null;
+  result: unknown;
+  attachments: { filename: string; status: number; body: unknown }[];
+  url: string;
+}
+
+export const listApprovals = (
+  companyId: number,
+  status: 'pending' | 'all' = 'all',
+): Promise<Approval[]> =>
+  request<Approval[]>(`/api/v1/companies/${companyId}/godkjenninger?status=${status}`);
+
+/** Approve and run it now, as the key. Only the key's own person may. */
+export const approveRequest = (companyId: number, approvalId: number): Promise<Approval> =>
+  request<Approval>(`/api/v1/companies/${companyId}/godkjenninger/${approvalId}/godkjenn`, {
+    method: 'POST',
+  });
+
+/** Decline it, with a reason the agent can read. */
+export const declineRequest = (
+  companyId: number,
+  approvalId: number,
+  note: string | null,
+): Promise<Approval> =>
+  json<Approval>(`/api/v1/companies/${companyId}/godkjenninger/${approvalId}/avvis`, 'POST', {
+    note,
+  });
+
+/**
+ * A file sent with a waiting request, as a blob, or null once it is gone.
+ *
+ * Fetched rather than linked, for the reason `fetchThumbnail` gives: a link is
+ * a request the company wall never sees.
+ */
+export const fetchApprovalFile = async (
+  companyId: number,
+  approvalId: number,
+  fileId: number,
+): Promise<Blob | null> => {
+  const path = `/api/v1/companies/${companyId}/godkjenninger/${approvalId}/fil?id=${fileId}`;
+  const active = activeCompanyId();
+  if (active !== null && companyId !== active) {
+    throw new WrongCompanyError(
+      'Vi stoppet en forespørsel som gjaldt et annet selskap enn det du ser på. Last siden på nytt.',
+      active,
+      companyId,
+    );
+  }
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, { credentials: 'include' });
+    return response.ok ? await response.blob() : null;
+  } catch {
+    return null;
+  }
+};
+
 // --- Customers and suppliers -------------------------------------------------------
 
 export type PartyType = 'kunde' | 'leverandor';
@@ -942,7 +1359,11 @@ export interface CashFlowType {
    * the list rather than left to bury the ordinary ways money moves.
    */
   reverses: string | null;
+  /** Only in a company's own catalogue: the type of the category's account. */
+  account_type?: AccountType | null;
 }
+
+export type AccountType = 'eiendel' | 'gjeld' | 'egenkapital' | 'inntekt' | 'kostnad';
 
 export interface TaxCode {
   code: string;
@@ -954,6 +1375,20 @@ export interface Catalogue {
   types: CashFlowType[];
   tax_codes: TaxCode[];
   max_attachment_bytes: number;
+}
+
+/**
+ * The catalogue as one company's books see it today.
+ *
+ * The default VAT codes follow the company's registration status, only the codes
+ * it may use are offered, and a category whose account has been deactivated is
+ * left out. The entry form loads this one; the shared catalogue is for signup.
+ */
+export interface CompanyCatalogue extends Catalogue {
+  vat_registered: boolean;
+  vat_registered_from: string | null;
+  /** Active accounts a category may be moved to, beside its own. */
+  accounts: { number: string; description: string; account_type: AccountType }[];
 }
 
 export interface AttachmentInfo {
@@ -1008,6 +1443,12 @@ export interface CashFlowEntry {
    */
   created_by_id: number | null;
   created_by_name: string | null;
+  /**
+   * The key the author worked through, by the name its person gave it, when
+   * the entry came from an agent or an integration rather than a page.
+   * `null` for everything typed by hand. See docs/agents-and-api.md rule 6.
+   */
+  created_via: string | null;
   attachments: AttachmentInfo[];
 }
 
@@ -1120,6 +1561,9 @@ export interface DocumentRead {
 
 export const getCatalogue = (): Promise<Catalogue> => request<Catalogue>('/api/v1/cashflow/types');
 
+export const getCompanyCatalogue = (companyId: number): Promise<CompanyCatalogue> =>
+  request<CompanyCatalogue>(`/api/v1/companies/${companyId}/cashflow/types`);
+
 /**
  * Read the uploaded bilag and get the entry form filled in. Stores nothing.
  *
@@ -1131,8 +1575,9 @@ export const getCatalogue = (): Promise<Catalogue> => request<Catalogue>('/api/v
  * `forklaring` is the sentence the user typed about the payment, for the bilag
  * the documents cannot settle on their own: three thousand kroner arriving from
  * a private account is a deposit from the owner, a repaid loan or a sale, and
- * the paperwork looks identical in all three cases. It is shown to the model and
- * stored nowhere.
+ * the paperwork looks identical in all three cases. This request only shows it to
+ * the model; it is the form's description field, so registering the payment is
+ * what stores and posts it, as the bilagstekst.
  */
 /**
  * Read a bilag and propose the entry, in one JSON answer.
@@ -1146,12 +1591,14 @@ export const interpretDocument = (
   companyId: number,
   files: File[],
   forklaring?: string,
+  retning?: Direction,
 ): Promise<InvoiceSuggestion> => {
   const form = new FormData();
   for (const file of files) form.append('files', file);
   if (forklaring !== undefined && forklaring.trim() !== '') {
     form.append('forklaring', forklaring.trim());
   }
+  if (retning !== undefined) form.append('retning', retning);
   return request<InvoiceSuggestion>(`/api/v1/companies/${companyId}/cashflow/forslag`, {
     method: 'POST',
     body: form,
@@ -1162,8 +1609,19 @@ export const interpretDocument = (
 export interface InterpretHandlers {
   /** Which files were read, and how much text came out of each. Arrives first. */
   onDocuments?: (documents: DocumentRead[]) => void;
+  /**
+   * Something worth saying while the user waits: so far only that the bilag is
+   * long and the model will take longer over it. At most once, before the
+   * description starts.
+   */
+  onNotice?: (message: string) => void;
   /** The next piece of the description, as the model writes it. */
   onDescription?: (piece: string) => void;
+  /**
+   * Which way the money went, when the user has said so. It decides the
+   * direction and narrows the categories, and the model is told it.
+   */
+  retning?: Direction;
 }
 
 /**
@@ -1205,6 +1663,7 @@ export const interpretDocumentStreaming = async (
   if (forklaring !== undefined && forklaring.trim() !== '') {
     form.append('forklaring', forklaring.trim());
   }
+  if (handlers.retning !== undefined) form.append('retning', handlers.retning);
 
   let response: Response;
   try {
@@ -1255,6 +1714,7 @@ export const interpretDocumentStreaming = async (
       return;
     }
     if (name === 'dokumenter') handlers.onDocuments?.(payload as DocumentRead[]);
+    else if (name === 'advarsel') handlers.onNotice?.((payload as { melding: string }).melding);
     else if (name === 'beskrivelse') handlers.onDescription?.((payload as { tekst: string }).tekst);
     else if (name === 'forslag') suggestion = payload as InvoiceSuggestion;
     else if (name === 'feil') failure = (payload as { melding: string }).melding;
@@ -1304,6 +1764,7 @@ export const recordCashFlow = (
     tax_code?: string | null;
     payment_method: 'bank' | 'kontant';
     party_id?: number | null;
+    account_number?: string | null;
   },
 ): Promise<CashFlowEntry> =>
   json<CashFlowEntry>(`/api/v1/companies/${companyId}/cashflow`, 'POST', payload);
@@ -1326,6 +1787,7 @@ export const editCashFlow = (
     tax_code?: string | null;
     payment_method: 'bank' | 'kontant';
     party_id?: number | null;
+    account_number?: string | null;
   },
 ): Promise<CashFlowEntry> =>
   json<CashFlowEntry>(`/api/v1/companies/${companyId}/cashflow/${voucherId}`, 'PUT', payload);
@@ -1351,6 +1813,42 @@ export const uploadDocument = (
 
 export const documentUrl = (companyId: number, attachmentId: number): string =>
   `${API_BASE_URL}/api/v1/companies/${companyId}/dokument/${attachmentId}`;
+
+/**
+ * The thumbnail of a photographed bilag, or null when there is none.
+ *
+ * Fetched rather than set as an `<img src>`, because an image tag is a request
+ * the company wall never sees: a stale id in a listing would paint another
+ * company's receipt under this company's name. So the same outward check as
+ * `request()` runs first, and the picture arrives as a blob the page turns into
+ * an object URL.
+ *
+ * Null for a 404, which is the ordinary answer for a PDF (no thumbnail is made
+ * of one) and for a photo no decoder would open. The page shows the badge it
+ * always showed. Any other failure is null too: a thumbnail is decoration, and
+ * a register that fails to list because a picture did not load is worse.
+ */
+export const fetchThumbnail = async (
+  companyId: number,
+  attachmentId: number,
+): Promise<Blob | null> => {
+  const path = `/api/v1/companies/${companyId}/dokument/${attachmentId}/miniatyr`;
+  const scope = companyInPath(path);
+  const active = activeCompanyId();
+  if (scope !== null && active !== null && scope !== active) {
+    throw new WrongCompanyError(
+      'Vi stoppet en forespørsel som gjaldt et annet selskap enn det du ser på. Last siden på nytt.',
+      active,
+      scope,
+    );
+  }
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, { credentials: 'include' });
+    return response.ok ? await response.blob() : null;
+  } catch {
+    return null;
+  }
+};
 
 // --- Faktura ---------------------------------------------------------------------
 //
@@ -1636,3 +2134,648 @@ export const fakturaPdfUrl = (companyId: number, documentId: number): string =>
 
 export const fakturaEhfUrl = (companyId: number, documentId: number): string =>
   `${API_BASE_URL}/api/v1/companies/${companyId}/faktura/${documentId}/ehf`;
+
+// --- MVA-melding -------------------------------------------------------------------
+
+/** One line of the melding: a code, its side, and what it comes to. */
+export interface MvaLine {
+  mva_kode: string;
+  description: string;
+  /** A reverse-charge code appears twice, once on each side. */
+  side: 'utgaaende' | 'inngaaende';
+  /** Absent on a deduction: Skatteetaten wants only the amount there. */
+  grunnlag: string | null;
+  sats_percent: string | null;
+  merverdiavgift: string;
+  spesifikasjon: string | null;
+}
+
+export interface MvaBlocker {
+  code: string;
+  message: string;
+}
+
+/** One finding from Skatteetaten's validation, in their words. */
+export interface MvaFinding {
+  sti: string;
+  melding: string;
+  alvorlighet: string | null;
+  kode: string | null;
+  mva_kode: string | null;
+  detaljer: string | null;
+}
+
+export type MvaFilingStatus = 'validert' | 'avvist' | 'sendt' | 'mottatt' | 'feilet';
+
+export interface MvaDocument {
+  data_type: string;
+  filename: string;
+  content_type: string;
+  byte_size: number;
+}
+
+/** A melding as it was checked, and what happened to it after. */
+export interface MvaFiling {
+  id: number;
+  company_id: number;
+  year: number;
+  termin: number;
+  period_label: string;
+  status: MvaFilingStatus;
+  fastsatt_merverdiavgift: string;
+  lines: MvaLine[];
+  merknad: string | null;
+  validation_status: string;
+  /** Skatteetaten would refuse it, or the answer could not be read. */
+  validation_blocks: boolean;
+  findings: MvaFinding[];
+  validated_at: string;
+  submitted_at: string | null;
+  submitted_by_name: string | null;
+  altinn_instance_id: string | null;
+  feedback_received_at: string | null;
+  error: string | null;
+  payment_kid: string | null;
+  payment_amount: string | null;
+  payment_due: string | null;
+  payment_account: string | null;
+  settlement_voucher_id: number | null;
+  documents: MvaDocument[];
+  /** On the period page: whether the ledger still says what this filing says. */
+  matches_ledger: boolean | null;
+}
+
+export interface MvaPeriodRow {
+  year: number;
+  termin: number;
+  label: string;
+  name: string;
+  start: string;
+  end: string;
+  deadline: string;
+  is_over: boolean;
+  fastsatt_merverdiavgift: string;
+  line_count: number;
+  status: MvaFilingStatus | null;
+  filed_fastsatt: string | null;
+  /** Filed, and the ledger for the period has moved since. */
+  changed_since_filed: boolean;
+}
+
+export interface MvaChoice {
+  value: string;
+  label: string;
+}
+
+export interface MvaSettings {
+  period_type: string;
+  category: string;
+  period_types: MvaChoice[];
+  categories: MvaChoice[];
+}
+
+export interface MvaOverview {
+  company_id: number;
+  year: number;
+  vat_registered: boolean;
+  settings: MvaSettings;
+  periods: MvaPeriodRow[];
+}
+
+export interface MvaPeriod {
+  company_id: number;
+  year: number;
+  termin: number;
+  label: string;
+  name: string;
+  start: string;
+  end: string;
+  deadline: string;
+  category: string;
+  orgnr: string;
+  lines: MvaLine[];
+  output_vat: string;
+  input_vat: string;
+  fastsatt_merverdiavgift: string;
+  reconciliation: { output_account: string; input_account: string; difference: string };
+  /** What the backend says stands in the way. The page shows these, not its own. */
+  blockers: MvaBlocker[];
+  /** False when this installation cannot check or file; offer the XML instead. */
+  submission_available: boolean;
+  changed_since_filed: boolean;
+  filings: MvaFiling[];
+}
+
+export const getMvaOverview = (companyId: number, year: number): Promise<MvaOverview> =>
+  request<MvaOverview>(`/api/v1/companies/${companyId}/mva?aar=${year}`);
+
+export const getMvaPeriod = (companyId: number, year: number, termin: number): Promise<MvaPeriod> =>
+  request<MvaPeriod>(`/api/v1/companies/${companyId}/mva/termin?aar=${year}&termin=${termin}`);
+
+export const updateMvaSettings = (
+  companyId: number,
+  payload: { period_type?: string; category?: string },
+): Promise<MvaSettings> =>
+  json<MvaSettings>(`/api/v1/companies/${companyId}/mva/innstillinger`, 'PATCH', payload);
+
+/**
+ * Send the melding to Skatteetaten's validation. Files nothing.
+ *
+ * Needs the ID-porten login; rejects with 409 when there is none.
+ */
+export const checkMvaPeriod = (
+  companyId: number,
+  year: number,
+  termin: number,
+  merknad: string | null,
+): Promise<MvaFiling> =>
+  json<MvaFiling>(`/api/v1/companies/${companyId}/mva/termin/kontroll`, 'POST', {
+    aar: year,
+    termin,
+    merknad,
+  });
+
+/**
+ * Irreversible: files the checked melding with Skatteetaten through Altinn.
+ *
+ * `fastsatt` is the figure the person confirmed. The backend refuses unless it
+ * is exactly the checked one, and refuses (`melding_changed`) if the ledger has
+ * moved since the check.
+ */
+export const submitMvaFiling = (
+  companyId: number,
+  filingId: number,
+  fastsatt: string,
+): Promise<MvaFiling> =>
+  json<MvaFiling>(`/api/v1/companies/${companyId}/mva/innsendinger/${filingId}/send`, 'POST', {
+    fastsatt_merverdiavgift: fastsatt,
+    bekreftet: true,
+  });
+
+/** Fetch the receipt and payment information that arrived after filing. */
+export const fetchMvaFeedback = (companyId: number, filingId: number): Promise<MvaFiling> =>
+  request<MvaFiling>(`/api/v1/companies/${companyId}/mva/innsendinger/${filingId}/tilbakemelding`, {
+    method: 'POST',
+  });
+
+export const mvaPeriodXmlUrl = (companyId: number, year: number, termin: number): string =>
+  `${API_BASE_URL}/api/v1/companies/${companyId}/mva/termin/xml?aar=${year}&termin=${termin}`;
+
+export const mvaFiledXmlUrl = (companyId: number, filingId: number): string =>
+  `${API_BASE_URL}/api/v1/companies/${companyId}/mva/innsendinger/${filingId}/melding.xml`;
+
+export const mvaDocumentUrl = (companyId: number, filingId: number, dataType: string): string =>
+  `${API_BASE_URL}/api/v1/companies/${companyId}/mva/innsendinger/${filingId}/dokument?type=${encodeURIComponent(dataType)}`;
+
+// --- SAF-T ----------------------------------------------------------------------
+
+export type SaftVersion = '1.30' | '1.40';
+
+/**
+ * One thing the cross-reference check found. `feil` stops the download: the file
+ * would pass Altinn's schema check and fail at the auditor. `merknad` is worth
+ * reading and may well be right.
+ */
+export interface SaftFinding {
+  severity: 'feil' | 'merknad';
+  code: string;
+  message: string;
+}
+
+/** What the backend's check says about one financial year, before any file exists. */
+export interface SaftCheck {
+  company_id: number;
+  year: number;
+  /** The version the file will be written in. */
+  version: SaftVersion;
+  /** Every version the year may be written in; one from 2027. */
+  versions: SaftVersion[];
+  exportable: boolean;
+  number_of_entries: number;
+  total_debit: string;
+  total_credit: string;
+  findings: SaftFinding[];
+}
+
+const saftQuery = (year: number, version: SaftVersion | null): string =>
+  `aar=${year}` + (version === null ? '' : `&versjon=${encodeURIComponent(version)}`);
+
+export const checkSaft = (
+  companyId: number,
+  year: number,
+  version: SaftVersion | null = null,
+): Promise<SaftCheck> =>
+  request<SaftCheck>(`/api/v1/companies/${companyId}/saft/kontroll?${saftQuery(year, version)}`);
+
+/**
+ * The file itself, as a link: the browser downloads it with the session cookie.
+ * The backend refuses (422, `saft_not_exportable`) whenever the check above has a
+ * `feil`, so offer the link only when `exportable` is true.
+ */
+export const saftFileUrl = (companyId: number, year: number, version: SaftVersion | null = null): string =>
+  `${API_BASE_URL}/api/v1/companies/${companyId}/saft/fil?${saftQuery(year, version)}`;
+
+// --- Bank -----------------------------------------------------------------------
+//
+// camt.053 import and reconciliation. Matching only ever links a bank line to a
+// voucher; posting from a line goes through the register's own path. Nothing
+// here can change a posted voucher.
+
+export interface BankStatement {
+  id: number;
+  company_id: number;
+  bank_account_id: number;
+  account: string;
+  account_label: string | null;
+  statement_ref: string;
+  from_date: string;
+  to_date: string;
+  /** Signed: a balance is a position, and an overdrawn account is negative. */
+  opening_balance: string;
+  closing_balance: string;
+  lines_new: number;
+  lines_known: number;
+  filename: string;
+  camt_version: string;
+  sha256: string;
+  imported_at: string;
+}
+
+export interface BankImport {
+  statements: BankStatement[];
+  /** The same file had been imported before; nothing new was stored. */
+  already_imported: boolean;
+  /** Entries the bank had not booked yet, left out. */
+  skipped_unbooked: number;
+}
+
+export interface BankSuggestion {
+  voucher_id: number;
+  voucher_no: string;
+  occurred_on: string;
+  description: string;
+  party_name: string | null;
+  type_label: string | null;
+  score: number;
+  confidence: 'sterk' | 'mulig';
+  reasons: string[];
+}
+
+export interface BankLine {
+  id: number;
+  company_id: number;
+  statement_id: number;
+  bank_account_id: number;
+  booking_date: string;
+  value_date: string | null;
+  amount: string;
+  direction: Direction;
+  counterparty_name: string | null;
+  remittance: string | null;
+  kid: string | null;
+  bank_reference: string | null;
+  additional_info: string | null;
+  voucher_id: number | null;
+  voucher_no: string | null;
+  match_kind: 'bekreftet' | 'opprettet' | null;
+  matched_at: string | null;
+  /** The matched voucher has been reversed since; the line is no longer explained. */
+  voucher_reversed: boolean;
+  suggestions: BankSuggestion[];
+  invoice: { document_id: number; document_number: string | null; buyer_name: string } | null;
+}
+
+export type BankLineFilter = 'alle' | 'uavstemt' | 'avstemt';
+
+/** The account in the file is not one of the company's; the page links to where accounts are added. */
+export const UNKNOWN_STATEMENT_ACCOUNT = 'unknown_statement_account';
+
+export const importBankStatement = (companyId: number, file: File): Promise<BankImport> => {
+  const form = new FormData();
+  form.append('file', file);
+  // No Content-Type header: the browser must set the multipart boundary itself.
+  return request<BankImport>(`/api/v1/companies/${companyId}/bank/kontoutskrifter`, {
+    method: 'POST',
+    body: form,
+  });
+};
+
+export const listBankStatements = (companyId: number): Promise<BankStatement[]> =>
+  request<BankStatement[]>(`/api/v1/companies/${companyId}/bank/kontoutskrifter`);
+
+export const bankStatementFileUrl = (companyId: number, statementId: number): string =>
+  `${API_BASE_URL}/api/v1/companies/${companyId}/bank/kontoutskrifter/${statementId}/fil`;
+
+export const listBankLines = (companyId: number, filter: BankLineFilter = 'alle'): Promise<BankLine[]> =>
+  request<BankLine[]>(`/api/v1/companies/${companyId}/bank/linjer?status=${filter}`);
+
+export const confirmBankMatch = (companyId: number, lineId: number, voucherId: number): Promise<BankLine> =>
+  json<BankLine>(`/api/v1/companies/${companyId}/bank/linjer/${lineId}/avstemming`, 'POST', {
+    voucher_id: voucherId,
+  });
+
+export const removeBankMatch = (companyId: number, lineId: number): Promise<BankLine> =>
+  request<BankLine>(`/api/v1/companies/${companyId}/bank/linjer/${lineId}/avstemming`, {
+    method: 'DELETE',
+  });
+
+/** Post a voucher for the line. Amount, date and direction are the bank's and are not sent. */
+export const createFromBankLine = (
+  companyId: number,
+  lineId: number,
+  payload: { type_code: string; description: string; tax_code?: string | null; party_id?: number | null },
+): Promise<BankLine> =>
+  json<BankLine>(`/api/v1/companies/${companyId}/bank/linjer/${lineId}/bilag`, 'POST', payload);
+
+// --- Inngående balanse og årsavslutning --------------------------------------------
+//
+// Both are review-then-post. The review comes from the backend (`.../kontroll`,
+// the closing plan) and the page shows it as it is: the sums and the findings
+// are the server's, never recomputed here, for the reason lib/format.ts gives.
+
+export interface YearFinding {
+  severity: 'feil' | 'merknad';
+  code: string;
+  message: string;
+}
+
+/** One opening line as typed or as read from a saldobalanse. Amounts are strings. */
+export interface OpeningLineInput {
+  account_number: string;
+  debit: string;
+  credit: string;
+  party_id: number | null;
+  description: string | null;
+}
+
+export interface OpeningLine extends OpeningLineInput {
+  account_description: string | null;
+  party_name: string | null;
+}
+
+export interface OpeningReview {
+  company_id: number;
+  year: number | null;
+  lines: OpeningLine[];
+  total_debit: string;
+  total_credit: string;
+  difference: string;
+  postable: boolean;
+  findings: YearFinding[];
+}
+
+export interface OpeningVoucher {
+  id: number;
+  voucher_no: string;
+  transaction_date: string;
+  posted_at: string | null;
+  is_reversal: boolean;
+  reversed: boolean;
+  corrects_id: number | null;
+  total: string;
+  lines: OpeningLine[];
+}
+
+export interface OpeningState {
+  company_id: number;
+  year: number | null;
+  allowed: boolean;
+  refusal: string | null;
+  standing: OpeningVoucher | null;
+  history: OpeningVoucher[];
+}
+
+export interface PostedYearVoucher {
+  company_id: number;
+  id: number;
+  voucher_no: string;
+  transaction_date: string;
+  description: string;
+  total: string;
+}
+
+const openingPath = (companyId: number): string => `/api/v1/companies/${companyId}/inngaende-balanse`;
+
+export const getOpeningState = (companyId: number): Promise<OpeningState> =>
+  request<OpeningState>(openingPath(companyId));
+
+export const reviewOpening = (companyId: number, lines: OpeningLineInput[]): Promise<OpeningReview> =>
+  json<OpeningReview>(`${openingPath(companyId)}/kontroll`, 'POST', { lines });
+
+/** Reads a saldobalanse CSV into lines and reviews them. Nothing is posted or kept. */
+export const readSaldobalanse = (companyId: number, file: File): Promise<OpeningReview> => {
+  const form = new FormData();
+  form.append('file', file);
+  return request<OpeningReview>(`${openingPath(companyId)}/saldobalanse`, { method: 'POST', body: form });
+};
+
+/** Posts the opening balance; `correct` reverses the standing one and replaces it. */
+export const postOpening = (
+  companyId: number,
+  lines: OpeningLineInput[],
+  correct: boolean,
+): Promise<PostedYearVoucher> =>
+  json<PostedYearVoucher>(openingPath(companyId), 'POST', { lines, korriger: correct });
+
+export const reverseOpening = (companyId: number): Promise<PostedYearVoucher> =>
+  request<PostedYearVoucher>(`${openingPath(companyId)}/reversering`, { method: 'POST' });
+
+export interface YearEvent {
+  action: 'avsluttet' | 'gjenapnet';
+  occurred_at: string;
+  user_id: number | null;
+  reason: string | null;
+  result: string | null;
+  tax: string | null;
+}
+
+export interface FinancialYearStatus {
+  company_id: number;
+  year: number;
+  start_date: string;
+  end_date: string;
+  closed: boolean;
+  closed_at: string | null;
+  events: YearEvent[];
+}
+
+export const listFinancialYears = (companyId: number): Promise<FinancialYearStatus[]> =>
+  request<FinancialYearStatus[]>(`/api/v1/companies/${companyId}/regnskapsaar`);
+
+export interface PlannedLine {
+  account_number: string;
+  description: string;
+  debit: string;
+  credit: string;
+}
+
+export interface ClosingPlan {
+  company_id: number;
+  year: number;
+  organisation_form: string | null;
+  closed: boolean;
+  closed_at: string | null;
+  revenue: string;
+  costs: string;
+  result_before_tax: string;
+  tax: string;
+  result: string;
+  tax_lines: PlannedLine[];
+  disposition_lines: PlannedLine[];
+  closable: boolean;
+  findings: YearFinding[];
+}
+
+const closingPath = (companyId: number): string => `/api/v1/companies/${companyId}/arsavslutning`;
+
+export const getClosingPlan = (companyId: number, year: number, tax: string): Promise<ClosingPlan> =>
+  request<ClosingPlan>(
+    `${closingPath(companyId)}?${new URLSearchParams({ aar: String(year), skattekostnad: tax || '0' })}`,
+  );
+
+export const closeYear = (
+  companyId: number,
+  year: number,
+  tax: string,
+): Promise<ClosingPlan & { vouchers: PostedYearVoucher[] }> =>
+  json(closingPath(companyId), 'POST', { aar: year, skattekostnad: tax || '0', bekreftet: true });
+
+export const reopenYear = (
+  companyId: number,
+  year: number,
+  reason: string,
+): Promise<{ company_id: number; year: number; reversals: PostedYearVoucher[] }> =>
+  json(`${closingPath(companyId)}/gjenapning`, 'POST', { aar: year, begrunnelse: reason, bekreftet: true });
+
+// --- Kontoplan --------------------------------------------------------------------
+
+export interface LedgerAccount {
+  id: number;
+  number: string;
+  description: string;
+  account_type: AccountType;
+  is_active: boolean;
+  /** Used by Myntos itself: cannot be deactivated or deleted. */
+  is_locked: boolean;
+  /** Anything ever posted to it; such an account can only be deactivated. */
+  has_postings: boolean;
+  created_date: string | null;
+  /** Null only for an account added after the year was closed. */
+  grouping_category: string | null;
+  grouping_code: string | null;
+  /** Set when a person chose the post; null when the seed or the default did. */
+  grouping_chosen_at: string | null;
+}
+
+export interface GroupingOption {
+  category: string;
+  code: string;
+  description: string;
+}
+
+export interface Kontoplan {
+  year: number;
+  /** A closed year's groupings are not changed. */
+  closed: boolean;
+  /** Whose published list the options come from; differs from `year` before one is out. */
+  list_year: number;
+  accounts: LedgerAccount[];
+  groupings: GroupingOption[];
+}
+
+export const getKontoplan = (companyId: number, year: number): Promise<Kontoplan> =>
+  request<Kontoplan>(`/api/v1/companies/${companyId}/kontoplan?aar=${year}`);
+
+export const suggestAccount = (
+  companyId: number,
+  number: string,
+  year: number,
+): Promise<{ account_type: AccountType; grouping_category: string; grouping_code: string }> =>
+  request(
+    `/api/v1/companies/${companyId}/kontoplan/forslag?nummer=${encodeURIComponent(number)}&aar=${year}`,
+  );
+
+export const createAccount = (
+  companyId: number,
+  year: number,
+  payload: {
+    number: string;
+    description: string;
+    account_type?: AccountType | null;
+    grouping_category?: string | null;
+    grouping_code?: string | null;
+  },
+): Promise<Kontoplan> =>
+  json<Kontoplan>(`/api/v1/companies/${companyId}/kontoplan?aar=${year}`, 'POST', payload);
+
+export const updateAccount = (
+  companyId: number,
+  accountId: number,
+  year: number,
+  payload: { description?: string; is_active?: boolean },
+): Promise<Kontoplan> =>
+  json<Kontoplan>(`/api/v1/companies/${companyId}/kontoplan/${accountId}?aar=${year}`, 'PATCH', payload);
+
+export const setGrouping = (
+  companyId: number,
+  accountId: number,
+  payload: { year: number; grouping_category: string; grouping_code: string },
+): Promise<Kontoplan> =>
+  json<Kontoplan>(`/api/v1/companies/${companyId}/kontoplan/${accountId}/gruppering`, 'PUT', payload);
+
+export const deleteAccount = (companyId: number, accountId: number): Promise<void> =>
+  request<void>(`/api/v1/companies/${companyId}/kontoplan/${accountId}`, { method: 'DELETE' });
+
+// --- Uttak, tap på krav og justering (mva-meldingens spesifikasjon) --------------
+
+export type Spesifikasjon =
+  | 'uttak'
+  | 'tapPåKrav'
+  | 'justering'
+  | 'tilbakeføringAvInngåendeMerverdiavgift';
+
+export interface Adjustment {
+  id: number;
+  voucher_no: string;
+  occurred_on: string;
+  spesifikasjon: Spesifikasjon;
+  tax_code: string;
+  /** Signed as the melding signs it: positive is owed, negative is credited. */
+  merverdiavgift: string;
+  grunnlag: string | null;
+  account_number: string;
+  account_description: string;
+  description: string;
+  is_reversal: boolean;
+  reversed_by_id: number | null;
+}
+
+export interface AdjustmentList {
+  year: number;
+  kinds: { spesifikasjon: Spesifikasjon; tax_codes: string[]; default_account: string }[];
+  entries: Adjustment[];
+}
+
+export const listAdjustments = (companyId: number, year: number): Promise<AdjustmentList> =>
+  request<AdjustmentList>(`/api/v1/companies/${companyId}/mva/spesifikasjoner?aar=${year}`);
+
+export const recordAdjustment = (
+  companyId: number,
+  payload: {
+    spesifikasjon: Spesifikasjon;
+    occurred_on: string;
+    tax_code: string;
+    amount: string;
+    description: string;
+    account_number?: string | null;
+    party_id?: number | null;
+  },
+): Promise<Adjustment> =>
+  json<Adjustment>(`/api/v1/companies/${companyId}/mva/spesifikasjoner`, 'POST', payload);
+
+export const reverseAdjustment = (companyId: number, adjustmentId: number): Promise<Adjustment> =>
+  json<Adjustment>(
+    `/api/v1/companies/${companyId}/mva/spesifikasjoner/${adjustmentId}/reversering`,
+    'POST',
+    {},
+  );

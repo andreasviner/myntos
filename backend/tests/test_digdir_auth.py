@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +33,12 @@ from cryptography.hazmat.primitives.serialization import (
 
 from myntos.auth import digdir_check, idporten
 from myntos.auth.idporten import testid
-from myntos.auth.idporten.client import IdPortenClient, IdPortenError, new_pkce_pair
+from myntos.auth.idporten.client import (
+    GovernmentLogin,
+    IdPortenClient,
+    IdPortenError,
+    new_pkce_pair,
+)
 from myntos.auth.maskinporten import client as maskinporten
 from myntos.auth.maskinporten.client import (
     JwtGrantTokenProvider,
@@ -48,6 +54,7 @@ from myntos.auth.signing_keys import (
     thumbprint,
 )
 from myntos.core.config import Settings
+from myntos.integrations.skatteetaten.mva import MvaError, MvaValidation
 
 ISSUER = "https://test.maskinporten.no/"
 TOKEN_ENDPOINT = "https://test.maskinporten.no/token"
@@ -593,9 +600,9 @@ async def test_a_token_from_another_login_attempt_is_refused(
 def test_openid_is_always_asked_for_and_never_asked_for_twice() -> None:
     assert idporten.configured_scope(_settings(idporten_scopes="")) == "openid"
     scope = idporten.configured_scope(
-        _settings(idporten_scopes="openid skatteetaten:mvameldinginnsending")
+        _settings(idporten_scopes="openid skatteetaten:mvameldingvalidering")
     )
-    assert scope == "openid skatteetaten:mvameldinginnsending"
+    assert scope == "openid skatteetaten:mvameldingvalidering"
 
 
 def test_a_half_configured_idporten_is_absent_rather_than_broken() -> None:
@@ -773,3 +780,161 @@ async def test_a_real_login_sends_no_login_hint(
         state="s", nonce="n", code_challenge="c"
     )
     assert "login_hint" not in dict(httpx.URL(url).params)
+
+
+# --- A refused token request says why ---------------------------------------------
+
+
+async def test_a_refused_code_exchange_says_what_id_porten_said(
+    monkeypatch: pytest.MonkeyPatch, signing_key: SigningKey
+) -> None:
+    """``invalid_client`` alone covers a wrong kid, an unregistered key and more.
+
+    The TT02 client's kid was wrong on 2026-10-09 and the only thing printed was
+    "401"; ID-porten's description named the cause outright.
+    """
+
+    def refusing(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("openid-configuration"):
+            return httpx.Response(
+                200,
+                json={
+                    "issuer": IDPORTEN_ISSUER,
+                    "authorization_endpoint": f"{IDPORTEN_ISSUER}/authorize",
+                    "token_endpoint": f"{IDPORTEN_ISSUER}/token",
+                    "jwks_uri": f"{IDPORTEN_ISSUER}/jwks.json",
+                },
+            )
+        return httpx.Response(
+            401,
+            json={
+                "error": "invalid_client",
+                "error_description": "Invalid JWT. Key identifier (kid) reference not found.",
+            },
+        )
+
+    monkeypatch.setattr(
+        idporten.client,
+        "_client",
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(refusing)),
+    )
+    with pytest.raises(IdPortenError, match=r"invalid_client - Invalid JWT\. Key identifier"):
+        await _idporten_client(signing_key).exchange_code(code="c", code_verifier="v", nonce="n")
+
+
+def test_a_refusal_outside_the_oauth_vocabulary_is_not_repeated() -> None:
+    """Only RFC 6749's own error codes are echoed; anything else is dropped."""
+    response = httpx.Response(400, json={"error": "code=abc123", "error_description": "x"})
+    assert idporten.client._token_error(response) == ""
+    assert idporten.client._token_error(httpx.Response(400, text="<html>")) == ""
+
+
+# --- --mva: validation only -------------------------------------------------------
+
+
+MVA_ORGNR = "311124226"  # Tenor, MVA-registered AS (test_data/README.md).
+
+
+def test_the_mva_check_reports_the_period_that_has_ended() -> None:
+    assert digdir_check.previous_termin(date(2026, 10, 9)).name == "juli-august"
+    # In January the last finished period is last year's sixth.
+    january = digdir_check.previous_termin(date(2027, 1, 15))
+    assert (january.year, january.index) == (2026, 6)
+
+
+def test_the_mva_check_builds_its_melding_with_the_real_aggregation() -> None:
+    """A sale and a deduction, through the code a company's melding goes through."""
+    melding = digdir_check.sample_melding(MVA_ORGNR, date(2026, 10, 9))
+    assert [(line.mva_kode, line.merverdiavgift) for line in melding.lines] == [
+        ("3", Decimal("2500.00")),
+        ("1", Decimal("-500.00")),
+    ]
+    assert melding.fastsatt_merverdiavgift == Decimal("2000.00")
+
+
+class _ValidationOnly:
+    """An MVA client that can validate and can do nothing else.
+
+    Any attribute but ``validate`` raises, so a check that so much as looked up
+    ``create_instance`` or ``submit`` fails here rather than in tt02.
+    """
+
+    def __init__(self, answer: bytes) -> None:
+        self.answer = answer
+        self.sent: list[bytes] = []
+
+    async def validate(self, melding: bytes, *, id_porten_token: str) -> MvaValidation:
+        assert id_porten_token == "person-token"
+        self.sent.append(melding)
+        return MvaValidation(content=self.answer, content_type="application/xml")
+
+    def __getattr__(self, name: str) -> Any:
+        raise AssertionError(f"the --mva check must not touch {name}")
+
+
+def _login() -> GovernmentLogin:
+    return GovernmentLogin(
+        access_token="person-token",
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        pid=PID,
+        acr=ACR,
+        subject="sub-1",
+        refresh_token=None,
+    )
+
+
+async def test_the_mva_check_validates_and_keeps_both_documents(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    answer = (
+        b"<valideringsresultat xmlns='no:skatteetaten:fastsetting:avgift:mva:"
+        b"valideringsresultat:v1'><avvikVedMeldingslevering>ingen avvik"
+        b"</avvikVedMeldingslevering></valideringsresultat>"
+    )
+    client = _ValidationOnly(answer)
+    monkeypatch.setattr(digdir_check, "build_mva_client", lambda settings: client)
+    report = digdir_check.Report()
+    await digdir_check._check_mva_validation(
+        _settings(), report, _login(), MVA_ORGNR, save_to=tmp_path, today=date(2026, 10, 9)
+    )
+    assert not report.failed and not report.warned
+    assert MVA_ORGNR.encode() in client.sent[0]
+    assert (tmp_path / "mva-melding.xml").read_bytes() == client.sent[0]
+    assert (tmp_path / "valideringsresultat.xml").read_bytes() == answer
+    assert "ingen avvik" in capsys.readouterr().out
+
+
+async def test_a_blocking_verdict_is_reported_with_its_findings(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The call worked; what Skatteetaten says is the result, so it is a warning."""
+    answer = (
+        b"<valideringsresultat><avvikVedMeldingslevering>ugyldig skattemelding"
+        b"</avvikVedMeldingslevering><avvik><stiTilAvvik>/mvaKode</stiTilAvvik>"
+        b"<avviksinformasjon><avvikstype>avvikende</avvikstype><avvikKode>R-1</avvikKode>"
+        b"<begrunnelse>kode finnes ikke</begrunnelse></avviksinformasjon></avvik>"
+        b"</valideringsresultat>"
+    )
+    monkeypatch.setattr(digdir_check, "build_mva_client", lambda settings: _ValidationOnly(answer))
+    report = digdir_check.Report()
+    await digdir_check._check_mva_validation(_settings(), report, _login(), MVA_ORGNR)
+    assert report.warned and not report.failed
+    output = capsys.readouterr().out
+    assert "ugyldig skattemelding" in output
+    assert "R-1 /mvaKode: kode finnes ikke" in output
+
+
+async def test_a_validation_host_that_refuses_is_a_failure_naming_the_host(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class Refusing(_ValidationOnly):
+        async def validate(self, melding: bytes, *, id_porten_token: str) -> MvaValidation:
+            raise MvaError("could not reach the MVA validation API at https://x")
+
+    monkeypatch.setattr(digdir_check, "build_mva_client", lambda settings: Refusing(b""))
+    report = digdir_check.Report()
+    await digdir_check._check_mva_validation(
+        _settings(skatteetaten_mva_api_base_url="https://x"), report, _login(), MVA_ORGNR
+    )
+    assert report.failed
+    assert "host: https://x" in capsys.readouterr().out

@@ -118,9 +118,54 @@ def test_an_unregistered_seller_asserts_no_vat_identifier() -> None:
     root = parse(ehf.render(issued(vat_registered=False, lines=[make_line(tax_code="0")])))
     party = find(root, "cac:AccountingSupplierParty/cac:Party")
 
-    assert party.find("cac:PartyTaxScheme", {"cac": CAC}) is None
-    # But the legal entity is still identified, which BR-CO-26 requires.
+    schemes = {
+        find(scheme, "cac:TaxScheme/cbc:ID").text: find(scheme, "cbc:CompanyID").text
+        for scheme in party.findall("cac:PartyTaxScheme", {"cac": CAC})
+    }
+    # No VAT scheme, and so no NO...MVA. What it does carry is its orgnr as the
+    # tax registration (BT-32), because BR-E-02 refuses its category-E lines
+    # without one.
+    assert schemes == {ehf.TAX_REGISTRATION_SCHEME: "910000004"}
+    # And the legal entity is still identified, which BR-CO-26 requires.
     assert find(party, "cac:PartyLegalEntity/cbc:CompanyID").text == "910000004"
+
+
+def test_foretaksregisteret_is_the_tax_registration_peppol_looks_for() -> None:
+    """NO-R-002 reads the marking from PartyTaxScheme under scheme TAX, not from a note."""
+    root = parse(ehf.render(issued(seller_in_foretaksregisteret=True)))
+    party = find(root, "cac:AccountingSupplierParty/cac:Party")
+    schemes = {
+        find(scheme, "cac:TaxScheme/cbc:ID").text: find(scheme, "cbc:CompanyID").text
+        for scheme in party.findall("cac:PartyTaxScheme", {"cac": CAC})
+    }
+    assert schemes == {"VAT": "NO910000004MVA", "TAX": "Foretaksregisteret"}
+
+
+def test_the_markings_share_one_note() -> None:
+    """PEPPOL-EN16931-R002: a single document-level note outside Germany."""
+    document = issued(seller_in_foretaksregisteret=True, note="Takk for handelen")
+    document.document_type = DocumentType.KREDITNOTA
+    root = parse(ehf.render(document, issued()))
+
+    notes = root.findall(f"{{{CBC}}}Note")
+    assert len(notes) == 1
+    assert (notes[0].text or "").split("\n") == [
+        "Foretaksregisteret",
+        "Kreditnota",
+        "Takk for handelen",
+    ]
+
+
+def test_a_document_without_any_reference_says_so() -> None:
+    """PEPPOL-EN16931-R003 wants BT-10 or BT-13; neither is the seller's to invent."""
+    root = parse(ehf.render(issued(buyer_reference=None, order_reference=None)))
+    assert find(root, "cbc:BuyerReference").text == ehf.NO_BUYER_REFERENCE
+
+    with_order = parse(ehf.render(issued(buyer_reference=None, order_reference="PO-1")))
+    assert with_order.find(f"{{{CBC}}}BuyerReference") is None
+
+    with_own = parse(ehf.render(issued(buyer_reference="Avd. 4")))
+    assert find(with_own, "cbc:BuyerReference").text == "Avd. 4"
 
 
 def test_the_buyer_endpoint_is_what_peppol_routes_on() -> None:
@@ -143,7 +188,7 @@ def test_tax_subtotals_mirror_the_paragraph_5_1_5_breakdown() -> None:
     document = issued(
         lines=[
             make_line(1, unit_price="1000.00", tax_code="3"),
-            make_line(2, unit_price="200.00", tax_code="32"),
+            make_line(2, unit_price="200.00", tax_code="33"),
             make_line(3, unit_price="100.00", tax_code="52"),
         ]
     )
@@ -244,17 +289,21 @@ def test_norwegian_characters_survive_the_round_trip() -> None:
 def test_rendering_is_deterministic() -> None:
     """The XML is stored at issue and compared later; two runs must not differ."""
     document = issued(
-        lines=[make_line(1, tax_code="3"), make_line(2, tax_code="32"), make_line(3, tax_code="5")]
+        lines=[make_line(1, tax_code="3"), make_line(2, tax_code="33"), make_line(3, tax_code="5")]
     )
     assert ehf.render(document) == ehf.render(document)
 
 
-@pytest.mark.parametrize("tax_code", ["3", "31", "32", "5", "6", "52", "0"])
+@pytest.mark.parametrize("tax_code", ["3", "31", "33", "5", "6", "52", "0"])
 def test_every_sellable_code_produces_a_valid_category(tax_code: str) -> None:
     root = parse(ehf.render(issued(lines=[make_line(tax_code=tax_code)], vat_registered=True)))
     category = find(root, "cac:TaxTotal/cac:TaxSubtotal/cac:TaxCategory")
     code = find(category, "cbc:ID").text
     assert code in {"S", "Z", "E", "G", "AE", "K", "O"}
-    if code != "S":
-        # Every non-standard category must say why no VAT was charged.
-        assert find(category, "cbc:TaxExemptionReason").text
+    reason = category.find(f"{{{CBC}}}TaxExemptionReason")
+    if code in {"S", "Z"}:
+        # S charges VAT; Z is a rate of 0 %, and BR-Z-10 forbids a reason on it.
+        assert reason is None
+    else:
+        # Every other zero category must say why no VAT was charged.
+        assert reason is not None and reason.text

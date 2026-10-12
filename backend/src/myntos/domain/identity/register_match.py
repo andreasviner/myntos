@@ -32,6 +32,15 @@ sources, and the difference between them is the whole reason
 Which is what makes linking an ID-porten login worth offering: it is the step
 that turns a guess into an answer.
 
+**A Myntos BankID sign-in is not that step, and must not become one.** The name
+on an account made with BankID came from BankID, and it is still an account
+name here: ``trolig``, like a typed one. Reading it as ``bekreftet`` would be
+using a BankID login to raise the trust of an identification of our own, which
+is the ID-veksling BankID's merchant terms forbid without a separate permission
+(docs/integrations/bankid.md). The ID-porten login is different in kind: the
+person authenticates to the state each time, with whichever eID they choose,
+and the name is Folkeregisteret's.
+
 **A middle name is not a different person.** People sign up as "Andreas
 Lindeman" and stand in the register as "Andreas Edvardsen Lindeman", so a first
 name plus a last name matches. That admits a false positive (two brothers, or a
@@ -42,7 +51,7 @@ administrator who knows their own colleagues, and it grants nothing.
 **Where a name came from outranks how exactly it matches.** A verified name
 that agrees on first-and-last beats an account name that agrees letter for
 letter, because anybody can type a name into a signup form and only the person
-themselves can pass BankID as it. Exactness breaks ties *within* one source,
+themselves can pass ID-porten as it. Exactness breaks ties *within* one source,
 never across them.
 
 Pure functions over plain data. No database, no HTTP, no ORM: the caller reads
@@ -234,7 +243,7 @@ def match_person(
         # it does not, which is the ordering worth stating plainly: a
         # Folkeregisteret name that matches on first-and-last is better evidence
         # than a self-typed one that matches letter for letter, because anybody
-        # can type a name and only one person can pass BankID as it.
+        # can type a name and only one person can pass ID-porten as it.
         _index(
             (
                 member.verified_name,

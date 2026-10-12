@@ -1,10 +1,12 @@
-"""The private keys that authenticate this installation to Digdir.
+"""The private keys that authenticate this installation to Digdir, and to the BankID broker.
 
 Maskinporten and ID-porten both authenticate a *client* with a signed JWT
 rather than a shared secret: the JWT grant (RFC 7523) in Maskinporten's case,
 ``private_key_jwt`` client authentication in ID-porten's. Both need the same
 three things — a private key, the ``kid`` it was registered under, and the
-signing algorithm — so both read it through here.
+signing algorithm — so both read it through here. The BankID sign-in does the
+same against its broker (Idura recommends ``private_key_jwt`` over a secret),
+and so does that; its assertion is built by :func:`client_assertion`.
 
 **Two file encodings, one setting.** ``MASKINPORTEN_JWK_PATH`` is documented as
 a JWK, and Digdir's self-service hands you one. But a key generated with
@@ -32,13 +34,17 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import uuid
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+from myntos.core.clock import utc_now
 
 # RS256 across the board. Maskinporten accepts RS256/384/512 and ID-porten the
 # same; one algorithm keeps the registration and the code from disagreeing, and
@@ -48,6 +54,9 @@ ALGORITHM = "RS256"
 # Digdir requires at least 2048 bits. Refusing anything smaller here turns a
 # rejected token request into a configuration error with a readable reason.
 _MINIMUM_KEY_SIZE = 2048
+
+# See client_assertion.
+_ASSERTION_LIFETIME = timedelta(seconds=60)
 
 
 class SigningKeyError(Exception):
@@ -175,6 +184,32 @@ def _checked(key: object, kid: str, source: str) -> SigningKey:
             f"{_MINIMUM_KEY_SIZE} bits"
         )
     return SigningKey(key=key, kid=kid)
+
+
+def client_assertion(signing_key: SigningKey, *, client_id: str, audience: str) -> str:
+    """A ``private_key_jwt`` client assertion (RFC 7523 § 2.2, OIDC Core § 9).
+
+    ``iss`` and ``sub`` are both the client id, ``aud`` is the authorization
+    server, and ``jti`` makes each one unrepeatable: Idura's guide calls it
+    optional for most eIDs and required for some, and there is no reason to
+    make that a per-broker question. Sixty seconds, because an assertion that
+    outlives the one request it authenticates has nothing left to do (Idura
+    asks for at most five minutes).
+    """
+    issued_at = utc_now()
+    return jwt.encode(
+        {
+            "iss": client_id,
+            "sub": client_id,
+            "aud": audience,
+            "iat": int(issued_at.timestamp()),
+            "exp": int((issued_at + _ASSERTION_LIFETIME).timestamp()),
+            "jti": str(uuid.uuid4()),
+        },
+        signing_key.key,
+        algorithm=signing_key.algorithm,
+        headers={"kid": signing_key.kid},
+    )
 
 
 def public_jwk(key: RSAPrivateKey, *, kid: str | None = None) -> dict[str, str]:

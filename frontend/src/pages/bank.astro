@@ -1,0 +1,513 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Bank | Myntos"
+  description="Importer kontoutskriften fra banken og avstem den mot det som er ført."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Bankavstemming</p>
+      {/* Selskapet er overskriften: en kontoutskrift hører til én konto i ett
+          regnskap, og det skal stå der man ser det før man laster opp. */}
+      <h1 data-session-company></h1>
+      <p class="muted orgnr" id="orgnr"></p>
+    </div>
+  </header>
+
+  <p class="lead">
+    Last ned kontoutskriften som ISO 20022-fil (camt.053) fra nettbanken og last den opp her. Hver
+    bevegelse på kontoen settes ved siden av bilagene som allerede er ført, så du ser hva som er
+    forklart og hva som mangler. Ingenting som er ført, blir endret.
+  </p>
+
+  <p class="status" id="page-status" hidden></p>
+  <div class="empty" id="loading">Henter …</div>
+
+  <section class="card" id="import-card" hidden>
+    <h2 class="card-title">Importer kontoutskrift</h2>
+    <form id="import-form" novalidate>
+      <label class="field">
+        <span>Fil fra nettbanken (camt.053)</span>
+        <input type="file" name="file" id="import-file" accept=".xml,application/xml,text/xml" required />
+        <span class="field-hint">
+          Samme fil to ganger blir ikke importert to ganger, og en utskrift som overlapper en du alt har
+          lastet opp, legger bare til det som er nytt. En fil som ikke går opp mot sin egen saldo,
+          blir avvist.
+        </span>
+      </label>
+      <button class="btn btn-primary" type="submit" id="import-submit">Importer</button>
+      <p class="status" id="import-status" hidden></p>
+      {/* Lenke og ikke bare tekst: kontoen kan bare legges til på selskapssiden,
+          og en melding som ikke sier hvor, er en blindvei. */}
+      <p class="status" data-tone="error" id="unknown-account" hidden>
+        <span id="unknown-account-text"></span>
+        <a href="/organisasjon/#selskap">Legg til kontoen under Selskapet</a>.
+      </p>
+    </form>
+  </section>
+
+  <section class="card" id="lines-card" hidden>
+    <div class="lines-head">
+      <h2 class="card-title">Bevegelser på kontoen</h2>
+      <label class="filter">
+        <span class="muted">Vis</span>
+        <select id="filter">
+          <option value="uavstemt">Ikke avstemt</option>
+          <option value="avstemt">Avstemt</option>
+          <option value="alle">Alle</option>
+        </select>
+      </label>
+    </div>
+    <p class="status" id="lines-status" hidden></p>
+    <ul class="lines" id="lines"></ul>
+    <p class="empty" id="lines-empty" hidden></p>
+  </section>
+
+  <section class="card" id="statements-card" hidden>
+    <h2 class="card-title">Importerte kontoutskrifter</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Konto</th>
+            <th scope="col">Periode</th>
+            <th scope="col" class="num">Inngående</th>
+            <th scope="col" class="num">Utgående</th>
+            <th scope="col" class="num">Nye linjer</th>
+            <th scope="col">Fil</th>
+          </tr>
+        </thead>
+        <tbody id="statements"></tbody>
+      </table>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .page-head {
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .orgnr {
+    margin: 0.2rem 0 0;
+  }
+  .card + .card {
+    margin-top: 1.25rem;
+  }
+  .lines-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+  .filter {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .lines {
+    list-style: none;
+    margin: 0.75rem 0 0;
+    padding: 0;
+  }
+  .line {
+    border-top: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+    padding: 0.85rem 0;
+  }
+  .line-top {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+  }
+  .line-what {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .line-amount {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .line-meta {
+    font-size: 0.88rem;
+  }
+  .match {
+    margin-top: 0.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+  }
+  .warning {
+    color: var(--negative);
+  }
+  .suggestions {
+    list-style: none;
+    margin: 0.5rem 0 0;
+    padding: 0;
+  }
+  .suggestion {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem 1rem;
+    padding: 0.4rem 0;
+  }
+  .suggestion-reasons {
+    font-size: 0.85rem;
+  }
+  .create-form {
+    margin-top: 0.5rem;
+    display: grid;
+    gap: 0.5rem;
+    max-width: 34rem;
+  }
+  .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    UNKNOWN_STATEMENT_ACCOUNT,
+    bankStatementFileUrl,
+    confirmBankMatch,
+    createFromBankLine,
+    getCatalogue,
+    importBankStatement,
+    listBankLines,
+    listBankStatements,
+    removeBankMatch,
+    type BankLine,
+    type BankLineFilter,
+    type BankStatement,
+    type Catalogue,
+    type Company,
+  } from '../lib/api';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import { isoDate, kontonummer, kroner, orgnummer } from '../lib/format';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const linesStatus = el<HTMLParagraphElement>('#lines-status');
+  const filter = el<HTMLSelectElement>('#filter');
+
+  let company: Company;
+  let catalogue: Catalogue | null = null;
+
+  // Spurt der det tegnes, aldri tatt vare på: selskapet på skjermen kan flytte seg.
+  const mayWrite = (): boolean => canInCompany(company, 'ledger:write');
+
+  function message(error: unknown, fallback: string): string {
+    return error instanceof ApiError ? error.message : fallback;
+  }
+
+  function node<K extends keyof HTMLElementTagNameMap>(
+    tag: K,
+    text?: string,
+    className?: string,
+  ): HTMLElementTagNameMap[K] {
+    const created = document.createElement(tag);
+    if (text !== undefined) created.textContent = text;
+    if (className !== undefined) created.className = className;
+    return created;
+  }
+
+  function signed(line: BankLine): string {
+    return (line.direction === 'ut' ? '−' : '+') + kroner(line.amount);
+  }
+
+  function describe(line: BankLine): string {
+    return line.counterparty_name ?? line.remittance ?? line.additional_info ?? 'Uten tekst fra banken';
+  }
+
+  // Det banken skrev om bevegelsen, som forslag til beskrivelse på et nytt bilag.
+  function proposedDescription(line: BankLine): string {
+    return [line.counterparty_name, line.remittance ?? line.additional_info]
+      .filter((part): part is string => Boolean(part))
+      .join(' – ')
+      .slice(0, 255);
+  }
+
+  function matchedRow(line: BankLine): HTMLElement {
+    const row = node('div', undefined, 'match');
+    const how = line.match_kind === 'opprettet' ? 'Ført fra denne linjen som bilag' : 'Avstemt mot bilag';
+    row.append(node('span', `${how} ${line.voucher_no ?? ''}`.trim()));
+    if (line.voucher_reversed) {
+      // Lenken står, men bilaget er reversert: linjen er ikke lenger forklart.
+      row.append(
+        node('span', 'Bilaget er reversert, så bevegelsen er ikke forklart lenger.', 'warning'),
+      );
+    }
+    if (mayWrite()) {
+      const undo = node('button', 'Fjern avstemmingen', 'btn btn-ghost btn-small');
+      undo.type = 'button';
+      undo.addEventListener('click', () => {
+        undo.disabled = true;
+        removeBankMatch(company.id, line.id)
+          .then(() => refreshLines())
+          .catch((error: unknown) => {
+            undo.disabled = false;
+            setStatus(linesStatus, message(error, 'Vi fikk ikke fjernet avstemmingen.'));
+          });
+      });
+      row.append(undo);
+    }
+    return row;
+  }
+
+  function suggestionList(line: BankLine): HTMLElement {
+    const list = node('ul', undefined, 'suggestions');
+    for (const suggestion of line.suggestions) {
+      const item = node('li', undefined, 'suggestion');
+      const text = node('div');
+      const title = node(
+        'div',
+        `${suggestion.confidence === 'sterk' ? 'Trolig' : 'Mulig'}: bilag ${suggestion.voucher_no}, ` +
+          `${isoDate(suggestion.occurred_on)}, ${suggestion.description}`,
+      );
+      text.append(title, node('div', suggestion.reasons.join(' · '), 'muted suggestion-reasons'));
+      item.append(text);
+      if (mayWrite()) {
+        const confirm = node('button', 'Bekreft', 'btn btn-primary btn-small');
+        confirm.type = 'button';
+        confirm.addEventListener('click', () => {
+          confirm.disabled = true;
+          confirmBankMatch(company.id, line.id, suggestion.voucher_id)
+            .then(() => refreshLines())
+            .catch((error: unknown) => {
+              confirm.disabled = false;
+              setStatus(linesStatus, message(error, 'Vi fikk ikke avstemt linjen.'));
+            });
+        });
+        item.append(confirm);
+      }
+      list.append(item);
+    }
+    return list;
+  }
+
+  function createForm(line: BankLine): HTMLElement {
+    const wrapper = node('div');
+    const open = node('button', 'Før som nytt bilag', 'btn btn-ghost btn-small');
+    open.type = 'button';
+    const form = node('form', undefined, 'create-form');
+    form.noValidate = true;
+    form.hidden = true;
+
+    const typeField = node('label', undefined, 'field');
+    const typeSelect = node('select');
+    typeSelect.required = true;
+    // Bare typer som går samme vei som pengene: en inntektstype på en utbetaling
+    // ville ført bilaget baklengs. Backend avviser det uansett.
+    for (const entry of catalogue?.types ?? []) {
+      if (entry.direction !== line.direction) continue;
+      const option = node('option', entry.label);
+      option.value = entry.code;
+      typeSelect.append(option);
+    }
+    typeField.append(node('span', 'Hva var dette?'), typeSelect);
+
+    const note = node('span', '', 'field-hint');
+    const updateNote = (): void => {
+      note.textContent = catalogue?.types.find((entry) => entry.code === typeSelect.value)?.note ?? '';
+    };
+    typeSelect.addEventListener('change', updateNote);
+    updateNote();
+    typeField.append(note);
+
+    const textField = node('label', undefined, 'field');
+    const text = node('input');
+    text.type = 'text';
+    text.maxLength = 255;
+    text.value = proposedDescription(line);
+    textField.append(node('span', 'Beskrivelse'), text);
+
+    const fixed = node(
+      'p',
+      `Beløp, dato og retning kommer fra banken: ${signed(line)}, ${isoDate(line.booking_date)}.`,
+      'field-hint',
+    );
+    const submit = node('button', 'Før bilaget', 'btn btn-primary btn-small');
+    submit.type = 'submit';
+    const status = node('p', undefined, 'status');
+    status.hidden = true;
+    form.append(typeField, textField, fixed, submit, status);
+
+    open.addEventListener('click', () => {
+      form.hidden = !form.hidden;
+    });
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      submit.disabled = true;
+      createFromBankLine(company.id, line.id, {
+        type_code: typeSelect.value,
+        description: text.value.trim(),
+      })
+        .then(() => refreshLines())
+        .catch((error: unknown) => {
+          submit.disabled = false;
+          setStatus(status, message(error, 'Vi fikk ikke ført bilaget.'));
+        });
+    });
+    wrapper.append(open, form);
+    return wrapper;
+  }
+
+  function lineItem(line: BankLine): HTMLLIElement {
+    const item = node('li', undefined, 'line');
+    const top = node('div', undefined, 'line-top');
+    const what = node('div', undefined, 'line-what');
+    what.append(node('strong', describe(line)));
+    const meta = [isoDate(line.booking_date)];
+    if (line.remittance && line.counterparty_name) meta.push(line.remittance);
+    if (line.kid) meta.push(`KID ${line.kid}`);
+    what.append(node('div', meta.join(' · '), 'muted line-meta'));
+    if (line.invoice !== null) {
+      what.append(
+        node(
+          'div',
+          `KID-en hører til faktura ${line.invoice.document_number ?? ''} til ${line.invoice.buyer_name}. ` +
+            'Innbetaling på faktura føres ikke herfra ennå.',
+          'muted line-meta',
+        ),
+      );
+    }
+    const amount = node('span', signed(line), `line-amount ${line.direction === 'inn' ? 'amount-in' : 'amount-out'}`);
+    top.append(what, amount);
+    item.append(top);
+
+    if (line.voucher_id !== null) {
+      item.append(matchedRow(line));
+      return item;
+    }
+    if (line.suggestions.length > 0) {
+      item.append(suggestionList(line));
+    } else {
+      item.append(node('p', 'Ingen ført betaling har samme beløp i nærheten av datoen.', 'muted line-meta'));
+    }
+    if (mayWrite()) item.append(createForm(line));
+    return item;
+  }
+
+  async function refreshLines(): Promise<void> {
+    setStatus(linesStatus, '');
+    const chosen = filter.value as BankLineFilter;
+    try {
+      const lines = await listBankLines(company.id, chosen);
+      el('#lines').replaceChildren(...lines.map(lineItem));
+      const empty = el<HTMLParagraphElement>('#lines-empty');
+      empty.textContent =
+        chosen === 'uavstemt'
+          ? 'Alt som er importert, er avstemt.'
+          : 'Ingen bevegelser å vise. Importer en kontoutskrift først.';
+      show(empty, lines.length === 0);
+    } catch (error: unknown) {
+      setStatus(linesStatus, message(error, 'Vi fikk ikke hentet bevegelsene.'));
+    }
+  }
+
+  function statementRow(statement: BankStatement): HTMLTableRowElement {
+    const row = node('tr');
+    const account = kontonummer(statement.account) + (statement.account_label ? ` (${statement.account_label})` : '');
+    const link = node('a', statement.filename);
+    link.href = bankStatementFileUrl(company.id, statement.id);
+    const file = node('td');
+    file.append(link);
+    row.append(
+      node('td', account),
+      node('td', `${isoDate(statement.from_date)} – ${isoDate(statement.to_date)}`),
+      node('td', kroner(statement.opening_balance), 'num'),
+      node('td', kroner(statement.closing_balance), 'num'),
+      node('td', `${statement.lines_new} av ${statement.lines_new + statement.lines_known}`, 'num'),
+      file,
+    );
+    return row;
+  }
+
+  async function refreshStatements(): Promise<void> {
+    const statements = await listBankStatements(company.id);
+    el('#statements').replaceChildren(...statements.map(statementRow));
+    show(el('#statements-card'), statements.length > 0);
+  }
+
+  const importForm = el<HTMLFormElement>('#import-form');
+  const importStatus = el<HTMLParagraphElement>('#import-status');
+  importForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const file = el<HTMLInputElement>('#import-file').files?.[0];
+    show(el('#unknown-account'), false);
+    if (file === undefined) {
+      setStatus(importStatus, 'Velg filen du lastet ned fra nettbanken.');
+      return;
+    }
+    const button = el<HTMLButtonElement>('#import-submit');
+    button.disabled = true;
+    setStatus(importStatus, '');
+    importBankStatement(company.id, file)
+      .then(async (result) => {
+        const added = result.statements.reduce((sum, s) => sum + s.lines_new, 0);
+        const known = result.statements.reduce((sum, s) => sum + s.lines_known, 0);
+        let text = result.already_imported
+          ? 'Denne filen er importert fra før. Ingenting nytt ble lagret.'
+          : `Importert: ${added} nye bevegelser` + (known > 0 ? `, ${known} fantes fra før.` : '.');
+        if (result.skipped_unbooked > 0) {
+          text += ` ${result.skipped_unbooked} som banken ikke har bokført ennå, ble utelatt.`;
+        }
+        setStatus(importStatus, text, 'ok');
+        importForm.reset();
+        await Promise.all([refreshLines(), refreshStatements()]);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof ApiError && error.code === UNKNOWN_STATEMENT_ACCOUNT) {
+          el('#unknown-account-text').textContent = `${error.message}.`;
+          show(el('#unknown-account'), true);
+          return;
+        }
+        setStatus(importStatus, message(error, 'Vi fikk ikke importert filen.'));
+      })
+      .finally(() => {
+        button.disabled = false;
+      });
+  });
+
+  filter.addEventListener('change', () => void refreshLines());
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      const current = currentCompany(companies);
+      if (current === undefined) return;
+      company = current;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      if (mayWrite()) catalogue = await getCatalogue();
+      show(el('#import-card'), mayWrite());
+      show(el('#lines-card'), true);
+      await Promise.all([refreshLines(), refreshStatements()]);
+    } catch (error: unknown) {
+      setStatus(pageStatus, message(error, 'Vi fikk ikke hentet selskapet.'));
+    } finally {
+      el('#loading').hidden = true;
+    }
+  });
+</script>

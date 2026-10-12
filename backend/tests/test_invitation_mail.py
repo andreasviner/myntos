@@ -475,6 +475,7 @@ def test_a_named_smtp_host_wins_over_cloudflare() -> None:
 
 def test_inviting_a_colleague_emails_them(client: TestClient, outbox: RecordingMailer) -> None:
     company_id = _books(client)
+    outbox.sent.clear()  # the owner's own confirmation mail from signing up
 
     invitation = _invite(client, company_id, "ola@example.no", "admin")
 
@@ -497,6 +498,7 @@ def test_the_invitation_still_works_when_the_relay_refuses(
     link is there for the inviter to pass on themselves.
     """
     company_id = _books(client)
+    outbox.sent.clear()  # the owner's own confirmation mail from signing up
     outbox.fails_with = "451 greylisted, try again later"
 
     invitation = _invite(client, company_id, "ola@example.no")
@@ -515,6 +517,7 @@ def test_a_deployment_that_sends_no_mail_says_so(
     client: TestClient, outbox: RecordingMailer
 ) -> None:
     company_id = _books(client)
+    outbox.sent.clear()  # the owner's own confirmation mail from signing up
     outbox.configured = False
 
     invitation = _invite(client, company_id, "ola@example.no")
@@ -529,6 +532,7 @@ def test_listing_invitations_neither_resends_nor_claims_to_have(
 ) -> None:
     """The link and the send are for the moment of invitation, and only then."""
     company_id = _books(client)
+    outbox.sent.clear()  # the owner's own confirmation mail from signing up
     _invite(client, company_id, "ola@example.no")
     outbox.sent.clear()
 
@@ -544,6 +548,7 @@ def test_reinviting_sends_a_second_message_with_the_new_link(
 ) -> None:
     """Re-inviting is how an invitation is resent, and the old link stops working."""
     company_id = _books(client)
+    outbox.sent.clear()  # the owner's own confirmation mail from signing up
 
     first = _invite(client, company_id, "ola@example.no", "viewer")
     second = _invite(client, company_id, "ola@example.no", "member")
@@ -559,6 +564,7 @@ def test_the_message_names_the_role_the_invitation_grants(
     client: TestClient, outbox: RecordingMailer, role: str
 ) -> None:
     company_id = _books(client)
+    outbox.sent.clear()  # the owner's own confirmation mail from signing up
 
     _invite(client, company_id, "ola@example.no", role)
 
@@ -571,6 +577,7 @@ def test_a_member_who_may_not_invite_sends_no_mail(
 ) -> None:
     """The permission check comes first: a refusal must not still email somebody."""
     company_id = _books(client)
+    outbox.sent.clear()  # the owner's own confirmation mail from signing up
     invitation = _invite(client, company_id, "ola@example.no", "viewer")
     colleague = TestClient(client.app, base_url=TEST_ORIGIN)
     register(colleague, "ola@example.no", full_name="Ola Nordmann")

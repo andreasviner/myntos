@@ -40,7 +40,7 @@ TODAY = date(2026, 8, 16)
 RATES = {
     "3": Decimal("0.250000"),
     "31": Decimal("0.150000"),
-    "32": Decimal("0.120000"),
+    "33": Decimal("0.120000"),
     "5": Decimal("0.000000"),
     "6": Decimal("0.000000"),
     "52": Decimal("0.000000"),
@@ -50,7 +50,7 @@ RATES = {
 ACCOUNTS = {
     "3": "3000",
     "31": "3010",
-    "32": "3020",
+    "33": "3020",
     "5": "3100",
     "6": "3100",
     "52": "3120",
@@ -163,7 +163,7 @@ def test_totals_add_up() -> None:
     document = make_document(
         lines=[
             make_line(1, unit_price="1000.00", tax_code="3"),
-            make_line(2, unit_price="500.00", tax_code="32"),
+            make_line(2, unit_price="500.00", tax_code="33"),
         ]
     )
     computed = totals(document)
@@ -182,7 +182,7 @@ def test_breakdown_separates_rates_and_categories() -> None:
         lines=[
             make_line(1, unit_price="1000.00", tax_code="3"),
             make_line(2, unit_price="400.00", tax_code="3"),
-            make_line(3, unit_price="200.00", tax_code="32"),
+            make_line(3, unit_price="200.00", tax_code="33"),
             make_line(4, unit_price="100.00", tax_code="52"),
         ]
     )

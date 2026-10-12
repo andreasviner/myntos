@@ -1,4 +1,5 @@
 ---
+import VerifyEmailNotice from '../components/VerifyEmailNotice.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 
 /*
@@ -92,7 +93,7 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
     <ol class="steps">
       <li>
         <strong>Opprett konto</strong> med e-post og passord, eller med Google, Microsoft
-        eller Vipps.
+        eller BankID.
       </li>
       <li>
         <strong>Registrer selskapet</strong> med organisasjonsnummer. Kontoplan, mva-koder og
@@ -172,6 +173,8 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
 
     <p class="status" id="dash-status" hidden></p>
 
+    <VerifyEmailNotice />
+
     <div id="loading" class="empty">Henter oversikten …</div>
 
     {/* No books yet. Only the way to the form, not the form: setting up a set
@@ -243,6 +246,12 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
           <p class="stat-note" id="stat-vat-note">
             <span class="skeleton" style="--skeleton-width: 7rem"></span>
           </p>
+          {/* Mva-meldingen nås herfra og ikke fra toppmenyen: man går dit når
+              tallet her får en til det, og det skjer annenhver måned, ikke
+              flere ganger om dagen. */}
+          <p class="stat-note">
+            <a href="/mva/">Mva-meldingen →</a>
+          </p>
         </div>
       </div>
 
@@ -312,7 +321,21 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
 
       <p class="meta-note">
         Tallene er en oppsummering av det du selv har ført, ikke en mva-melding og ikke et
-        ferdig regnskap.
+        ferdig regnskap. Mva-meldingen for hver termin ser du under
+        <a href="/mva/">Mva-melding</a>.
+        {/* SAF-T lenkes herfra og ikke fra menyen: filen lages når Skatteetaten
+            ber om den, kanskje aldri, og hører hjemme ved siden av årets tall. */}
+        SAF-T-filen Skatteetaten kan be om ved bokettersyn, lager du under
+        <a href="/saft/">SAF-T</a>.
+        {/* Avstemmingen lenkes herfra av samme grunn: den svarer på om tallene
+            over stemmer med banken, og hører hjemme ved siden av dem. */}
+        Om det som er ført stemmer med banken, ser du under
+        <a href="/bank/">Bankavstemming</a>.
+        {/* Samme begrunnelse: begge gjøres én gang i året, eller én gang i
+            regnskapets liv, og hører hjemme ved årets tall, ikke i menyen. */}
+        Balansen fra et tidligere system fører du under
+        <a href="/inngaende-balanse/">Inngående balanse</a>, og et år som er over avslutter du
+        under <a href="/arsavslutning/">Årsavslutning</a>.
       </p>
     </div>
   </section>

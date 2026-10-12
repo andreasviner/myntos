@@ -1,0 +1,490 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Kontoplan | Myntos"
+  description="Kontoene i regnskapet, og hvilken post i næringsspesifikasjonen hver av dem havner i."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Kontoplan</p>
+      {/* Selskapet er overskriften: kontoplanen er ett regnskaps, og en konto lagt
+          til her finnes ikke i de andre selskapene på kontoen. */}
+      <h1 data-session-company></h1>
+      <p class="muted orgnr" id="orgnr"></p>
+    </div>
+    <div class="head-actions year-nav" role="group" aria-label="Regnskapsår">
+      <button type="button" class="btn btn-ghost btn-small" id="year-prev" aria-label="Året før"
+        >‹</button
+      >
+      <span class="year" id="year"></span>
+      <button type="button" class="btn btn-ghost btn-small" id="year-next" aria-label="Året etter"
+        >›</button
+      >
+    </div>
+  </header>
+
+  <p class="lead">
+    Hver konto havner i en post i næringsspesifikasjonen, og den posten står også i SAF-T-filen.
+    Postene er Skatteetatens egne, for hvert år. Kontonummeret kan aldri endres, og en konto det er
+    ført på kan bare deaktiveres: da forsvinner den fra nye føringer, men står fortsatt i årene som
+    brukte den.
+  </p>
+
+  <p class="status" id="page-status" hidden></p>
+  <div class="empty" id="loading">Henter …</div>
+
+  <div id="content" hidden>
+    <section class="card" id="add-card" hidden>
+      <h2 class="card-title">Legg til konto</h2>
+      <form id="add-form" novalidate>
+        <div class="field-row">
+          <label class="field narrow">
+            <span>Kontonummer</span>
+            <input type="text" name="number" inputmode="numeric" maxlength="4" placeholder="6820" />
+            <span class="field-hint">Fire siffer, NS 4102.</span>
+          </label>
+          <label class="field">
+            <span>Navn</span>
+            <input type="text" name="description" maxlength="255" />
+          </label>
+        </div>
+        <label class="field">
+          <span>Post i næringsspesifikasjonen</span>
+          <select name="grouping" id="add-grouping"></select>
+          <span class="field-hint" id="add-hint">
+            Foreslås ut fra kontonummeret når du har skrevet fire siffer.
+          </span>
+        </label>
+        <button class="btn btn-primary" type="submit" id="add-submit">Legg til</button>
+        <p class="status" id="add-status" hidden></p>
+      </form>
+    </section>
+
+    <section class="card">
+      <p class="card-hint" id="closed-note" hidden>
+        Regnskapsåret er avsluttet. Næringsspesifikasjonen for det er levert med disse postene, så de
+        endres ikke her. En post som var feil, rettes ved å åpne året igjen først.
+      </p>
+      <p class="card-hint" id="list-note" hidden></p>
+      <p class="status" id="table-status" hidden></p>
+      <div class="table-scroll">
+        <table class="data">
+          <thead>
+            <tr>
+              <th>Konto</th>
+              <th>Navn</th>
+              <th>Post i næringsspesifikasjonen</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="accounts"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</BaseLayout>
+
+<style>
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .orgnr {
+    margin: 0.2rem 0 0;
+  }
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--muted);
+    margin: 0 0 0.4rem;
+  }
+  .year-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .year {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    min-width: 3.5rem;
+    text-align: center;
+  }
+  .narrow {
+    flex: 0 0 8rem;
+  }
+  .grouping-code {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+  .row-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    justify-content: flex-end;
+  }
+  .row-edit {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: center;
+  }
+  .row-edit select,
+  .row-edit input {
+    max-width: 22rem;
+  }
+  tr[data-active='false'] td {
+    color: var(--muted);
+  }
+  .chosen {
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    createAccount,
+    deleteAccount,
+    getKontoplan,
+    setGrouping,
+    suggestAccount,
+    updateAccount,
+    type Company,
+    type GroupingOption,
+    type Kontoplan,
+    type LedgerAccount,
+  } from '../lib/api';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import { orgnummer } from '../lib/format';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const tableStatus = el<HTMLParagraphElement>('#table-status');
+  const addForm = el<HTMLFormElement>('#add-form');
+  const addGrouping = el<HTMLSelectElement>('#add-grouping');
+  const addStatus = el<HTMLParagraphElement>('#add-status');
+
+  let company: Company;
+  let year = new Date().getFullYear();
+  let plan: Kontoplan | null = null;
+  // Den ene raden som er åpen for redigering, og hva som redigeres i den.
+  let editing: { id: number; what: 'navn' | 'post' } | null = null;
+
+  // Spurt der svaret brukes, aldri tatt vare på: selskapet på skjermen kan
+  // bytte, og en tillatelse kopiert ut før det er en tillatelse for et annet.
+  const mayChange = (): boolean => canInCompany(company, 'ledger:chart');
+
+  const pairKey = (category: string, code: string): string => `${category}|${code}`;
+
+  function describePair(category: string | null, code: string | null): string {
+    if (category === null || code === null) return 'Ingen post for året';
+    if (category === 'NA') return 'Ingen post (NA)';
+    const found = plan?.groupings.find((item) => item.category === category && item.code === code);
+    return found === undefined ? `${category} ${code}` : `${code} ${found.description}`;
+  }
+
+  /** Postene som `<option>`-er, gruppert per kategori slik listen er ordnet. */
+  function groupingOptions(select: HTMLSelectElement, options: GroupingOption[]): void {
+    select.replaceChildren();
+    const groups = new Map<string, HTMLOptGroupElement>();
+    for (const item of options) {
+      let group = groups.get(item.category);
+      if (group === undefined) {
+        group = document.createElement('optgroup');
+        group.label = item.category;
+        groups.set(item.category, group);
+        select.append(group);
+      }
+      const node = document.createElement('option');
+      node.value = pairKey(item.category, item.code);
+      node.textContent = `${item.code} ${item.description}`;
+      group.append(node);
+    }
+  }
+
+  function button(label: string, onClick: () => void, primary = false): HTMLButtonElement {
+    const node = document.createElement('button');
+    node.type = 'button';
+    node.className = `btn ${primary ? 'btn-primary' : 'btn-ghost'} btn-small`;
+    node.textContent = label;
+    node.addEventListener('click', onClick);
+    return node;
+  }
+
+  async function act(work: () => Promise<Kontoplan | void>, done = 'Lagret.'): Promise<void> {
+    setStatus(tableStatus, '');
+    try {
+      const answer = await work();
+      editing = null;
+      if (answer) plan = answer;
+      else plan = await getKontoplan(company.id, year);
+      render();
+      setStatus(tableStatus, done, 'ok');
+    } catch (error: unknown) {
+      setStatus(tableStatus, error instanceof ApiError ? error.message : 'Ble ikke lagret.');
+    }
+  }
+
+  function groupingCell(account: LedgerAccount): HTMLTableCellElement {
+    const cell = document.createElement('td');
+    if (editing?.id === account.id && editing.what === 'post' && plan !== null) {
+      const wrap = document.createElement('div');
+      wrap.className = 'row-edit';
+      const select = document.createElement('select');
+      groupingOptions(select, plan.groupings);
+      if (account.grouping_category !== null && account.grouping_code !== null) {
+        select.value = pairKey(account.grouping_category, account.grouping_code);
+      }
+      wrap.append(
+        select,
+        button(
+          'Lagre',
+          () => {
+            const [category, code] = select.value.split('|');
+            void act(() =>
+              setGrouping(company.id, account.id, {
+                year,
+                grouping_category: category ?? '',
+                grouping_code: code ?? '',
+              }),
+            );
+          },
+          true,
+        ),
+        button('Avbryt', () => {
+          editing = null;
+          render();
+        }),
+      );
+      cell.append(wrap);
+      return cell;
+    }
+    const text = document.createElement('span');
+    text.className = 'grouping-code';
+    text.textContent = describePair(account.grouping_category, account.grouping_code);
+    cell.append(text);
+    if (account.grouping_chosen_at !== null) {
+      const chosen = document.createElement('div');
+      chosen.className = 'chosen';
+      chosen.textContent = 'Valgt for hånd';
+      cell.append(chosen);
+    }
+    return cell;
+  }
+
+  function nameCell(account: LedgerAccount): HTMLTableCellElement {
+    const cell = document.createElement('td');
+    if (editing?.id === account.id && editing.what === 'navn') {
+      const wrap = document.createElement('div');
+      wrap.className = 'row-edit';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = account.description;
+      input.maxLength = 255;
+      input.setAttribute('aria-label', 'Navn');
+      wrap.append(
+        input,
+        button(
+          'Lagre',
+          () =>
+            void act(() =>
+              updateAccount(company.id, account.id, year, { description: input.value.trim() }),
+            ),
+          true,
+        ),
+        button('Avbryt', () => {
+          editing = null;
+          render();
+        }),
+      );
+      cell.append(wrap);
+      return cell;
+    }
+    cell.textContent = account.description;
+    return cell;
+  }
+
+  function render(): void {
+    if (plan === null) return;
+    el('#year').textContent = String(year);
+    show(el('#closed-note'), plan.closed);
+    const listNote = el('#list-note');
+    listNote.textContent =
+      plan.list_year === year
+        ? ''
+        : `Skatteetaten har ikke publisert postene for ${year} ennå. Valgene under er fra listen for ` +
+          `${plan.list_year}, og SAF-T-kontrollen sier fra om at året ikke er kontrollert mot sin egen.`;
+    show(listNote, plan.list_year !== year);
+    show(el('#add-card'), mayChange());
+    groupingOptions(addGrouping, plan.groupings);
+
+    const body = el<HTMLTableSectionElement>('#accounts');
+    body.replaceChildren();
+    const may = mayChange();
+    for (const account of plan.accounts) {
+      const row = document.createElement('tr');
+      row.dataset.active = String(account.is_active);
+      const number = document.createElement('td');
+      number.textContent = account.number;
+      const status = document.createElement('td');
+      status.textContent = account.is_locked
+        ? 'Brukes av Myntos'
+        : account.is_active
+          ? 'Aktiv'
+          : 'Deaktivert';
+      const actions = document.createElement('td');
+      const wrap = document.createElement('div');
+      wrap.className = 'row-actions';
+      if (may && editing === null) {
+        wrap.append(
+          button('Endre navn', () => {
+            editing = { id: account.id, what: 'navn' };
+            render();
+          }),
+        );
+        if (!plan.closed && account.grouping_category !== null) {
+          wrap.append(
+            button('Endre post', () => {
+              editing = { id: account.id, what: 'post' };
+              render();
+            }),
+          );
+        }
+        if (!account.is_locked) {
+          wrap.append(
+            button(account.is_active ? 'Deaktiver' : 'Aktiver', () => {
+              void act(
+                () =>
+                  updateAccount(company.id, account.id, year, { is_active: !account.is_active }),
+                account.is_active ? 'Deaktivert. Kontoen tilbys ikke i nye føringer.' : 'Aktivert.',
+              );
+            }),
+          );
+        }
+        // Slett bare det som aldri har vært brukt; resten deaktiveres.
+        if (!account.is_locked && !account.has_postings) {
+          wrap.append(
+            button('Slett', () => {
+              if (!window.confirm(`Slette konto ${account.number} ${account.description}?`)) return;
+              void act(() => deleteAccount(company.id, account.id), 'Slettet.');
+            }),
+          );
+        }
+      }
+      actions.append(wrap);
+      row.append(number, nameCell(account), groupingCell(account), status, actions);
+      body.append(row);
+    }
+  }
+
+  async function refresh(): Promise<void> {
+    el('#year').textContent = String(year);
+    setStatus(pageStatus, '');
+    try {
+      plan = await getKontoplan(company.id, year);
+      editing = null;
+      render();
+      show(el('#content'), true);
+    } catch (error: unknown) {
+      show(el('#content'), false);
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet kontoplanen.');
+    }
+  }
+
+  // Forslaget til post følger nummeret, men overstyrer ikke et valg personen
+  // alt har gjort i listen.
+  let pickedByHand = false;
+  addGrouping.addEventListener('change', () => {
+    pickedByHand = true;
+  });
+  addForm.querySelector<HTMLInputElement>('input[name="number"]')?.addEventListener('input', (event) => {
+    const value = (event.target as HTMLInputElement).value.trim();
+    if (!/^\d{4}$/.test(value) || pickedByHand) return;
+    void suggestAccount(company.id, value, year)
+      .then((suggestion) => {
+        const key = pairKey(suggestion.grouping_category, suggestion.grouping_code);
+        if ([...addGrouping.options].some((item) => item.value === key)) addGrouping.value = key;
+        el('#add-hint').textContent =
+          `Foreslått ut fra nummeret: ${describePair(suggestion.grouping_category, suggestion.grouping_code)}. ` +
+          'Et forslag, ikke en avgjørelse: velg en annen post hvis den passer bedre.';
+      })
+      .catch((error: unknown) => {
+        el('#add-hint').textContent = error instanceof ApiError ? error.message : '';
+      });
+  });
+
+  addForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(addForm);
+    const [category, code] = String(data.get('grouping') ?? '').split('|');
+    const submit = el<HTMLButtonElement>('#add-submit');
+    submit.disabled = true;
+    setStatus(addStatus, '');
+    void createAccount(company.id, year, {
+      number: String(data.get('number') ?? '').trim(),
+      description: String(data.get('description') ?? '').trim(),
+      grouping_category: pickedByHand ? (category ?? null) : null,
+      grouping_code: pickedByHand ? (code ?? null) : null,
+    })
+      .then((answer) => {
+        plan = answer;
+        addForm.reset();
+        pickedByHand = false;
+        render();
+        setStatus(addStatus, 'Kontoen er lagt til.', 'ok');
+      })
+      .catch((error: unknown) => {
+        setStatus(addStatus, error instanceof ApiError ? error.message : 'Kontoen ble ikke lagt til.');
+      })
+      .finally(() => {
+        submit.disabled = false;
+      });
+  });
+
+  function changeYear(step: number): void {
+    year += step;
+    void refresh();
+  }
+
+  el('#year-prev').addEventListener('click', () => changeYear(-1));
+  el('#year-next').addEventListener('click', () => changeYear(1));
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      const current = currentCompany(companies);
+      if (current === undefined) return;
+      company = current;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      await refresh();
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet selskapet.');
+    } finally {
+      el('#loading').hidden = true;
+    }
+  });
+</script>

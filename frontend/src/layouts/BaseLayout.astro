@@ -105,6 +105,11 @@ const features = [
     blurb: 'Organisasjon, roller og invitasjoner.',
   },
   {
+    href: '/funksjoner/#ki-agenter',
+    title: 'Din egen KI-assistent',
+    blurb: 'ChatGPT, Claude eller din egen modell, med en nøkkel.',
+  },
+  {
     href: '/funksjoner/#apen-kildekode',
     title: 'Offentlig kildekode',
     blurb: 'Hele programmet er til å ettergå.',
@@ -320,11 +325,12 @@ const gettingStarted = [
 
               Kort med vilje. Toppen er ikke et innholdsfortegnelse over alle
               sidene, den er de få stedene man går rett til flere ganger om
-              dagen. Kontantstrømmen nås fra oversikten, der tallene som får
-              deg til å gå dit står; kunder og leverandører nås fra fakturaen
-              og fra kontantstrømmen, der man faktisk trenger dem. En lenke
-              som står overalt er ikke lettere å finne enn én som står der
-              man er. */}
+              dagen: oversikten, Betaling (kontantstrømmen), Faktura og KI.
+              Kunder og leverandører nås fra fakturaen og fra kontantstrømmen,
+              der man faktisk trenger dem; mva-meldingen fra mva-tallet på
+              oversikten; bank, SAF-T og årets åpning og avslutning fra notatet
+              under oversiktens tall. En lenke som står overalt er ikke lettere
+              å finne enn én som står der man er. */}
           {/* Rekkefølgen er arbeidsdagen: oversikten først, så det man gjør
               oftest. En betaling føres når den skjer, en faktura skrives når
               det passer, og KI er hjelpen man ber om underveis.
@@ -337,6 +343,13 @@ const gettingStarted = [
             <a class="nav-link" href="/kontantstrom/">Betaling</a>
             <a class="nav-link" href="/faktura/">Faktura</a>
             <a class="nav-link" href="/ki/">KI</a>
+            {/* Bare for et selskap som har slått på nøkler: uten dem finnes det
+                ingenting å godkjenne, og en lenke til en tom side er støy i
+                menyen alle bruker. Tallet er det som venter på deg, og står
+                bare når det er noe (lib/company.ts, mountApprovalsLink). */}
+            <a class="nav-link" href="/godkjenning/" data-approvals hidden>
+              Godkjenning<span class="nav-count" data-approvals-count hidden></span>
+            </a>
           </div>
 
           <div class="nav-group nav-actions">
@@ -465,6 +478,10 @@ const gettingStarted = [
                     <a class="nav-menu-handling" href="/organisasjon/#selskap">
                       Innstillinger for selskapet
                     </a>
+                    {/* Kontoen er personen, ikke selskapet: innloggingene og
+                        slettingen gjelder alle regnskapene på én gang, og hører
+                        derfor ikke hjemme på selskapets side. */}
+                    <a class="nav-menu-handling" href="/konto/">Din konto</a>
                   </div>
                 </div>
               </div>
@@ -927,6 +944,20 @@ const gettingStarted = [
 
   .nav-link:hover {
     color: var(--fg-strong);
+  }
+
+  .nav-count {
+    display: inline-block;
+    min-width: 1.3rem;
+    margin-left: 0.35rem;
+    padding: 0 0.35rem;
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+    color: var(--accent-fg);
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1.3rem;
+    text-align: center;
   }
 
   /* Selskapet over, personen under: to linjer i én kolonne, slik at høyden
@@ -1928,6 +1959,82 @@ const gettingStarted = [
   .detail dd {
     margin: 0.15rem 0 0;
     font-variant-numeric: tabular-nums;
+  }
+
+  /* Datoen og bilagsnummeret i registeret: beskrivelsen gir plass, ikke de. */
+  table.data td.nowrap {
+    white-space: nowrap;
+  }
+
+  /* --- Bilagsfilene i detaljlinjen -----------------------------------------
+     Her og ikke på /kontantstrom/, av samme grunn som radene over: de bygges
+     med createElement. Stilen for miniatyren sto på siden en stund, traff
+     aldri, og hvert bilde ble tegnet i full størrelse — ti av dem gjorde én
+     føring høyere enn skjermen.
+  ------------------------------------------------------------------------- */
+
+  /* Over hele bredden: filnavn er lange, og en kolonne på ni rem ville kuttet
+     alle til de samme første tegnene. */
+  .detail .detail-files {
+    grid-column: 1 / -1;
+  }
+  .bilag-files {
+    list-style: none;
+    margin: 0.3rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: 0.4rem 1.25rem;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr));
+  }
+  /* Miniatyr, merke, navn, i faste kolonner, så merkene står rett under
+     hverandre også når noen av filene er PDF-er uten miniatyr. Trykker man på
+     raden, får man filen slik den ble lastet opp. */
+  .bilag-file {
+    display: grid;
+    grid-template-columns: 2.5rem auto minmax(0, 1fr);
+    align-items: center;
+    gap: 0.6rem;
+    color: inherit;
+    text-decoration: none;
+  }
+  .bilag-file:hover .bilag-name {
+    text-decoration: underline;
+  }
+  .bilag-thumb {
+    display: block;
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+  .bilag-thumb img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: var(--radius-small);
+    border: 1px solid var(--border-strong);
+    background: var(--surface-3);
+  }
+  .bilag-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.85rem;
+  }
+
+  /* Merket som åpner detaljlinjen når et bilag har flere filer. En knapp,
+     fordi det ikke er én fil å lenke til, men kledd som de andre merkene. */
+  button.badge {
+    border: 0;
+    font-family: inherit;
+    line-height: inherit;
+    cursor: pointer;
+  }
+  button.badge:hover {
+    color: var(--fg);
+  }
+  button.badge:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 
   .badge {

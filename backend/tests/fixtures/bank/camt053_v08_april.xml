@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hand-built camt.053.001.08, in the 2019 shape: related parties wrapped in
+     Pty, status as Sts/Cd, the account as a bare BBAN, opening as PRCD. No real
+     bank data. Overlaps camt053_v02_mars.xml on purpose: it starts 2026-03-16
+     and repeats the two March entries from that day on, under the same bank
+     references. -->
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.08">
+  <BkToCstmrStmt>
+    <GrpHdr>
+      <MsgId>TESTBANK-20260416-000007</MsgId>
+      <CreDtTm>2026-04-16T06:00:00+02:00</CreDtTm>
+    </GrpHdr>
+    <Stmt>
+      <Id>2026-0416-15062033158</Id>
+      <CreDtTm>2026-04-16T06:00:00+02:00</CreDtTm>
+      <FrToDt>
+        <FrDtTm>2026-03-16T00:00:00+01:00</FrDtTm>
+        <ToDtTm>2026-04-15T23:59:59+02:00</ToDtTm>
+      </FrToDt>
+      <Acct>
+        <Id><Othr><Id>15062033158</Id><SchmeNm><Cd>BBAN</Cd></SchmeNm></Othr></Id>
+        <Ccy>NOK</Ccy>
+      </Acct>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>PRCD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="NOK">22500.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-03-15</Dt></Dt>
+      </Bal>
+      <Bal>
+        <Tp><CdOrPrtry><Cd>CLBD</Cd></CdOrPrtry></Tp>
+        <Amt Ccy="NOK">21951.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Dt><Dt>2026-04-15</Dt></Dt>
+      </Bal>
+      <Ntry>
+        <Amt Ccy="NOK">1250.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-03-16</Dt></BookgDt>
+        <ValDt><Dt>2026-03-16</Dt></ValDt>
+        <AcctSvcrRef>9926031600002</AcctSvcrRef>
+        <BkTxCd/>
+        <NtryDtls>
+          <TxDtls>
+            <RltdPties><Cdtr><Pty><Nm>KONTORLAND AS</Nm></Pty></Cdtr></RltdPties>
+            <RmtInf><Ustrd>Ordre 4711</Ustrd><Ustrd>Kontorrekvisita</Ustrd></RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+      <Ntry>
+        <Amt Ccy="NOK">49.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-03-31</Dt></BookgDt>
+        <ValDt><Dt>2026-03-31</Dt></ValDt>
+        <AcctSvcrRef>9926033100003</AcctSvcrRef>
+        <BkTxCd/>
+        <AddtlNtryInf>Kontohold mars</AddtlNtryInf>
+      </Ntry>
+      <Ntry>
+        <Amt Ccy="NOK">25.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-04-02</Dt></BookgDt>
+        <ValDt><Dt>2026-04-02</Dt></ValDt>
+        <BkTxCd/>
+        <AddtlNtryInf>Kortgebyr</AddtlNtryInf>
+      </Ntry>
+      <Ntry>
+        <Amt Ccy="NOK">25.00</Amt>
+        <CdtDbtInd>DBIT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-04-02</Dt></BookgDt>
+        <ValDt><Dt>2026-04-02</Dt></ValDt>
+        <BkTxCd/>
+        <AddtlNtryInf>Kortgebyr</AddtlNtryInf>
+      </Ntry>
+      <Ntry>
+        <Amt Ccy="NOK">800.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts><Cd>BOOK</Cd></Sts>
+        <BookgDt><Dt>2026-04-10</Dt></BookgDt>
+        <ValDt><Dt>2026-04-10</Dt></ValDt>
+        <AcctSvcrRef>9926041000005</AcctSvcrRef>
+        <BkTxCd/>
+        <NtryDtls>
+          <TxDtls>
+            <Refs><EndToEndId>E2E-OLA-1</EndToEndId></Refs>
+            <RltdPties><Dbtr><Pty><Nm>Ola Nordmann</Nm></Pty></Dbtr></RltdPties>
+            <RmtInf><Ustrd>Innskudd fra eier</Ustrd></RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+      <Ntry>
+        <Amt Ccy="NOK">100.00</Amt>
+        <CdtDbtInd>CRDT</CdtDbtInd>
+        <Sts><Cd>PDNG</Cd></Sts>
+        <BookgDt><Dt>2026-04-15</Dt></BookgDt>
+        <BkTxCd/>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+</Document>

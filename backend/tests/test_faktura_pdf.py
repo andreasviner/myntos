@@ -139,7 +139,7 @@ def test_the_vat_breakdown_is_printed_group_by_group() -> None:
     document = issued(
         lines=[
             make_line(1, unit_price="1000.00", tax_code="3"),
-            make_line(2, unit_price="200.00", tax_code="32"),
+            make_line(2, unit_price="200.00", tax_code="33"),
             make_line(3, unit_price="100.00", tax_code="52"),
         ]
     )

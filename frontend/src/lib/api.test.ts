@@ -228,3 +228,90 @@ describe('watching a bilag being read', () => {
     await expect(api.interpretDocumentStreaming(12, [], undefined)).rejects.toThrow(/avbrutt/);
   });
 });
+
+describe('a thumbnail', () => {
+  // An <img src> would be a request this wall never sees, which is why the
+  // thumbnail is fetched through it instead.
+  it('of another company is refused before the request is sent', async () => {
+    const { api, fetchMock } = await load(storedCompany(12));
+
+    await expect(api.fetchThumbnail(99, 5)).rejects.toBeInstanceOf(api.WrongCompanyError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('that does not exist is null, so the page falls back to the badge', async () => {
+    const { api, fetchMock } = await load(storedCompany(12));
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 404 }));
+
+    await expect(api.fetchThumbnail(12, 5)).resolves.toBeNull();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+});
+
+describe('starting a federated flow', () => {
+  it('says what the flow is for only when it is not an ordinary login', async () => {
+    // A BankID nobody has linked is refused at login and held at signup, so
+    // the sign-up page losing its intent would turn every BankID signup into
+    // "no account is linked to this BankID".
+    const { api } = await load({});
+    const login = new URL(api.providerStartUrl('bankid', '/'));
+    expect(login.pathname).toBe('/api/v1/auth/bankid/start');
+    expect(login.searchParams.get('redirect_to')).toBe('/');
+    expect(login.searchParams.has('intent')).toBe(false);
+
+    const signup = new URL(api.providerStartUrl('bankid', '/invitasjon/?token=a&b=c', 'signup'));
+    expect(signup.searchParams.get('intent')).toBe('signup');
+    expect(signup.searchParams.get('redirect_to')).toBe('/invitasjon/?token=a&b=c');
+
+    // Linking is for Google and Microsoft. BankID is switched to with
+    // startBankidLink, which the backend wants the password for.
+    const link = new URL(api.providerStartUrl('google', '/konto/', 'link'));
+    expect(link.searchParams.get('intent')).toBe('link');
+  });
+
+  it('starts the switch to BankID as a POST carrying the password, outside every company', async () => {
+    // A GET could be put in front of a signed-in browser by any page, and the
+    // switch takes the password and every other way in away.
+    const { api, fetchMock } = await load(storedCompany(12), {
+      authorization_url: 'https://myntos.idura.broker/oauth2/authorize?state=s',
+    });
+    const answer = await api.startBankidLink('hemmelig', '/konto/?byttet=bankid');
+    expect(answer.authorization_url).toContain('idura.broker');
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url.endsWith('/api/v1/auth/bankid/link')).toBe(true);
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({
+      password: 'hemmelig',
+      redirect_to: '/konto/?byttet=bankid',
+    });
+  });
+
+  it('asks for the switch to e-mail without naming an address', async () => {
+    // The link goes to the address on the account and no other, so the page
+    // has nothing to send but the request.
+    const { api, fetchMock } = await load(storedCompany(12), { sent: true, email: 'k@x.no' });
+    await api.requestSwitchToEmail();
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url.endsWith('/api/v1/account/switch-to-email')).toBe(true);
+    expect(init.method).toBe('POST');
+    expect(init.body ?? null).toBeNull();
+
+    await api.confirmSwitchToEmail('abc', 'et-langt-passord');
+    const [confirmUrl, confirmInit] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+    expect(confirmUrl.endsWith('/api/v1/auth/switch-to-email/confirm')).toBe(true);
+    expect(JSON.parse(String(confirmInit.body))).toEqual({
+      token: 'abc',
+      new_password: 'et-langt-passord',
+    });
+  });
+
+  it('removes a sign-in by provider, outside every company', async () => {
+    // The person's own ways in belong to no company, so the wall has nothing
+    // to compare and must not refuse the request while a company is open.
+    const { api, fetchMock } = await load(storedCompany(12));
+    await api.unlinkAccountIdentity('bankid');
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url.endsWith('/api/v1/account/identities/bankid')).toBe(true);
+    expect(init.method).toBe('DELETE');
+  });
+});

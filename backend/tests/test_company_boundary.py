@@ -27,7 +27,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from myntos.main import create_app
-from tests.conftest import register, write
+from tests.conftest import agent_header, assert_key_refused, register, write
 
 # Two real orgnrs, so the check digits hold and the creations succeed.
 MINE = "910000012"
@@ -119,6 +119,31 @@ def test_no_route_answers_for_another_organizations_company(
         f"{method} {path} answered {response.status_code} for another organization's company: "
         f"{response.text[:200]}"
     )
+
+
+@pytest.mark.parametrize(("method", "path"), _company_scoped_routes())
+def test_no_route_answers_a_key_for_another_organizations_company(
+    client: TestClient, method: str, path: str
+) -> None:
+    """The same wall, with a key instead of a session (docs/agents-and-api.md rule 9).
+
+    The second person makes a key for their own books and their agent asks
+    about the first person's company. A key is checked by a gate of its own
+    before the membership join runs, so this is a second wall and not the
+    first one tested twice: either could be removed and the other would still
+    have to hold.
+    """
+    first = register(client)
+    theirs = _company(client, first, MINE)
+
+    second = register(client, "per@example.no", full_name="Per Hansen")
+    own = _company(client, second, THEIRS)
+    header = agent_header(client, own["id"])
+
+    url = re.sub(r"\{[^}]+\}", "1", path.replace("{company_id}", str(theirs["id"])))
+    response = write(client, method, url, json={}, headers=header)
+
+    assert_key_refused(response, method, path)
 
 
 def test_the_company_list_shows_only_your_own(client: TestClient) -> None:

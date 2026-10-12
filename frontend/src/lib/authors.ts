@@ -30,10 +30,15 @@ export const UNKNOWN_AUTHOR = 'Ukjent';
  *
  * Grouped by id and not by name: two people called Ola Nordmann on the same
  * books are two authors, and the whole point of the mark is telling them apart.
+ *
+ * A person and a key they made count as two hands. Kari typing an entry and
+ * Kari's agent posting one are different answers to "who did this", and a
+ * register written by both is exactly where the reader needs to tell which
+ * rows came from the agent (docs/agents-and-api.md rule 6).
  */
 export function authorCount(entries: CashFlowEntry[]): number {
-  const seen = new Set<number | null>();
-  for (const entry of entries) seen.add(entry.created_by_id);
+  const seen = new Set<string>();
+  for (const entry of entries) seen.add(`${entry.created_by_id ?? ''}|${entry.created_via ?? ''}`);
   return seen.size;
 }
 
@@ -48,5 +53,9 @@ export function authorOf(entry: CashFlowEntry): string {
   // signup, so a blank one means something went wrong upstream, and printing
   // nothing at all would read as though the row had no mark.
   const name = entry.created_by_name?.trim();
-  return name === undefined || name === '' ? UNKNOWN_AUTHOR : name;
+  const who = name === undefined || name === '' ? UNKNOWN_AUTHOR : name;
+  // The person first and the key after, because the person is the one who
+  // registered the entry in the law's sense; the key is how.
+  const via = entry.created_via?.trim();
+  return via === undefined || via === '' ? who : `${who} via «${via}»`;
 }

@@ -1,0 +1,890 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+{/* Personens egen konto, ikke et selskap. Siden er derfor den ene i
+    programmet som ikke har et selskapsnavn i overskriften: alt her gjelder
+    deg, på tvers av alle regnskapene du er med i. */}
+<BaseLayout
+  title="Din konto | Myntos"
+  description="Se hvordan og hvor du er logget inn, bytt mellom BankID og e-post, logg ut enheter, og slett kontoen din."
+>
+  <header class="page-head">
+    <p class="eyebrow">Din konto</p>
+    <h1 data-session-name></h1>
+    <p class="muted" id="epost"></p>
+  </header>
+
+  <p class="status" id="page-status" hidden></p>
+
+  {/* Hvordan du kommer inn, ikke hvor du er logget inn (det er kortet under).
+      Om en innlogging kan fjernes, avgjør backend: den siste veien inn skal
+      aldri kunne fjernes, og knappen vises bare når svaret er ja.
+
+      BankID og alt annet utelukker hverandre. BankIDs vilkår forbyr å bruke en
+      BankID-innlogging til å sette opp, gjenopprette eller styrke en innlogging
+      hos oss (ID-veksling, se docs/integrations/bankid.md). En konto som logger
+      inn med BankID, har derfor ikke passord og ikke Google eller Microsoft, og
+      begge veier mellom BankID og e-post er et bytte som tar den andre
+      innloggingen bort. Derfor er begge et eget steg med advarsel og
+      avkrysning, og ikke en lenke. */}
+  <section class="card" id="innloggingsmater" aria-labelledby="innloggingsmater-tittel">
+    <h2 class="card-title" id="innloggingsmater-tittel">Slik logger du inn</h2>
+    <p class="metode" id="metode"></p>
+    <p class="card-hint" id="mater-hint" hidden>
+      En innlogging du kobler til her, gjelder kontoen du er logget inn på nå, og bare den.
+    </p>
+    <p class="status" id="mater-status" hidden></p>
+    <ul class="sesjoner" id="mater"></ul>
+    <div class="leverandorer" id="koble-til"></div>
+
+    {/* Fra e-post, Google eller Microsoft til BankID. Passordet kreves fordi en
+        kapret økt ellers kunne koble til sin egen BankID, slette passordet og
+        logge eieren ut overalt: da ville kontoen vært den andres for godt. Uten
+        passord på kontoen er en fersk innlogging beviset, som ved sletting. */}
+    <form class="bytte" id="til-bankid" novalidate hidden>
+      <p class="advarsel">
+        <strong>Når du kobler til BankID, kan du bare logge inn med BankID.</strong> Passordet ditt og
+        innlogging med Google eller Microsoft slutter å virke.
+      </p>
+      <p class="card-hint">
+        Du blir også logget ut på alle andre enheter. Vil du tilbake senere, kan du bytte til e-post
+        og passord her.
+      </p>
+      <p class="status" id="til-bankid-status" hidden></p>
+      <label class="field" id="til-bankid-passord" hidden>
+        <span>Passordet ditt</span>
+        <input type="password" name="bankid-password" autocomplete="current-password" />
+        <span class="field-hint">For å vise at det er du som bytter, og ikke bare nettleseren din.</span>
+      </label>
+      <div class="leverandorer" id="til-bankid-ny-innlogging"></div>
+      <label class="avkrysning">
+        <input type="checkbox" id="til-bankid-forstar" />
+        <span>Jeg forstår at jeg bare kan logge inn med BankID etterpå.</span>
+      </label>
+      <div class="handlinger">
+        <button type="submit" class="btn btn-primary" id="til-bankid-bekreft" disabled>
+          Fortsett til BankID
+        </button>
+        <button type="button" class="btn btn-ghost" id="til-bankid-avbryt">Avbryt</button>
+      </div>
+    </form>
+
+    {/* Fra BankID til e-post. Det er her BankID er porten: man starter det
+        innlogget med BankID. Derfor er det lenken i e-posten, ikke BankID, som
+        lager passordet, og ingenting endres før den er brukt. Adressen er den
+        kontoen har, og kan ikke velges her. */}
+    <button type="button" class="btn btn-ghost btn-small" id="til-epost-start" hidden>
+      Bytt til innlogging med e-post
+    </button>
+    <p class="card-hint" id="til-epost-umulig" hidden>
+      Denne installasjonen sender ikke e-post, så kontoen kan ikke bytte fra BankID herfra.
+    </p>
+    <form class="bytte" id="til-epost" novalidate hidden>
+      <p class="advarsel">
+        <strong>Når du bytter til e-post, slutter innlogging med BankID å virke for denne kontoen.</strong>
+      </p>
+      <p class="card-hint">
+        Vi sender en lenke til <strong id="til-epost-adresse"></strong>. Byttet skjer først når du har
+        valgt passord med lenken, og da blir alle som er logget inn på kontoen, logget ut. Til da
+        logger du inn med BankID som før.
+      </p>
+      <p class="status" id="til-epost-status" hidden></p>
+      <label class="avkrysning">
+        <input type="checkbox" id="til-epost-forstar" />
+        <span>Jeg forstår at BankID slutter å virke for kontoen når jeg har valgt passord.</span>
+      </label>
+      <div class="handlinger">
+        <button type="submit" class="btn btn-primary" id="til-epost-bekreft" disabled>
+          Send lenken
+        </button>
+        <button type="button" class="btn btn-ghost" id="til-epost-avbryt">Avbryt</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card" id="innlogginger" aria-labelledby="innlogginger-tittel">
+    <h2 class="card-title" id="innlogginger-tittel">Innloggingene dine</h2>
+    <p class="card-hint" id="innlogginger-hint">
+      Her er du logget inn nå. Kjenner du ikke igjen en av dem, logg den ut og bytt passord.
+    </p>
+    <p class="status" id="innlogging-status" hidden></p>
+    <p class="empty" id="innlogging-laster">Henter …</p>
+    <ul class="sesjoner" id="sesjoner"></ul>
+    <button type="button" class="btn btn-ghost btn-small" id="logg-ut-andre" hidden>
+      Logg ut alle andre enheter
+    </button>
+  </section>
+
+  <section class="card" id="slett" aria-labelledby="slett-tittel">
+    <h2 class="card-title" id="slett-tittel">Slett kontoen</h2>
+
+    {/* Hva som slettes og hva som blir, står før knappen og ikke i en
+        bekreftelsesboks etterpå: det er dette man skal ta stilling til, og
+        det er lettere å lese når man ikke allerede har bestemt seg. */}
+    <div class="to-kolonner">
+      <div>
+        <h3>Dette slettes</h3>
+        <ul>
+          <li>E-postadressen og passordet ditt</li>
+          <li>Innlogging med Google, Microsoft eller BankID</li>
+          <li>Koblingen til ID-porten, med fødselsnummeret</li>
+          <li>Alle innloggingene dine, med IP-adresse og nettleser</li>
+          <li>Tilgangen din til alle regnskap, og invitasjoner sendt til deg</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Dette blir hos selskapet</h3>
+        <ul>
+          <li>Bilag, føringer, fakturaer og mva-meldinger du har registrert</li>
+          <li>
+            Navnet ditt på føringene du har gjort, slik at regnskapet fortsatt viser hvem som
+            registrerte dem
+          </li>
+        </ul>
+      </div>
+    </div>
+    <p class="card-hint">
+      Regnskapet er selskapets, ikke ditt. Bokføringsloven krever at det oppbevares i fem år, og
+      at det går an å se hvem som har registrert hver føring. Derfor blir navnet ditt stående på
+      det du har ført, men ingenting annet om deg: ingen adresse, ingen innlogging og ingen
+      tilgang.
+    </p>
+
+    <p class="empty" id="plan-laster">Henter …</p>
+    <ul class="selskaper" id="selskaper" hidden></ul>
+
+    {/* Sperren. Den står i stedet for knappen, ikke ved siden av en knapp som
+        ikke virker: det som skal gjøres er å gi regnskapet videre. */}
+    <div class="sperre" id="sperre" hidden>
+      <p>
+        <strong>Kontoen kan ikke slettes ennå.</strong> Du er eneste eier av regnskap som noen
+        fortsatt trenger. Gjør en annen til eier først, under «Medlemmer» på selskapets side. Har
+        ingen andre tilgang, inviter den som skal ta over regnskapet som eier.
+      </p>
+    </div>
+
+    <button type="button" class="btn btn-ghost" id="slett-start" hidden>Slett kontoen …</button>
+
+    {/* Et steg, ikke en dialog: dette kan ikke angres. Se
+        docs/frontend-conventions.md, «Irreversible actions get a step». */}
+    <form id="slett-steg" novalidate hidden>
+      <p class="status" id="slett-status" hidden></p>
+
+      <label class="field" id="passord-felt" hidden>
+        <span>Passordet ditt</span>
+        <input type="password" name="password" autocomplete="current-password" />
+        <span class="field-hint">For å vise at det er du som sletter, og ikke bare nettleseren din.</span>
+      </label>
+
+      {/* Kontoer uten passord har ingenting å skrive inn, så en fersk
+          innlogging er beviset. */}
+      <div id="ny-innlogging" hidden>
+        <p class="card-hint" id="ny-innlogging-tekst"></p>
+        <div class="leverandorer" id="leverandorer"></div>
+      </div>
+
+      <label class="avkrysning">
+        <input type="checkbox" id="forstar" />
+        <span>Jeg forstår at kontoen ikke kan gjenopprettes.</span>
+      </label>
+
+      <div class="handlinger">
+        <button type="submit" class="btn btn-fare" id="slett-bekreft" disabled>
+          Slett kontoen for godt
+        </button>
+        <button type="button" class="btn btn-ghost" id="slett-avbryt">Avbryt</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card" id="slettet" hidden>
+    <h2 class="card-title">Kontoen er slettet</h2>
+    <p>
+      Du er logget ut overalt, og vi har ikke lenger noen måte å nå deg på. Regnskapene du var med
+      i, er der fortsatt for dem som eier dem.
+    </p>
+    <a class="btn btn-primary" href="/">Til forsiden</a>
+  </section>
+</BaseLayout>
+
+<style>
+  .page-head {
+    margin-bottom: 1.25rem;
+  }
+  .page-head h1 {
+    margin: 0.3rem 0 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .page-head p {
+    margin: 0.2rem 0 0;
+  }
+  .sesjoner,
+  .selskaper {
+    list-style: none;
+    margin: 1rem 0;
+    padding: 0;
+  }
+  .sesjoner li,
+  .selskaper li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    padding: 0.7rem 0;
+    border-top: 1px solid var(--border);
+  }
+  .sesjoner li:last-child,
+  .selskaper li:last-child {
+    border-bottom: 1px solid var(--border);
+  }
+  .enhet {
+    font-weight: 620;
+  }
+  .her {
+    color: var(--accent);
+    font-size: 0.85rem;
+    font-weight: 700;
+    margin-left: 0.4rem;
+  }
+  .tider {
+    display: block;
+    color: var(--muted);
+    font-size: 0.88rem;
+  }
+  .to-kolonner {
+    display: grid;
+    gap: 0 1.5rem;
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  }
+  .to-kolonner h3 {
+    font-size: 0.95rem;
+    margin: 1rem 0 0.4rem;
+  }
+  .to-kolonner ul {
+    margin: 0 0 0.75rem;
+    padding-left: 1.2rem;
+  }
+  .utfall {
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  .utfall[data-tone='error'] {
+    color: var(--danger);
+    font-weight: 620;
+  }
+  .sperre {
+    background: var(--danger-bg);
+    border: 1px solid var(--danger-line);
+    border-radius: var(--radius-small);
+    color: var(--danger);
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+  }
+  .sperre p {
+    margin: 0;
+  }
+  .metode {
+    font-weight: 620;
+    margin: 0.4rem 0 0.25rem;
+  }
+  .bytte {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
+  /* Gul, ikke rød: et bytte kan gjøres om, bare ikke med den innloggingen det
+     tar bort. Rødt er for slettingen, som ikke kan gjøres om i det hele tatt. */
+  .advarsel {
+    background: var(--gold-soft);
+    border-radius: var(--radius-small);
+    color: var(--gold);
+    padding: 0.75rem 1rem;
+    margin: 0 0 0.75rem;
+  }
+  #slett-steg {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
+  .avkrysning {
+    display: flex;
+    gap: 0.6rem;
+    align-items: flex-start;
+    margin: 1rem 0;
+  }
+  .handlinger,
+  .leverandorer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+  .leverandorer {
+    margin: 0.75rem 0;
+  }
+  /* Rød, og bare her: det er den eneste knappen i programmet som ikke kan
+     angres på noen måte, heller ikke med en kreditnota. */
+  .btn-fare {
+    background: var(--danger);
+    color: #ffffff;
+  }
+  .btn-fare:hover:not(:disabled) {
+    filter: brightness(0.92);
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    endAccountSession,
+    endOtherAccountSessions,
+    eraseAccount,
+    getErasurePlan,
+    getProviders,
+    listAccountIdentities,
+    listAccountSessions,
+    providerStartUrl,
+    requestSwitchToEmail,
+    startBankidLink,
+    unlinkAccountIdentity,
+    type AccountIdentity,
+    type AccountSession,
+    type ErasurePlan,
+    type ProviderSummary,
+    type Session,
+  } from '../lib/api';
+  import { loadCompanies } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import { CALLBACK_ERRORS } from '../lib/providers';
+  import {
+    forgetChrome,
+    loadSession,
+    redirectToLogin,
+    rememberAuth,
+    setActiveCompany,
+    setAuthState,
+  } from '../lib/session';
+  import { describeSignIn, isBankidAccount } from '../lib/signin';
+  import { clearActiveCompany } from '../lib/tenant';
+
+  const TIME = new Intl.DateTimeFormat('nb-NO', { dateStyle: 'medium', timeStyle: 'short' });
+  const PROVIDERS: Record<string, string> = {
+    google: 'Google',
+    microsoft: 'Microsoft',
+    bankid: 'BankID',
+  };
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const sessionStatus = el<HTMLParagraphElement>('#innlogging-status');
+  const sessionList = el<HTMLUListElement>('#sesjoner');
+  const endOthers = el<HTMLButtonElement>('#logg-ut-andre');
+  const eraseStatus = el<HTMLParagraphElement>('#slett-status');
+  const eraseStep = el<HTMLFormElement>('#slett-steg');
+  const eraseStart = el<HTMLButtonElement>('#slett-start');
+  const eraseConfirm = el<HTMLButtonElement>('#slett-bekreft');
+  const understood = el<HTMLInputElement>('#forstar');
+  const passwordInput = el<HTMLInputElement>('input[name="password"]');
+
+  let session: Session;
+  let plan: ErasurePlan | null = null;
+
+  function message(error: unknown, fallback: string): string {
+    return error instanceof ApiError ? error.message : fallback;
+  }
+
+  // --- Slik logger du inn -------------------------------------------------------------
+
+  const waysStatus = el<HTMLParagraphElement>('#mater-status');
+  const DATE = new Intl.DateTimeFormat('nb-NO', { dateStyle: 'medium' });
+
+  function wayRow(title: string, detail: string, action: HTMLElement | null): HTMLLIElement {
+    const item = document.createElement('li');
+    const text = document.createElement('div');
+    const name = document.createElement('span');
+    name.className = 'enhet';
+    name.textContent = title;
+    const more = document.createElement('span');
+    more.className = 'tider';
+    more.textContent = detail;
+    text.append(name, more);
+    item.append(text);
+    if (action !== null) item.append(action);
+    return item;
+  }
+
+  function identityRow(identity: AccountIdentity): HTMLLIElement {
+    const used =
+      identity.last_login_at === null
+        ? 'ikke brukt ennå'
+        : `sist brukt ${TIME.format(new Date(identity.last_login_at))}`;
+    const detail = `Koblet til ${DATE.format(new Date(identity.linked_at))}, ${used}`;
+    // BankID fjernes aldri med en knapp. Veien ut er byttet til e-post, som
+    // tar den bort først når lenken i e-posten har satt et passord.
+    if (identity.provider === 'bankid') {
+      return wayRow(identity.label, `${detail}. Den eneste måten inn på kontoen.`, null);
+    }
+    if (!identity.removable) {
+      return wayRow(identity.label, `${detail}. Den eneste måten inn, så den kan ikke fjernes.`, null);
+    }
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-ghost btn-small';
+    button.textContent = 'Fjern';
+    button.addEventListener('click', () => {
+      button.disabled = true;
+      void unlinkAccountIdentity(identity.provider)
+        .then(async () => {
+          // Økten må hentes på nytt: «logg inn på nytt med …» under sletting
+          // skal ikke tilby en innlogging som nettopp ble fjernet.
+          session = (await loadSession(true)) ?? session;
+          if (plan !== null) renderProof(plan);
+          await refreshWays();
+          setStatus(waysStatus, `Innlogging med ${identity.label} er fjernet.`, 'ok');
+        })
+        .catch((error: unknown) => {
+          setStatus(waysStatus, message(error, 'Vi fikk ikke fjernet innloggingen.'));
+          button.disabled = false;
+        });
+    });
+    return wayRow(identity.label, detail, button);
+  }
+
+  /** «Koble til …». BankID er en knapp som åpner byttet, de andre en lenke. */
+  function connectButton(provider: ProviderSummary): HTMLElement {
+    if (provider.code === 'bankid') {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn btn-ghost btn-small';
+      button.textContent = `Koble til ${provider.label}`;
+      button.addEventListener('click', openToBankid);
+      return button;
+    }
+    const link = document.createElement('a');
+    link.className = 'btn btn-ghost btn-small';
+    link.href = providerStartUrl(provider.code, '/konto/#innloggingsmater', 'link');
+    link.textContent = `Koble til ${provider.label}`;
+    return link;
+  }
+
+  async function refreshWays(): Promise<void> {
+    try {
+      const [identities, offered] = await Promise.all([
+        listAccountIdentities(),
+        getProviders().catch(() => null),
+      ]);
+      const bankid = isBankidAccount(session.user);
+      el('#metode').textContent = describeSignIn(session.user);
+      show(el('#mater-hint'), !bankid);
+      el('#innlogginger-hint').textContent = bankid
+        ? 'Her er du logget inn nå. Kjenner du ikke igjen en av dem, logg den ut.'
+        : 'Her er du logget inn nå. Kjenner du ikke igjen en av dem, logg den ut og bytt passord.';
+
+      // En BankID-konto har ikke passord og kan ikke få et uten å bytte, så
+      // en rad som sa «Ikke satt» ville se ut som noe man kunne gjøre noe med.
+      const password = wayRow('Passord', session.user.has_password ? 'Satt' : 'Ikke satt', null);
+      el('#mater').replaceChildren(...(bankid ? [] : [password]), ...identities.map(identityRow));
+
+      // Bare det denne installasjonen faktisk har satt opp, og bare det som
+      // ikke er koblet til fra før. Ingenting kobles til en BankID-konto.
+      const linked = new Set(identities.map((identity) => identity.provider));
+      el('#koble-til').replaceChildren(
+        ...(bankid ? [] : (offered?.providers ?? []))
+          .filter((provider) => !linked.has(provider.code))
+          .map(connectButton),
+      );
+
+      const mailed = offered?.email_delivery ?? false;
+      if (bankid) show(toBankid, false);
+      else show(toEmail, false);
+      show(toEmailStart, bankid && mailed && toEmail.hidden);
+      show(el('#til-epost-umulig'), bankid && offered !== null && !mailed);
+    } catch (error: unknown) {
+      setStatus(waysStatus, message(error, 'Vi fikk ikke hentet innloggingsmåtene dine.'));
+    }
+  }
+
+  // En kobling som feilet, kommer tilbake hit med en fast kode, aldri
+  // leverandørens egen tekst. Et bytte til BankID som gikk gjennom, kommer
+  // tilbake med ?byttet=bankid, og beskjeden vises bare når økten bekrefter det.
+  const pageParams = new URLSearchParams(window.location.search);
+  const linkError = pageParams.get('error');
+  if (linkError !== null) {
+    setStatus(waysStatus, CALLBACK_ERRORS[linkError] ?? 'Koblingen feilet. Prøv en gang til.');
+  }
+  const switched = pageParams.get('byttet');
+
+  /** Ta ?byttet= og ?error= av adresselinjen, så en omlasting ikke gjentar beskjeden. */
+  function forgetQuery(): void {
+    try {
+      window.history.replaceState(null, '', window.location.pathname + window.location.hash);
+    } catch {
+      // Beskjeden er allerede vist; resten av siden virker uansett.
+    }
+  }
+
+  // --- Bytte til BankID -----------------------------------------------------------
+
+  const toBankid = el<HTMLFormElement>('#til-bankid');
+  const toBankidStatus = el<HTMLParagraphElement>('#til-bankid-status');
+  const toBankidConfirm = el<HTMLButtonElement>('#til-bankid-bekreft');
+  const toBankidUnderstood = el<HTMLInputElement>('#til-bankid-forstar');
+  const toBankidPassword = el<HTMLInputElement>('input[name="bankid-password"]');
+
+  function updateToBankid(): void {
+    toBankidConfirm.disabled =
+      !toBankidUnderstood.checked || (session.user.has_password && toBankidPassword.value === '');
+  }
+
+  function openToBankid(): void {
+    toBankid.reset();
+    clearStatusOf(toBankidStatus);
+    el('#til-bankid-ny-innlogging').replaceChildren();
+    show(el('#til-bankid-passord'), session.user.has_password);
+    show(el('#koble-til'), false);
+    show(toBankid, true);
+    updateToBankid();
+    if (session.user.has_password) toBankidPassword.focus();
+  }
+
+  function closeToBankid(): void {
+    toBankid.reset();
+    show(toBankid, false);
+    show(el('#koble-til'), true);
+  }
+
+  toBankidUnderstood.addEventListener('change', updateToBankid);
+  toBankidPassword.addEventListener('input', updateToBankid);
+  el('#til-bankid-avbryt').addEventListener('click', closeToBankid);
+
+  toBankid.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (toBankidConfirm.disabled) return;
+    toBankidConfirm.disabled = true;
+    clearStatusOf(toBankidStatus);
+    void startBankidLink(
+      session.user.has_password ? toBankidPassword.value : null,
+      '/konto/?byttet=bankid#innloggingsmater',
+    )
+      .then(({ authorization_url: url }) => {
+        window.location.assign(url);
+      })
+      .catch((error: unknown) => {
+        setStatus(toBankidStatus, message(error, 'Vi fikk ikke startet byttet til BankID.'));
+        // En konto uten passord må ha logget inn nylig. Tilby det samme som
+        // under sletting: logg inn på nytt, og kom tilbake hit.
+        if (
+          error instanceof ApiError &&
+          error.code === 'reauthentication_required' &&
+          !session.user.has_password
+        ) {
+          el('#til-bankid-ny-innlogging').replaceChildren(
+            ...session.user.providers.map((code) => {
+              const link = document.createElement('a');
+              link.className = 'btn btn-ghost btn-small';
+              link.href = providerStartUrl(code, '/konto/#innloggingsmater');
+              link.textContent = `Logg inn på nytt med ${PROVIDERS[code] ?? code}`;
+              return link;
+            }),
+          );
+        }
+        updateToBankid();
+      });
+  });
+
+  // --- Bytte til e-post -------------------------------------------------------------
+
+  const toEmailStart = el<HTMLButtonElement>('#til-epost-start');
+  const toEmail = el<HTMLFormElement>('#til-epost');
+  const toEmailStatus = el<HTMLParagraphElement>('#til-epost-status');
+  const toEmailConfirm = el<HTMLButtonElement>('#til-epost-bekreft');
+  const toEmailUnderstood = el<HTMLInputElement>('#til-epost-forstar');
+
+  toEmailStart.addEventListener('click', () => {
+    toEmail.reset();
+    clearStatusOf(toEmailStatus);
+    el('#til-epost-adresse').textContent = session.user.email;
+    toEmailConfirm.disabled = true;
+    show(toEmailStart, false);
+    show(toEmail, true);
+  });
+
+  toEmailUnderstood.addEventListener('change', () => {
+    toEmailConfirm.disabled = !toEmailUnderstood.checked;
+  });
+
+  el('#til-epost-avbryt').addEventListener('click', () => {
+    toEmail.reset();
+    show(toEmail, false);
+    show(toEmailStart, true);
+  });
+
+  toEmail.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (toEmailConfirm.disabled) return;
+    toEmailConfirm.disabled = true;
+    clearStatusOf(toEmailStatus);
+    void requestSwitchToEmail()
+      .then(({ sent, email }) => {
+        if (!sent) {
+          setStatus(toEmailStatus, 'Vi fikk ikke sendt e-posten. Prøv igjen om litt.');
+          toEmailConfirm.disabled = false;
+          return;
+        }
+        toEmail.reset();
+        show(toEmail, false);
+        show(toEmailStart, true);
+        setStatus(
+          waysStatus,
+          `Lenken er sendt til ${email}. Den virker i en halvtime. Til du har valgt passord med ` +
+            'den, logger du inn med BankID som før.',
+          'ok',
+        );
+      })
+      .catch((error: unknown) => {
+        setStatus(toEmailStatus, message(error, 'Vi fikk ikke sendt lenken.'));
+        toEmailConfirm.disabled = false;
+      });
+  });
+
+  // --- Innloggingene ---------------------------------------------------------------
+
+  function sessionRow(row: AccountSession): HTMLLIElement {
+    const item = document.createElement('li');
+    const text = document.createElement('div');
+    const device = document.createElement('span');
+    device.className = 'enhet';
+    device.textContent = row.device ?? 'Ukjent nettleser';
+    text.append(device);
+    if (row.current) {
+      const here = document.createElement('span');
+      here.className = 'her';
+      here.textContent = 'Denne enheten';
+      text.append(here);
+    }
+    const times = document.createElement('span');
+    times.className = 'tider';
+    times.textContent =
+      `Logget inn ${TIME.format(new Date(row.created_at))}, ` +
+      `sist brukt ${TIME.format(new Date(row.last_seen_at))}`;
+    text.append(times);
+    item.append(text);
+
+    // Denne enheten logges ut med «Logg ut» øverst, som alle andre steder.
+    if (!row.current) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn btn-ghost btn-small';
+      button.textContent = 'Logg ut';
+      button.addEventListener('click', () => {
+        button.disabled = true;
+        void endAccountSession(row.id)
+          .then(refreshSessions)
+          .catch((error: unknown) => {
+            setStatus(sessionStatus, message(error, 'Vi fikk ikke logget ut enheten.'));
+            button.disabled = false;
+          });
+      });
+      item.append(button);
+    }
+    return item;
+  }
+
+  async function refreshSessions(): Promise<void> {
+    clearStatusOf(sessionStatus);
+    try {
+      const rows = await listAccountSessions();
+      sessionList.replaceChildren(...rows.map(sessionRow));
+      show(endOthers, rows.some((row) => !row.current));
+    } catch (error: unknown) {
+      setStatus(sessionStatus, message(error, 'Vi fikk ikke hentet innloggingene.'));
+    } finally {
+      el('#innlogging-laster').hidden = true;
+    }
+  }
+
+  function clearStatusOf(node: HTMLElement): void {
+    setStatus(node, '');
+  }
+
+  endOthers.addEventListener('click', () => {
+    endOthers.disabled = true;
+    void endOtherAccountSessions()
+      .then(refreshSessions)
+      .then(() => {
+        setStatus(sessionStatus, 'Alle andre enheter er logget ut.', 'ok');
+      })
+      .catch((error: unknown) => {
+        setStatus(sessionStatus, message(error, 'Vi fikk ikke logget ut de andre enhetene.'));
+      })
+      .finally(() => {
+        endOthers.disabled = false;
+      });
+  });
+
+  // --- Sletting -----------------------------------------------------------------
+
+  const FATE_TEXT: Record<string, string> = {
+    leaves: 'Tilgangen din fjernes. Regnskapet blir hos de andre eierne.',
+    deleted: 'Ingenting er ført, og ingen andre er med. Slettes sammen med kontoen.',
+    blocks_members: 'Du er eneste eier, og andre har tilgang. Gjør en av dem til eier først.',
+    blocks_books:
+      'Du er eneste eier, og regnskapet skal oppbevares i fem år. Inviter den som skal ta over som eier først.',
+  };
+
+  /** Bytter til selskapet og går til medlemslisten, der eierskapet gis videre. */
+  async function openCompany(companyId: number): Promise<void> {
+    const companies = await loadCompanies();
+    const company = companies.find((candidate) => candidate.id === companyId);
+    if (company === undefined) return;
+    setActiveCompany(company);
+    window.location.href = '/organisasjon/#tilgang';
+  }
+
+  function companyRow(outcome: ErasurePlan['companies'][number]): HTMLLIElement {
+    const item = document.createElement('li');
+    const text = document.createElement('div');
+    const name = document.createElement('strong');
+    name.textContent = outcome.company_name;
+    const fate = document.createElement('span');
+    fate.className = 'utfall tider';
+    fate.textContent = FATE_TEXT[outcome.fate] ?? '';
+    const blocks = outcome.fate === 'blocks_members' || outcome.fate === 'blocks_books';
+    if (blocks) fate.dataset.tone = 'error';
+    text.append(name, fate);
+    item.append(text);
+    if (blocks) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn btn-ghost btn-small';
+      button.textContent = 'Gå til medlemmene';
+      button.addEventListener('click', () => {
+        void openCompany(outcome.company_id).catch((error: unknown) => {
+          setStatus(pageStatus, message(error, 'Vi fikk ikke åpnet selskapet.'));
+        });
+      });
+      item.append(button);
+    }
+    return item;
+  }
+
+  function recentEnough(current: ErasurePlan): boolean {
+    return (
+      current.recent_login_until !== null && new Date(current.recent_login_until).getTime() > Date.now()
+    );
+  }
+
+  function renderProof(current: ErasurePlan): void {
+    show(el('#passord-felt'), current.requires_password);
+    const needsLogin = !current.requires_password && !recentEnough(current);
+    show(el('#ny-innlogging'), !current.requires_password);
+    el('#ny-innlogging-tekst').textContent = needsLogin
+      ? 'Kontoen din har ikke passord. Logg inn på nytt for å vise at det er du, og slett kontoen innen ti minutter etterpå.'
+      : 'Du logget inn nylig, så det holder som bekreftelse.';
+    const providers = el('#leverandorer');
+    providers.replaceChildren(
+      ...(needsLogin ? session.user.providers : []).map((code) => {
+        const link = document.createElement('a');
+        link.className = 'btn btn-ghost btn-small';
+        link.href = providerStartUrl(code, '/konto/#slett');
+        link.textContent = `Logg inn på nytt med ${PROVIDERS[code] ?? code}`;
+        return link;
+      }),
+    );
+    updateConfirm();
+  }
+
+  function updateConfirm(): void {
+    const ready =
+      plan !== null &&
+      !plan.blocked &&
+      understood.checked &&
+      (plan.requires_password ? passwordInput.value !== '' : recentEnough(plan));
+    eraseConfirm.disabled = !ready;
+  }
+
+  function renderPlan(current: ErasurePlan): void {
+    plan = current;
+    const list = el<HTMLUListElement>('#selskaper');
+    list.replaceChildren(...current.companies.map(companyRow));
+    show(list, current.companies.length > 0);
+    show(el('#sperre'), current.blocked);
+    show(eraseStart, !current.blocked && eraseStep.hidden);
+    if (current.blocked) show(eraseStep, false);
+    renderProof(current);
+  }
+
+  async function refreshPlan(): Promise<void> {
+    try {
+      renderPlan(await getErasurePlan());
+    } catch (error: unknown) {
+      setStatus(pageStatus, message(error, 'Vi fikk ikke hentet hva som skjer med regnskapene dine.'));
+    } finally {
+      el('#plan-laster').hidden = true;
+    }
+  }
+
+  eraseStart.addEventListener('click', () => {
+    show(eraseStep, true);
+    show(eraseStart, false);
+    if (plan?.requires_password) passwordInput.focus();
+  });
+
+  el('#slett-avbryt').addEventListener('click', () => {
+    eraseStep.reset();
+    clearStatusOf(eraseStatus);
+    show(eraseStep, false);
+    show(eraseStart, plan !== null && !plan.blocked);
+    updateConfirm();
+  });
+
+  understood.addEventListener('change', updateConfirm);
+  passwordInput.addEventListener('input', updateConfirm);
+
+  function leave(): void {
+    // Det lokale må bort også: hintet om innlogging, selskapsvalget og navnet
+    // i toppen hører til en konto som ikke finnes lenger.
+    rememberAuth('ut');
+    setAuthState('ut');
+    clearActiveCompany();
+    forgetChrome();
+    for (const id of ['#innlogginger', '#slett', '#page-status']) show(el(id), false);
+    show(el('#slettet'), true);
+  }
+
+  eraseStep.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (eraseConfirm.disabled || plan === null) return;
+    eraseConfirm.disabled = true;
+    clearStatusOf(eraseStatus);
+    void eraseAccount(plan.requires_password ? passwordInput.value : null)
+      .then(leave)
+      .catch((error: unknown) => {
+        setStatus(eraseStatus, message(error, 'Vi fikk ikke slettet kontoen.'));
+        // Noen kan ha blitt med eller gått ut i mellomtiden; vis det som gjelder nå.
+        if (error instanceof ApiError && error.code === 'erasure_blocked') void refreshPlan();
+        updateConfirm();
+      });
+  });
+
+  void loadSession().then((current) => {
+    if (current === null) {
+      redirectToLogin();
+      return;
+    }
+    session = current;
+    el('#epost').textContent = current.user.email;
+    if (switched !== null || linkError !== null) forgetQuery();
+    if (switched === 'bankid' && isBankidAccount(current.user)) {
+      setStatus(
+        waysStatus,
+        'Du logger nå inn med BankID, og bare med BankID. Passordet og innlogging med Google ' +
+          'eller Microsoft er fjernet, og du er logget ut på alle andre enheter.',
+        'ok',
+      );
+    }
+    void refreshWays();
+    void refreshSessions();
+    void refreshPlan();
+  });
+</script>

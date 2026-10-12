@@ -12,10 +12,11 @@ shape before opening anything.
 from __future__ import annotations
 
 import asyncio
+import uuid
 from pathlib import Path
 
 from myntos.storage.base import ObjectNotFoundError
-from myntos.storage.keys import new_key, validate_key
+from myntos.storage.keys import new_key, validate_derived_key, validate_key
 
 
 class LocalDocumentStorage:
@@ -43,6 +44,20 @@ class LocalDocumentStorage:
         # overwriting a document we are legally required to keep.
         with path.open("xb") as handle:
             handle.write(content)
+
+    async def save_derived(self, key: str, *, content: bytes, content_type: str) -> None:
+        del content_type
+        path = self._root / validate_derived_key(key)
+        await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
+        await asyncio.to_thread(self._replace, path, content)
+
+    @staticmethod
+    def _replace(path: Path, content: bytes) -> None:
+        # Written beside and renamed over, so a reader never sees half a
+        # thumbnail while two requests are making the same one.
+        partial = path.with_name(f".{path.name}.{uuid.uuid4().hex}")
+        partial.write_bytes(content)
+        partial.replace(path)
 
     async def load(self, key: str) -> bytes:
         path = self._path(key)

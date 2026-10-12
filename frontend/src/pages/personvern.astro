@@ -2,17 +2,24 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 
 /**
- * Personvernerklæringen. Den er også det dokumentet Google, Microsoft og Vipps
- * krever en offentlig lenke til før en OAuth-klient godkjennes, så den må ligge
- * på en stabil URL og nevne uttrykkelig hva vi henter fra dem. Derfor
- * avsnittet «Innlogging med Google, Microsoft eller Vipps» står for seg selv.
+ * Personvernerklæringen. Den er også det dokumentet Google og Microsoft krever
+ * en offentlig lenke til før en OAuth-klient godkjennes, så den må ligge på en
+ * stabil URL og nevne uttrykkelig hva vi henter fra dem. Derfor står avsnittet
+ * «Innlogging med Google eller Microsoft» for seg selv. BankID har sitt eget
+ * avsnitt, fordi det går gjennom en mellomledd (Idura) som er vår
+ * databehandler, og fordi det er der fødselsnummeret ville ha kommet fra.
  *
  * Alt som står her skal kunne ettergås i koden. Feltene i avsnitt 3 er de
  * faktiske kolonnene i backend/src/myntos/domain/identity/models.py, og
  * lagringsstedene i avsnitt 7 er de som er satt i core/config.py og
  * infra/cloudflare. Endrer vi det ene, må vi endre det andre.
+ *
+ * Teksten om BankID og Idura er skrevet ut fra kode og Iduras offentlige
+ * dokumentasjon, og den juridiske ordlyden må gjennomgås av eieren før den
+ * publiseres. Se docs/gdpr.md. Det samme gjelder avsnittet om nøkler for
+ * KI-agenter (3e2), som er skrevet ut fra docs/agents-and-api.md regel 8.
  */
-const oppdatert = '27. august 2026';
+const oppdatert = '11. oktober 2026';
 
 const grunnlag = [
   {
@@ -21,8 +28,13 @@ const grunnlag = [
     basis: 'Avtale, GDPR art. 6(1)(b)',
   },
   {
-    formal: 'Innlogging med Google, Microsoft eller Vipps, når du velger det',
+    formal: 'Innlogging med Google eller Microsoft, når du velger det',
     data: 'Brukeridentifikator hos leverandøren, e-postadresse, navn',
+    basis: 'Avtale, GDPR art. 6(1)(b)',
+  },
+  {
+    formal: 'Innlogging med BankID, når du velger det',
+    data: 'Brukeridentifikator hos Idura (et pseudonym), og navnet ditt når kontoen opprettes med BankID. Ikke fødselsnummer',
     basis: 'Avtale, GDPR art. 6(1)(b)',
   },
   {
@@ -33,6 +45,11 @@ const grunnlag = [
   {
     formal: 'Sende deg nødvendige meldinger om kontoen (invitasjon, verifisering, varsel om sikkerhetshendelse)',
     data: 'E-postadresse',
+    basis: 'Avtale, GDPR art. 6(1)(b)',
+  },
+  {
+    formal: 'Nøkler for KI-agenter og API, når selskapet har slått dem på',
+    data: 'Nøkkelens navn, hvem som laget den, når og med hvilket program den sist ble brukt',
     basis: 'Avtale, GDPR art. 6(1)(b)',
   },
   {
@@ -49,6 +66,14 @@ const underleverandorer = [
     sted: 'EØS, der Workers-container og R2-bøtte er opprettet med jurisdiksjon «eu»',
   },
   {
+    // Egen rad, fordi stedet er et annet: Cloudflare lover ikke at e-post
+    // behandles i EØS, slik R2-bøtta gjør. Derfor inneholder e-postene ingen
+    // regnskapsdata. Se docs/ARCHITECTURE.md, «What the mail provider sees».
+    navn: 'Cloudflare Email Sending',
+    rolle: 'Utgående e-post: invitasjoner, lenker som bekrefter e-postadressen, lenker til nytt passord, og beskjeder om hvordan du logger inn. Ser mottakeradressen, emnet og teksten, aldri regnskapsdata',
+    sted: 'Cloudflares globale nett; ikke bundet til EØS',
+  },
+  {
     navn: 'Løynd (Lindeman Technologies)',
     rolle: 'KI-forslag: bilag du laster opp (selve filene: PDF-er til tekstuthenting, bilder leses av modellen), offentlige opplysninger om selskapet fra Enhetsregisteret, en frivillig setning du selv skriver om bilaget, og salgsbeskrivelsen du skriver i fakturaskjemaet. Kan slås helt av per selskap. Se avsnitt 3d2 og /ki',
     sted: 'Norge, med inferensservere på norsk jord og ingen lagring',
@@ -59,9 +84,16 @@ const underleverandorer = [
     sted: 'EØS-region',
   },
   {
-    navn: 'Google, Microsoft, Vipps MobilePay',
+    navn: 'Google, Microsoft',
     rolle: 'Kun hvis du velger å logge inn med dem',
     sted: 'Se leverandørens egen personvernerklæring',
+  },
+  {
+    // Databehandler, ikke en leverandør du selv har konto hos: Idura formidler
+    // BankID-innloggingen til oss. Se avsnitt 3b2.
+    navn: 'Idura (Idura ApS, del av Stø AS, som driver BankID)',
+    rolle: 'Innlogging med BankID, kun hvis du velger det. Ser at du logger inn hos Myntos med BankID, og gir oss en fast brukeridentifikator og navnet ditt. Vi ber ikke om fødselsnummeret ditt',
+    sted: 'EU. Selskapet er i Danmark, og lover i sin databehandleravtale å ikke overføre personopplysninger ut av EU',
   },
   {
     navn: 'Skatteetaten, Altinn, Digitaliseringsdirektoratet',
@@ -92,6 +124,10 @@ const underleverandorer = [
       <li>Regnskapstallene dine trener ingen modeller, verken våre eller andres.</li>
       <li>Vi bruker én informasjonskapsel, og den holder deg innlogget.</li>
       <li>Data lagres i EØS.</li>
+      <li>
+        Gir dere en egen KI-assistent en nøkkel, henter den regnskapet selv, og modellen dere valgte
+        avgjør hvor det havner. Myntos sender det ikke noe sted.
+      </li>
       <li>Du kan hente ut alt du har lagt inn, og du kan få kontoen slettet.</li>
     </ul>
   </section>
@@ -126,7 +162,7 @@ const underleverandorer = [
     midlertidig etter gjentatt gjetting.
   </p>
 
-  <h3>b. Innlogging med Google, Microsoft eller Vipps</h3>
+  <h3>b. Innlogging med Google eller Microsoft</h3>
   <p>
     Velger du å logge inn med en av disse, gjør vi det gjennom OpenID Connect og mottar bare det
     som er nødvendig for å vite hvem du er: leverandørens <em>stabile brukeridentifikator</em>
@@ -152,8 +188,10 @@ const underleverandorer = [
     </li>
     <li>
       Vi kobler en ny leverandørinnlogging til en konto som finnes fra før, bare når leverandøren
-      bekrefter at e-postadressen er verifisert. Ellers ville en uverifisert adresse vært en vei
-      inn i andres konto.
+      bekrefter at e-postadressen er verifisert, eller når du selv kobler den til fra
+      <a href="/konto/">Din konto</a> mens du er logget inn. Ellers ville en uverifisert adresse
+      vært en vei inn i andres konto. En konto som logger inn med BankID, får aldri Google eller
+      Microsoft koblet til seg (se b2).
     </li>
   </ul>
   <p class="note">
@@ -163,6 +201,41 @@ const underleverandorer = [
       rel="noopener noreferrer">Google API Services User Data Policy</a
     >, inkludert kravene om begrenset bruk (Limited Use).
   </p>
+
+  <h3>b2. Innlogging med BankID</h3>
+  <p>
+    Du kan også logge inn med <strong>BankID</strong>. Det går gjennom
+    <a href="https://idura.eu" rel="noopener noreferrer">Idura</a>, som er en del av Stø, selskapet
+    som driver BankID, og som behandler innloggingen på våre vegne. Dette er ikke ID-porten, og en
+    BankID-innlogging her gir oss ingen rett til å levere noe til Skatteetaten.
+  </p>
+  <ul>
+    <li>
+      Vi får en <em>fast brukeridentifikator</em> fra Idura, et pseudonym for deg som ikke er
+      fødselsnummeret, og navnet ditt. Identifikatoren er det eneste vi lagrer om innloggingen.
+      Navnet bruker vi bare når du oppretter en konto med BankID: da blir det navnet på kontoen.
+    </li>
+    <li>
+      Vi ber <strong>ikke</strong> om fødselsnummeret ditt. Vi trenger det ikke for å kjenne deg
+      igjen, og et fødselsnummer skal bare behandles når det er saklig behov for det. Skulle det
+      likevel komme med fra Idura, kaster vi det uten å lagre det.
+    </li>
+    <li>
+      BankID gir ingen e-postadresse. Oppretter du en konto med BankID, skriver du inn adressen
+      selv, og vi sender en lenke som bekrefter at den er din.
+    </li>
+    <li>
+      En BankID kobles til en konto du allerede har bare når du selv gjør det fra
+      <a href="/konto/">Din konto</a> mens du er logget inn, aldri fordi noen har skrevet inn
+      adressen din.
+    </li>
+    <li>
+      En konto som logger inn med BankID, logger bare inn med BankID. Det krever BankIDs vilkår.
+      Kobler du BankID til en konto du har, sletter vi passordet (hashen av det) og koblingen til
+      Google eller Microsoft. Bytter du senere til e-post og passord, sletter vi BankID-koblingen
+      og identifikatoren fra Idura når du har valgt passord med lenken vi sender deg.
+    </li>
+  </ul>
 
   <h3>c. Innloggingsøkter og sikkerhet</h3>
   <p>
@@ -200,7 +273,7 @@ const underleverandorer = [
       lagres hos Løynd.
     </li>
     <li>
-      <strong>Deretter to spørsmål om teksten</strong>, om de første 2000 tegnene, sammen med
+      <strong>Deretter to spørsmål om teksten</strong>, om de første 2000 tegnene av hvert dokument og høyst 28 000 tegn i alt, sammen med
       filenes navn og titler: hvilken kategori i kontantstrømregisteret passer, og hva står det
       på bilaget der vår egen lesning kom tom tilbake? Kategorien svarer modellen med ett tall
       fra en fast liste. Det andre svaret er fem linjer: dato, valuta, selger, én setning om
@@ -265,17 +338,53 @@ const underleverandorer = [
   </p>
   <p>
     Vi sender selve invitasjonen som e-post til adressen du oppgir. Meldingen inneholder navnet
-    ditt, navnet på organisasjonen, rollen og lenken, og svaradressen er din, slik at den som
-    lurer på om invitasjonen er ekte kan svare deg. E-posten går gjennom e-posttjeneren denne
+    ditt, navnet på selskapet, rollen og lenken. Har du bekreftet e-postadressen din, er
+    svaradressen din, slik at den som lurer på om invitasjonen er ekte kan svare deg. E-posten går gjennom e-posttjeneren denne
     installasjonen er satt opp med; kjører du Myntos selv uten en slik tjener, sendes ingenting,
     og du får lenken til å sende selv.
+  </p>
+
+  <p>
+    Når du oppretter en konto med passord, sender vi en lenke som bekrefter at e-postadressen er
+    din, og ber du om nytt passord, sender vi en lenke som setter det. Begge lenkene lagres bare
+    som hash, virker én gang, og går ut av seg selv: bekreftelsen etter to døgn, passordlenken
+    etter en halvtime. Logger kontoen inn med BankID, får du i stedet en e-post om det, uten lenke,
+    og ber du om å bytte fra BankID til e-post, sender vi en lenke som setter passordet. Den lagres
+    og går ut som passordlenken. E-postene har ingen sporingspiksler og ingen lenker som går via
+    oss eller andre.
+  </p>
+
+  <h3>e2. Nøkler for KI-agenter og API</h3>
+  <p>
+    Et selskap kan slå på nøkler under Innstillinger for selskapet → Tilgang. Da kan hver person med tilgang til
+    regnskapet lage en nøkkel som lar en KI-assistent, for eksempel ChatGPT, Claude eller en modell
+    dere kjører selv, eller et program dere har laget, lese og føre i regnskapet med den personens
+    tilgang. Det er av til en eier eller administrator har slått det på.
+  </p>
+  <p>
+    Her er det <strong>dere som henter, ikke vi som sender</strong>. Myntos sender ingenting til
+    leverandøren av modellen; assistenten henter det den ber om, og modellen dere har valgt avgjør
+    hvor opplysningene havner. En modell dere kjører selv holder dem hos dere. Bruker dere en
+    leverandør som OpenAI eller Anthropic, kan opplysningene havne utenfor EØS. Regnskapet kan
+    inneholde personopplysninger om kunder, leverandører og ansatte, og for det assistenten henter,
+    er selskapet behandlingsansvarlig på samme måte som når dere eksporterer regnskapet selv. Myntos
+    sjekker ikke hvilken modell som brukes. Dette er ikke en del av KI-forslagene i avsnitt 3d2,
+    som bare går til Løynd.
+  </p>
+  <p>
+    Om hver nøkkel lagrer vi navnet den fikk, hvem som laget den, hva den kan, når den ble laget,
+    tatt i bruk, sist brukt og stoppet, og navnet på programmet som brukte den, slik det oppgir seg
+    selv. Selve nøklene lagres bare som hash. Bilag ført med en nøkkel får nøkkelens navn ved siden
+    av navnet ditt, fordi det er en del av regnskapets opplysning om hvem som registrerte føringen.
+    Du får en e-post når du lager en nøkkel, når en agent tar den i bruk, og hvis vi stopper den
+    fordi den ser ut til å være misbrukt.
   </p>
 
   <h3>f. Innlevering til Skatteetaten</h3>
   <p>
     Innlevering skjer med din egen pålogging via <strong>ID-porten</strong>, og innholdet i
     meldingen går til Skatteetaten og Altinn, som selv er behandlingsansvarlige for det de mottar.
-    Vi ber aldri om, og lagrer aldri, ID-porten-passordet eller BankID-opplysningene dine.
+    Vi ber aldri om, og lagrer aldri, passordet ditt til ID-porten eller BankID.
     Funksjonen er under arbeid; se <a href="/funksjoner/">funksjonssiden</a> for status.
   </p>
 
@@ -364,8 +473,18 @@ const underleverandorer = [
   <h2>8. Hvor lenge vi lagrer</h2>
   <ul>
     <li>
-      <strong>Kontoopplysninger:</strong> så lenge du har en konto. Ber du om sletting, fjernes
-      kontoen med tilhørende identiteter, medlemskap og økter.
+      <strong>Kontoopplysninger:</strong> så lenge du har en konto. Du kan slette den selv under
+      <a href="/konto/">Din konto</a>. Da fjernes e-postadressen, passordet, innlogging med
+      Google, Microsoft og BankID, koblingen til ID-porten med fødselsnummeret, alle økter og all
+      tilgang. Har du ført noe i et regnskap, blir navnet ditt stående på det du førte, og
+      ingenting annet om deg: regnskapet er selskapets, og bokføringsloven krever at det går an å
+      se hvem som registrerte hver føring så lenge regnskapet oppbevares. Er du eneste eier av et
+      regnskap som andre bruker eller som har innhold, må du gi det videre til en ny eier først.
+    </li>
+    <li>
+      <strong>API-nøkler:</strong> slutter å virke når de stoppes, etter et år, eller etter 30 dager
+      uten bruk. Sletter du kontoen, stoppes nøklene dine og programnavnet fjernes. Har nøkkelen ført
+      noe, blir navnet den fikk stående på det den førte, som navnet ditt.
     </li>
     <li>
       <strong>Øktopplysninger (IP og nettleser):</strong> beholdes en periode etter utlogging
@@ -386,7 +505,12 @@ const underleverandorer = [
   <h2>9. Sikkerhet</h2>
   <ul>
     <li>Passord lagres som Argon2id-hash, aldri i lesbar form.</li>
-    <li>Økt- og invitasjonsnøkler lagres bare som SHA-256-hash.</li>
+    <li>Økt-, invitasjons- og API-nøkler lagres bare som SHA-256-hash.</li>
+    <li>
+      En API-nøkkel virker bare én gang før den byttes til kortlivede nøkler som fornyes, og en
+      gammel nøkkel som dukker opp igjen stopper hele nøkkelen. Ingen nøkkel kan sende noe til
+      Skatteetaten, flytte penger, endre kontonummer eller endre hvem som har tilgang.
+    </li>
     <li>All trafikk går over HTTPS, og øktkapselen sendes bare over HTTPS.</li>
     <li>
       En økt kan trekkes tilbake umiddelbart. Både «logg meg ut overalt» og stenging av en

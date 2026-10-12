@@ -148,3 +148,51 @@ class VoucherNotFoundError(LedgerError):
 
 class AlreadyReversedError(LedgerError):
     """The voucher has already been reversed once."""
+
+
+class CannotReverseHereError(LedgerError):
+    """The voucher belongs to a flow that corrects it in its own way.
+
+    An opening balance is replaced through its own page, and a year-end closing
+    is undone only by reopening the year, which records who did it and why.
+    """
+
+
+# --- The kontoplan ----------------------------------------------------------------
+
+
+class AccountNotFoundError(LedgerError):
+    """No such account in this company's kontoplan."""
+
+
+class InvalidAccountNumberError(LedgerError):
+    """Not a four-digit NS 4102 number, or a type the number's class cannot have."""
+
+
+class DuplicateAccountError(LedgerError):
+    """The company's kontoplan already has an account with that number."""
+
+
+class InactiveAccountError(LedgerError):
+    """The account is deactivated, so nothing new may be posted to it."""
+
+
+class AccountInUseError(LedgerError):
+    """The account cannot be deactivated or deleted.
+
+    Either the posting logic refers to it by number (the bank, the VAT
+    accounts, the party balance accounts), or it carries history: postings,
+    an opening balance, a customer or supplier settling against it.
+    """
+
+
+class InvalidGroupingError(LedgerError):
+    """The næringsspesifikasjon pair is not in Skatteetaten's published list."""
+
+
+class TaxCodeNotAllowedError(LedgerError):
+    """The VAT code is not one this company may use on that date.
+
+    An unregistered business claiming a deduction, or charging output VAT,
+    is the case this exists for: see :mod:`myntos.domain.ledger.vatstatus`.
+    """

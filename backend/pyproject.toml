@@ -27,6 +27,16 @@ dependencies = [
     # itself in. Pure Python on purpose: the bytes come from a user, and a native
     # PDF parser is a much larger thing to trust with them.
     "pypdf>=5.1",
+    # Thumbnails of photographed bilag, and the JPEG a HEIC photo is read as.
+    # Native decoders handed user bytes, which is why they only ever run in a
+    # short-lived child process with a memory ceiling and a timeout: see
+    # myntos.domain.bilag.derived. Pillow is MIT-CMU.
+    "pillow>=12.3.0",
+    # HEIC is what an iPhone camera saves. pi-heif rather than pillow-heif: the
+    # same binding (BSD-3) without the encoder, so the wheel bundles libheif and
+    # libde265 (LGPL-3.0, loaded dynamically) and not x265, which is GPL. We only
+    # ever need to read the format, never to write it.
+    "pi-heif>=1.4.0",
 ]
 
 [dependency-groups]
@@ -39,6 +49,11 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
     "pre-commit>=4",
+    # Validate the generated EHF against the UBL XSD (lxml) and the CEN and
+    # Peppol Schematrons, which are XSLT 2.0 and need Saxon-HE (MPL-2.0). Test
+    # only: a document that fails them is a generator bug, not a runtime case.
+    "saxonche>=13.0.0",
+    "lxml>=6.1.3",
 ]
 
 [build-system]
@@ -82,3 +97,10 @@ plugins = ["pydantic.mypy"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+# Test-only validators (tests/test_faktura_ehf_validation.py). Neither ships
+# type information, and stubs for lxml would be a third dev dependency to type
+# a dozen lines that only ever read our own XML back.
+[[tool.mypy.overrides]]
+module = ["lxml", "lxml.*", "saxonche"]
+ignore_missing_imports = true

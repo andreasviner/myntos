@@ -1,0 +1,474 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Inngående balanse | Myntos"
+  description="Før balansen selskapet har med seg fra et annet regnskapssystem."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Inngående balanse</p>
+      {/* Selskapet er overskriften: balansen gjelder ett regnskap, og navnet
+          skal stå der man ser det før noe føres. */}
+      <h1 data-session-company></h1>
+      <p class="muted orgnr" id="orgnr"></p>
+    </div>
+  </header>
+
+  <p class="lead">
+    Har selskapet ført regnskap et annet sted før, starter det ikke på null her. Før saldoene fra
+    balansen ved årsskiftet, helst rett fra saldobalansen i det gamle systemet, så blir bankkontoen,
+    kundene og egenkapitalen riktige fra første dag.
+  </p>
+
+  <p class="status" id="page-status" hidden></p>
+  <div class="empty" id="loading">Henter …</div>
+
+  {/* Det som står nå. Retting er reversering pluss ny balanse, aldri endring. */}
+  <section class="card" id="standing" hidden>
+    <h2 class="card-title">Ført inngående balanse <span id="standing-no" class="muted"></span></h2>
+    <div class="table-scroll">
+      <table class="lines">
+        <thead>
+          <tr><th>Konto</th><th>Tekst</th><th>Kunde/leverandør</th><th class="num">Debet</th><th class="num">Kredit</th></tr>
+        </thead>
+        <tbody id="standing-lines"></tbody>
+      </table>
+    </div>
+    <div class="actions" id="standing-actions">
+      <button type="button" class="btn btn-ghost" id="correct">Rett inngående balanse</button>
+      <button type="button" class="btn btn-ghost" id="withdraw">Trekk den tilbake</button>
+    </div>
+    <p class="card-hint">
+      En ført balanse endres ikke. Retting reverserer den og fører den nye i samme operasjon, så
+      begge står i regnskapet med lenke mellom seg.
+    </p>
+  </section>
+
+  {/* Skjemaet. Innsending lagrer ingenting; den ber om backendens kontroll. */}
+  <section class="card" id="form-card" hidden>
+    <h2 class="card-title" id="form-title">Saldoer per 1. januar <span id="form-year"></span></h2>
+    <label class="field">
+      <span>Last inn saldobalanse (CSV)</span>
+      <input type="file" id="csv" accept=".csv,text/csv,text/plain" />
+      <span class="field-hint">
+        Eksporter saldobalansen etter årsoppgjøret fra det gamle systemet. Myntos leser kontonummer
+        og utgående saldo, og fyller inn skjemaet under. Ingenting føres før du har kontrollert det.
+      </span>
+    </label>
+    <form id="opening-form" novalidate>
+      <div class="table-scroll">
+        <table class="lines">
+          <thead>
+            <tr>
+              <th>Konto</th><th>Tekst</th><th>Kunde/leverandør</th><th class="num">Debet</th><th
+                class="num">Kredit</th
+              ><th><span class="visually-hidden">Fjern</span></th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <p class="card-hint">
+        Kunder og leverandører med åpne poster føres som én linje per faktura på 1500 og 2400, med
+        parten valgt. Mva som ikke var gjort opp ved årsskiftet føres på 2740.
+      </p>
+      <div class="actions">
+        <button type="button" class="btn btn-ghost" id="add-row">Legg til linje</button>
+        <button type="submit" class="btn btn-primary" id="check">Kontroller</button>
+      </div>
+      <p class="status" id="form-status" hidden></p>
+    </form>
+  </section>
+
+  {/* Gjennomgangen: det backend sier blir ført, og hva den har å utsette. */}
+  <section class="card" id="review" hidden aria-live="polite">
+    <h2 class="card-title">Gjennomgå før føring</h2>
+    <p id="review-intro"></p>
+    <div class="table-scroll">
+      <table class="lines">
+        <thead>
+          <tr><th>Konto</th><th>Tekst</th><th>Kunde/leverandør</th><th class="num">Debet</th><th class="num">Kredit</th></tr>
+        </thead>
+        <tbody id="review-lines"></tbody>
+        <tfoot>
+          <tr><th colspan="3">Sum</th><th class="num" id="sum-debit"></th><th class="num" id="sum-credit"></th></tr>
+        </tfoot>
+      </table>
+    </div>
+    <ul class="findings" id="errors" hidden></ul>
+    <ul class="findings notes" id="notes" hidden></ul>
+    <div class="actions">
+      <button type="button" class="btn btn-ghost" id="back">Tilbake til skjemaet</button>
+      <button type="button" class="btn btn-primary" id="post" disabled>Før inngående balanse</button>
+    </div>
+    <p class="status" id="review-status" hidden></p>
+  </section>
+
+  <section class="card" id="history-card" hidden>
+    <h2 class="card-title">Historikk</h2>
+    <ul class="history" id="history"></ul>
+  </section>
+</BaseLayout>
+
+<style>
+  .page-head {
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .orgnr {
+    margin: 0.2rem 0 0;
+  }
+  .card + .card {
+    margin-top: 1rem;
+  }
+  .lines {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+  }
+  .lines th,
+  .lines td {
+    text-align: left;
+    padding: 0.35rem 0.5rem;
+    border-bottom: 1px solid var(--border, #ddd);
+  }
+  .lines .num {
+    text-align: right;
+  }
+  .lines input,
+  .lines select {
+    width: 100%;
+    min-width: 6rem;
+  }
+  .findings {
+    margin: 0.75rem 0;
+    padding-left: 1.2rem;
+    color: var(--negative);
+  }
+  .findings.notes {
+    color: var(--muted);
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+  }
+  .history {
+    padding-left: 1.2rem;
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    getOpeningState,
+    listParties,
+    postOpening,
+    readSaldobalanse,
+    reverseOpening,
+    reviewOpening,
+    type Company,
+    type OpeningLine,
+    type OpeningLineInput,
+    type OpeningState,
+    type Party,
+  } from '../lib/api';
+  import { normaliseAmount } from '../lib/amount';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import { isoDate, kroner, orgnummer } from '../lib/format';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const formStatus = el<HTMLParagraphElement>('#form-status');
+  const reviewStatus = el<HTMLParagraphElement>('#review-status');
+  const rows = el<HTMLTableSectionElement>('#rows');
+  const postButton = el<HTMLButtonElement>('#post');
+
+  let company: Company;
+  let parties: Party[] = [];
+  let state: OpeningState;
+  // Om skjemaet erstatter en ført balanse. Settes bare av «Rett»-knappen.
+  let correcting = false;
+  // Linjene slik de ble kontrollert. Det er disse som føres, ikke skjemaet
+  // slik det ser ut etter at noen har trykket «Tilbake».
+  let reviewed: OpeningLineInput[] = [];
+
+  function cell(text: string, numeric = false): HTMLTableCellElement {
+    const td = document.createElement('td');
+    td.textContent = text;
+    if (numeric) td.className = 'num';
+    return td;
+  }
+
+  function amount(value: string): string {
+    return Number(value) === 0 ? '' : kroner(value);
+  }
+
+  function lineRow(line: OpeningLine): HTMLTableRowElement {
+    const tr = document.createElement('tr');
+    tr.append(
+      cell(`${line.account_number} ${line.account_description ?? '(ukjent konto)'}`),
+      cell(line.description ?? ''),
+      cell(line.party_name ?? ''),
+      cell(amount(line.debit), true),
+      cell(amount(line.credit), true),
+    );
+    return tr;
+  }
+
+  function partySelect(selected: number | null): HTMLSelectElement {
+    const select = document.createElement('select');
+    select.className = 'party';
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = 'Ingen';
+    select.append(none);
+    for (const party of parties) {
+      const option = document.createElement('option');
+      option.value = String(party.id);
+      option.textContent = `${party.name} (${party.party_type === 'kunde' ? 'kunde' : 'leverandør'})`;
+      option.selected = party.id === selected;
+      select.append(option);
+    }
+    return select;
+  }
+
+  function input(className: string, value: string, label: string): HTMLInputElement {
+    const node = document.createElement('input');
+    node.className = className;
+    node.value = value;
+    node.setAttribute('aria-label', label);
+    if (className === 'debit' || className === 'credit') node.inputMode = 'decimal';
+    return node;
+  }
+
+  function addRow(line?: Partial<OpeningLineInput>): void {
+    const tr = document.createElement('tr');
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn btn-ghost btn-small';
+    remove.textContent = 'Fjern';
+    remove.addEventListener('click', () => tr.remove());
+    const parts: HTMLElement[] = [
+      input('account', line?.account_number ?? '', 'Konto'),
+      input('description', line?.description ?? '', 'Tekst'),
+      partySelect(line?.party_id ?? null),
+      input('debit', line?.debit && Number(line.debit) !== 0 ? line.debit.replace('.', ',') : '', 'Debet'),
+      input('credit', line?.credit && Number(line.credit) !== 0 ? line.credit.replace('.', ',') : '', 'Kredit'),
+      remove,
+    ];
+    for (const part of parts) {
+      const td = document.createElement('td');
+      td.append(part);
+      tr.append(td);
+    }
+    rows.append(tr);
+  }
+
+  function fill(lines: OpeningLineInput[]): void {
+    rows.replaceChildren();
+    for (const line of lines) addRow(line);
+    if (lines.length === 0) {
+      addRow();
+      addRow();
+    }
+  }
+
+  /** Skjemaet som linjer, eller en melding om feltet som ikke kunne leses. */
+  function collect(): OpeningLineInput[] | string {
+    const lines: OpeningLineInput[] = [];
+    for (const [index, tr] of [...rows.querySelectorAll('tr')].entries()) {
+      const value = (selector: string): string => el<HTMLInputElement>(selector, tr).value.trim();
+      const account = value('.account');
+      const debit = normaliseAmount(value('.debit'));
+      const credit = normaliseAmount(value('.credit'));
+      if (account === '' && debit === '0' && credit === '0') continue;
+      if (debit === null || credit === null) return `Beløpet på linje ${index + 1} kan ikke leses.`;
+      const party = el<HTMLSelectElement>('.party', tr).value;
+      lines.push({
+        account_number: account,
+        debit,
+        credit,
+        party_id: party === '' ? null : Number(party),
+        description: value('.description') || null,
+      });
+    }
+    return lines;
+  }
+
+  function list(target: HTMLElement, messages: string[]): void {
+    target.replaceChildren(
+      ...messages.map((message) => {
+        const item = document.createElement('li');
+        item.textContent = message;
+        return item;
+      }),
+    );
+    show(target, messages.length > 0);
+  }
+
+  function renderState(): void {
+    const mayWrite = canInCompany(company, 'ledger:write');
+    el('#form-year').textContent = state.year === null ? '' : String(state.year);
+    if (state.refusal !== null) setStatus(pageStatus, state.refusal[0]!.toUpperCase() + state.refusal.slice(1) + '.');
+
+    const standing = state.standing;
+    show(el('#standing'), standing !== null);
+    if (standing !== null) {
+      el('#standing-no').textContent = `bilag ${standing.voucher_no}, ${isoDate(standing.transaction_date)}`;
+      el('#standing-lines').replaceChildren(...standing.lines.map(lineRow));
+    }
+    show(el('#standing-actions'), standing !== null && state.allowed && mayWrite);
+
+    // Skjemaet vises når det kan brukes: ingen balanse ført ennå, eller en
+    // retting er valgt.
+    show(el('#form-card'), state.allowed && mayWrite && (standing === null || correcting));
+    el('#form-title').firstChild!.textContent = correcting ? 'Rettet inngående balanse per 1. januar ' : 'Saldoer per 1. januar ';
+
+    const history = state.history;
+    show(el('#history-card'), history.length > 1);
+    el('#history').replaceChildren(
+      ...history.map((voucher) => {
+        const item = document.createElement('li');
+        const what = voucher.is_reversal ? 'Reversering' : voucher.corrects_id !== null ? 'Rettet balanse' : 'Inngående balanse';
+        item.textContent = `${voucher.voucher_no}: ${what}, ${kroner(voucher.total)}${voucher.reversed ? ' (reversert)' : ''}`;
+        return item;
+      }),
+    );
+  }
+
+  async function load(): Promise<void> {
+    [state, parties] = await Promise.all([getOpeningState(company.id), listParties(company.id)]);
+    renderState();
+    if (rows.children.length === 0) fill([]);
+  }
+
+  function showReview(visible: boolean): void {
+    show(el('#review'), visible);
+    show(el('#form-card'), !visible);
+  }
+
+  el<HTMLFormElement>('#opening-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    setStatus(formStatus, '');
+    const lines = collect();
+    if (typeof lines === 'string') {
+      setStatus(formStatus, lines);
+      return;
+    }
+    const button = el<HTMLButtonElement>('#check');
+    button.disabled = true;
+    reviewOpening(company.id, lines)
+      .then((review) => {
+        reviewed = lines;
+        el('#review-intro').textContent = correcting
+          ? `Dette erstatter den førte balansen. Den gamle reverseres, og denne føres per 1. januar ${review.year ?? ''}.`
+          : `Dette føres som ett bilag per 1. januar ${review.year ?? ''} i journalen for inngående balanse.`;
+        el('#review-lines').replaceChildren(...review.lines.map(lineRow));
+        el('#sum-debit').textContent = kroner(review.total_debit);
+        el('#sum-credit').textContent = kroner(review.total_credit);
+        list(el('#errors'), review.findings.filter((f) => f.severity === 'feil').map((f) => f.message));
+        list(el('#notes'), review.findings.filter((f) => f.severity === 'merknad').map((f) => f.message));
+        postButton.disabled = !review.postable;
+        setStatus(reviewStatus, '');
+        showReview(true);
+      })
+      .catch((error: unknown) => {
+        setStatus(formStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke kontrollert balansen.');
+      })
+      .finally(() => {
+        button.disabled = false;
+      });
+  });
+
+  el('#back').addEventListener('click', () => showReview(false));
+
+  postButton.addEventListener('click', () => {
+    postButton.disabled = true;
+    postOpening(company.id, reviewed, correcting)
+      .then(async (posted) => {
+        correcting = false;
+        rows.replaceChildren();
+        show(el('#review'), false);
+        await load();
+        setStatus(pageStatus, `Inngående balanse er ført som bilag ${posted.voucher_no}.`, 'ok');
+      })
+      .catch((error: unknown) => {
+        postButton.disabled = false;
+        setStatus(reviewStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke ført balansen.');
+      });
+  });
+
+  el<HTMLInputElement>('#csv').addEventListener('change', (event) => {
+    const file = (event.target as HTMLInputElement).files?.[0];
+    if (file === undefined) return;
+    setStatus(formStatus, '');
+    readSaldobalanse(company.id, file)
+      .then((review) => {
+        fill(review.lines);
+        setStatus(
+          formStatus,
+          `Leste ${review.lines.length} kontoer fra filen. Se over linjene, fordel 1500 og 2400 på kunder og leverandører hvis du vil, og kontroller.`,
+          'ok',
+        );
+      })
+      .catch((error: unknown) => {
+        setStatus(formStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke lest filen.');
+      });
+  });
+
+  el('#add-row').addEventListener('click', () => addRow());
+
+  el('#correct').addEventListener('click', () => {
+    correcting = true;
+    fill(state.standing?.lines ?? []);
+    renderState();
+  });
+
+  el('#withdraw').addEventListener('click', () => {
+    // En bekreftelse holder her: tilbaketrekkingen er en reversering, og en ny
+    // balanse kan føres etterpå.
+    if (!window.confirm('Reversere den førte inngående balansen? Den blir stående i regnskapet med en reversering.')) return;
+    reverseOpening(company.id)
+      .then(async (reversal) => {
+        correcting = false;
+        rows.replaceChildren();
+        await load();
+        setStatus(pageStatus, `Inngående balanse er reversert med bilag ${reversal.voucher_no}.`, 'ok');
+      })
+      .catch((error: unknown) => {
+        setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke reversert balansen.');
+      });
+  });
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      const current = currentCompany(companies);
+      if (current === undefined) return;
+      company = current;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      await load();
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet selskapet.');
+    } finally {
+      el('#loading').hidden = true;
+    }
+  });
+</script>

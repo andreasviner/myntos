@@ -27,21 +27,24 @@ VAT is deductible at all, and therefore whether a proposed VAT code means
 anything. A company outside the register that gets handed code 1 on a purchase
 is being told it may reclaim VAT it may not.
 
-**What the user typed.** A free-text note on the upload, and the only one of the
-three the model could not have got any other way. It exists because some bilag
+**What the user typed.** The sentence in the entry form's description field,
+sent with the upload as ``forklaring``, and the only one of the three the model
+could not have got any other way. It exists because some bilag
 are genuinely undecidable from the paper: a bank transfer of 3 000 kroner from a
 private account into the company's is an owner's deposit, a loan repayment or a
 sale, and only the person who made it knows which. A sentence resolves it.
 
 Three rules govern all of it:
 
-**It is context, never an answer.** The note is shown to the model and reaches
-no other part of the system: it is not stored, not posted, and cannot set a
-field. Everything that comes back is checked against the document exactly as
-before — :func:`myntos.domain.bilag.extraction.parse_answer` still discards a
-date the document does not contain, and the note is not part of the document.
-That is the difference between helping the model read and letting the user
-dictate the reading.
+**It is context, never an answer.** Within this module the note is only shown
+to the model: nothing here stores it, and it cannot set a field. Everything that
+comes back is checked against the document exactly as before —
+:func:`myntos.domain.bilag.extraction.parse_answer` still discards a date the
+document does not contain, and the note is not part of the document. That is the
+difference between helping the model read and letting the user dictate the
+reading. The same sentence *is* stored and posted, but by another route: it is
+the description field, so registering the payment files it as the bilagstekst,
+which is what /ki and the personvernerklæring say.
 
 **It is bounded.** Each part is truncated, because this text is prepended to a
 document excerpt that already has a ceiling, and a formål paragraph long enough
@@ -109,6 +112,12 @@ class BilagContext:
     vat_registered: bool | None = None
     #: What the user typed on the upload form.
     note: str | None = None
+    #: Which way the money went, when the user said so by clicking it. Told to
+    #: the model as the user's word, next to their note, because it is the same
+    #: kind of statement: about this payment, by the person who made it. The
+    #: category menu is narrowed to it as well (see the endpoint), so this line
+    #: is about the sentence the model writes, "Kjøp av" or "Salg av".
+    direction: str | None = None
 
     @classmethod
     def build(
@@ -120,6 +129,7 @@ class BilagContext:
         industry_description: str | None = None,
         vat_registered: bool | None = None,
         note: str | None = None,
+        direction: str | None = None,
     ) -> BilagContext:
         """Assemble one, clipping every part on the way in.
 
@@ -134,6 +144,7 @@ class BilagContext:
             industry=_clip(industry or None, 120),
             vat_registered=vat_registered,
             note=_clip(note, MAX_NOTE_CHARS),
+            direction=direction if direction in _DIRECTION_SAID else None,
         )
 
     @property
@@ -163,11 +174,22 @@ class BilagContext:
                 "Mva-registrert: "
                 + ("ja" if self.vat_registered else "nei, ikke i Merverdiavgiftsregisteret")
             )
+        if self.direction is not None:
+            lines.append(f"Brukeren har valgt: {_DIRECTION_SAID[self.direction]}")
         if self.note is not None:
             lines.append(f"Brukerens egen forklaring på bilaget: {self.note}")
         if not lines:
             return ""
         return "\n".join(lines)[:MAX_CONTEXT_CHARS]
+
+
+#: The two answers to "which way did the money go", as the model is told them.
+#: Keyed by the API's own values, and anything else is dropped rather than
+#: passed through, so this line can only ever say one of two fixed sentences.
+_DIRECTION_SAID = {
+    "ut": "penger ut, altså et kjøp eller en annen betaling fra selskapet",
+    "inn": "penger inn, altså et salg eller en annen innbetaling til selskapet",
+}
 
 
 #: The empty context. Passing this is exactly equivalent to passing nothing, and

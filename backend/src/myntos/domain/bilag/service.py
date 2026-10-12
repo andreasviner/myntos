@@ -10,14 +10,17 @@ could make it mean something to a filesystem or to a response header.
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from myntos.domain.bilag import derived
 from myntos.domain.bilag.errors import (
     AttachmentNotFoundError,
     DocumentTooLargeError,
+    NoThumbnailError,
     UnsupportedDocumentError,
 )
 from myntos.domain.bilag.models import (
@@ -28,7 +31,10 @@ from myntos.domain.bilag.models import (
     sniff_content_type,
 )
 from myntos.domain.ledger.models import Company, Transaction
-from myntos.storage.base import DocumentStorage
+from myntos.storage.base import DocumentStorage, ObjectNotFoundError, StorageError
+from myntos.storage.keys import thumbnail_key
+
+logger = logging.getLogger(__name__)
 
 # Anything outside this is replaced. Keeps Norwegian letters, drops quotes,
 # newlines, slashes and control characters — the three things that would let a
@@ -46,6 +52,7 @@ _FALLBACK_NAME = {
     "image/jpeg": "bilag.jpg",
     "image/webp": "bilag.webp",
     "image/gif": "bilag.gif",
+    "image/heic": "bilag.heic",
 }
 
 
@@ -158,3 +165,40 @@ async def get_attachment(db: AsyncSession, *, company: Company, attachment_id: i
     if attachment is None:
         raise AttachmentNotFoundError("finner ikke dokumentet")
     return attachment
+
+
+async def thumbnail_of(storage: DocumentStorage, attachment: Attachment) -> bytes:
+    """A small JPEG of ``attachment``, made the first time it is asked for.
+
+    The caller has already found ``attachment`` through its company
+    (:func:`get_attachment`), which is the whole access check: the thumbnail's
+    key is computed from the original's, so there is no second id a request
+    could name.
+
+    Made on demand and then kept, rather than made at upload. Upload is where a
+    user is waiting on the one thing that matters, the bilag being filed, and a
+    thumbnail that failed to decode must never be able to fail that. Being
+    regenerable is also what makes this safe to lose: a derived object that has
+    gone missing is simply made again here.
+    """
+    if attachment.content_type not in derived.THUMBNAIL_SOURCES:
+        raise NoThumbnailError("dette dokumentet har ingen miniatyr")
+    key = thumbnail_key(attachment.storage_key)
+    try:
+        return await storage.load(key)
+    except ObjectNotFoundError:
+        pass
+    original = await storage.load(attachment.storage_key)
+    try:
+        picture = await derived.thumbnail(original, attachment.content_type)
+    except derived.DerivationError as error:
+        raise NoThumbnailError("dette dokumentet har ingen miniatyr") from error
+    try:
+        await storage.save_derived(
+            key, content=picture, content_type=derived.THUMBNAIL_CONTENT_TYPE
+        )
+    except StorageError:
+        # Not kept, still shown. The next request makes it again, which costs a
+        # fraction of a second and loses nothing.
+        logger.warning("A thumbnail was made but could not be stored")
+    return picture

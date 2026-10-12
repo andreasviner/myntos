@@ -6,3 +6,7 @@
 *.jpg binary
 *.pdf binary
 *.woff2 binary
+
+# Vendored validation artefacts are kept byte-for-byte as published; their
+# README lists the upstream checksums, which a line-ending rewrite would break.
+backend/tests/fixtures/ehf/** -text

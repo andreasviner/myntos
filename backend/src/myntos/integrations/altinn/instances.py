@@ -217,6 +217,37 @@ class AppInstanceClient:
         )
         return _element_from(payload)
 
+    async def replace_data(
+        self,
+        ref: InstanceRef,
+        *,
+        token: str,
+        element_id: str,
+        content: bytes,
+        content_type: str,
+        filename: str,
+    ) -> DataElement:
+        """Overwrite a data element the app created along with the instance.
+
+        Some apps create a data element at instantiation and expect it to be
+        *filled*, not added: the MVA app makes its ``mvaMeldingInnsending``
+        envelope this way, and a second one POSTed beside it is refused, because
+        the data type allows exactly one. Skatteetaten's guide says PUT for that
+        element and POST for everything else.
+        """
+        payload = await self._request(
+            "PUT",
+            f"/instances/{ref.path}/data/{element_id}",
+            token=token,
+            content=content,
+            headers={
+                "Content-Type": content_type,
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+            expected=(httpx.codes.OK, httpx.codes.CREATED),
+        )
+        return _element_from(payload)
+
     async def upload_attachments(
         self,
         ref: InstanceRef,

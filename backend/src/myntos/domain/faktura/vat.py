@@ -81,7 +81,10 @@ class VatTreatment:
 _SALES_TREATMENTS: dict[str, VatTreatment] = {
     "3": VatTreatment(VatCategory.STANDARD),
     "31": VatTreatment(VatCategory.STANDARD),
+    # 32 is fish at 11,11 %, 33 the 12 % rate. Both are the standard category
+    # in EN 16931 terms: VAT is charged, at whatever rate the line says.
     "32": VatTreatment(VatCategory.STANDARD),
+    "33": VatTreatment(VatCategory.STANDARD),
     "5": VatTreatment(
         VatCategory.ZERO_RATED,
         "Avgiftsfritt salg, jf. merverdiavgiftsloven kapittel 6.",

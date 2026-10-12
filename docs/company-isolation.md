@@ -52,9 +52,16 @@ async def get_company_context(company_id: int, user: CurrentUser, db: DbSession)
 
 - It returns the company **and** the caller's membership as one frozen value,
   because that is exactly the pair a missing check separates.
-- A company that does not exist and a company belonging to somebody else's
-  organization get the **same 404**. A 403 would confirm the id is real, turning
-  the API into a way to enumerate other people's books.
+- A company that does not exist and any company the caller has no
+  `CompanyMembership` on, including a sibling company in the same account, get
+  the **same 404**. A 403 would confirm the id is real, turning the API into a
+  way to enumerate other people's books.
+- **A key for an agent adds a wall in front** (docs/agents-and-api.md rule 9).
+  A key belongs to one company, and any other company id is the same 404 before
+  the membership join runs, including a company the key's own person is a
+  member of. The membership join alone would let that through, so the key's
+  pin is a second wall and not the first one tested twice. Both boundary files
+  run their whole route table with a key as well as with a session.
 
 Inside a route body the membership check has already passed, which is only half
 the job: **two companies in the same account both pass it.** So every service
@@ -68,9 +75,10 @@ document = await db.scalar(
 )
 ```
 
-There is exactly one `db.get(...)` by primary key in the whole backend, and it
-is for the session's user. Adding a second for a company-scoped row is how this
-wall gets a hole in it.
+There are exactly two `db.get(...)` calls by primary key in the whole backend,
+and both are for a `User`: the session's user (`api/deps.py`) and the owner of
+a mailed token (`domain/identity/email_tokens.py`). Neither is company-scoped.
+Adding one for a company-scoped row is how this wall gets a hole in it.
 
 ### The one query that reads a row by id on purpose
 
@@ -88,7 +96,12 @@ so nobody has to re-derive it while auditing:
   access would leave the register unable to say who booked the row somebody is
   asking about.
 
-What would turn it into a hole is passing it anything a caller supplied. If a
+`ledger.service._key_names` does the same for the keys a page of vouchers was
+registered through (`gl_transaction.created_via_agent_key_id`), for the same
+reason: the ids come off this company's own vouchers, and a key belongs to one
+company, so every name it can return is one of these books' own keys.
+
+What would turn either into a hole is passing it anything a caller supplied. If a
 future endpoint wants "entries by person", the person is a `CompanyMembership`
 on `context.company` first and a `user_id` second — resolve the membership, then
 use its `user_id`. Never the other way round.
@@ -122,7 +135,7 @@ truthfully about whichever company was asked for.
 { "id": 12, "name": "DIALGA AS", "verified": true }
 ```
 
-Three properties, and each one is load-bearing:
+Four properties, and each one is load-bearing:
 
 1. **One record.** The id every request is built from and the name painted in
    the header are the *same value*, written only from a whole `Company` object.
@@ -211,7 +224,8 @@ mistaken for anything at all.
 ## Gaps
 
 - **The frontend tests reach `src/lib/` and no further.** `pnpm test` runs
-  Vitest over [`tenant.test.ts`](../frontend/src/lib/tenant.test.ts) and
+  Vitest over `src/lib/*.test.ts`. The wall is
+  [`tenant.test.ts`](../frontend/src/lib/tenant.test.ts) and
   [`api.test.ts`](../frontend/src/lib/api.test.ts), which cover the record and
   both halves of the request wall (all six wall assertions were confirmed to
   fail with the guards removed). Nothing tests the `.astro` pages: that needs a

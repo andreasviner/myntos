@@ -5,7 +5,8 @@ and submitting** both the MVA-melding and the skattemelding; Maskinporten is
 accepted only for retrieval and information APIs. The submission path is:
 
 1. Send the browser to ID-porten (authorization code + PKCE, scopes such as
-   ``openid skatteetaten:mvameldingvalidering skatteetaten:mvameldinginnsending``).
+   ``openid skatteetaten:mvameldingvalidering altinn:instances.write``; the old
+   ``skatteetaten:mvameldinginnsending`` is retired, see docs/integrations/mva.md).
 2. Exchange the code here for an ID-porten **access token**.
 3. Exchange that for an Altinn token
    (:func:`myntos.integrations.altinn.tokens.exchange_id_porten_token`).
@@ -258,9 +259,9 @@ class IdPortenClient:
                 raise IdPortenError("could not reach ID-porten") from error
 
         if response.status_code != httpx.codes.OK:
-            # The body can echo request parameters; report nothing but the status.
             raise IdPortenError(
                 f"ID-porten rejected the authorization code ({response.status_code})"
+                + _token_error(response)
             )
 
         try:
@@ -409,6 +410,41 @@ class IdPortenClient:
             if key.key_id == key_id:
                 return key
         return None
+
+
+# RFC 6749 § 5.2's error codes, the only values of ``error`` repeated from a
+# refused token request. The body used to be dropped entirely because it can
+# echo request parameters, and that left every refusal reading "401": a ``kid``
+# the portal does not know, a key never registered and a spent code all looked
+# the same (found 2026-10-09, on the TT02 client, where ID-porten's own words
+# were "Key identifier (kid) reference not found"). ``error`` is reported only
+# when it is one of these, and ``error_description`` is Digdir's prose about
+# the client's own request, cut short.
+_TOKEN_ERRORS = frozenset(
+    {
+        "invalid_request",
+        "invalid_client",
+        "invalid_grant",
+        "unauthorized_client",
+        "unsupported_grant_type",
+        "invalid_scope",
+    }
+)
+
+
+def _token_error(response: httpx.Response) -> str:
+    """``: <error> <description>`` from a refused token request, or nothing."""
+    try:
+        body = response.json()
+    except ValueError:
+        return ""
+    if not isinstance(body, dict) or body.get("error") not in _TOKEN_ERRORS:
+        return ""
+    description = body.get("error_description")
+    detail = f": {body['error']}"
+    if isinstance(description, str) and description.strip():
+        detail += f" - {description.strip()[:200]}"
+    return detail
 
 
 def _pid_from(claims: dict[str, Any]) -> str:

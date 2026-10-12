@@ -50,7 +50,7 @@ SALES_TAX_OPTIONS: tuple[SalesTaxOption, ...] = (
         note="Mat og drikke, og vann og avløp fra 1. juli 2025.",
     ),
     SalesTaxOption(
-        tax_code="32",
+        tax_code="33",
         label="12 % (persontransport, overnatting)",
         income_account="3020",
         note="Persontransport, overnatting, kino, museer og idrettsarrangement.",

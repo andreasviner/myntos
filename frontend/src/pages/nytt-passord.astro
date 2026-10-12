@@ -1,0 +1,115 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+{/* Nytt passord: siden lenken i tilbakestillings-e-posten åpner.
+
+    Tokenet står i fragmentet (#token=…), ikke i spørrestrengen, så det aldri
+    havner i en serverlogg. Vi leser det og sender det i en POST først når
+    passordet er valgt. Det fjernes fra adresselinjen når lenken er brukt eller
+    avvist.
+
+    Etterpå er alle økter på kontoen avsluttet, også denne nettleserens, og man
+    logger inn med det nye passordet. Det er hele poenget: den som tilbakestiller
+    tror ofte at noen andre kjenner det gamle. */}
+
+<BaseLayout title="Nytt passord | Myntos" description="Velg et nytt passord til Myntos-kontoen din.">
+  <div class="auth-page">
+    <h1>Velg nytt passord</h1>
+    <p class="lead">Etterpå blir alle som er logget inn på kontoen logget ut.</p>
+
+    <div class="card">
+      <p class="status" id="status" hidden></p>
+
+      <form id="reset-form" novalidate>
+        <label class="field">
+          <span>Nytt passord</span>
+          <input type="password" name="password" autocomplete="new-password" required />
+          <span class="field-hint" id="password-hint">Lengde teller mer enn krøllete tegn.</span>
+        </label>
+        <button class="btn btn-primary btn-block" type="submit" id="submit">Lagre passordet</button>
+      </form>
+
+      <div id="done" hidden>
+        <p>Passordet er byttet. Logg inn med det nye.</p>
+        <a class="btn btn-primary btn-block" href="/logg-inn/">Logg inn</a>
+      </div>
+
+      {/* En lenke som er brukt, utløpt eller ødelagt er ikke noe leseren kan
+          rette, så siden peker videre til en ny lenke i stedet for å vise et
+          skjema som bare kan feile. */}
+      <div id="dead" hidden>
+        <p>Denne lenken virker ikke lenger. Den kan være brukt, for gammel, eller erstattet av en nyere.</p>
+        <a class="btn btn-primary btn-block" href="/glemt-passord/">Be om en ny lenke</a>
+      </div>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .auth-page {
+    max-width: 26rem;
+    margin: 0 auto;
+  }
+</style>
+
+<script>
+  import { ApiError, getProviders, resetPassword } from '../lib/api';
+  import { el, setStatus, show } from '../lib/dom';
+  import { forgetFragment, tokenFromFragment } from '../lib/links';
+
+  const status = el<HTMLParagraphElement>('#status');
+  const form = el<HTMLFormElement>('#reset-form');
+  const submit = el<HTMLButtonElement>('#submit');
+  const passwordField = el<HTMLInputElement>('input[name="password"]');
+
+  // Lenken blir stående i adresselinjen til den er brukt eller avvist: en
+  // omlasting midt i skrivingen skal ikke koste en ny e-post.
+  const token = tokenFromFragment(window.location.hash);
+
+  function dead(): void {
+    forgetFragment();
+    show(form, false);
+    setStatus(status, '');
+    show(el('#dead'), true);
+  }
+
+  if (token === null) dead();
+
+  // Minstelengden kommer fra backend, som håndhever den, slik som på /registrer/.
+  void getProviders()
+    .then(({ password_min_length: minimum }) => {
+      el('#password-hint').textContent = `Minst ${minimum} tegn. Lengde teller mer enn krøllete tegn.`;
+      passwordField.minLength = minimum;
+    })
+    .catch(() => {
+      // Regelen står i feilmeldingen uansett.
+    });
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (token === null) return;
+    const password = String(new FormData(form).get('password') ?? '');
+
+    submit.disabled = true;
+    setStatus(status, '');
+    void resetPassword(token, password)
+      .then(() => {
+        forgetFragment();
+        show(form, false);
+        show(el('#done'), true);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof ApiError && error.code === 'invalid_email_token') {
+          dead();
+          return;
+        }
+        // Et for kort passord bruker ikke opp lenken, så man kan prøve igjen.
+        setStatus(
+          status,
+          error instanceof ApiError ? error.message : 'Vi fikk ikke lagret passordet. Prøv en gang til.',
+        );
+        submit.disabled = false;
+      });
+  });
+</script>

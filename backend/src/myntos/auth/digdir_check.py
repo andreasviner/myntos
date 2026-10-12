@@ -34,10 +34,24 @@ ID-porten `kid` is ever exercised. The person
 must be synthetic (Tenor, +80 on the month digits) and have tax data for the
 income year; `test_data/README.md` records which of ours do.
 
+With ``--mva <orgnr>`` as well, the same login is used to send an MVA-melding
+for that company to Skatteetaten's *validation* endpoint::
+
+    uv run python -m myntos.auth.digdir_check --person <fnr> --mva <orgnr>
+
+The melding is built by the code that builds a real one (``domain.mva.melding``)
+from a fixed, small set of lines, so what Skatteetaten finds wrong with it is
+what it would find wrong with a company's. Validation files nothing: it is the
+step before an Altinn instance exists, and this check stops there. It never
+creates an instance and never calls ``process/next``, in test as in anything
+else. ``--save <dir>`` keeps the melding and the answer.
+
 It is a diagnostic, not a test: it talks to the real services with the real
 credentials, and requesting a token is free and leaves no trace worth worrying
-about. Nothing is submitted, created or written anywhere — every call is a read.
-Tokens are never printed; a token's presence is reported, never its value.
+about. Nothing is submitted or created anywhere, and nothing is written except
+where ``--save`` says — every call is a read, or a validation, which files
+nothing. Tokens are never printed; a token's presence is reported, never its
+value.
 """
 
 from __future__ import annotations
@@ -46,10 +60,15 @@ import argparse
 import asyncio
 import re
 import sys
+import uuid
 from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
+from pathlib import Path
 
 import httpx
 
+from myntos import __version__
 from myntos.auth.idporten.client import (
     GovernmentLogin,
     IdPortenError,
@@ -65,6 +84,9 @@ from myntos.auth.maskinporten.client import (
 )
 from myntos.auth.signing_keys import SigningKeyError, load_signing_key
 from myntos.core.config import Settings, get_settings
+from myntos.domain.mva import melding as melding_module
+from myntos.domain.mva.codes import Meldingskategori
+from myntos.domain.mva.periods import PeriodType, Termin, termin_for
 from myntos.integrations.altinn.authorized_parties import fetch_authorized_parties, flatten
 from myntos.integrations.altinn.tokens import (
     INSTANCE_SCOPES,
@@ -75,6 +97,8 @@ from myntos.integrations.altinn.tokens import (
 from myntos.integrations.skatteetaten.client import SCOPE as SKATTEMELDING_SCOPE
 from myntos.integrations.skatteetaten.client import SkatteetatenError
 from myntos.integrations.skatteetaten.client import build_client as build_skattemelding_client
+from myntos.integrations.skatteetaten.mva import MvaError
+from myntos.integrations.skatteetaten.mva import build_client as build_mva_client
 
 _OK = "  ok  "
 _FAIL = " fail "
@@ -336,7 +360,13 @@ async def _check_idporten_authorization(settings: Settings, report: Report) -> N
 
 
 async def _check_person_chain(
-    settings: Settings, report: Report, pid: str, year: int, org: str | None = None
+    settings: Settings,
+    report: Report,
+    pid: str,
+    year: int,
+    org: str | None = None,
+    mva_org: str | None = None,
+    save_to: Path | None = None,
 ) -> None:
     """The person-present half, end to end, for one synthetic test person.
 
@@ -379,6 +409,8 @@ async def _check_person_chain(
     await _check_fetch(settings, report, login, pid, year, label="skattemelding fetch")
     if org is not None:
         await _check_fetch(settings, report, login, org, year, label="skattemelding fetch (org)")
+    if mva_org is not None:
+        await _check_mva_validation(settings, report, login, mva_org, save_to=save_to)
 
 
 async def _check_authorized_parties(altinn_token: str, report: Report) -> None:
@@ -428,8 +460,8 @@ async def _check_fetch(
     call - only the identifier differs, and which of the two succeeds is the
     interesting part. A machine token gets SME-EKSTERN-005 here ("cannot check
     whether the logged-in user may represent the taxpayer"); a person's token
-    carrying digdir:skattemelding answers it, for every organisation they hold
-    Altinn rights for.
+    answers it, for every organisation they hold Altinn rights for. Holding
+    digdir:skattemelding makes no difference: verified without it 2026-10-09.
     """
     try:
         skattemelding = build_skattemelding_client(settings)
@@ -445,6 +477,119 @@ async def _check_fetch(
     report.ok(label, f"utkast {year} for {identifier}: {len(content)} bytes of XML")
 
 
+def previous_termin(today: date) -> Termin:
+    """The last two-month period that has ended by ``today``.
+
+    Not the current one: a melding for a period still running is something no
+    real company sends, and a validation that complains about the date would
+    hide whatever it says about the lines.
+    """
+    current = termin_for(PeriodType.TO_MAANEDER, today)
+    if current.index > 1:
+        return Termin(PeriodType.TO_MAANEDER, current.year, current.index - 1)
+    return Termin(PeriodType.TO_MAANEDER, current.year - 1, PeriodType.TO_MAANEDER.per_year)
+
+
+# The books the --mva melding is built from: one sale at 25 % and one purchase
+# with deductible input VAT, the two lines every ordinary melding has. Fixed
+# rather than read from a database so the check needs no company set up first,
+# and passed through the same aggregation as a real ledger's lines so the XML is
+# what Myntos would send, not a hand-written imitation of it.
+_SAMPLE_LINES = (
+    melding_module.TaxedLine(
+        code="3",
+        rate=Decimal("0.25"),
+        is_debit=False,
+        base=Decimal("10000.00"),
+        debit_tax=Decimal("0.00"),
+        credit_tax=Decimal("2500.00"),
+    ),
+    melding_module.TaxedLine(
+        code="1",
+        rate=Decimal("0.25"),
+        is_debit=True,
+        base=Decimal("2000.00"),
+        debit_tax=Decimal("500.00"),
+        credit_tax=Decimal("0.00"),
+    ),
+)
+
+
+def sample_melding(orgnr: str, today: date) -> melding_module.Melding:
+    return melding_module.build(
+        _SAMPLE_LINES,
+        termin=previous_termin(today),
+        category=Meldingskategori.ALMINNELIG,
+        orgnr=orgnr,
+    )
+
+
+async def _check_mva_validation(
+    settings: Settings,
+    report: Report,
+    login: GovernmentLogin,
+    orgnr: str,
+    *,
+    save_to: Path | None = None,
+    today: date | None = None,
+) -> None:
+    """Send a Myntos-built MVA-melding to Skatteetaten's validation endpoint.
+
+    Only ever reached after a TestID login, and :func:`headless_login` refuses
+    anything but a test issuer, so this cannot run against production with a
+    synthetic person. Validation is the one Skatteetaten REST call in the MVA
+    flow and it takes the ID-porten token directly; everything after it is the
+    Altinn app, which this deliberately does not touch. An instance created in
+    tt02 is a filing in progress that somebody has to clean up, and
+    ``process/next`` is a filing.
+
+    A verdict that blocks submission is a *warning*, not a failure: the call
+    worked, and what Skatteetaten says about the melding is the result being
+    asked for. The findings are printed whole, because they are the part worth
+    reading.
+    """
+    melding = sample_melding(orgnr, today or date.today())
+    xml = melding_module.melding_xml(
+        melding,
+        reference=f"digdir-check-{uuid.uuid4()}",
+        system_version=__version__,
+    )
+    if save_to is not None:
+        save_to.mkdir(parents=True, exist_ok=True)
+        (save_to / "mva-melding.xml").write_bytes(xml)
+
+    try:
+        answer = await build_mva_client(settings).validate(xml, id_porten_token=login.access_token)
+    except MvaError as error:
+        report.fail(
+            "mva validation",
+            f"{error}\n"
+            f"host: {settings.skatteetaten_mva_api_base_url}\n"
+            "a 403 is the scope: skatteetaten:mvameldingvalidering must be on\n"
+            "  the ID-porten client and in IDPORTEN_SCOPES. A reset connection is\n"
+            "  the host - the documented sbstest host did that on 2026-10-06",
+        )
+        return
+    if save_to is not None:
+        (save_to / "valideringsresultat.xml").write_bytes(answer.content)
+
+    result = melding_module.parse_validation(answer.content)
+    summary = (
+        f"{melding.termin.label} for {orgnr}, "
+        f"fastsatt {melding_module.format_amount(melding.fastsatt_merverdiavgift)}\n"
+        f"verdict: {result.status}"
+    )
+    findings = "".join(
+        f"\n- [{avvik.alvorlighet or '?'}] {avvik.kode or ''} {avvik.sti}: {avvik.melding}"
+        + (f" ({avvik.detaljer})" if avvik.detaljer else "")
+        for avvik in result.avvik
+    )
+    if result.blocks_submission:
+        report.warn("mva validation", summary + findings)
+        return
+    report.ok("mva validation", summary + findings)
+
+
 # A 5xx carries no meaning about the request, so it is matched before the
 # table below rather than being given a phrase of its own.
 _SERVER_ERROR = re.compile(r"failed \(5\d\d\)")
@@ -455,9 +600,9 @@ _SERVER_ERROR = re.compile(r"failed \(5\d\d\)")
 _MEANINGS = (
     (
         "SME-EKSTERN-005",
-        "the client is missing the digdir:skattemelding scope - it carries the\n"
-        "  Altinn rights to represent a taxpayer, and without it Skatteetaten\n"
-        "  cannot check those rights at all",
+        "there is no logged-in person whose Altinn rights Skatteetaten could\n"
+        "  check: a Maskinporten token without a systembruker for this taxpayer.\n"
+        "  Read it with an ID-porten login, or set up the systembruker",
     ),
     (
         "ikke tilgjengelig",
@@ -495,6 +640,8 @@ async def run(
     pid: str | None = None,
     year: int = _DEFAULT_INCOME_YEAR,
     org: str | None = None,
+    mva_org: str | None = None,
+    save_to: Path | None = None,
 ) -> int:
     settings = get_settings()
     report = Report()
@@ -509,7 +656,7 @@ async def run(
             await _check_skattemelding_scope(settings, report)
     await _check_idporten(settings, report)
     if pid is not None:
-        await _check_person_chain(settings, report, pid, year, org)
+        await _check_person_chain(settings, report, pid, year, org, mva_org, save_to)
 
     print()
     if report.failed:
@@ -548,12 +695,26 @@ def main() -> int:
         "--org",
         metavar="ORGNR",
         help="an organisasjonsnummer to read the skattemelding for, as the "
-        "--person given above. Needs digdir:skattemelding on the ID-porten "
-        "client and that person to hold Altinn rights for the company - being "
-        "daglig leder in Enhetsregisteret is enough",
+        "--person given above. Needs that person to hold Altinn rights for the "
+        "company - being daglig leder in Enhetsregisteret is enough",
+    )
+    parser.add_argument(
+        "--mva",
+        metavar="ORGNR",
+        help="validate a Myntos-built MVA-melding for this organisasjonsnummer "
+        "as the --person given above. Validation only: no Altinn instance is "
+        "created and nothing is submitted",
+    )
+    parser.add_argument(
+        "--save",
+        metavar="DIR",
+        type=Path,
+        help="with --mva, write the melding and Skatteetaten's answer here",
     )
     args = parser.parse_args()
-    return asyncio.run(run(args.person, args.year, args.org))
+    if args.mva is not None and args.person is None:
+        parser.error("--mva needs --person: validation takes a person's login")
+    return asyncio.run(run(args.person, args.year, args.org, args.mva, args.save))
 
 
 if __name__ == "__main__":  # pragma: no cover - entry point

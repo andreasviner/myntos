@@ -26,7 +26,7 @@ from myntos.api.v1 import skatt as skatt_endpoints
 from myntos.auth.idporten.client import GovernmentLogin
 from myntos.core.config import get_settings
 from myntos.integrations import brreg
-from tests.conftest import register, write
+from tests.conftest import agent_header, register, write
 
 # The ID-porten stub is shared with the tests that own the login flow, so a
 # change to what a login returns reaches both. Only the fixture wiring is
@@ -387,3 +387,24 @@ def test_the_access_mark_is_never_written_into_the_stored_snapshot(
     assert roles, "the snapshot should hold the register's answer"
     for role in roles:
         assert "access" not in role
+
+
+def test_a_key_fetching_the_register_is_not_told_who_has_access(
+    client: TestClient, brreg_says: None
+) -> None:
+    """Who has access is never a key's to read (agents-and-api.md rule 5).
+
+    ``GET …/register`` is closed to keys for that reason, and ``POST …/hent``
+    answers with the same board list, so a key gets it without the marks: an
+    empty list, and the public board from Enhetsregisteret's own route.
+    """
+    session = register(client, "kari@example.no", full_name="Kari Nordmann")
+    company_id = _company(client, session)
+    header = agent_header(client, company_id)
+
+    response = client.post(f"/api/v1/companies/{company_id}/hent", headers=header)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["roles"] == []
+    # Signed in, the marks are there.
+    assert _fetch(client, company_id)["Kari Berit Nordmann"]["access"] == "trolig"

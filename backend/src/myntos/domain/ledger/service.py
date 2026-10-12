@@ -29,12 +29,13 @@ from sqlalchemy.orm import aliased, selectinload
 
 from myntos.core.clock import utc_now
 from myntos.domain.identity.models import (
+    AgentKey,
     CompanyMembership,
     Organization,
     OrganizationRole,
     User,
 )
-from myntos.domain.ledger import cashflow, parties, posting
+from myntos.domain.ledger import cashflow, kontoplan, parties, posting, vatstatus
 from myntos.domain.ledger.bankkonto import format_bank_account, validate_bank_account
 from myntos.domain.ledger.cashflow import CashFlowDirection
 from myntos.domain.ledger.chart import (
@@ -43,25 +44,34 @@ from myntos.domain.ledger.chart import (
     CASH_JOURNAL_DESCRIPTION,
     CASH_JOURNAL_ID,
     CASH_JOURNAL_TYPE,
+    CLOSING_JOURNAL_ID,
     INPUT_VAT_ACCOUNT,
+    OPENING_JOURNAL_ID,
     OUTPUT_VAT_ACCOUNT,
+    SETTLEMENT_JOURNAL_ID,
     STANDARD_ACCOUNTS,
     STANDARD_TAX_CODES,
     TAX_CODES_BY_CODE,
 )
 from myntos.domain.ledger.errors import (
+    AccountNotFoundError,
     AlreadyReversedError,
     BankAccountNotFoundError,
+    CannotReverseHereError,
+    ChartIncompleteError,
     ClosedFinancialYearError,
     CompanyAlreadyClaimedError,
     CompanyNotFoundError,
     CompanyOrgnrLockedError,
     DuplicateBankAccountError,
     DuplicateCompanyError,
+    InactiveAccountError,
+    InvalidAccountNumberError,
     InvalidAmountError,
     NotAuthorizedForPartyError,
     PeriodOutsideBooksError,
     PrimaryBankAccountRequiredError,
+    TaxCodeNotAllowedError,
     UnknownTaxCodeError,
     VoucherNotFoundError,
 )
@@ -249,6 +259,8 @@ async def update_company_profile(
     in_foretaksregisteret: bool | None = None,
     organisation_form: str | None = None,
     ki_enabled: bool | None = None,
+    vat_registered_from: date | None = None,
+    clear_vat_registered_from: bool = False,
 ) -> Company:
     """Correct the company's own details.
 
@@ -299,7 +311,14 @@ async def update_company_profile(
     if city is not None:
         company.city = city or None
     if vat_registered is not None:
+        # Future entries only. Every voucher already posted carries its own
+        # tax code and rate and stays exactly as it is; what moves is what the
+        # register proposes and accepts from now on (see .vatstatus).
         company.vat_registered = vat_registered
+    if clear_vat_registered_from:
+        company.vat_registered_from = None
+    elif vat_registered_from is not None:
+        company.vat_registered_from = vat_registered_from
     if in_foretaksregisteret is not None:
         company.in_foretaksregisteret = in_foretaksregisteret
     if ki_enabled is not None:
@@ -783,17 +802,21 @@ async def _open_financial_year(db: AsyncSession, company: Company, year: int) ->
     )
     db.add(financial_year)
 
-    accounts = await db.scalars(select(Account).where(Account.company_id == company.id))
+    accounts = list(await db.scalars(select(Account).where(Account.company_id == company.id)))
+    # The latest earlier year's row per account, which is what carries a
+    # person's choice forward. This used to look every account up in the seed
+    # chart, which was right only while the seed was the whole kontoplan; the
+    # first account somebody added would have made opening the next year raise.
+    previous: dict[int, AccountGrouping] = {}
+    for grouping in await db.scalars(
+        select(AccountGrouping)
+        .join(Account, Account.id == AccountGrouping.account_id)
+        .where(Account.company_id == company.id, AccountGrouping.financial_year < year)
+        .order_by(AccountGrouping.financial_year)
+    ):
+        previous[grouping.account_id] = grouping
     for account in accounts:
-        seed = next(s for s in STANDARD_ACCOUNTS if s.number == account.account_number)
-        db.add(
-            AccountGrouping(
-                account_id=account.id,
-                financial_year=year,
-                grouping_category=seed.grouping_category,
-                grouping_code=seed.grouping_code,
-            )
-        )
+        db.add(kontoplan.grouping_for_new_year(account, previous.get(account.id), year))
     await db.flush()
     return financial_year
 
@@ -884,6 +907,48 @@ async def _next_voucher_number(db: AsyncSession, journal_id: int, year: int) -> 
     return f"{year}-{number:04d}"
 
 
+def _basis_account(
+    accounts: dict[str, Account], catalogue_number: str, chosen: str | None
+) -> Account:
+    """The account the amount is booked to: the category's, or one like it.
+
+    A person may book a category to another account of the **same type** in
+    their own kontoplan: «Datakostnad» to a 6820 they added for hosting, a
+    sale to a 3050 for one product line. The type is what keeps that choice
+    from moving the amount between the balance sheet and the income statement,
+    which is the one thing a category exists to get right. The accounts the
+    code refers to by number are never a choice; a cost booked to 2710 is a
+    deduction nobody claimed.
+
+    A deactivated account is refused whichever way it was reached, with a
+    message that says where it can be switched back on.
+    """
+    default = accounts.get(catalogue_number)
+    if default is None:
+        raise ChartIncompleteError(f"kontoplanen mangler konto {catalogue_number}")
+    account = default
+    if chosen is not None and chosen != catalogue_number:
+        picked = accounts.get(chosen)
+        if picked is None:
+            raise AccountNotFoundError(f"kontoplanen har ingen konto {chosen}")
+        if picked.account_number in kontoplan.LOCKED_ACCOUNTS:
+            raise InvalidAccountNumberError(
+                f"konto {chosen} brukes av Myntos selv og kan ikke velges for en betaling"
+            )
+        if picked.account_type is not default.account_type:
+            raise InvalidAccountNumberError(
+                f"konto {chosen} er en {picked.account_type.value}skonto, og typen du valgte "
+                f"føres på en {default.account_type.value}skonto"
+            )
+        account = picked
+    if not account.is_active:
+        raise InactiveAccountError(
+            f"konto {account.account_number} er deaktivert. Aktiver den i kontoplanen, eller "
+            "velg en annen konto"
+        )
+    return account
+
+
 def _check_gross(amount: Decimal) -> Decimal:
     if not isinstance(amount, Decimal):  # pragma: no cover - pydantic coerces first
         raise InvalidAmountError("beløpet må være et desimaltall")
@@ -908,6 +973,7 @@ async def record_cash_flow(
     party_pk: int | None = None,
     corrects_pk: int | None = None,
     created_by_user_id: int | None = None,
+    account_number: str | None = None,
 ) -> Transaction:
     """Record one payment in or out as a posted voucher.
 
@@ -939,6 +1005,10 @@ async def record_cash_flow(
     :class:`~myntos.domain.ledger.models.Transaction` — and a required argument
     would tempt a caller without a user into passing a placeholder id, which is
     worse than an empty field.
+
+    ``account_number`` books the amount to another account of the same type
+    than the category's own, one the company added to its kontoplan; see
+    :func:`_basis_account` for what may be chosen.
     """
     entry_type = cashflow.get_type(type_code)
     gross = _check_gross(gross_amount)
@@ -953,12 +1023,43 @@ async def record_cash_flow(
         else await parties.get_party(db, company=company, party_pk=party_pk)
     )
 
-    code = tax_code if tax_code is not None else entry_type.default_tax_code
+    # Registration is read on the entry's own date, not today's: a purchase
+    # made before the registration took effect carried no deduction, whenever
+    # it is typed in. See .vatstatus for what an unregistered business gets.
+    registered = vatstatus.registered_on(company, occurred_on)
+    if not registered and entry_type.code in vatstatus.REGISTERED_ONLY_TYPES:
+        raise TaxCodeNotAllowedError(
+            f"selskapet var ikke mva-registrert {occurred_on.isoformat()}, og da er mva betalt "
+            "ved innførsel en del av det varene kostet. Før hele regningen som varekjøp"
+        )
+    code = (
+        tax_code
+        if tax_code is not None
+        else vatstatus.default_tax_code(entry_type.default_tax_code, registered)
+    )
+    allowed = vatstatus.allowed_tax_codes(registered)
+    if allowed is not None and code not in allowed:
+        raise TaxCodeNotAllowedError(
+            f"selskapet var ikke mva-registrert {occurred_on.isoformat()}, så mva-kode {code} "
+            "kan ikke brukes: den gir fradrag eller krever inn mva. Bruk kode 0, så føres hele "
+            "beløpet"
+        )
+    basis_account = _basis_account(accounts, entry_type.account_number, account_number)
     tax = await _resolve_tax_code(db, company, code)
     rate = posting.rate_on(tax, occurred_on)
     seed = TAX_CODES_BY_CODE.get(code)
     reverse_charge = seed is not None and seed.reverse_charge
-    if reverse_charge:
+    vat_only = seed is not None and seed.vat_only
+    if vat_only:
+        # Codes 14 and 15: the bill is the tax and nothing else. The basis it
+        # was calculated on is the customs value of goods paid for elsewhere,
+        # so it is derived back from the amount rather than asked for: SAF-T
+        # wants a basis on every taxed line, and the MVA-melding reports only
+        # the deduction for these codes, so an øre of rounding in the derived
+        # basis reaches nobody.
+        net = gross
+        vat = gross
+    elif reverse_charge:
         # Innførsel and services bought abroad: the foreign seller charged no
         # Norwegian VAT, so nothing is carved out of what was paid. The whole
         # amount is the cost, and the VAT is computed on top of it as an amount
@@ -983,7 +1084,10 @@ async def record_cash_flow(
     )
     basis_line = TransactionLine(
         record_id="2",
-        account=accounts[entry_type.account_number],
+        # Whatever the category says, a vat-only code lands on 2710: picking 14
+        # under "Varekjøp" means the bill was the border VAT, and booking it to
+        # 4000 would make a deductible tax a cost.
+        account=accounts[INPUT_VAT_ACCOUNT] if vat_only else basis_account,
         # On the basis line, like the tax information: SAF-T puts
         # CustomerID/SupplierID on the line describing the trade, not on the
         # one describing the money movement.
@@ -993,10 +1097,14 @@ async def record_cash_flow(
         credit=net if is_incoming else ZERO,
     )
     # On the basis line, never on the VAT line — see posting.set_tax_information.
-    posting.set_tax_information(basis_line, tax_code=tax, rate=rate, basis=net, amount=vat)
+    # The one exception is a vat-only code, where the two are the same line.
+    basis = posting.quantize_money(gross / rate) if vat_only and rate > ZERO else net
+    posting.set_tax_information(basis_line, tax_code=tax, rate=rate, basis=basis, amount=vat)
     lines = [payment_line, basis_line]
 
-    if vat > ZERO and reverse_charge:
+    if vat_only:
+        pass
+    elif vat > ZERO and reverse_charge:
         # Both sides, because the buyer is both parties to this VAT. 2700 is
         # what is owed on the import; 2710 is the deduction, present only when
         # the purchase carries the right to one. Deductible, they cancel and the
@@ -1038,7 +1146,7 @@ async def record_cash_flow(
             lines.append(
                 TransactionLine(
                     record_id="4",
-                    account=accounts[entry_type.account_number],
+                    account=basis_account,
                     description=f"Ikke fradragsberettiget innførselsmva, kode {code}",
                     debit=ZERO if undone else vat,
                     credit=vat if undone else ZERO,
@@ -1134,6 +1242,18 @@ async def reverse_cash_flow(
     the one action a reader most wants attributed.
     """
     original = await get_voucher(db, company=company, voucher_pk=voucher_pk)
+    # The opening balance and the year-end closing have corrections of their
+    # own (myntos.domain.arsoppgjor): replacing an opening balance reverses and
+    # reposts in one step, and a closing is undone only by reopening the year,
+    # which is logged with a reason. Reversed from here they would be undone
+    # without either.
+    journal_code = await db.scalar(
+        select(Journal.journal_id).where(Journal.id == original.journal_id)
+    )
+    if journal_code in {OPENING_JOURNAL_ID, CLOSING_JOURNAL_ID}:
+        raise CannotReverseHereError(
+            "inngående balanse og årsavslutning rettes fra sine egne sider, ikke fra registeret"
+        )
     already = await db.scalar(
         select(Transaction.id).where(Transaction.reverses_transaction_pk == original.id)
     )
@@ -1192,6 +1312,9 @@ class CashFlowView:
     # by person without matching on a string two colleagues may share.
     created_by_id: int | None
     created_by_name: str | None
+    # The name of the key the author worked through, when they used one
+    # (docs/agents-and-api.md rule 6): "Kari Nordmann via «Claude»".
+    created_via: str | None = None
 
 
 def describe(
@@ -1199,6 +1322,7 @@ def describe(
     *,
     reversed_by_id: int | None = None,
     created_by_name: str | None = None,
+    created_via: str | None = None,
 ) -> CashFlowView | None:
     """Project a voucher onto the cash-flow shape, or ``None`` if it has none.
 
@@ -1230,6 +1354,13 @@ def describe(
         ),
         None,
     )
+    # Border VAT paid on a tollpass (codes 14 and 15) has no basis account: the
+    # whole payment went to 2710, and that line carries the tax information.
+    # Without this fallback such a payment would vanish from the register while
+    # still sitting in the books.
+    tax_only = basis is None
+    if basis is None:
+        basis = next((line for line in transaction.lines if line.tax_code is not None), None)
     if basis is None:
         return None
 
@@ -1237,6 +1368,8 @@ def describe(
     credit = payment.credit or ZERO
     gross = debit if debit > ZERO else credit
     net = (basis.debit or ZERO) if (basis.debit or ZERO) > ZERO else (basis.credit or ZERO)
+    if tax_only:
+        net = ZERO
     # Read from the line rather than derived as gross - net, because the two
     # disagree for an import: the VAT there is computed on top of what was paid
     # instead of carved out of it, so gross equals net and the subtraction says
@@ -1271,6 +1404,7 @@ def describe(
         # did not resolve, and a voucher with no author at all, are different
         # facts, and the interface says «ukjent» for the second one only.
         created_by_name=created_by_name,
+        created_via=created_via,
     )
 
 
@@ -1283,7 +1417,12 @@ async def list_cash_flows(
     offset: int = 0,
 ) -> list[CashFlowView]:
     """The register, newest first."""
-    query = _voucher_query().where(Journal.company_id == company.id)
+    # The opening balance is not a payment, though it puts money on 1920: it is
+    # what the bank held when the books arrived, and listed here it would read
+    # as the year's largest receipt.
+    query = _voucher_query().where(
+        Journal.company_id == company.id, Journal.journal_id != OPENING_JOURNAL_ID
+    )
     if financial_year is not None:
         query = query.where(Transaction.financial_year == financial_year)
     transactions = list(
@@ -1295,12 +1434,16 @@ async def list_cash_flows(
     )
     reversals = await _reversal_map(db, [t.id for t in transactions])
     authors = await _author_names(db, [t.created_by_user_id for t in transactions])
+    keys = await _key_names(db, [t.created_via_agent_key_id for t in transactions])
     views = [
         describe(
             t,
             reversed_by_id=reversals.get(t.id),
             created_by_name=(
                 None if t.created_by_user_id is None else authors.get(t.created_by_user_id)
+            ),
+            created_via=(
+                None if t.created_via_agent_key_id is None else keys.get(t.created_via_agent_key_id)
             ),
         )
         for t in transactions
@@ -1340,6 +1483,21 @@ async def _author_names(db: AsyncSession, user_ids: Sequence[int | None]) -> dic
         return {}
     rows = await db.execute(select(User.id, User.full_name).where(User.id.in_(wanted)))
     return {row.id: row.full_name for row in rows}
+
+
+async def _key_names(db: AsyncSession, key_ids: Sequence[int | None]) -> dict[int, str]:
+    """``{key id: name}`` for the keys a page of vouchers was registered through.
+
+    Not filtered by company, for the reason :func:`_author_names` gives: the
+    ids come off this company's own vouchers, never from a request, and a key
+    belongs to one company, so every name this can return is one of these
+    books' own keys.
+    """
+    wanted = {key_id for key_id in key_ids if key_id is not None}
+    if not wanted:
+        return {}
+    rows = await db.execute(select(AgentKey.id, AgentKey.name).where(AgentKey.id.in_(wanted)))
+    return {row.id: row.name for row in rows}
 
 
 # --- Summary --------------------------------------------------------------------
@@ -1419,6 +1577,10 @@ def _movement_query(
         .where(
             Journal.company_id == company_id,
             Account.account_number.in_(account_numbers),
+            # Money in and out *this year*. The opening balance on 1920 is a
+            # position carried in, not a movement; the cash position below,
+            # which is a position, keeps it.
+            Journal.journal_id != OPENING_JOURNAL_ID,
             _still_stands(),
         )
         .group_by(Transaction.voucher_type)
@@ -1476,6 +1638,10 @@ async def summarise(db: AsyncSession, *, company: Company, financial_year: int) 
                 Journal.company_id == company.id,
                 Transaction.financial_year == financial_year,
                 Account.account_number.in_(VAT_ACCOUNTS),
+                # A settled period's VAT is still the year's VAT. The settlement
+                # moves it to 2740 to be paid, and counting that move here would
+                # show a company that has filed as one that owes nothing.
+                Journal.journal_id != SETTLEMENT_JOURNAL_ID,
                 _still_stands(),
             )
             .group_by(Account.account_number)

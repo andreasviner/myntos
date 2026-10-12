@@ -46,7 +46,7 @@ from typing import Protocol
 
 from myntos.domain.bilag import questions
 from myntos.domain.bilag.classification import (
-    MAX_DOCUMENT_CHARS,
+    MAX_BILAG_CHARS,
     Ask,
     excerpt,
     preamble,
@@ -77,14 +77,33 @@ _SYSTEM = (
     "ikke i teksten, svarer du UKJENT. Ingen forklaring og ingen andre linjer."
 )
 
+# MOTPART says where the seller is printed and where the buyer is, because "the
+# seller" alone was not enough on a pro forma invoice from MA-3D: two names on
+# the page, the buyer's in the filename too, and nothing telling the model that
+# the name over a Trondheim address is the one paying.
+#
+# BESKRIVELSE says what to do with several orders because the model, shown one
+# card charge and nine AliExpress orders, described the first item it read as if
+# it were the purchase. The example is deliberately not from any fixture: an
+# example names the shape of the answer, and one that named a real bilag's
+# items would teach the test its own answer.
 _QUESTION = (
     "Svar med nøyaktig disse fem linjene, i denne rekkefølgen:\n"
     "DATO: datoen kjøpet eller fakturaen er datert, avskrevet nøyaktig slik den står "
     "i teksten over\n"
     "VALUTA: valutakoden beløpene er i, tre store bokstaver, for eksempel NOK, GBP eller EUR\n"
-    "MOTPART: navnet på selgeren, avskrevet nøyaktig slik det står i teksten over\n"
+    "MOTPART: navnet på selgeren, altså den som har utstedt bilaget og skal ha pengene, "
+    "avskrevet nøyaktig slik det står i teksten over. Selgeren står i brevhodet, ved "
+    "organisasjonsnummer eller VAT ID, etter «Selger» eller «Sold by», eller som "
+    "mottaker av betalingen («Beneficiary», «Betalingsmottaker»). Ikke kjøperen: navnet "
+    "over faktura- eller leveringsadressen, etter «Kunde», «Bill to» eller «Customer», er "
+    "den som betaler. Dokumentets tittel kan være filnavnet, som den som lagret fila har "
+    "valgt, så et navn der er ikke selgeren bare fordi det står der\n"
     "BESKRIVELSE: én kort setning på norsk om hva selskapet fikk for pengene, altså "
-    "hvilken vare eller tjeneste det var. Ikke skriv selgerens navn, fakturanummeret eller "
+    "hvilken vare eller tjeneste det var. Er det flere dokumenter med ulike ordrer eller "
+    "varer, beskriv alt samlet, for eksempel «Kontorrekvisita: skrivere, kabler og "
+    "en kontorstol», og ikke bare den første varen. Ikke skriv "
+    "selgerens navn, fakturanummeret eller "
     f"beløpet: de har egne felt, og en beskrivelse som gjentar dem sier ingenting. Maks "
     f"{MAX_DESCRIPTION_CHARS} tegn\n"
     "SPØRSMÅL: ett kort spørsmål til brukeren om noe bare brukeren kan vite, og "
@@ -206,7 +225,9 @@ def _said(value: str, document_text: str) -> bool:
     first, for the same reason the user's own note was never put in.
     """
     body = _OUR_HEADING.sub(" ", document_text)
-    haystack = " ".join(body[: MAX_DOCUMENT_CHARS * 2].split()).casefold()
+    # The whole bilag's allowance, not one document's: a quote from the fifth
+    # file is as much a quote as one from the first, now the model is shown it.
+    haystack = " ".join(body[: MAX_BILAG_CHARS * 2].split()).casefold()
     return " ".join(value.split()).casefold() in haystack
 
 
@@ -562,6 +583,13 @@ def merge(reading: InvoiceReading, found: Extraction) -> tuple[InvoiceReading, f
     parser took a date merely because it was the earliest one on the page, that
     is a tie-break and not a reading, and a receipt covering a period will lose
     the tie. The model is asked which line is the date and gets to break it.
+
+    The seller has the same kind of exception. A name the parser took from the
+    file's title rather than from the page is a gap with something parked in it,
+    not a reading: the title is often the filename, and MA-3D's invoice was
+    saved as "PI Andreas Lindeman _26-0023", which put the buyer in the motpart
+    field ahead of anything the model said. The model, which read the page,
+    replaces it.
     """
     filled: dict[str, object] = {}
     if found.occurred_on is not None and (
@@ -576,11 +604,15 @@ def merge(reading: InvoiceReading, found: Extraction) -> tuple[InvoiceReading, f
         and found.currency_code != "NOK"
     ):
         filled["currency_code"] = found.currency_code
-    if reading.seller_name is None and found.counterparty_name is not None:
+    if (
+        reading.seller_name is None or reading.seller_named_by_title
+    ) and found.counterparty_name is not None:
         filled["seller_name"] = found.counterparty_name
     if not filled:
         return reading, frozenset()
-    return replace(reading, **filled), frozenset(filled)  # type: ignore[arg-type]
+    # Not a field the model filled, so not in the set that says which ones it did.
+    flags = {"seller_named_by_title": False} if "seller_name" in filled else {}
+    return replace(reading, **filled, **flags), frozenset(filled)  # type: ignore[arg-type]
 
 
 #: Words too short to be worth requiring in a sentence. "1TB" and "M3" are part

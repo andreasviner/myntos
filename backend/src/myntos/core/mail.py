@@ -1,7 +1,9 @@
 """Sending mail, and the decision not to.
 
-Myntos sends one kind of message today: an invitation to join an organization.
-That is enough to want a real transport and not enough to want a dependency, so
+Myntos sends three kinds of message: an invitation to a company's books, and,
+to a person about their own account, an address confirmation and a password
+reset (:mod:`myntos.domain.identity.account_mail`). That is enough to want a
+real transport and not enough to want a dependency, so
 sending sits behind a small protocol with two implementations: the standard
 library's ``smtplib``, run off the event loop in a worker thread, and Cloudflare
 Email Sending over HTTPS for a deployment whose domain is on Cloudflare anyway.
@@ -364,6 +366,15 @@ def _cloudflare_problem(response: httpx.Response, *, recipient: str) -> str | No
     if recipient in bounced:
         # The address itself is wrong, and no retry changes that.
         return "rejected by the receiving server (permanent bounce)"
+    # The same shape of lie, one step earlier: an address on the account's
+    # suppression list (it bounced or complained before) is dropped without
+    # being tried, and reported inside a successful response. Cloudflare only
+    # answers this way when dropping is switched on for the sending subdomain;
+    # otherwise the request fails outright and the branch above catches it.
+    # Checked against the send_raw reference, 2026-10-09.
+    suppressed = result.get("suppressed_recipients") or [] if isinstance(result, dict) else []
+    if recipient in suppressed:
+        return "dropped: the address is on the sending account's suppression list"
     return None
 
 

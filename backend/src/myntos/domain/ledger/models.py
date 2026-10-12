@@ -70,8 +70,8 @@ RATE = Numeric(9, 6)
 GROUPING_NOT_APPLICABLE = "NA"
 
 # Standard VAT codes that must never reach the MVA-melding. Kept here next to
-# the tax tables rather than in the (not yet written) MVA aggregator, because
-# it is a property of the code list itself — see docs/integrations/mva.md.
+# the tax tables rather than in the MVA aggregator (myntos.domain.mva.melding),
+# because it is a property of the code list itself; see docs/integrations/mva.md.
 NON_REPORTABLE_STANDARD_TAX_CODES = frozenset({"0", "7", "20", "21", "22"})
 
 
@@ -159,6 +159,29 @@ class Company(Base):
     # charging output VAT when not. Defaulting to False is the safe direction:
     # an unregistered business that accidentally invoices VAT still owes it.
     vat_registered: Mapped[bool] = mapped_column(Boolean, default=False)
+    # The day the registration in Merverdiavgiftsregisteret takes effect, when
+    # it is later than the start of these books. Registration is not a property
+    # of a company so much as of a date: a business crosses the threshold in
+    # March, is registered from 1 May, and the purchases it made in April carry
+    # no deduction however the flag reads today. NULL means "for as long as
+    # these books go back", which is the only reading of the rows that existed
+    # before the column did. Read through
+    # :func:`myntos.domain.ledger.vatstatus.registered_on` and nowhere else.
+    #
+    # It decides *defaults and permissions for new entries only*. A posted
+    # voucher keeps the code it was posted with whatever this says later; see
+    # docs/integrations/mva.md, "Registration status".
+    vat_registered_from: Mapped[date | None] = mapped_column(Date)
+    # How long one MVA-melding period is, as the XSD names it ("toMaaneder",
+    # "maaned", "aar"). Two months is the law's default; a month or a year is
+    # something Skatteetaten grants on application, so it is a setting rather
+    # than something the books could work out. See myntos.domain.mva.periods.
+    vat_period_type: Mapped[str] = mapped_column(String(32), default="toMaaneder")
+    # Which kind of melding the company files ("alminnelig", "primaernaering").
+    # Primærnæring is farming, forestry and fishing, which file once a year on a
+    # later deadline and are told apart from an ordinary yearly filer only by
+    # this.
+    vat_category: Mapped[str] = mapped_column(String(32), default="alminnelig")
     # Decides the "Foretaksregisteret" marking and the head-office address that
     # must accompany it (§ 5-1-2 second paragraph). Aksjeselskap,
     # allmennaksjeselskap and NUF are always registered there.
@@ -205,6 +228,19 @@ class Company(Base):
     # drops it again, so one left declared here would be a phantom diff on
     # every autogenerate.
     ki_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Whether a key may be made for these books at all, and whether any key
+    # works in them (docs/agents-and-api.md rule 3).
+    #
+    # Off by default, the opposite of ``ki_enabled`` above, and the difference is
+    # who sends what. KI is Myntos sending a bilag to Løynd, which runs in Norway
+    # and keeps nothing. A key is the company letting a tool of its own choosing
+    # read the books, and that tool's model may be anywhere. Only the people
+    # responsible for the books can decide that, so it starts as a no, and an
+    # owner or admin turns it on after being told what it means. Turning it off
+    # revokes every key rather than pausing them, so turning it on again later
+    # cannot quietly bring back a key somebody had forgotten.
+    agent_access_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # --- What Enhetsregisteret says ------------------------------------------
     #
@@ -470,6 +506,12 @@ class Account(Base):
         Enum(AccountType, name="account_type", values_callable=lambda e: [m.value for m in e])
     )
     created_date: Mapped[date | None] = mapped_column(Date)
+    # False hides the account from *new* entries and nothing else. It is still
+    # in the SAF-T file, still in every report, and every voucher already
+    # posted to it still says it was; deactivating is how a kontoplan sheds an
+    # account it no longer uses without rewriting the years that did use it.
+    # See myntos.domain.ledger.kontoplan for which accounts may not be switched
+    # off at all.
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     company: Mapped[Company] = relationship(back_populates="accounts")
@@ -503,6 +545,24 @@ class AccountGrouping(Base):
     # with no næringsspesifikasjon post.
     grouping_category: Mapped[str] = mapped_column(String(64))
     grouping_code: Mapped[str] = mapped_column(String(64))
+    # Set when a person chose this pair on the kontoplan page, and carried
+    # forward with it into the next year. NULL means the seed (or a migration
+    # correcting the seed) wrote it.
+    #
+    # The column exists for the next migration more than for the interface.
+    # ``b7d40e2c9a15`` could correct every row holding the old seed's exact pair
+    # because nothing then let a person edit a grouping, so "holds the seed's
+    # pair" meant "was written by the seed". That stopped being true the day the
+    # kontoplan became editable: a person may now choose any listed pair,
+    # including one a later seed correction would want to move. A migration
+    # rewriting groupings must therefore leave ``chosen_at IS NOT NULL`` rows
+    # alone, which is a fact it can test rather than a guess it has to make.
+    chosen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Who chose it. SET NULL for the reason every author column here gives: the
+    # person may be erased, and the choice stays a choice.
+    chosen_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("app_user.id", ondelete="SET NULL")
+    )
 
     account: Mapped[Account] = relationship(back_populates="groupings")
 
@@ -742,21 +802,40 @@ class Transaction(Base):
     # a regnskapsfører and the owner both post to the same journal, and "who
     # booked this as a private withdrawal" had no answer in the data at all.
     #
-    # Nullable, and not because a voucher may lack an author. Three reasons it
-    # can be NULL: rows posted before this column existed, GDPR erasure taking
-    # the person and leaving the record, and a voucher some future job posts
-    # with nobody logged in. A reader must therefore treat NULL as "not
-    # recorded" and never as "nobody": the register shows «ukjent» for it rather
-    # than inventing a name or quietly leaving the field out.
+    # Nullable, and not because a voucher may lack an author. Two reasons it
+    # can be NULL: rows posted before this column existed, and a voucher some
+    # future job posts with nobody logged in. GDPR erasure is *not* one of them
+    # any more: an account a voucher names is kept as a tombstone with its id
+    # and name, precisely so this column goes on answering (docs/gdpr.md). A
+    # reader must therefore treat NULL as "not recorded" and never as "nobody":
+    # the register shows «ukjent» for it rather than inventing a name or quietly
+    # leaving the field out.
     #
     # SET NULL rather than CASCADE, for the same reason as the bilag archive:
     # deleting the person must never delete the bookkeeping they did. A posted
     # voucher is history (bokføringsloven § 13) and outlives every account.
     #
-    # Not a SAF-T field: the standard's Transaction has no user, so this is ours
-    # and does not reach the export.
+    # Exported as SAF-T ``Transaction/SourceID`` ("details of person or
+    # application that entered the transaction"), as the user's id. An earlier
+    # version of this comment said the standard had no such field; it does, and
+    # it is the one an auditor reads to ask who booked something.
     created_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("app_user.id", ondelete="SET NULL")
+    )
+    # The key the author worked through, when they did (docs/agents-and-api.md
+    # rule 6). The person above is still the one who registered the entry, as
+    # bokføringsforskriften needs somebody to be; this says how. The register
+    # shows "Kari Nordmann via «Claude»".
+    #
+    # Never set by the code that builds a voucher. It is stamped on every new
+    # voucher flushed during a request a key made (myntos.api.deps), so a new
+    # way of posting cannot forget it, and a voucher posted in a browser
+    # session can never claim it.
+    #
+    # SET NULL for the same reason as the author: the voucher outlives
+    # everything that made it.
+    created_via_agent_key_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agent_key.id", ondelete="SET NULL")
     )
     description: Mapped[str] = mapped_column(String(255))
     # SAF-T TransactionType — bilagstype.
@@ -844,6 +923,19 @@ class TransactionLine(Base):
     # an empty element fails SAF-T validation.
     debit_tax_amount: Mapped[Decimal | None] = mapped_column(MONEY)
     credit_tax_amount: Mapped[Decimal | None] = mapped_column(MONEY)
+    # The MVA-melding's ``spesifikasjon`` for this line: ``uttak``,
+    # ``tapPåKrav``, ``justering`` or ``tilbakeføringAvInngåendeMerverdiavgift``,
+    # spelled exactly as Skatteetaten's code list spells them
+    # (:class:`myntos.domain.mva.codes.Spesifikasjon`). NULL on every ordinary
+    # line, which is nearly all of them.
+    #
+    # On the line rather than derived from the voucher type, because the melding
+    # groups lines and not vouchers (``GROUP BY (mvaKode, spesifikasjon,
+    # sats)``), and because a reversal copies lines: a tap på krav undone has to
+    # net against the tap på krav, not against the period's ordinary deductions.
+    # Only set where tax information is set, on the same line. Not a SAF-T
+    # field; the export does not read it.
+    vat_specification: Mapped[str | None] = mapped_column(String(64))
 
     transaction: Mapped[Transaction] = relationship(back_populates="lines")
     account: Mapped[Account] = relationship()

@@ -374,6 +374,11 @@ def _reverse_line(line: TransactionLine) -> TransactionLine:
         # counts the original twice instead of netting it out.
         debit_tax_amount=line.credit_tax_amount,
         credit_tax_amount=line.debit_tax_amount,
+        # The melding groups by spesifikasjon as well as by code, so a reversed
+        # tap på krav has to land in the tap på krav line to cancel it. Dropped,
+        # it would net against the period's ordinary deductions instead and
+        # leave both lines wrong by the same amount.
+        vat_specification=line.vat_specification,
     )
     # Copy the relationships too, and only when they are actually set: on a
     # transaction that has not been flushed the foreign key columns are still

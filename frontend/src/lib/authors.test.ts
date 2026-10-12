@@ -38,6 +38,7 @@ function entry(author: Partial<CashFlowEntry>): CashFlowEntry {
     corrects_id: null,
     created_by_id: null,
     created_by_name: null,
+    created_via: null,
     attachments: [],
     ...author,
   };
@@ -81,11 +82,23 @@ describe('authorCount', () => {
     const namesake = { created_by_id: 3, created_by_name: 'Ola Nordmann' };
     expect(authorCount([entry(OLA), entry(namesake)])).toBe(2);
   });
+
+  it('counts a person and their agent as two hands', () => {
+    // Which rows the agent posted is the question a register written by both
+    // has to answer, so the mark appears.
+    const agent = { ...KARI, created_via: 'Claude' };
+    expect(authorCount([entry(KARI), entry(agent)])).toBe(2);
+    expect(namesAuthors([entry(agent), entry(agent)])).toBe(false);
+  });
 });
 
 describe('authorOf', () => {
   it('prints the name the backend recorded', () => {
     expect(authorOf(entry(KARI))).toBe('Kari Nordmann');
+  });
+
+  it('names the key after the person who worked through it', () => {
+    expect(authorOf(entry({ ...KARI, created_via: 'Claude' }))).toBe('Kari Nordmann via «Claude»');
   });
 
   it('says «ukjent» rather than leaving the mark blank', () => {

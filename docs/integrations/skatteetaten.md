@@ -162,4 +162,4 @@ digdir-samarbeid.slack.com.
 - Skatteetaten support is effectively unstaffed weeks 28–32 (Norwegian
   summer) — plan onboarding around it.
 - Follow `skatteetaten.no/samarbeidspartnere/sluttbrukersystemer/sbs-nyheter/`
-  and the repo; fellesmøter are ~quarterly (next: 2026-09-08).
+  and the repo; fellesmøter are ~quarterly, announced there.

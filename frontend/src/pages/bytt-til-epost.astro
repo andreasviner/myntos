@@ -1,0 +1,144 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+{/* Bytt fra BankID til e-post: siden lenken i e-posten åpner.
+
+    En konto som logger inn med BankID, kan ikke ha passord ved siden av, fordi
+    BankIDs vilkår forbyr å bruke en BankID-innlogging til å sette opp en
+    innlogging hos oss (docs/integrations/bankid.md). Byttet ble startet på
+    «Din konto» av noen som var logget inn med BankID, men det er denne lenken
+    som gjør det: den viser at innboksen er din, og først når passordet er
+    valgt her, fjernes BankID fra kontoen. Til da virker BankID som før.
+
+    Tokenet står i fragmentet (#token=…), slik som på /nytt-passord/, så det
+    aldri havner i en serverlogg. Det sendes i en POST når passordet er valgt,
+    og fjernes fra adresselinjen når lenken er brukt eller avvist.
+
+    Etterpå er alle økter på kontoen avsluttet, også denne nettleserens, og man
+    logger inn med e-postadressen og det nye passordet. */}
+
+<BaseLayout
+  title="Bytt til e-post | Myntos"
+  description="Velg passord og logg inn på Myntos med e-post i stedet for BankID."
+>
+  <div class="auth-page">
+    <h1>Bytt til innlogging med e-post</h1>
+    <p class="lead">
+      Når du har valgt passord, slutter innlogging med BankID å virke for kontoen, og alle som er
+      logget inn på den, blir logget ut.
+    </p>
+
+    <div class="card">
+      <p class="status" id="status" hidden></p>
+
+      <form id="switch-form" novalidate>
+        <label class="field">
+          <span>Nytt passord</span>
+          <input type="password" name="password" autocomplete="new-password" required />
+          <span class="field-hint" id="password-hint">Lengde teller mer enn krøllete tegn.</span>
+        </label>
+        <button class="btn btn-primary btn-block" type="submit" id="submit">
+          Velg passord og bytt
+        </button>
+      </form>
+
+      <div id="done" hidden>
+        <p>
+          Byttet er gjort. Kontoen logger inn med e-postadressen din og passordet du nettopp valgte,
+          og ikke lenger med BankID.
+        </p>
+        <a class="btn btn-primary btn-block" href="/logg-inn/">Logg inn</a>
+      </div>
+
+      {/* En lenke som er brukt, utløpt eller erstattet kan ikke rettes her, så
+          siden peker tilbake til «Din konto», der man ber om en ny. Kontoen
+          logger fortsatt inn med BankID. */}
+      <div id="dead" hidden>
+        <p>
+          Denne lenken virker ikke lenger. Den kan være brukt, for gammel, eller erstattet av en
+          nyere. Kontoen logger fortsatt inn med BankID, og du kan be om en ny lenke under «Din
+          konto».
+        </p>
+        <a class="btn btn-primary btn-block" href="/konto/#innloggingsmater">Til Din konto</a>
+      </div>
+    </div>
+  </div>
+</BaseLayout>
+
+<style>
+  .auth-page {
+    max-width: 26rem;
+    margin: 0 auto;
+  }
+</style>
+
+<script>
+  import { ApiError, confirmSwitchToEmail, getProviders } from '../lib/api';
+  import { el, setStatus, show } from '../lib/dom';
+  import { forgetFragment, tokenFromFragment } from '../lib/links';
+  import { forgetChrome, rememberAuth, setAuthState } from '../lib/session';
+  import { clearActiveCompany } from '../lib/tenant';
+
+  const status = el<HTMLParagraphElement>('#status');
+  const form = el<HTMLFormElement>('#switch-form');
+  const submit = el<HTMLButtonElement>('#submit');
+  const passwordField = el<HTMLInputElement>('input[name="password"]');
+
+  // Lenken blir stående i adresselinjen til den er brukt eller avvist: en
+  // omlasting midt i skrivingen skal ikke koste en ny e-post.
+  const token = tokenFromFragment(window.location.hash);
+
+  function dead(): void {
+    forgetFragment();
+    show(form, false);
+    setStatus(status, '');
+    show(el('#dead'), true);
+  }
+
+  if (token === null) dead();
+
+  // Minstelengden kommer fra backend, som håndhever den, slik som på /registrer/.
+  void getProviders()
+    .then(({ password_min_length: minimum }) => {
+      el('#password-hint').textContent = `Minst ${minimum} tegn. Lengde teller mer enn krøllete tegn.`;
+      passwordField.minLength = minimum;
+    })
+    .catch(() => {
+      // Regelen står i feilmeldingen uansett.
+    });
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (token === null) return;
+    const password = String(new FormData(form).get('password') ?? '');
+
+    submit.disabled = true;
+    setStatus(status, '');
+    void confirmSwitchToEmail(token, password)
+      .then(() => {
+        forgetFragment();
+        // Alle økter er avsluttet, også denne nettleserens. Hintet om at man
+        // er logget inn, og selskapet som var åpent, hører til en økt som ikke
+        // finnes lenger.
+        rememberAuth('ut');
+        setAuthState('ut');
+        clearActiveCompany();
+        forgetChrome();
+        show(form, false);
+        show(el('#done'), true);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof ApiError && error.code === 'invalid_email_token') {
+          dead();
+          return;
+        }
+        // Et for kort passord bruker ikke opp lenken, så man kan prøve igjen.
+        setStatus(
+          status,
+          error instanceof ApiError ? error.message : 'Vi fikk ikke lagret passordet. Prøv en gang til.',
+        );
+        submit.disabled = false;
+      });
+  });
+</script>

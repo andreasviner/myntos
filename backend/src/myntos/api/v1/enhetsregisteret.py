@@ -14,7 +14,7 @@ from dataclasses import asdict
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from myntos.api.deps import CurrentUser
+from myntos.api.deps import KEY_READ, CurrentUser
 from myntos.domain.ledger.orgnr import validate_orgnr
 from myntos.integrations import brreg
 
@@ -101,7 +101,7 @@ class RoleResponse(BaseModel):
     elected_by: str | None
 
 
-@router.get("/enhetsregisteret/{orgnr}")
+@router.get("/enhetsregisteret/{orgnr}", openapi_extra=KEY_READ)
 async def lookup_unit(orgnr: str, _user: CurrentUser) -> RegisteredUnitResponse:
     """Look up a registered unit by its organisasjonsnummer.
 
@@ -116,7 +116,7 @@ async def lookup_unit(orgnr: str, _user: CurrentUser) -> RegisteredUnitResponse:
     return RegisteredUnitResponse(**asdict(unit))
 
 
-@router.get("/enhetsregisteret/{orgnr}/roller")
+@router.get("/enhetsregisteret/{orgnr}/roller", openapi_extra=KEY_READ)
 async def lookup_roles(orgnr: str, _user: CurrentUser) -> list[RoleResponse]:
     """Who holds a registered role in the unit: styre, daglig leder, revisor…
 

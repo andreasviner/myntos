@@ -2,9 +2,10 @@
 
 A submission is not one request. Skatteetaten requires a person to review the
 melding before it is filed, so the token that authorizes the filing has to
-survive between the ID-porten callback and the moment the user presses submit.
-The backend runs as stateless containers that sleep between requests, so that
-means a database row rather than process memory - the same reasoning
+survive between the ID-porten callback and the moment the user presses submit,
+and a restart or a deploy can land in between (``./update.sh`` restarts the
+unit). Process memory would lose it there, and the person would have to log in
+again halfway through a filing, so it is a database row - the same reasoning
 :class:`~myntos.domain.identity.models.OAuthLoginAttempt` records for its own
 short-lived state.
 

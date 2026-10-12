@@ -19,6 +19,7 @@ flowchart LR
     PG[(PostgreSQL<br/>EEA region)]
     MP[Maskinporten]
     IDP[ID-porten]
+    IDURA[Idura, EU<br/>BankID sign-in]
     ALT[Altinn 3<br/>instance APIs]
     SKE[Skatteetaten APIs]
 
@@ -28,6 +29,8 @@ flowchart LR
     BE --> R2
     BE -->|JWT grant, m2m| MP
     FE -->|OIDC redirect| IDP
+    FE -->|OIDC redirect| IDURA
+    BE -->|code exchange, private_key_jwt| IDURA
     BE -->|token exchange| ALT
     BE --> SKE
 ```
@@ -35,14 +38,18 @@ flowchart LR
 ## Accounts, organizations and login
 
 Myntos has its own accounts, entirely separate from the government auth below.
-A user signs in with **email and password** or with **Google** ("logg inn med
-Gmail"); both land in the same account model.
+A user signs in with **email and password**, with **Google** or **Microsoft**,
+or with **BankID** through a broker; all of them land in the same account
+model. BankID here is a login to Myntos and nothing more: it is not ID-porten,
+and **ID-porten is never a way to sign in**, because Digdir's terms for private
+customers allow it for reaching public services (the filings below), not as a
+product's own login. Nobody should try to make it one.
 
 ### The company is the tenant; the account only owns companies
 
 ```
 Organization ─── OrganizationMembership ── User ─┬─ password hash
-  (an account)      (may add companies)          ├─ UserIdentity (google)
+  (an account)      (may add companies)          ├─ UserIdentity (google, microsoft, bankid)
         │                                        │
         └─ Company (orgnr) ─┬─ CompanyMembership ┘  (role, access, per company)
               (plan)        └─ ledger, bilag, MVA
@@ -140,9 +147,9 @@ Nothing is gated on it. An unconfirmed company books, invoices and reports
 exactly like a confirmed one — bookkeeping does not wait for BankID on a Sunday
 evening. What the confirmation settles is *whose* company it is. Until it is
 settled, the header carries a small red dot beside the company name and
-`/organisasjon/` opens with a yellow banner and a **Bekreft nå** button. The dot
-says only "look here"; the banner says the rest, at full size, where the button
-that fixes it is.
+`/organisasjon/` opens with a yellow banner and a **Bekreft selskapet** button.
+The dot says only "look here"; the banner says the rest, at full size, where the
+button that fixes it is.
 
 ### What comes from Enhetsregisteret
 
@@ -214,15 +221,19 @@ under another company's name. With two companies on the account, the settings
 page said `Lindeman Technologies` on the account card while the header said
 `DIALGA AS`, and it was reported as a leak. The function is gone, migration
 `c4d7e81f2a90` gave the borrowed names back, and
-[company-isolation.md](company-isolation.md#accounts-are-never-named-after-companies)
+[company-isolation.md](company-isolation.md#the-account-is-not-a-company)
 is the rule not to reintroduce it.
 
 So a placeholder name stays until somebody chooses one. `PATCH
 /api/v1/organizations/{id}` is the only thing that clears the flag.
 
-Both `GET /auth/me` (as `organization_name_is_placeholder`) and the organization
-endpoints (as `name_is_placeholder`) expose it, so the frontend can offer a
-rename instead of presenting a made-up name as settled fact.
+Only the organization endpoints expose it (as `name_is_placeholder`); `GET
+/auth/me` does not. No page shows an account's name or offers to rename one,
+because a name nobody displays cannot be mistaken for a company's
+([company-isolation.md](company-isolation.md#the-account-is-not-a-company)). The
+flag still earns its keep where the name is personal data: deleting the account
+(`domain/identity/erasure.py`) renames a placeholder made from the person's name
+to `Konto {id}`, and leaves a name somebody chose alone.
 
 ### Credentials and sessions
 
@@ -230,25 +241,61 @@ rename instead of presenting a made-up name as settled fact.
   a separate `user_identity` row. One person can hold both, so someone who
   signed up with a password and later clicks "log in with Google" keeps the same
   account, memberships and audit trail instead of forking a second one.
+  **Except with BankID**: an account with a `bankid` row has no password and no
+  other provider, because BankID's terms forbid using a BankID login to set up
+  or restore a sign-in of our own (ID-veksling). Moving between BankID and
+  e-mail is a switch, in either direction; see
+  [BankID is the only way in](#bankid-is-the-only-way-in).
 - A federated identity is only linked to an **existing** account when the
-  provider asserts the email is **verified**. Matching on the address alone is
+  provider asserts the email is **verified**, or when the person links it from
+  `/konto/` while signed in to that account. Matching on the address alone is
   the classic federated-login account-takeover — Microsoft's nOAuth advisory is
   the same bug — and refusing is the whole defence. A *new* account is created
   either way, because there is nobody to take over and refusing would block
   every Microsoft user (see below); it is simply recorded as unverified.
+- **BankID asserts no address at all**, so the rule above has nothing to work
+  with, and three narrower ones replace it (see
+  [Federated providers](#federated-providers)): a BankID login signs in only an
+  account it is already linked to; linking happens only from a signed-in
+  account; and a BankID signup asks for an address and **refuses one that
+  already has an account** rather than joining it. The verified-address rule
+  above also stops at a BankID account: Google with that account's verified
+  address is refused (`email_belongs_to_bankid_account`), not linked.
 - **Sessions are server-side and revocable**: an opaque 256-bit token in an
   `httpOnly; Secure; SameSite=Lax` cookie, stored only as a SHA-256 digest. A
   stateless JWT was rejected because "log me out everywhere" and "lock this
   compromised account" have to take effect immediately on a system holding
   accounting records. Non-browser clients can ask for the same token as a bearer
   token instead.
+- **Keys for agents and integrations** are a third credential beside the
+  session, and never a way into the account. A person makes one per company
+  in the Tilgang section of `/organisasjon/`, once an owner or admin has
+  switched keys on for that company, and their agent exchanges it once for a
+  15-minute access token and a rotating refresh token (`myntos_ck_`,
+  `myntos_at_`, `myntos_rt_`; SHA-256 digests only, like sessions). A key
+  reaches only the routes that declare a key scope, in its own company only,
+  with its person's role as it stands on each request, and some routes no key
+  reaches at all: filing, money, access, the account. The rules and the
+  reasons are in [agents-and-api.md](agents-and-api.md).
+- A person sees and ends their own sessions at `/konto/`
+  (`GET /account/sessions`, one or all the others). The list shows a coarse
+  "Firefox på Linux" derived from the stored user agent, never the raw string
+  or the IP address; see [gdpr.md](gdpr.md#the-session-list).
+- **Deleting an account** (`POST /account/erasure`) takes the person and leaves
+  the books. Credentials, identities, the fødselsnummer, sessions and
+  memberships go; an account that vouchers, bilag or filings still name stays as
+  a **tombstone** with its id and name, because the books must keep saying who
+  registered each entry. Refused while the person is the last owner of books
+  somebody still needs. The whole line is drawn in [gdpr.md](gdpr.md).
 - Cookie-authenticated **writes** additionally require an `Origin` in the CORS
   allow-list, as a second layer behind `SameSite`. Bearer-authenticated requests
   skip the check — the header has to be attached deliberately.
 
-**Email** is one message and two transports: the invitation, composed in
-`domain/identity/invitation_mail.py` and sent inline by the endpoint that
-creates the invitation, so the response can say whether it went. The Myntos mark
+**Email** is a handful of messages and two transports. The first is the
+invitation, composed in `domain/identity/invitation_mail.py` and sent inline by
+the endpoint that creates the invitation, so the response can say whether it
+went; the address confirmation, the password reset and the three BankID ones
+are below. The Myntos mark
 travels inside the message as a related MIME part (`core/brand.py`), never as a
 URL: a remote logo is a blocked image in most clients and a read receipt in the
 rest, and the word "Myntos" sits beside it as text so a blocked one still names
@@ -264,10 +311,93 @@ on by hand. A refused relay, an unreachable API and a permanent bounce are all
 reported the same way and never roll back the invitation, which already exists.
 
 This deployment sends through Cloudflare, on `myntos.no`, whose SPF, DKIM and
-DMARC records `wrangler email sending enable` wrote and maintains.
+DMARC records `wrangler email sending enable` wrote and maintains. The endpoint
+is `POST /accounts/{account_id}/email/sending/send_raw` with `from`,
+`recipients` and `mime_message`; checked against Cloudflare's API reference on
+2026-10-09. A recipient listed under `permanent_bounces` *or*
+`suppressed_recipients` in a successful response is reported as not sent.
 
-Not yet built, and deliberately: no address-verification mail and no password
-reset.
+**The rest are about a person's own account** (`domain/identity/
+account_mail.py`, tokens in `domain/identity/email_tokens.py`, table
+`user_email_token`, migration `c5e8a17d3f42`): a link that confirms the address
+of a password signup, a password-reset link, and for a BankID account the
+answer to a reset request (no link), the link that switches it to e-mail, and
+the notice that an account was switched to BankID
+([BankID is the only way in](#bankid-is-the-only-way-in)). Both are minted like an
+invitation token (256 random bits, SHA-256 digest stored, single-use, a
+deadline) and carry a **purpose** that is part of every lookup, so a
+confirmation link can never reset a password. Asking for a new link of one kind
+kills the older ones, so only the newest message in an inbox works. Redeeming is
+a conditional `UPDATE ... WHERE consumed_at IS NULL`, which is what makes
+single-use hold under two simultaneous clicks. The links put the token in the
+**fragment** (`/nytt-passord/#token=...`), not the query string as the older
+invitation link does, so it never reaches a server log or a Referer.
+
+- **Confirmation** is mailed at signup (in a background task, so signup never
+  waits on a relay) and on request from the front page's notice. It stamps
+  `email_verified_at` and signs nobody in, because a mail scanner may follow it
+  and a different browser may open it. Lifetime `EMAIL_VERIFICATION_LIFETIME_HOURS`.
+- **Reset** is requested anonymously at `/auth/password/forgot`, which answers
+  the same 202 and empty body for an address with an account, one without, a
+  deactivated one and one past the hourly cap, and sends the mail **after** the
+  response so relay latency is not a second answer. What remains is one insert
+  the unknown address does not get, which is far inside network jitter; a decoy
+  row per typed address would be a table of strangers' addresses kept for
+  nobody. Completing a reset revokes **every** session of the account (the
+  caller's too, unlike a password change, since nobody here proved they were the
+  one signed in), stamps the address confirmed, and lifts the login lockout,
+  which bounds guessing and nobody guessed. No session is issued. Lifetime
+  `PASSWORD_RESET_LIFETIME_MINUTES` (30). **A BankID account never gets a reset
+  link**: the same 202, and a mail saying it signs in with BankID, recorded as
+  a `bankid_notice` row so the cap counts it; the reset endpoint refuses a link
+  for one anyway (`bankid_account`).
+- **Throttle:** `ACCOUNT_MAIL_MAX_PER_HOUR` links of one kind per account per
+  rolling hour, counted from the token rows: the mail-side twin of the per-account
+  login lockout, and like it, bounding one address rather than a sender.
+  Signed in, the limit is a 429; anonymous, it is silently the same 202.
+- **Without mail configured** none of this is offered: `/auth/providers` says
+  `email_delivery: false`, the login page shows no "Glemt passordet?", the
+  notice never appears, and both request endpoints answer 503 (a fact about the
+  deployment, identical for every address).
+
+**What an unconfirmed account may do: everything it could before.** Every
+password account made before 2026-10-09 is unconfirmed, because nothing could
+confirm it, and the migration refuses to backfill a check that never happened.
+So confirmation gates exactly one thing: an invitation from an unconfirmed
+account is sent **without the inviter's Reply-To**, because anybody can sign up
+as somebody else's address and a message from our domain must not route a
+stranger's reply to it. Accepting an invitation is not gated: the token in hand
+is the proof, and the address match is already required. Squatting an address
+by signing up as it is answered by the reset flow: the real owner receives the
+reset link, and completing it ends the squatter's sessions and password. **Not
+for a BankID signup**, which a reset never reaches: an address squatted that way
+stays squatted until a release for unconfirmed addresses exists (a gap,
+[integrations/bankid.md](integrations/bankid.md#gaps)).
+
+### What the mail provider sees
+
+Mail is the one path where Myntos' "nothing leaves the EEA" rule cannot be
+fully kept, and the design limits what crosses it instead. Cloudflare's Email
+Sending documentation makes no data-location commitment (unlike R2's
+`jurisdiction=eu`), and the recipient's own mail server is wherever the
+recipient chose. So every message is written on the assumption that its full
+text is read outside the EEA:
+
+- **What it sees:** the recipient address, the subject, the body, the sender
+  and Reply-To. For an invitation that is the inviter's name, the company's
+  name, the role and the link; for the account mails, the person's first name
+  and the link.
+- **What it never sees:** accounting data. No amounts, bilag, parties, MVA or
+  SAF-T content is ever put in a message, and nothing may be added that would
+  be. A company's name is public in Enhetsregisteret already.
+- **The links are credentials** while they live, so they are short-lived and
+  single-use: 30 minutes for a reset, two days for a confirmation, seven for an
+  invitation, each dead once used or superseded.
+- **No tracking:** no remote images (the mark is an inline MIME part), no
+  redirecting link wrappers, nothing fetched when a message is opened.
+
+SMTP through a relay in the EEA is the alternative for a deployment that wants
+the transport itself inside the EEA; the bytes are identical either way.
 
 ### Federated providers
 
@@ -277,16 +407,20 @@ One OIDC implementation (`auth/oidc/client.py`), several providers as data
 `/auth/{provider}/start` and `/auth/{provider}/callback` are generic, and
 `/auth/providers` lists only what this deployment has credentials for — so a
 button can never lead to a 503. Adding a provider needs no migration:
-`user_identity.provider` is a VARCHAR precisely so the list can grow.
+`user_identity.provider` is a VARCHAR precisely so the list can grow. This is
+Myntos's own login plane and shares nothing with the government login
+(`government_login_attempt`, `auth/idporten/`), for the reason
+[The two auth planes](#the-two-auth-planes-this-is-the-part-everyone-gets-wrong)
+gives; BankID below uses this plane's tables, not that one's.
 
-Three things genuinely differ between providers, and each has bitten real
-systems:
+Between Google and Microsoft, which both carry an address, three things
+genuinely differ, and each has bitten real systems:
 
-| | Google | Microsoft (Entra ID) | Vipps |
-| --- | --- | --- | --- |
-| Issuer check | two accepted spellings | discovery returns a `{tenantid}` **template**, resolved against the token's own `tid` (validated as a GUID first) | plain equality |
-| Email verified | `email_verified` | **not sent** — `xms_edov` optional claim instead | `email_verified` |
-| Email claim | `email` | `email`, falling back to `preferred_username` | `email` |
+| | Google | Microsoft (Entra ID) |
+| --- | --- | --- |
+| Issuer check | two accepted spellings | discovery returns a `{tenantid}` **template**, resolved against the token's own `tid` (validated as a GUID first) |
+| Email verified | `email_verified` | **not sent** — `xms_edov` optional claim instead |
+| Email claim | `email` | `email`, falling back to `preferred_username` |
 
 The Microsoft row is the interesting one. Entra ID never emits
 `email_verified`; the equivalent is `xms_edov` ("email domain owner verified"),
@@ -297,10 +431,121 @@ Myntos account, without preventing a new one. `MICROSOFT_TENANT` is an
 authorization boundary rather than a formality: `common` lets any Microsoft
 tenant in the world start a sign-in.
 
-Vipps needs a merchant agreement rather than a self-service app registration,
-and its discovery URL in `.env.example` has **not** been verified against
-current Vipps documentation — check it before enabling. It is a configuration
-value, so correcting it is not a code change.
+#### BankID, through a broker
+
+**BankID** comes through an OIDC broker, Idura by default (formerly Criipto,
+part of Stø, which runs BankID; Denmark, EU-only processing per its data
+processing agreement). The broker is configuration (`BANKID_ISSUER`,
+`BANKID_CLIENT_ID`, `BANKID_REDIRECT_URI`, and a key or a secret); the verified
+values, the page each one was read from, and the dashboard steps for sandbox and
+production are in [integrations/bankid.md](integrations/bankid.md). Three
+things set it apart from the providers above:
+
+- **It authenticates the client with `private_key_jwt`**, Idura's
+  recommendation, using the same key handling as ID-porten
+  (`auth/signing_keys.py`). A secret works too.
+- **It says who somebody is and not how to reach them.** No email comes back,
+  so `OidcProfile.email` is `None`, `ProviderConfig.asserts_email` is false, and
+  none of the address rules above can apply. The broker's `sub` is the only
+  thing stored (`user_identity.subject`; `email_at_provider` stays NULL). The
+  **fødselsnummer is not asked for** (`scope=openid`, never `ssn`): signing in
+  needs a stable identifier and `sub` is one, and the number would need a
+  "saklig behov" under personopplysningsloven § 12 that a login does not have.
+  If one arrives anyway it is discarded. See [gdpr.md](gdpr.md#bankid).
+- **Every login is a fresh one** (`prompt=login`), never a reused broker
+  session, because deleting an account without a password trusts a login from
+  the last ten minutes as proof that its owner is at the keyboard.
+
+What happens to a verified BankID depends on what the flow was started for,
+which is recorded on the attempt (`oauth_login_attempt.intent`, migration
+`7a3e5c1d9b24`) because it cannot be inferred from the answer:
+
+1. **`login`: sign in an account it is linked to, and only that.** An unlinked
+   BankID is refused (`no_linked_account`), with no session and nothing
+   created. A login button never makes an account.
+2. **`link`: from `/konto/` ("Koble til BankID"), signed in, and a switch**:
+   when it completes, BankID is the account's only way in (below). It starts
+   with `POST /auth/bankid/link`, which wants the password first, never with a
+   GET to `/start` (`bytte_ikke_bekreftet`). The attempt
+   records who started it (`oauth_login_attempt.user_id`), and the callback
+   refuses unless the session it arrives with is that same account
+   (`kobling_annen_konto`). Without the check, somebody could start a link on
+   their own account and hand the BankID page to a victim, whose BankID would
+   then open the attacker's books under a name the victim recognises. A BankID
+   already linked elsewhere is refused (`identity_already_linked`); one account
+   has at most one per provider. **This is the only way a BankID reaches an
+   existing account**, because it is the only place both halves are proved in
+   one flow: the account by its session, the person by BankID.
+3. **`signup`: from `/registrer/`.** A BankID that is already linked simply
+   signs in. One that is not is held for half an hour
+   (`pending_provider_signup`: `sub`, the name, a token digest, a deadline;
+   deleted when used, swept when expired) and the browser goes to
+   `/fullfor-registrering/#token=…`, which shows the name and asks for an
+   address. The account is created with BankID's name, the typed address
+   **unconfirmed**, no password, and the ordinary confirmation mail. **An
+   address that already has an account is refused, never joined**: the address
+   is only what was typed, and attaching a BankID to whichever account owns it
+   would let anyone with a BankID take over anyone's account by typing an
+   address. The refusal says to sign in the usual way and link BankID from
+   `/konto/`; the hold survives it, so another address can be tried. What it
+   makes is a BankID account, and `/registrer/` says so beside the button.
+
+**Unlinking** (`DELETE /account/identities/{provider}`) is refused
+(`last_sign_in_method`) when it would leave no password and no other provider,
+and refused for BankID always (`bankid_account`; the way out is the switch
+below). `GET /account/identities` says per row whether it may go, so the page
+never offers a button the backend would refuse.
+
+##### BankID is the only way in
+
+**An account that signs in with BankID signs in with nothing else.** Stø's
+merchant terms (§ 7.2, definition (l)) forbid *ID-veksling* without a separate
+paid permission: using a BankID login "to activate, restore or increase trust
+in the Merchant's identification or authentication mechanism", and the
+Norwegian permission terms add in so many words that authenticating customers
+with BankID as the basis for the merchant's own "pålogging" is covered. BankID
+as the login every time is ordinary authentication; an account BankID set up
+or vouched for being opened afterwards with our own password is not. The owner
+decided on 2026-10-10 that the two are mutually exclusive rather than to buy
+the permission. The quotes, sources and open questions for Stø are in
+[integrations/bankid.md](integrations/bankid.md).
+
+- **The `bankid` row is the marker** (`service.is_bankid_account`), and nothing
+  else is, so there is no flag to drift from it and no migration. Every path
+  that could add a way in asks: reset, change password, password login, linking
+  or signing in with Google or Microsoft, unlinking. That includes a password
+  left from before the rule.
+- **Linking BankID is a switch.** It starts with `POST /auth/bankid/link`, which
+  wants the password (or a login in the last ten minutes, as deleting the
+  account does), never a GET: otherwise a hijacked session could swap the
+  owner's password for its own BankID and, since a reset never reaches a BankID
+  account, keep the account for good. The callback clears the password, deletes
+  every other identity, retires password links, revokes every other session and
+  mails the address.
+- **Leaving BankID goes through the inbox.** `POST /account/switch-to-email`
+  mails a `switch_to_password` link to the account's own address and changes
+  nothing; `POST /auth/switch-to-email/confirm` with that link sets the
+  password, deletes the BankID row, confirms the address and revokes every
+  session. It is the one step a BankID session starts, and it is built so the
+  link, not BankID, is what makes the password.
+- **Nothing is "BankID-verified."** A BankID sign-in raises no badge and no
+  `bekreftet` in the register match; the name it gave is an account name like
+  any other ([register-access.md](register-access.md)).
+
+A token from a different eID on the same broker (`acr_values` sits in the
+address bar, where anybody can edit it) is refused when the token says which
+scheme ran: Idura's `identityscheme` must be `nobankid-oidc`. The returned
+level of assurance is not checked, unlike ID-porten's, because Idura documents
+no `acr` claim in the token; for a login that is a deliberate trade, and the
+filings keep their own check at level high.
+
+**Vipps Login was removed on 2026-10-10**, having never been configured in
+production. It needs a merchant agreement that costs from 300 kr a month, and
+Vipps stops releasing the fødselsnummer in Norway from 2027-01-01, which takes
+away the one thing it would have offered over the providers already here.
+`user_identity.provider` is a VARCHAR, so no migration had to drop the value;
+`7a3e5c1d9b24` refuses to run if a `vipps` row exists anyway, because the ORM
+could no longer read one.
 
 ## The cash-flow register
 
@@ -353,8 +598,9 @@ Salg 1 250 kr, 25 % mva                 Kontorrekvisita 625 kr, 25 % mva
   The column is nullable and stays that way — rows predating it, GDPR erasure
   taking the person and leaving the record (`ondelete="SET NULL"`, since a
   posted voucher outlives every account), and any future job that posts with
-  nobody logged in. Not a SAF-T field: the standard's `Transaction` has no user
-  element, so it does not reach the export. The register shows the mark only
+  nobody logged in. It reaches the SAF-T export as `Transaction/SourceID`, the
+  user's id; an earlier version of this paragraph said the standard had no such
+  element, and it does. The register shows the mark only
   when a set of books has more than one author (`frontend/src/lib/authors.ts`).
 - Creating a company **seeds** a starter kontoplan, the VAT codes with
   date-effective rates, the first financial year and its per-year account
@@ -362,6 +608,16 @@ Salg 1 250 kr, 25 % mva                 Kontorrekvisita 625 kr, 25 % mva
   of accounts. Dates before the first financial year are refused: the seeded
   rates are only claimed to hold from then, and posting earlier would snapshot
   an invented rate onto the entry.
+
+- **VAT registration decides the defaults, by the entry's date.** An
+  unregistered company (or an entry dated before `vat_registered_from`) gets
+  code 0 for every category, so the gross amount goes to the cost, and is
+  refused codes that deduct or charge VAT. Switching the status moves what new
+  entries are offered and never touches a posted one
+  ([integrations/mva.md](integrations/mva.md#registration-status-built-2026-10-09)).
+- A category may be booked to **another account of the same type** the company
+  added to its kontoplan, never across types and never to a deactivated or
+  locked account (`service._basis_account`).
 
 **Who** the payment was with is a separate field: `Party`, SAF-T's `Customers`
 and `Suppliers`. It is optional, because most payments have no counterparty
@@ -374,24 +630,42 @@ created: posted vouchers point at them, and SAF-T exports them per financial
 year, so changing either would rewrite what past filings said.
 
 **Bilag documents** attach to a posted voucher (`bilag_attachment` +
-`myntos.storage`). PDF only, verified by magic number rather than by the
-uploader's `Content-Type`; the storage key is generated and never derived from
-the filename; the SHA-256 is stored so the file handed to an auditor can be
+`myntos.storage`). PDF, PNG, JPEG, WebP, GIF and HEIC, each verified by magic
+number rather than by the uploader's `Content-Type` or extension; the storage
+key is generated and never derived from the filename; the SHA-256 is stored so the file handed to an auditor can be
 proven to be the one uploaded. The archive is **append-only** — there is no
 delete endpoint, because bokføringsloven § 13 requires primary documentation to
 stay available for five years after the financial year ends.
 
+The original is kept **byte for byte**, EXIF and all, because it is the
+primary documentation and a stripped copy would no longer be the file that was
+uploaded. What *is* stripped is every copy made from it
+(`domain/bilag/derived.py`): the register's thumbnails, and the JPEG a HEIC
+photo is turned into for Løynd, which does not open HEIC. A phone photo carries
+the GPS position it was taken at, and neither a colleague looking at the
+register nor a model needs it, so a copy is redrawn from pixels onto a canvas
+with no metadata at all (orientation applied first). Decoding happens in a
+short-lived child process with a memory ceiling and a timeout, since it is
+native code handed a stranger's bytes; a photo that will not decode is still
+filed, it just has no thumbnail. PDFs get none either: that would need a native
+PDF renderer, which is the thing pypdf was chosen to avoid.
+
 None of this is a shortcut around the exporters. The register writes the same
-tables the SAF-T export and the MVA-melding will read, which is why it was
+tables the SAF-T export and the MVA-melding read, which is why it was
 worth building on the ledger rather than beside it.
 
 ### Document storage
 
 Two backends behind one `DocumentStorage` protocol, and one key format shared
 by both, so a document moved between them keeps its key. The key is generated
-(`yyyy/<uuid>.pdf`) and validated on the way back out: nothing the uploader
+(`yyyy/<uuid>.<ext>`) and validated on the way back out: nothing the uploader
 supplies takes part in building a path, and a key that cannot express a
 traversal cannot be talked into one.
+
+Thumbnails live beside the archive under `derived/thumbnail/yyyy/<uuid>.jpg`,
+computed from the original's key rather than stored, made on first request and
+regenerable at any time. `save_derived` is the one write that may replace an
+object, and it only accepts that prefix, so it cannot be pointed at a bilag.
 
 - **local** — filesystem, development only. The production host writes only to
   the unit's `ReadWritePaths`, and nothing is backed up from there.
@@ -410,6 +684,81 @@ synchronous transport, for about two hundred lines of use. The algorithm is
 published and fixed, the implementation is verified against AWS's own
 `get-vanilla` test vector, and the failure mode is benign — a signing mistake
 means R2 answers 403 on the first request rather than corrupting anything.
+
+## Where the books start and where each year ends
+
+`domain/arsoppgjor/`, `/inngaende-balanse/` and `/arsavslutning/` (built
+2026-10-09). Both flows are review-then-post: the page asks the backend what
+would be posted and what is wrong with it, and the post runs the same check
+again.
+
+**Inngående balanse.** A company whose earlier years were kept elsewhere posts
+its balance sheet as **one balanced voucher in the `IB` journal**, dated the
+first day of its first financial year in Myntos, typed or read from the old
+system's saldobalanse as CSV (`saldobalanse.py`: separator, header wording and
+Norwegian number formats detected, signed amounts read as debit positive; a file
+read by a heuristic fills the form and is never posted directly). A voucher and
+not stored opening rows, because a voucher is immutable, attributed, corrected
+like everything else, and already counted by every reader: the bank position,
+the customer's balance, the next year's derived opening. The SAF-T export is the
+one reader that treats the journal differently ([saf-t.md](integrations/saf-t.md)).
+
+The rules, and why:
+
+- **Only the first year, only while it is open.** Every later year's opening
+  balance already exists, derived from the year before; a second opening voucher
+  would count it twice. Closing is the one thing that relies on it (the equity a
+  loss is covered from), so a closed year refuses it.
+- **Not "only before anything else is posted".** Books move to Myntos in
+  January and the previous accountant's final saldobalanse arrives in March;
+  refusing then would make the import useless to the people it is for, and
+  nothing posted in an open year reads the opening balance. The register's year
+  figures and listing leave the `IB` journal out (money carried in is not money
+  received), while the cash position keeps it.
+- **Balance-sheet accounts only, and not 2700/2710.** A result left on income
+  and cost accounts has not been disposed of, and posting it would make it this
+  year's result. Last period's unsettled VAT goes on 2740, because each Myntos
+  settlement sweeps the period's 2700/2710 onto 2740 and would pull last year's
+  VAT into this year's first term.
+- **Open items (åpne poster)** on 1500/2400 name their customer or supplier, one
+  line per item, on the party's own balance account; an account is split per
+  party completely or not at all, since half a reskontro does not reconcile.
+- **Corrections** reverse the standing voucher and post the replacement with
+  `corrects_transaction_pk`, in one request. The register's reversal route
+  refuses `IB` and `AVS` vouchers (`cannot_reverse_here`), so neither can be
+  undone around its own rules.
+
+**Årsavslutning.** At most two vouchers in the `AVS` journal on 31 December: the
+**tax cost** an AS states (8300/2500; Myntos does not compute tax or deferred
+tax, and says so when an AS with a profit states none), and the
+**disposition**, read off `company.organisation_form`:
+
+| Form | Profit | Loss | Also |
+| --- | --- | --- | --- |
+| AS | covers udekket tap first (8990 → 2080), the rest to annen egenkapital (8960 → 2050) | covered by free equity on 2050, the rest carried as udekket tap on 2080 | 2060 with a balance is a merknad: an AS has no privatkonto |
+| ENK | 8800 → 2050 | 2050 → 8800 | privatkonto 2060 closed against 2050; tax refused, the owner is the taxpayer |
+| anything else | refused by name | | |
+
+Then `financial_year.closed_at` is set (every posting path already goes through
+`ensure_financial_year`, which refuses a closed year), a `financial_year_event`
+row is written, and the next year is opened. Years close in order, only after
+they are over (Oslo date), and a period with VAT not yet settled onto 2740 is a
+merknad, because its settlement belongs in the year and a closed year will
+refuse it. Closing and reopening need **`ledger:close`** (admins and owners): it
+locks every colleague out of the year.
+
+**Reopening is allowed, explicit, logged, and never an erasure.** Bokføringsloven
+protects the posted entries and their traceability, not a software lock, so
+reopening touches no posted voucher: it **reverses** the closing vouchers, clears
+the lock, and logs who and why. Only the latest closed year, and only with a
+written reason and a confirmation that the årsregnskap has not been fastsatt.
+After adoption an error is corrected in the open year against equity, which
+Myntos cannot yet verify (Regnskapsregisteret is phase 6), so the confirmation is
+the person's for now. Refusing outright would have pushed the ordinary late
+supplier invoice into the wrong year.
+
+Accounts 2000, 2080, 2500, 8300, 8800, 8960 and 8990 joined the seed chart for
+this, and migration `c3f9a2d71e58` backfills them with the year log table.
 
 ## Frontend
 
@@ -430,28 +779,51 @@ The header is **company-first**: the company's name is the loud half and the
 signed-in person is the quiet line beneath it, because every page in the
 application is about a set of books rather than about an account — a
 regnskapsfører switching client has to see *which* client at a glance, while
-their own name never changes. The whole name is the link to `/organisasjon/`,
-because that is where a company is switched, corrected and confirmed, and it is
-what somebody points at when they think "this company". A **red dot** beside it
-means nobody has confirmed the ownership yet; the sentence explaining that lives
-in the banner the dot leads to, rather than being read again on every page.
-`lib/company.ts` holds the one `/companies` request the header and the page
-below it share.
+their own name never changes. The whole name opens the **company menu**,
+because it is what somebody points at when they think "this company", and a
+regnskapsfører with twelve clients should not go through a settings page to
+reach the thirteenth. The menu lists the companies to switch between, then
+«Legg til selskap» (only for those holding `organization:manage`), the
+company's settings, and «Din konto» (`/konto/`). The **cog** beside it goes
+straight to `/organisasjon/`, where a company is corrected and confirmed. A
+**red dot** beside the name means nobody has confirmed the ownership yet; the
+sentence explaining that lives in the banner on `/organisasjon/`, rather than
+being read again on every page. `lib/company.ts` holds the one `/companies`
+request the header and the page below it share.
 
-The signed-in nav is deliberately three links — Oversikt, Faktura, KI — plus a
-cog. It is not a table of contents: `/kontantstrom/` is reached from the
-overview, beside the numbers that send you there, and `/parter/` from the
-invoice and the cashflow entry, where a customer is actually needed. A link
-present everywhere is no easier to find than one present where you are.
+The signed-in nav is deliberately four links — Oversikt, Betaling
+(`/kontantstrom/`), Faktura, KI — plus the cog. «Betaling» rather than
+«Kontantstrøm», because it is the word on the button people already press on
+the overview and it names what they are about to do rather than the report it
+ends in. It is not a table of contents: `/parter/` is reached from the invoice
+and the cashflow entry, where a customer is actually needed; `/mva/` from the
+VAT figure on the overview; and the rarer pages (`/bank/`, `/saft/`, the year's
+opening and close) from the note under the overview's figures. A link present
+everywhere is no easier to find than one present where you are.
 
 | Page | Purpose |
 | --- | --- |
 | `/` | Marketing when signed out; overview, totals and recent entries when signed in |
 | `/kontantstrom/` | The register: entry form, listing, reversal, bilag upload (several files at once, PDF or photograph, with a box for what the documents do not say) |
 | `/faktura/` | Salgsdokument: line editor, a review step that shows the § 5-1 findings before anything is issued, kreditnota, PDF and EHF download |
-| `/logg-inn/`, `/registrer/` | Password and Google sign-in; the Google button hides itself when the deployment has no Google client |
+| `/saft/` | The SAF-T Financial file for one financial year: the backend's cross-reference findings first, the download only when none of them blocks, the version offered only for years that accept two. Reached from the note under the overview's figures. See [integrations/saf-t.md](integrations/saf-t.md#what-myntos-does-built-2026-10-09) |
+| `/kontoplan/` | The kontoplan for one year: every account, its post in the næringsspesifikasjon, adding, renaming, (de)activating and regrouping. Changes need `ledger:chart`. Reached from `/organisasjon/`, `/saft/` and the account field in the register. See [integrations/saf-t.md](integrations/saf-t.md#the-kontoplan-is-editable-built-2026-10-09) |
+| `/mva-justeringer/` | Uttak, tap på krav, justering and tilbakeføring: the MVA-melding's `spesifikasjon` lines, recorded and reversed. Reached from `/mva/`. See [integrations/mva.md](integrations/mva.md#spesifikasjon-uttak-tap-på-krav-justering-tilbakeføring-built-2026-10-09) |
+| `/mva/` | The MVA-melding per period: every line, the deadline, Skatteetaten's check, a confirmation step before filing, the receipt and payment information afterwards, and the melding as XML for upload by hand. Reached from the VAT figure on the overview, not from the top menu. See [integrations/mva.md](integrations/mva.md#what-myntos-does) |
+| `/bank/` | Bank reconciliation: upload a camt.053 file, see each movement next to the voucher that books it, confirm a suggested voucher or post a new one from the line through the register's own path. Matching is a link and never edits a voucher. Reached from the note under the overview's figures. See [integrations/bank.md](integrations/bank.md) |
+| `/inngaende-balanse/` | The opening balance of books brought from another system: saldobalanse CSV or typed lines, open items per customer and supplier, the backend's review, then one voucher; correction is reversal plus replacement. Reached from the overview's note. See [§ Where the books start](#where-the-books-start-and-where-each-year-ends) |
+| `/arsavslutning/` | One financial year's result, tax (AS) and disposition, shown line by line before a confirmed close; reopening with a reason and the log of both. Reached from the overview's note |
+| `/parter/` | Customers and suppliers (SAF-T `Party`) for the active company: the register a counterparty is picked from. Reached from `/faktura/` and the register's entry form, not from the menu |
+| `/ki/` | Where KI is used in Myntos and who runs the model, public; signed in, also the switch (`Company.ki_enabled`) that turns it off for one set of books, naming the company it applies to. See [§ KI](#ki-anywhere-in-the-product-one-provider-only) |
+| `/godkjenning/` | What keys for agents and programs asked to do and that waits for the key's person: approve (runs the stored request as the key), decline with a reason the agent reads, or go to the MVA page for a request to file. Decided ones below. In the top menu only while the company has keys switched on, with a count of what waits. See [agents-and-api.md](agents-and-api.md) rule 13 |
+| `/nytt-selskap/` | Setting up books for another company: orgnr (or Altinn's list of companies the person may act for), then the books, then inviting colleagues. Reached from «Legg til selskap» in the company menu, and only for an account holder with `organization:manage` |
+| `/logg-inn/`, `/registrer/` | Password sign-in, and one button per provider the deployment has configured (Google, Microsoft, BankID); a provider without credentials has no button. `/registrer/` starts a BankID flow with `intent=signup` |
+| `/fullfor-registrering/` | The second step of a BankID signup: the name BankID gave, and the address the person types. Token in the fragment. An address that has an account is refused, with the way to link BankID instead |
 | `/invitasjon/` | Accepts an invitation token, sending the recipient to sign in first if needed |
+| `/konto/` | The **person**, not a company: how they sign in (password, linked providers, «Koble til BankID», and removing one while another way in remains), where they are signed in (end one device, or all the others), and deleting the account, with what is deleted and what stays with each company stated before the button. Reached from the company menu as «Din konto». See [gdpr.md](gdpr.md) |
+| `/bekreft-epost/`, `/glemt-passord/`, `/nytt-passord/` | Address confirmation and password reset, from links in the fragment. The front page carries a notice (`components/VerifyEmailNotice.astro`) while the address is unconfirmed and the deployment sends mail. See [Credentials and sessions](#credentials-and-sessions) |
 | `/organisasjon/` | Everything about **one company**: its own details (the only place its bank accounts, VAT registration, Foretaksregisteret and the address are edited), its subscription, who may open it and who has been invited to it, the Altinn confirmation of who it belongs to, and everything Enhetsregisteret holds about it including the board and the revisor. The board list marks who can open the books and offers to invite whoever cannot: [register-access.md](register-access.md). No account is shown here: see [company-isolation.md](company-isolation.md#the-account-is-not-a-company) |
+| `/priser/`, `/bankpriser/`, `/funksjoner/`, `/about/`, `/kom-i-gang/` (and one guide per program under it), `/ansvar/`, `/personvern/`, `/vilkar/` | Marketing and legal pages, readable signed out: prices, a comparison of business banks, features, moving from another program, the disclaimer, the privacy policy and the terms. `/personvern/` and `/ki/` carry the public promise about KI ([§ KI](#ki-anywhere-in-the-product-one-provider-only)) |
 
 `/faktura/` is three cards and one of them at a time — the form, the review,
 and what came out. Issuing is irreversible, so the step between the form and a
@@ -494,7 +866,9 @@ Consequences for the code:
   protocol details and sharp edges live in
   [integrations/maskinporten.md](integrations/maskinporten.md).
 - `auth/idporten/` — end-user OIDC flow: frontend redirect → backend
-  callback → token exchange. Needed before any submission milestone.
+  callback → token exchange. Needed before any submission milestone. It is
+  never a sign-in to Myntos (Digdir's terms do not allow that for a private
+  service); "Logg inn med BankID" is a separate broker, in `auth/oidc/`.
 - The domain layer never sees tokens; integrations receive a
   `TokenProvider` and handle exchange internally.
 
@@ -504,15 +878,32 @@ Consequences for the code:
 | --- | --- | --- |
 | `api` | HTTP endpoints, versioned (`/api/v1`) | domain, core |
 | `core` | Settings (pydantic-settings, env-driven), security middleware, clock | — |
-| `auth` | Myntos login (passwords, tokens, sessions, Google OIDC) **and** Maskinporten + ID-porten token acquisition | core, domain.identity |
-| `domain` | Ledger (incl. the cash-flow register), bilag, mva, identity (accounts/organizations) — business logic | core, db |
-| `integrations` | Skatteetaten/Altinn/Brreg/Løynd clients (translate domain ⇄ external APIs) | auth, core |
-| `saft` | SAF-T Financial export (serializer over the ledger) | domain |
+| `auth` | Myntos login (passwords, tokens, sessions, Google/Microsoft/BankID OIDC), keys for agents and integrations (`agent_keys`), **and** Maskinporten + ID-porten token acquisition | core, domain.identity; `agent_keys` also reads two ledger models, because a key belongs to a company and its stamp goes on a voucher |
+| `domain` | Ledger (incl. the cash-flow register), bilag, faktura, bank (camt.053 import and matching), mva, årsoppgjør (opening balance, year-end closing), identity (accounts/organizations) — business logic | core, db; the `storage` protocol and keys, and one data type from `integrations.brreg` (below) |
+| `integrations` | Skatteetaten/Altinn/Brreg/Løynd/Norges Bank clients (translate domain ⇄ external APIs) | auth, core |
+| `saft` | SAF-T Financial export: snapshot, writer, cross-reference check, vendored code lists | domain |
 | `db` | SQLAlchemy base/session; Alembic in `backend/migrations/` | core |
 | `storage` | Bilag document storage (local dev / R2 prod) | core |
 
-Dependency rule: **`domain` imports nothing from `api`, `integrations` or
-`storage`.** Integration code contains no business logic.
+Dependency rule: **`domain` imports nothing from `api`, and from
+`integrations` and `storage` only types and pure functions, never a client.**
+Integration code contains no business logic. The exceptions are few enough to
+name, and each is acceptable for the same reason: it lets the domain describe
+something without reaching out for it.
+
+- `domain/bilag/service.py`, `domain/faktura/service.py` and
+  `domain/bank/service.py` take a `storage.base.DocumentStorage`, which is a
+  `Protocol`: the caller passes the backend, and the domain never chooses local
+  or R2. `domain/bilag/service.py` also uses `storage.keys.thumbnail_key`, a
+  pure function, because where a thumbnail lives is derived from the original's
+  key and a second copy of that rule would drift.
+- `domain/ledger/service.py` imports `integrations.brreg.RegisteredUnit`, the
+  data type a register lookup returns, to copy its fields onto a company. The
+  lookup itself happens in the endpoint (`api/v1/companies.py`).
+
+What would break the rule is a domain function that makes a request: a model, a
+register or a bucket called from inside the accounting core. Those are passed
+in (the `ask` callable below) or done by the caller.
 
 ### KI: anywhere in the product, one provider only
 
@@ -533,6 +924,11 @@ That is a single decision doing several jobs at once:
   "where does my bookkeeping go?" is a list that grows.
 - **One place to switch.** The API is OpenAI-shaped and `LOYND_BASE_URL` is
   configuration, so a self-hosted model is a deployment choice, not a rewrite.
+
+This rule is about the models *Myntos* calls. A company that connects its own
+agent to its books with an API key is a different thing, governed by
+[agents-and-api.md](agents-and-api.md): Myntos sends that agent's provider
+nothing, the agent fetches the data, and the company turned that on itself.
 
 Two constraints come with the permission, and they are not negotiable per
 feature: a model's answer is **never** posted to the ledger without a person
@@ -606,11 +1002,11 @@ nothing is going to overwrite it.
 a revenue one, so a supplier sending money back had nowhere honest to go: filed
 as a sale, the eBay refund of 26 266,40 would have reported 5 253 kroner of
 output VAT on a purchase that was cancelled, and inflated turnover by the rest.
-So the catalogue now carries sixteen refunds, one per cost category, and each is
-**derived** from the purchase it reverses rather than written out. A refund
-takes its account and its VAT code from that purchase, because a refund booked
-to a different account leaves both the cost and the deduction overstated with
-nothing in the books saying so.
+So the catalogue now carries seventeen refunds, one per refundable cost
+category, and each is **derived** from the purchase it reverses rather than
+written out. A refund takes its account and its VAT code from that purchase,
+because a refund booked to a different account leaves both the cost and the
+deduction overstated with nothing in the books saying so.
 
 The posting is the purchase backwards. Bank is debited, the cost account is
 credited, and the VAT goes to **2710 as a credit** rather than 2700: it is the
@@ -649,9 +1045,10 @@ halves wrong by the same amount, which is why the test asserts the summary.
 The classifier's menu narrows to the reversals when the bilag shows both legs
 for one counterparty, so the question it answers is "a reversal of what" rather
 than "is this a sale". Which family that is follows from the direction and needs
-no second flag: the sixteen refunds on the money-in menu, the six kreditnotaer
+no second flag: the seventeen refunds on the money-in menu, the six kreditnotaer
 on the money-out one. The form groups each under one heading for the same
-reason: sixteen refunds would otherwise bury the twelve ways of earning money.
+reason: seventeen refunds would otherwise bury the twelve other ways money comes
+in.
 
 **Money can move without anything being earned or spent**, and until 2026-09-08
 the catalogue could not say so. Five payments every VAT-registered business
@@ -707,13 +1104,48 @@ sentence.** Most counterparties a small company meets are met once: a private
 seller on FINN, a foreign webshop, the state. The field used to read "ingen
 valgt" under a line saying the sender was not a registered party, which is a
 wordy way of showing the one thing the field is for and then not showing it.
-Instead the name off the bilag is an option of its own, under the heading
-"Ikke registrert", selected and marked with where the name came from like any
-other proposal. Posting with it selected registers the party with nothing but
+Instead the name off the bilag is put in the field, marked with where it came
+from like any other proposal. Posting with it selected registers the party with nothing but
 the name: the number is generated and the organisasjonsnummer stays empty,
 because the name is what the bilag actually said, and a party with only a name
 is still one the next bilag can be matched against. "Ingen valgt" is still in
 the list, and the entry still posts without a party.
+
+**The motpart is one box you can type in, with the register as its dropdown,
+and a re-read leaves it alone.** It was a `<select>`. The option held the
+proposed name and nothing else, so when the proposal was wrong the only
+alternatives were "ingen valgt" or a detour through /parter. That is how
+MA-3D's pro forma invoice got stuck on its own buyer. A text box under the list
+fixed the typing and showed every name twice, so the two became one combobox:
+typing narrows the list, the arrow lists everyone, and on posting the text is
+read back by `lib/counterparty.ts`. A registered name (case and spacing aside,
+never a prefix) is that party, and anything else becomes a new one. The other
+fault made it worse: answering the model's question in the description box
+reads the bilag again, and that read put every proposal back over whatever the
+user had changed. The page now keeps the set of fields the user has touched
+since the bilag was chosen. A later read fills the others and leaves those
+alone, and the set is emptied when the bilag is.
+
+**The direction starts unanswered, and the user's answer is passed on.**
+"Penger inn" used to be checked in the markup, with the first sales category
+and its 25 % under it, and those were on screen for the seconds a read takes.
+For MA-3D's invoice that looked like the answer until "Penger ut" replaced it.
+Now no direction and no category is selected until the bilag or the user picks
+one, and the form will not post without both. A direction the user clicks is
+theirs: a later read leaves it alone, the bilag is read again at once, and the
+request carries `retning`. The backend lets that beat every inference in
+`suggest` (the sign on a bank line included), narrows the category menu to it,
+and tells the model in the context block. A direction a previous read
+*proposed* is never sent back, because that would present the backend's own
+guess to the model as the user's word.
+
+**A name from the title waits for the model.** The title is often the
+filename, and the filename is whatever the person saving it typed. MA-3D's
+invoice was saved as "PI Andreas Lindeman _26-0023". A seller read only from the
+title is flagged (`seller_named_by_title`), and the model's MOTPART replaces it
+instead of only filling an empty field. The model had answered MA-3D all along.
+"Beneficiary's Name" in a bank-details block is read as a seller label, because
+it states who the money goes to as plainly as "Sold by" does.
 
 **A screenshot has no letterhead, so nothing is read out of its position.** The
 last resort for a sender with no organisasjonsnummer used to be the first
@@ -805,7 +1237,10 @@ person who made the payment knows which.
 That block sits **above** the document and is never folded into it. The
 distinction is the one the whole design rests on: quoted answers are accepted
 only when they appear in the *documents*, so a note in the box cannot set the
-counterparty or the date. It is shown to the model and stored nowhere.
+counterparty or the date. The user's sentence is the description field
+([above](#where-a-model-is-allowed-to-answer)): shown to the model as context
+(sent as `forklaring`), and stored and posted as the bilagstekst when the
+payment is registered. The reading request itself stores nothing.
 
 **And the register asks back** (`domain/bilag/questions.py`). A field with no
 prompt gets left as it was, so a proposal comes with up to three questions whose
@@ -890,6 +1325,16 @@ date shown next to it. That is the general rule in its sharpest form: a model is
 for the questions that are genuinely judgements, and arithmetic on a public
 figure is not one.
 
+**A purchase in a foreign currency is proposed at mva-kode 0, never left
+empty.** Whatever VAT the seller charged abroad is not Norwegian input VAT, and
+an empty code was not a neutral answer: the form fills an empty code with the
+category's default, 25 % on nearly every purchase. MA-3D's 1 790 EUR invoice,
+printed "VAT 0,00 €", came back deducting a fifth of its kroner amount. The
+import VAT on goods arrives later on the freight forwarder's or Tolletaten's
+bill and is its own entry, "Mva betalt ved innførsel (tollpass)" at code 14. A
+bilag filed under that category keeps code 14 whatever its currency, because
+it is that bill.
+
 The second use is `domain/faktura/drafting.py`, behind
 `POST /companies/{id}/faktura/linjeforslag`: a sentence describing a sale becomes
 invoice lines. The same rule holds in a different shape — the model **restates
@@ -910,8 +1355,10 @@ guessing which field is missing.
 Four properties follow, and they are the reason for the shape:
 
 - **Layering holds.** `classify()` and `draft_lines()` each take an `ask`
-  callable, so the domain still imports nothing from `integrations`; the endpoint
-  passes `integrations/loynd.py` and catches its errors.
+  callable, so the domain never imports the model's client (the only thing it
+  takes from `integrations` is one data type, see
+  [§ Backend layout](#backend-layout-backendsrcmyntos)); the endpoint passes
+  `integrations/loynd.py` and catches its errors.
 - **Optional by construction, and switchable by the user.** No `LOYND_KEY`, no
   request — the entry form is filled in as far as the text allows, and the
   invoice form leaves the box out entirely
@@ -931,8 +1378,9 @@ Whatever gets built next inherits a promise already made in public:
 [/ki](https://myntos.no/ki/) and `frontend/src/pages/personvern.astro` tell the
 user where AI is used, what leaves the building and who runs the model. A new
 use those pages do not describe is a bug in the pages, not an undocumented
-feature. `MAX_DOCUMENT_CHARS` in `classification.py` and `MAX_REQUEST_CHARS` in
-`drafting.py` are the same promise in code: send the model what the question
+feature. `MAX_DOCUMENT_CHARS` and `MAX_BILAG_CHARS` in `classification.py` (per
+file, and over the whole bilag) and `MAX_REQUEST_CHARS` in `drafting.py` are the
+same promise in code: send the model what the question
 needs, and no more. Note what is *not* sent with a line proposal — not the
 buyer, not the company, not the ledger. The question does not need them.
 
@@ -944,12 +1392,21 @@ buyer, not the company, not the ledger. The question does not need them.
   numbers, year-versioned code lists), and every internal VAT code maps to a
   `StandardTaxCode`. The export is version-parameterized: v1.30 (usable until
   2026-12-31) and v1.40 (mandatory for periods from 2027-01-01). The SAF-T
-  export is then a projection, not a translation.
+  export is then a projection, not a translation. The mapping is checked
+  against Skatteetaten's published list at test time and at export time; it was
+  wrong for half the seeded accounts until it was (integrations/saf-t.md).
 - **One shared VAT-code dimension** feeds both the SAF-T export and the
   MVA-melding (the melding is an aggregation `GROUP BY (mvaKode,
-  spesifikasjon, sats)` per period).
+  spesifikasjon, sats)` per period). The spesifikasjon is a column on the
+  ledger line (`vat_specification`), set only where the tax information is.
+- **The kontoplan belongs to the company, not to the seed.** `chart.py` is what
+  a new company starts with; nothing may assume an account's number is in it,
+  and a grouping row a person chose (`chosen_at`) is never rewritten by a
+  migration correcting the seed.
 - **Posted entries are immutable** — corrections are reversals
-  (bokføringsloven traceability).
+  (bokføringsloven traceability). That includes the opening balance and a
+  year's closing: reopening a year reverses its closing vouchers rather than
+  removing them, and `financial_year_event` keeps who closed and reopened what.
 - **VAT rates are date-effective reference data**, never constants: rates
   change mid-year (e.g. water/wastewater 25% → 15% on 2025-07-01, on the
   same SAF-T code as food).
@@ -962,6 +1419,13 @@ buyer, not the company, not the ledger. The question does not need them.
   `ON DELETE SET NULL`; `SalesDocument.seller_bank_account` is the snapshot the
   PDF and the EHF read, so closing an account never rewrites what an issued
   invoice said. See [integrations/efaktura.md](integrations/efaktura.md).
+- **The bank's statement is evidence, and reconciling is a link.** An imported
+  camt.053 file is archived whole and refused unless it adds up to its own
+  closing balance; its lines are unique per account on the bank's reference (or
+  a fingerprint when there is none), so re-imports and overlaps are idempotent.
+  `BankStatementLine.transaction_pk` says which voucher books a movement and
+  setting it never touches the voucher. See
+  [integrations/bank.md](integrations/bank.md).
 
 ## Deployment (decided July 2026)
 
@@ -996,9 +1460,11 @@ buyer, not the company, not the ledger. The question does not need them.
 
 ### Why EEA hosting is legal (and what the product must do about it)
 
-Since 2025-01-29, bokføringsforskriften **§ 7-5** allows electronic
+Since 2025-01-27, bokføringsforskriften **§ 7-5** allows electronic
 accounting records to be kept in any **EEA state, the UK or Switzerland**
-without dispensation, provided the bookkeeping-obligated entity:
+without dispensation (forskrift 27. januar 2025 nr. 79, in force at once;
+checked on Lovdata 2026-10-10, where § 7-5 reads "endret ved forskrift 27 jan
+2025 nr. 79"), provided the bookkeeping-obligated entity:
 
 1. **notifies skattekontoret in writing** — what is stored abroad, where, and
    how authorities get access; and
@@ -1014,25 +1480,45 @@ ordered to store in Norway after a compliance breach.
 
 ## Security model
 
-- **Secrets:** only via environment / injected secrets. Maskinporten private
+- **Secrets:** only in `<repo>/.env` (mode 600, read by pydantic-settings) or
+  in real environment variables. Nothing injects them: the container-era secret
+  bindings are gone ([§ Deployment](#deployment-decided-july-2026)), and the
+  key files themselves sit in the gitignored `secrets/`. Maskinporten private
   keys are per-installation JWKs (Digdir's recommendation), rotated at least
   yearly (registered keys expire after 1 year), never shared across
   installations, never in the repo. `.gitignore` + gitleaks (pre-commit and
   CI) enforce the repo side.
-- **Least privilege:** one Maskinporten client per deployment; narrow scopes;
-  separate clients per API rather than one client with everything.
+- **Least privilege:** one Maskinporten client and one ID-porten client per
+  environment, each meant to hold only scopes some code path requests. Not one
+  client per API: a Maskinporten token is already requested with just the scope
+  its call needs, and one ID-porten login has to carry every scope the person's
+  errand uses, so splitting clients would add keys to rotate and logins to sit
+  through without narrowing any token. A scope registered beyond that is unused
+  rather than dangerous, since no token carries a scope nobody asked for
+  ([integrations/maskinporten.md](integrations/maskinporten.md#scopes-to-put-on-the-maskinporten-client)).
 - **Transport/API hardening:** security headers middleware on every response
   (`core/security.py`), API docs disabled in production, explicit CORS
   allow-list, `Cache-Control: no-store` on API responses.
 - **Supply chain:** locked dependencies (uv.lock, pnpm-lock.yaml), Dependabot
   (uv ecosystem supported since 2025), GitHub Actions pinned to commit SHAs,
   secret scanning in CI.
-- **Tokens:** government access tokens are cached in memory only, never logged,
-  never persisted. Application credentials are never stored in usable form:
-  passwords as Argon2id hashes, session and invitation tokens as SHA-256 digests
-  of 256-bit random values.
+- **Tokens:** Maskinporten tokens are cached in memory only. A person's
+  ID-porten token has to survive between the callback and the submission, so
+  it is stored Fernet-encrypted under `GOVERNMENT_TOKEN_KEY`
+  (`government_login_attempt.sealed_token`, `auth/idporten/vault.py`) until
+  ID-porten's own `exp`, and with no key configured the feature is off rather
+  than the token stored readable. Neither kind is ever logged. Application
+  credentials are never stored in usable form:
+  passwords as Argon2id hashes, session, invitation, confirmation and reset
+  tokens, and agent keys and their tokens, as SHA-256 digests of 256-bit
+  random values.
 - **Passwords:** Argon2id at argon2-cffi defaults (t=3, m=64 MiB, p=4 — above
   the OWASP 19 MiB floor); parameters live in the hash, so raising them
-  re-hashes users on their next sign-in. Policy is length-only (≥12), and login
-  failures throttle per account. Broad source-based rate limiting is expected at
-  the Cloudflare edge, not in the application.
+  re-hashes users on their next sign-in. Policy is length-only (at least
+  `PASSWORD_MIN_LENGTH`, default 10, in `core/config.py`), and login failures
+  throttle per account. There is **no source-based rate limiting** in front of
+  the API: `api.myntos.no` is this deployment's own machine behind Caddy, not
+  Cloudflare, so no edge does it. If it is needed it belongs in Caddy, not in
+  the application. The one limit the application keeps is per key for agents
+  (agents-and-api.md rule 10), because only the application knows which key a
+  request carries.

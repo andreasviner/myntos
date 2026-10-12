@@ -162,7 +162,7 @@ def test_a_vat_number_outside_the_menu_falls_back_and_is_flagged() -> None:
         ("25 %", "3"),
         ("25", "3"),  # a bare rate: no menu entry has that number
         ("mva 2", "31"),  # menu number inside prose
-        ("12 %", "32"),
+        ("12 %", "33"),
         ("0 %", "5"),  # the literal reading: avgiftsfritt salg
     ],
 )

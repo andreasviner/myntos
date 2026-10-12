@@ -17,9 +17,13 @@ paragraph explaining why is the part worth keeping.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Anything structural. Tenancy model, the two auth planes, deployment, the data-model constraints that are legal rather than technical |
 | [docs/company-isolation.md](docs/company-isolation.md) | **Any code that touches a company id, on either side.** One account holds many companies; the walls that keep them apart are built twice, differently, and the second one is easy to breach by accident |
 | [docs/register-access.md](docs/register-access.md) | Anything that joins Enhetsregisteret's board list to the member list, or that touches the ID-porten identity link. The join has no key: it is a name match, and the mark has to say how much the match is worth |
+| [docs/agents-and-api.md](docs/agents-and-api.md) | **Any new route, page or feature.** Every feature is a public API feature and ships with a skill for agents and help articles for an AI helping a person; keys, what a key may never do, what waits for the person's approval, and why a pasted key must die on first use |
+| [docs/agents/README.md](docs/agents/README.md) | **Writing or changing a skill or a help article**, which every route and every page change needs. The two halves of what agents read, the areas and their order, the exact shape of each file |
+| [docs/gdpr.md](docs/gdpr.md) | Account deletion, the session list, or any column that points at `app_user`. What is the person's to erase and what is the books' to keep, and why a deleted bookkeeper leaves a tombstone with their name |
 | [docs/frontend-conventions.md](docs/frontend-conventions.md) | Adding or changing a page. `hidden`, session and chrome, forms, the text rules |
-| [docs/integrations/](docs/integrations/) | Maskinporten, ID-porten, Altinn, MVA, SAF-T, EHF. One file per counterparty |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Deciding what to build next |
+| [docs/integrations/](docs/integrations/) | Maskinporten, ID-porten, Altinn, MVA, SAF-T, EHF, bank statements, BankID login (Idura). One file per counterparty |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Deciding what to build next: what is being built, phase by phase |
+| [docs/FEATURES.md](docs/FEATURES.md) | Choosing what to build after that: everything Fiken, Tripletex and the rest have that Myntos lacks, ranked, with sources |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Commits, style, running the checks |
 | `CLAUDE.local.md` (gitignored, if present) | Anything about *this machine*: what runs where, deployment, live integration state |
 
@@ -41,13 +45,41 @@ paragraph explaining why is the part worth keeping.
    because bokføringsloven requires five years of primary documentation.
 4. **Money is `Decimal` end to end.** No floats anywhere near an amount.
 5. **Nothing leaves the EEA**, and nothing reaches a model unless the company
-   switched it on. See ARCHITECTURE.md § KI.
+   switched it on. See ARCHITECTURE.md § KI. Two exceptions, both written down:
+   account mail (address confirmation, reset, invitations), which Cloudflare
+   sends without an EEA promise and which therefore never carries accounting
+   data (ARCHITECTURE.md § What the mail provider sees); and a company's own
+   agent reading its books with a key the company chose to issue
+   (docs/agents-and-api.md rule 8).
 6. **Norwegian for the user, English for the code.** `.astro` comments are
    bokmål; `lib/*.ts` and the whole backend are English. Never "åpen
    kildekode": Myntos is source-available.
 7. **Comments say why.** This codebase explains the decision and the failure it
    came from, not what the next line does. Match that; a change that removes a
    reason is a regression even when the code is identical.
+8. **Every feature is an API feature, and every feature teaches agents, both
+   ways.** It is an endpoint under `/api/v1` before it is a page, with an
+   OpenAPI description written for someone who does not know Norwegian
+   accounting, and in the same change it ships:
+   - a **skill** (`docs/agents/skills/<feature>/SKILL.md`) for an agent
+     working in the books through the API, and
+   - **help articles** (`docs/agents/help/<area>/<topic>.md`, one per task)
+     for an AI helping a person use the page, with the page's exact labels,
+
+   both listed in `llms.txt` in the order docs/agents/README.md gives. Renaming
+   a button or adding a step updates the help articles whose `pages:` name
+   that page. `tests/test_agent_surface.py` fails a route without its skill, a
+   page without a help article, a file `llms.txt` does not list and a dead link
+   between them; the lists of older routes in it only shrink. Every route says
+   what it is to a key: `openapi_extra=KEY_READ`, `key_write("…")` (undoable),
+   `key_post("…")` (final), `KEY_PREVIEW` (stores nothing), or a reason in
+   `_NOT_FOR_AGENTS`; undeclared is closed. The string in `key_write`/`key_post`
+   is the bokmål a person reads when a key's request waits for their approval
+   on `/godkjenning/` («Claude vil føre en betaling»). A key never files to
+   Skatteetaten, moves money, changes a kontonummer, manages access or approves
+   requests, whatever its scopes. See
+   [docs/agents-and-api.md](docs/agents-and-api.md) and, for writing either
+   kind of file, [docs/agents/README.md](docs/agents/README.md).
 
 ## Checks before you call something done
 
@@ -59,9 +91,9 @@ make lint                            # ruff, ruff format --check, mypy, astro ch
 or one at a time:
 
 ```
-cd backend && uv run pytest          # 906 tests. Move the repo .env aside first,
-                                     # or ~212 fail on production config
-cd frontend && pnpm test             # vitest, src/lib only: the company wall
+cd backend && uv run pytest          # ~1900 tests, ~15 min. Reads no .env, so it
+                                     # runs safely beside production's
+cd frontend && pnpm test             # vitest, src/lib only
 cd frontend && pnpm run check        # astro check, must be 0 errors
 ```
 

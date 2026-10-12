@@ -27,10 +27,19 @@ separately below instead of being parameterised into one.
 § 5-1-5 exactly (:mod:`myntos.domain.faktura.totals`), and EN 16931's
 BR-CO-14 checks the document's tax total against the sum of those groups.
 
-**A zero-rate group needs a reason.** BR-E-10, BR-G-10, BR-AE-10 and BR-Z-09 all
-require ``TaxExemptionReason`` where no VAT is charged. The reasons come from
-:mod:`myntos.domain.faktura.vat` so the printed document and the XML give the
-customer the same explanation.
+**A zero-rate group needs a reason — except the one that must not have one.**
+BR-E-10, BR-G-10 and BR-AE-10 require ``TaxExemptionReason`` where no VAT is
+charged, and the reasons come from :mod:`myntos.domain.faktura.vat` so the
+printed document and the XML give the customer the same explanation. Category
+``Z`` is the exception: BR-Z-10 *forbids* a reason on it, because a zero rate is
+a rate, not an exemption. The PDF still prints one.
+
+All of this is checked against the published rule sets, not only against our
+reading of them: ``tests/test_faktura_ehf_validation.py`` runs every shape of
+document this module produces through the UBL 2.1 XSD, the CEN EN 16931
+Schematron and the Peppol BIS Billing 3.0 Schematron. The rule ids in the
+comments below are the ones those validators report; a change here that makes
+one of them fire is a document a Peppol access point will refuse.
 """
 
 from __future__ import annotations
@@ -67,6 +76,28 @@ PAYMENT_MEANS_CREDIT_TRANSFER = "31"
 
 # UNCL 5153. The only tax scheme this system deals in.
 VAT_SCHEME = "VAT"
+
+# The scheme for BT-32, the seller's *tax registration* as opposed to its VAT
+# number. Peppol's Norwegian rule NO-R-002 looks for the word
+# "Foretaksregisteret" exactly here, under this scheme id, and nowhere else.
+TAX_REGISTRATION_SCHEME = "TAX"
+
+# BR-Z-10: the one zero category that may not carry a reason; "S" charges VAT
+# and has nothing to explain.
+_NO_EXEMPTION_REASON = frozenset({VatCategory.STANDARD, VatCategory.ZERO_RATED})
+
+# PEPPOL-EN16931-R003 rejects a document with neither a buyer reference (BT-10)
+# nor an order reference (BT-13). The regulation asks for neither, and most
+# small-business buyers never give one, so the form leaves "Deres referanse"
+# optional and this says, in words the buyer's clerk can read, that there was
+# none. Not the buyer's name or our invoice number: BT-10 is the *buyer's*
+# routing key, and a plausible-looking value that is not theirs would be routed
+# on as if it were.
+NO_BUYER_REFERENCE = "Ikke oppgitt"
+
+# PEPPOL-EN16931-R002 allows a single document-level note (BT-22) outside
+# Germany. The markings and the free text are joined into it, one per line.
+NOTE_SEPARATOR = "\n"
 
 # Registered once, at import. ElementTree keeps the prefix table globally, and
 # the alternative is prefixes named ns0/ns1 in a document a human has to read.
@@ -144,6 +175,36 @@ def _address(
     _sub(country_element, _cbc("IdentificationCode"), country)
 
 
+def _seller_tax_registration(document: SalesDocument) -> str | None:
+    """BT-32, the seller's tax registration, or ``None`` when it has nothing to add.
+
+    Two different jobs share this one field, because EN 16931 defines it as
+    "a reference that enables the Seller to state his registered tax status":
+
+    - **Foretaksregisteret.** § 5-1-2 wants the word on the document, and Peppol's
+      NO-R-002 looks for it here (``CompanyID`` = "Foretaksregisteret" under
+      scheme ``TAX``). The ``cbc:Note`` carries it as well, for the person
+      reading; this is the copy a receiving system can find.
+    - **A seller outside Merverdiavgiftsregisteret.** Its lines are category
+      ``E``, and BR-E-02 refuses an ``E`` line unless the seller states *some*
+      tax identifier. Such a seller has no VAT number by definition, so its
+      organisasjonsnummer — the identifier Skatteetaten knows it by — is the
+      honest one. This is how XRechnung does the same for the German
+      Kleinunternehmer, with the Steuernummer in the same slot.
+
+    A seller that is both in Foretaksregisteret and unregistered for VAT gets
+    the marking: it satisfies BR-E-02 too, and the field holds one value
+    (UBL-SR-13 allows a single seller tax registration).
+    """
+    if document.seller_in_foretaksregisteret:
+        from myntos.domain.faktura.compliance import FORETAKSREGISTERET_MARKING
+
+        return FORETAKSREGISTERET_MARKING
+    if not document.seller_vat_registered:
+        return document.seller_orgnr or None
+    return None
+
+
 def _supplier(parent: ET.Element, document: SalesDocument) -> None:
     """``cac:AccountingSupplierParty`` — us."""
     party = _sub(_sub(parent, _cac("AccountingSupplierParty")), _cac("Party"))
@@ -173,6 +234,12 @@ def _supplier(parent: ET.Element, document: SalesDocument) -> None:
         tax_scheme_party = _sub(party, _cac("PartyTaxScheme"))
         _sub(tax_scheme_party, _cbc("CompanyID"), f"NO{document.seller_orgnr}MVA")
         _sub(_sub(tax_scheme_party, _cac("TaxScheme")), _cbc("ID"), VAT_SCHEME)
+
+    tax_registration = _seller_tax_registration(document)
+    if tax_registration:
+        registration = _sub(party, _cac("PartyTaxScheme"))
+        _sub(registration, _cbc("CompanyID"), tax_registration)
+        _sub(_sub(registration, _cac("TaxScheme")), _cbc("ID"), TAX_REGISTRATION_SCHEME)
 
     legal = _sub(party, _cac("PartyLegalEntity"))
     _sub(legal, _cbc("RegistrationName"), document.seller_name)
@@ -217,7 +284,11 @@ def _tax_category(parent: ET.Element, subtotal: TaxSubtotal) -> None:
     category = _sub(parent, _cac("TaxCategory"))
     _sub(category, _cbc("ID"), subtotal.category.value)
     _sub(category, _cbc("Percent"), _plain(subtotal.percent))
-    if subtotal.category is not VatCategory.STANDARD and subtotal.reason:
+    # BR-Z-10 forbids a reason on "Z", where the others require one: zero-rated
+    # supplies are taxable at 0 %, not exempt. Writing the reason the PDF
+    # prints ("Avgiftsfritt salg ...") here is what made every zero-rated
+    # invoice fail validation until the Schematron was run against it.
+    if subtotal.category not in _NO_EXEMPTION_REASON and subtotal.reason:
         _sub(category, _cbc("TaxExemptionReason"), subtotal.reason)
     _sub(_sub(category, _cac("TaxScheme")), _cbc("ID"), VAT_SCHEME)
 
@@ -398,11 +469,18 @@ def build(document: SalesDocument, credited: SalesDocument | None = None) -> ET.
         if document.due_date is not None:
             _sub(root, _cbc("DueDate"), document.due_date.isoformat())
         _sub(root, _cbc("InvoiceTypeCode"), document.document_type.ubl_type_code)
-    for note in _notes(document):
-        _sub(root, _cbc("Note"), note)
+    # One note, not one per marking: PEPPOL-EN16931-R002. A kreditnota for an AS
+    # carries three (Foretaksregisteret, Kreditnota, the crediting text), and
+    # three cbc:Note elements is a document a Norwegian access point refuses.
+    _optional(root, _cbc("Note"), NOTE_SEPARATOR.join(_notes(document)))
 
     _sub(root, _cbc("DocumentCurrencyCode"), currency)
-    _optional(root, _cbc("BuyerReference"), document.buyer_reference)
+    # PEPPOL-EN16931-R003: a buyer reference or an order reference, one of the
+    # two. See NO_BUYER_REFERENCE for why the fallback says "none" outright.
+    buyer_reference = document.buyer_reference
+    if not buyer_reference and not document.order_reference:
+        buyer_reference = NO_BUYER_REFERENCE
+    _optional(root, _cbc("BuyerReference"), buyer_reference)
 
     if document.order_reference:
         order = _sub(root, _cac("OrderReference"))

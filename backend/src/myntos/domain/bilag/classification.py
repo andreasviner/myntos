@@ -64,11 +64,43 @@ class Ask(Protocol):
     def __call__(self, *, system: str, prompt: str, max_tokens: int) -> Awaitable[str]: ...
 
 
-# How much of the document the model is shown. The top of an invoice carries the
-# sender, the item lines and the totals; the rest is payment instructions and
+# How much of each document the model is shown. The top of an invoice carries
+# the sender, the item lines and the totals; the rest is payment instructions and
 # small print. Sending less is faster, cheaper, and less of the user's business
 # leaving the building than sending it all.
+#
+# Per document, not per bilag. It used to be the first 2000 characters of all of
+# them together, which on a bilag of one bank line and nine AliExpress orders was
+# the bank line and two invoices: the model never saw the 5 908,81-krone spot
+# welder, and described the purchase as one of the servos it had seen.
 MAX_DOCUMENT_CHARS = 2000
+# And a ceiling over the whole bilag, set by the model's context rather than by
+# taste. Løynd serves a 32 768-token window, and a prompt is kept under 90 % of
+# it: past that the model reads noticeably worse, and past 100 % the request is
+# refused and the form fills itself in without the model, saying nothing. What
+# is left after the system prompt, the company preamble, the menu and the
+# 220-token answer is about 28 000 tokens.
+#
+# Characters per token decide how many characters that is, and they were
+# measured on 2026-10-09 against the running model: 1.7 to 2.5 on every bilag in
+# regnaskaps_tests/, and 1.02 on a synthetic bank statement, because Qwen
+# tokenises every digit on its own. The ceiling is set by the digits, so that a
+# long statement full of figures still fits; on ordinary text it is a third of
+# the window.
+MAX_BILAG_CHARS = 28000
+# Past this the bilag is long enough to say so: the questions take longer, and a
+# model given more text reads each part of it less closely. The ceiling this
+# change replaced, which nobody had found too small for a real bilag.
+LONG_BILAG_CHARS = 12000
+# The heading myntos.api.v1.cashflow writes above each file when a bilag has
+# several. Spelled here rather than imported, because the API layer is not the
+# domain's to import; extraction has the same pattern for the same text.
+_DOCUMENT_HEADING = re.compile(r"^-{3}\s*Dokument\s+\d+\s*:")
+# A line shorter than this is a label ("Total:", "Order ID:") and stays in every
+# document even when the same label was printed in the one before, because the
+# figure under it means nothing without it. A longer line printed again is the
+# shop's small print or the buyer's address, said once is enough.
+_MIN_REPEATED_LINE = 30
 
 _SYSTEM = (
     "Du er en norsk regnskapsassistent. Du får en faktura eller kvittering og en "
@@ -204,10 +236,57 @@ def excerpt(document_text: str, *, title: str | None = None) -> str:
     would have its answer accepted as something the bilag said. See
     :func:`preamble`.
     """
-    kept = "\n".join(line for line in document_text.splitlines() if line.strip())
+    return _uncapped(document_text, title=title)[:MAX_BILAG_CHARS]
+
+
+def measure(document_text: str, *, title: str | None = None) -> tuple[int, bool]:
+    """How many characters the model is shown, and whether the ceiling cut any.
+
+    So the API can say "this bilag is long" with the number the model actually
+    gets, after the per-file allowance and the repeated small print, rather
+    than with the size of the upload.
+    """
+    whole = _uncapped(document_text, title=title)
+    return min(len(whole), MAX_BILAG_CHARS), len(whole) > MAX_BILAG_CHARS
+
+
+def _uncapped(document_text: str, *, title: str | None) -> str:
+    """The excerpt before the ceiling over the whole bilag is applied."""
+    lines = [line for line in document_text.splitlines() if line.strip()]
+    if not any(_DOCUMENT_HEADING.match(line) for line in lines):
+        # One file: exactly the excerpt it always was.
+        kept = "\n".join(lines)
+        if title is not None:
+            kept = f"Dokumentets tittel: {title}\n{kept}"
+        return kept[:MAX_DOCUMENT_CHARS]
+
+    # Several files: each one gets its own allowance, so the fifth document is
+    # read as well as the first, and the small print a shop repeats on every
+    # order is sent once rather than nine times.
+    seen: set[str] = set()
+    documents: list[list[str]] = [[]]
+    for line in lines:
+        if _DOCUMENT_HEADING.match(line):
+            documents.append([line])
+            continue
+        key = " ".join(line.split())
+        if len(key) >= _MIN_REPEATED_LINE:
+            if key in seen:
+                continue
+            seen.add(key)
+        documents[-1].append(line)
+    parts = [
+        # The heading is ours and costs nothing against the document's allowance.
+        document[0] + "\n" + "\n".join(document[1:])[:MAX_DOCUMENT_CHARS]
+        if document and _DOCUMENT_HEADING.match(document[0])
+        else "\n".join(document)[:MAX_DOCUMENT_CHARS]
+        for document in documents
+        if document
+    ]
+    kept = "\n".join(parts)
     if title is not None:
         kept = f"Dokumentets tittel: {title}\n{kept}"
-    return kept[:MAX_DOCUMENT_CHARS]
+    return kept
 
 
 def preamble(context: BilagContext | None) -> str:

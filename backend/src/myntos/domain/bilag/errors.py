@@ -22,3 +22,11 @@ class DocumentTooLargeError(AttachmentError):
 
 class AttachmentNotFoundError(AttachmentError):
     """No such document in this company."""
+
+
+class NoThumbnailError(AttachmentNotFoundError):
+    """The document exists and has no thumbnail: a PDF, or an image no decoder opens.
+
+    A not-found rather than its own status, because to the page asking it is the
+    same answer: show the badge instead. The original is untouched either way.
+    """

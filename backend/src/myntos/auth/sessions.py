@@ -12,7 +12,7 @@ collapsing into one unreadable predicate.
 """
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from myntos.auth.tokens import generate_token, hash_token
 from myntos.core.clock import as_utc, utc_now
 from myntos.core.config import get_settings
+from myntos.domain.identity.errors import SessionNotFoundError
 from myntos.domain.identity.models import User, UserSession
 
 
@@ -119,3 +120,50 @@ async def revoke_all_sessions(
     if except_session_id is not None:
         statement = statement.where(UserSession.id != except_session_id)
     await db.execute(statement)
+
+
+def is_live(session: UserSession, *, now: datetime) -> bool:
+    """Whether ``session`` would still authenticate at ``now``.
+
+    The same three deadlines :func:`resolve_session` applies, without its side
+    effects: listing somebody's sessions must not retire the idle ones as it
+    reads them, and must not slide the window of every row it touches.
+    """
+    if session.revoked_at is not None or as_utc(session.expires_at) <= now:
+        return False
+    idle_deadline = as_utc(session.last_seen_at) + timedelta(
+        hours=get_settings().session_idle_timeout_hours
+    )
+    return idle_deadline > now
+
+
+async def list_live_sessions(db: AsyncSession, user_id: int) -> list[UserSession]:
+    """The sessions ``user_id`` could still be signed in with, latest use first.
+
+    Revoked and expired rows stay in the table for their audit value (see
+    :class:`UserSession`) but are not offered here: a list of "your logins"
+    that included the ones already ended would invite ending them again.
+    """
+    now = utc_now()
+    rows = await db.scalars(
+        select(UserSession)
+        .where(UserSession.user_id == user_id, UserSession.revoked_at.is_(None))
+        .order_by(UserSession.last_seen_at.desc(), UserSession.id.desc())
+    )
+    return [session for session in rows if is_live(session, now=now)]
+
+
+async def get_own_session(db: AsyncSession, *, user_id: int, session_id: int) -> UserSession:
+    """One of the caller's own sessions, by id.
+
+    Looked up with the owner in the ``WHERE`` clause, never by primary key
+    alone: a session id belonging to somebody else is answered exactly like
+    one that does not exist, so the endpoint can neither sign other people out
+    nor tell anybody which ids are live.
+    """
+    session = await db.scalar(
+        select(UserSession).where(UserSession.id == session_id, UserSession.user_id == user_id)
+    )
+    if session is None:
+        raise SessionNotFoundError("fant ingen slik innlogging")
+    return session

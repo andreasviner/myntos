@@ -3,11 +3,13 @@
 This is the *application* identity plane — who is logged into Myntos — and it
 is deliberately separate from :mod:`myntos.auth.idporten` and
 :mod:`myntos.auth.maskinporten`, which answer a different question: who we are
-to Skatteetaten. A user signs into Myntos with an email/password or a Google
-account; when that same user later submits an MVA-melding they authenticate
-*again* with ID-porten, because Skatteetaten requires a personal ID-porten
-login for submissions and will never accept a Myntos session as evidence of
-anything.
+to Skatteetaten. A user signs into Myntos with an email/password, a Google or
+Microsoft account, or BankID through a broker; when that same user later
+submits an MVA-melding they authenticate *again* with ID-porten, because
+Skatteetaten requires a personal ID-porten login for submissions and will never
+accept a Myntos session as evidence of anything. Signing in with BankID does
+not change that: it is a login to Myntos, bought from a broker, and says
+nothing to the state.
 
 Five decisions shape the tables below, and they are the ones that would be
 expensive to reverse:
@@ -26,12 +28,19 @@ expensive to reverse:
    :class:`UserIdentity`. Someone who signed up with a password can add Google
    later — or drop it again — and keep the same user id, the same memberships
    and the same audit trail. Modelling "login with Google" as a second user
-   account would fork the memberships instead.
+   account would fork the memberships instead. **BankID is the exception**: an
+   account with a ``bankid`` row has no password and no other provider, because
+   BankID's terms forbid using it to set up or restore a sign-in of our own.
+   The row is the whole marker; there is no flag to drift from it. See
+   :func:`~myntos.domain.identity.service.is_bankid_account`.
 
 3. **A federated identity is only linked to an existing account when the
-   provider asserts a verified email.** Matching on the email address alone is
+   provider asserts a verified email**, or when the person linking it is
+   already signed in to that account. Matching on the email address alone is
    an account-takeover primitive; see
-   :func:`~myntos.domain.identity.service.sign_in_with_provider`.
+   :func:`~myntos.domain.identity.service.sign_in_with_provider`. BankID asserts
+   no address at all, so for it the second way is the only one; see
+   :func:`~myntos.domain.identity.service.link_provider`.
 
 4. **Sessions are server-side and revocable.** A stateless JWT cannot be
    withdrawn before it expires, which is the wrong default for a system holding
@@ -39,9 +48,10 @@ expensive to reverse:
    found compromised" both have to take effect immediately. The cookie carries
    an opaque random token; the database stores only its hash.
 
-5. **Role and provider columns are VARCHAR, not PostgreSQL enums.** Both lists
-   are expected to grow (another provider, another role), and extending a
-   native enum means an ``ALTER TYPE`` in a migration. The ledger's
+5. **Role, provider and intent columns are VARCHAR, not PostgreSQL enums.**
+   The lists are expected to change (another provider, another role, and one
+   provider has already gone), and changing a native enum means an ``ALTER
+   TYPE`` in a migration. The ledger's
    ``account_type``/``party_type`` stay native because those sets are closed by
    accounting rules — these are not.
 """
@@ -57,9 +67,11 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -98,14 +110,49 @@ class IdentityProvider(enum.StrEnum):
     gmail-specific to model. The same holds for Microsoft, where one endpoint
     covers personal accounts and Entra ID tenants alike.
 
+    ``bankid`` is Norwegian BankID through an OpenID Connect broker (Idura by
+    default; docs/ARCHITECTURE.md, "Federated providers"). Unlike the other two
+    it says who a person *is* and nothing about how to reach them: no email
+    address comes back, so none of the email-based linking rules can apply to
+    it, and the broker's ``sub`` is the only thing stored.
+
     Adding a member here needs no migration, which is exactly why the column is
     a plain VARCHAR rather than a PostgreSQL enum type — see the module
-    docstring.
+    docstring. Removing one does need care: a row still holding the old value
+    can no longer be read, which is why ``7a3e5c1d9b24`` refuses to run while a
+    ``vipps`` row exists rather than deleting it.
     """
 
     GOOGLE = "google"
     MICROSOFT = "microsoft"
-    VIPPS = "vipps"
+    BANKID = "bankid"
+
+
+class OAuthIntent(enum.StrEnum):
+    """What a federated flow was started *for*, decided before the provider is asked.
+
+    The provider's answer is the same identity either way; what to do with it
+    depends on which button the person pressed, and that cannot be inferred
+    afterwards without guessing.
+
+    - ``login``: sign in to the account this identity is linked to. For a
+      provider that asserts an email address, this also creates or links an
+      account by that address, as it always has. For one that asserts none
+      (BankID), an identity linked to nothing is refused: a login button never
+      creates an account.
+    - ``signup``: the same, except that an address-less identity linked to
+      nothing is held for a few minutes while the person types an email address
+      (:mod:`myntos.domain.identity.provider_signup`).
+    - ``link``: attach this identity to the account that started the flow,
+      which must still be the one signed in when it comes back. For BankID
+      this is a switch, not an addition: the account's password and other
+      providers go, and the flow starts from ``POST /auth/bankid/link``, which
+      asks for the password first, never from a GET.
+    """
+
+    LOGIN = "login"
+    SIGNUP = "signup"
+    LINK = "link"
 
 
 def _role_type() -> Enum:
@@ -127,6 +174,16 @@ def _provider_type() -> Enum:
         name="identity_provider",
         native_enum=False,
         length=32,
+        values_callable=lambda e: [member.value for member in e],
+    )
+
+
+def _intent_type() -> Enum:
+    return Enum(
+        OAuthIntent,
+        name="oauth_intent",
+        native_enum=False,
+        length=16,
         values_callable=lambda e: [member.value for member in e],
     )
 
@@ -226,6 +283,16 @@ class User(Base):
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # Set when the person deleted their account and the row stayed behind as a
+    # tombstone: the id and the name, nothing to sign in with, nothing to reach
+    # them by. It stays only when a set of books still points at it (a voucher
+    # they entered, a bilag they uploaded, a filing they made), because the
+    # books must go on saying who registered each entry for as long as they are
+    # kept, and NULL there would say "nobody knows". An account that touched no
+    # books is deleted outright. See myntos.domain.identity.erasure and
+    # docs/gdpr.md.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     identities: Mapped[list[UserIdentity]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
@@ -257,7 +324,14 @@ class User(Base):
 
 
 class UserIdentity(Base):
-    """A federated login linked to a :class:`User`."""
+    """A federated login linked to a :class:`User`.
+
+    For BankID this row is everything Myntos keeps about the login: which
+    account, and the broker's ``sub``. Not the fødselsnummer (never requested),
+    and not the birth date or the name the broker also sends (the name is read
+    once, at signup, to name a new account, and otherwise dropped). See
+    docs/gdpr.md.
+    """
 
     __tablename__ = "user_identity"
     __table_args__ = (
@@ -272,10 +346,14 @@ class UserIdentity(Base):
     provider: Mapped[IdentityProvider] = mapped_column(_provider_type())
     # The provider's stable subject identifier (Google's ``sub``) — never the
     # email address, which a Workspace administrator can reassign to a
-    # different person while ``sub`` stays put.
+    # different person while ``sub`` stays put. For BankID it is the broker's
+    # pseudonym, which Idura documents as stable *per tenant*: moving to another
+    # tenant (or another broker) gives every person a new one, and every link
+    # has to be made again.
     subject: Mapped[str] = mapped_column(String(255))
     # Only for display and support ("you signed up with this address"). Never
-    # used to find the account; that is what ``subject`` is for.
+    # used to find the account; that is what ``subject`` is for. Always NULL for
+    # BankID, which has no address to give.
     email_at_provider: Mapped[str | None] = mapped_column(String(EMAIL_LENGTH))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -471,6 +549,90 @@ class OrganizationInvitation(Base):
     invited_by: Mapped[User | None] = relationship(foreign_keys=[invited_by_user_id])
 
 
+class EmailTokenPurpose(enum.StrEnum):
+    """What a link mailed to an account's own address is for.
+
+    One table holds every kind, and the purpose is part of every lookup, so a
+    confirmation link can never be replayed as a password reset. Like the role
+    and provider columns, a VARCHAR with no CHECK (``native_enum=False`` makes
+    none), which is why the two added for BankID needed no migration.
+
+    - ``switch_to_password`` is the link a BankID account asks for to move to
+      e-mail and password. Not ``reset_password``, though it also sets one:
+      a reset is asked for anonymously and must never reach a BankID account,
+      and this one is asked for by a signed-in BankID account and also removes
+      the BankID. One purpose for both would make "refuse a reset for a BankID
+      account" and "accept this link for a BankID account" the same lookup.
+    - ``bankid_notice`` is not a link at all. It records that a reset request
+      for a BankID account was answered with "you sign in with BankID", so the
+      hourly cap counts those messages like any other. The token is minted
+      only because the column requires one; it is never sent, and nothing
+      redeems this purpose.
+    """
+
+    VERIFY_EMAIL = "verify_email"
+    RESET_PASSWORD = "reset_password"  # noqa: S105 - a purpose name, not a password
+    SWITCH_TO_PASSWORD = "switch_to_password"  # noqa: S105 - a purpose name, not a password
+    BANKID_NOTICE = "bankid_notice"
+
+
+def _purpose_type() -> Enum:
+    return Enum(
+        EmailTokenPurpose,
+        name="email_token_purpose",
+        native_enum=False,
+        length=32,
+        values_callable=lambda e: [member.value for member in e],
+    )
+
+
+class UserEmailToken(Base):
+    """A single-use link mailed to a person's own address.
+
+    Shaped like :class:`OrganizationInvitation` on purpose: 256 random bits,
+    handed out once inside a message, stored here only as a SHA-256 digest, with
+    a deadline and a stamp when it is spent. A database dump therefore holds no
+    link anybody could follow, which matters more here than for an invitation,
+    because a reset link is a password.
+
+    Three decisions.
+
+    **``email`` is stored, though ``user_id`` already points at an address.** A
+    link proves that whoever holds it could read the inbox it was sent to, not
+    the inbox the account names today. If the two ever differ, the link proves
+    nothing about the current one and is refused rather than read generously.
+
+    **Spent and superseded are the same stamp.** Asking for a new link kills the
+    earlier ones of the same purpose by stamping ``consumed_at``, so the newest
+    message in an inbox is the only one that works. A person holding two reset
+    mails should never have to work out which.
+
+    **Rows are kept after use**, and that is what the per-account mail cap counts
+    (``account_mail_max_per_hour``): the number of links of one kind made for one
+    account in the last hour. Nothing prunes them yet, the same housekeeping debt
+    :class:`OAuthLoginAttempt` records; an expired row can never be redeemed.
+    """
+
+    __tablename__ = "user_email_token"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_user_email_token_token_hash"),
+        CheckConstraint("expires_at > created_at", name="expires_after_creation"),
+        # The rate cap's query: one account, one purpose, newest first.
+        Index("ix_user_email_token_user_purpose", "user_id", "purpose", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="CASCADE"))
+    purpose: Mapped[EmailTokenPurpose] = mapped_column(_purpose_type())
+    # The address the link was mailed to; see the class docstring.
+    email: Mapped[str] = mapped_column(String(EMAIL_LENGTH))
+    token_hash: Mapped[str] = mapped_column(String(TOKEN_HASH_LENGTH))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Redeemed, or made worthless by a newer link of the same purpose.
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class UserSession(Base):
     """One signed-in browser (or API client).
 
@@ -512,15 +674,376 @@ class UserSession(Base):
         return self.revoked_at is not None
 
 
+class AgentKeyScope(enum.StrEnum):
+    """What a key may do, on top of what its person may do.
+
+    Three, because the line that matters to a person is not read against write
+    but undoable against final:
+
+    - ``read``: everything a viewer sees. Every key has it.
+    - ``write``: what can still be discarded or changed back. A draft invoice,
+      a party, a proposal read off a bilag, a bank line matched to a voucher.
+    - ``post``: what cannot. Posting or correcting a voucher, issuing an
+      invoice or a kreditnota, closing a year, adding to the bilag archive.
+      Never given by default (docs/agents-and-api.md rule 6): a posted voucher
+      is history, so the person's yes has to come before, not after.
+
+    Which routes need which scope is declared on each route
+    (:data:`myntos.api.deps.KEY_READ` and its siblings), and a route that
+    declares none cannot be called with a key at all.
+    """
+
+    READ = "read"
+    WRITE = "write"
+    POST = "post"
+
+
+class AgentKeyStop(enum.StrEnum):
+    """Why a key stopped working, as the Tilgang page will say it.
+
+    A VARCHAR like the role and provider columns, so a new reason needs no
+    migration. Each is recorded because the page has to tell the person what
+    happened and whether it was them, and "revoked" alone answers neither.
+    """
+
+    PERSON = "person"
+    AGENT = "agent"
+    REUSE = "reuse"
+    REFUSALS = "refusals"
+    ACCESS_OFF = "access_off"
+    MEMBER_REMOVED = "member_removed"
+    PASSWORD_RESET = "password_reset"  # noqa: S105 - a reason name, not a password
+    BANKID = "bankid"
+    ACCOUNT_DELETED = "account_deleted"
+
+
+class AgentTokenKind(enum.StrEnum):
+    ACCESS = "access"
+    REFRESH = "refresh"
+
+
+def _stop_type() -> Enum:
+    return Enum(
+        AgentKeyStop,
+        name="agent_key_stop",
+        native_enum=False,
+        length=32,
+        values_callable=lambda e: [member.value for member in e],
+    )
+
+
+def _token_kind_type() -> Enum:
+    return Enum(
+        AgentTokenKind,
+        name="agent_token_kind",
+        native_enum=False,
+        length=16,
+        values_callable=lambda e: [member.value for member in e],
+    )
+
+
+class AgentKey(Base):
+    """One person's permission for one agent to work in one company's books.
+
+    The whole of docs/agents-and-api.md rules 3 and 4 is in the shape of this
+    row, so it is worth reading them before changing it:
+
+    - **One person, one company.** ``user_id`` is who issued it and whose
+      permissions it works with, *as they stand on each request*: the key never
+      holds a role of its own, only ``scopes`` that narrow the person's. Lose
+      the role and the key loses it too; leave the company and the key is
+      revoked with the membership. A key spanning companies would be an
+      account that is shown, which the tenancy model forbids.
+    - **What the person copies is spent on first use.** Most people will paste
+      it into a conversation with their agent, and a conversation is stored by
+      somebody else. So the copied value (the connection key, ``myntos_ck_``)
+      opens nothing: it is exchanged once for a short access token and a
+      refresh token (:class:`AgentToken`), and from then on the copy in the
+      chat history is worthless. ``connection_key_hash`` stays after the
+      exchange so a second attempt can be told "already used" rather than
+      "unknown", which is the difference between an agent that asks for a new
+      key and one that keeps guessing.
+    - **Nothing lives for ever.** ``expires_at`` is a year from creation
+      whatever happens; a refresh chain unused for a month dies with its last
+      token (``agent_refresh_idle_days``).
+
+    Every credential is stored as a SHA-256 digest only, like a session.
+
+    ``user_id`` cascades, which is safe for a reason worth stating: a voucher
+    registered with a key names the key's person as its author too, so a
+    person any voucher names is kept as a tombstone (docs/gdpr.md) and their
+    keys stay with them. A person deleted outright registered nothing, with a
+    key or without one.
+    """
+
+    __tablename__ = "agent_key"
+    __table_args__ = (
+        UniqueConstraint("connection_key_hash", name="uq_agent_key_connection_key_hash"),
+        CheckConstraint("expires_at > created_at", name="expires_after_creation"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("company.id", ondelete="CASCADE"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_user.id", ondelete="CASCADE"))
+    # What the person called it, so the list and the register can say
+    # "via «Claude på jobb-PC»" rather than "via nøkkel 14".
+    name: Mapped[str] = mapped_column(String(64))
+    # Space-separated AgentKeyScope values, sorted. A string rather than a
+    # table because the set is three words long and is only ever read whole.
+    # What the key may do on its own.
+    scopes: Mapped[str] = mapped_column(String(64))
+    # The same, for what the key may only *ask* to do: a request needing one of
+    # these is stored and waits for its person to approve it on /godkjenning/
+    # (:class:`AgentApproval`) instead of running. Never overlaps ``scopes``,
+    # and never holds ``read``, which every key does on its own.
+    approval_scopes: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    connection_key_hash: Mapped[str] = mapped_column(String(TOKEN_HASH_LENGTH))
+    connection_key_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    exchanged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Slid at most once a minute, as a session's is, so a busy agent does not
+    # turn this row into a write on every request.
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The User-Agent the agent's HTTP client sent, truncated. Shown coarsely,
+    # to let a person tell their own agent from somebody else's.
+    last_used_client: Mapped[str | None] = mapped_column(String(255))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_reason: Mapped[AgentKeyStop | None] = mapped_column(_stop_type(), nullable=True)
+
+    user: Mapped[User] = relationship()
+
+    @property
+    def scope_set(self) -> frozenset[AgentKeyScope]:
+        return frozenset(AgentKeyScope(word) for word in self.scopes.split())
+
+    @property
+    def approval_scope_set(self) -> frozenset[AgentKeyScope]:
+        return frozenset(AgentKeyScope(word) for word in self.approval_scopes.split())
+
+
+class AgentToken(Base):
+    """An access or refresh token in one key's chain.
+
+    **Refresh tokens rotate, and an old one coming back kills the chain.** Each
+    refresh is answered with a new pair and stamps ``used_at`` on the token it
+    spent. A spent refresh token presented again means two parties hold the
+    chain, the agent and whoever copied it, and nothing here can tell which is
+    which, so the key is revoked and its person told
+    (:func:`myntos.auth.agent_keys.refresh`). Without rotation a refresh token
+    leaked in a transcript would work quietly for months.
+
+    Spent rows are therefore kept for as long as they could still be presented,
+    which is their own ``expires_at``, and pruned after it: past that a replay
+    is refused for being expired anyway, and keeping more would buy nothing
+    but rows. Expired access tokens go at the same time.
+    """
+
+    __tablename__ = "agent_token"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_agent_token_token_hash"),
+        CheckConstraint("expires_at > created_at", name="expires_after_creation"),
+        Index("ix_agent_token_key_id", "key_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key_id: Mapped[int] = mapped_column(ForeignKey("agent_key.id", ondelete="CASCADE"))
+    kind: Mapped[AgentTokenKind] = mapped_column(_token_kind_type())
+    token_hash: Mapped[str] = mapped_column(String(TOKEN_HASH_LENGTH))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Refresh tokens only: when it was exchanged for the next pair.
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    key: Mapped[AgentKey] = relationship()
+
+
+class AgentApprovalKind(enum.StrEnum):
+    """What a person is asked to approve.
+
+    - ``request``: a call a key made that needs a scope it may only ask for.
+      It is stored whole and run, as the key, when its person approves it.
+    - ``filing``: a key asking its person to file something to the state,
+      which no key may ever do (docs/agents-and-api.md rule 5). Nothing is
+      stored to run: approving it is the person going to the page that files
+      and doing it there with their own ID-porten login.
+    """
+
+    REQUEST = "request"
+    FILING = "filing"
+
+
+class AgentApprovalStatus(enum.StrEnum):
+    """Where a waiting request has got to, as stored.
+
+    Two more states are derived on read and never stored, like a key's
+    ``expired`` (:func:`myntos.domain.identity.approvals.status_of`): a pending
+    request past its deadline has ``expired``, and one whose key has stopped is
+    ``key_stopped``. Storing them would be one more thing for the clock, and
+    for every place that stops a key, to make wrong.
+    """
+
+    PENDING = "pending"
+    # Claimed by an approval and being run. Set and committed before the run
+    # starts, so two presses of «Godkjenn» cannot run one request twice; a row
+    # left here means the process died mid-run, and the page says to check.
+    RUNNING = "running"
+    # Ran, and the route answered 2xx.
+    DONE = "done"
+    # Ran, and the route refused it. ``result`` holds what it said.
+    FAILED = "failed"
+    DECLINED = "declined"
+    WITHDRAWN = "withdrawn"
+
+
+class FilingType(enum.StrEnum):
+    """What a key may ask its person to file. The skattemelding joins this when it can be filed."""
+
+    MVA_MELDING = "mva_melding"
+
+
+def _approval_kind_type() -> Enum:
+    return Enum(
+        AgentApprovalKind,
+        name="agent_approval_kind",
+        native_enum=False,
+        length=16,
+        values_callable=lambda e: [member.value for member in e],
+    )
+
+
+def _approval_status_type() -> Enum:
+    return Enum(
+        AgentApprovalStatus,
+        name="agent_approval_status",
+        native_enum=False,
+        length=16,
+        values_callable=lambda e: [member.value for member in e],
+    )
+
+
+class AgentApproval(Base):
+    """Something a key asked to do that waits for its person's yes.
+
+    The person decides, per key, which of ``write`` and ``post`` the agent may
+    do on its own and which it may only ask for (``AgentKey.approval_scopes``).
+    A request needing one it may only ask for is stopped at the gate
+    (:func:`myntos.api.deps.get_caller`), stored here whole (method, path,
+    body, files) and answered 202. When the person approves it on
+    /godkjenning/, it is run exactly as it was sent, as the key, so every check
+    the route makes is made then, against the books as they are then, and the
+    voucher it posts says «via» the key like any other (rule 6).
+
+    Stored whole rather than as a description of what it would do, because a
+    description is a second implementation of every route that writes, and
+    the one the person approved would be the one that drifted.
+
+    ``label`` is the route's own description in bokmål as it stood when the
+    request was made (``key_write("…")`` on the route), and ``note`` is the
+    agent's one sentence about why. The note is written by the agent, which
+    reads text written by strangers (rule 7), so the page shows it as the
+    agent's words beside what was actually sent, never instead of it.
+
+    ``decided_by_user_id`` is SET NULL like every other actor column
+    (docs/gdpr.md): who approved is the key's person, who is also the voucher's
+    author, so the voucher keeps the answer the books need.
+    """
+
+    __tablename__ = "agent_approval"
+    __table_args__ = (
+        CheckConstraint("expires_at > created_at", name="expires_after_creation"),
+        Index("ix_agent_approval_company_id_status", "company_id", "status"),
+        Index("ix_agent_approval_key_id", "key_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("company.id", ondelete="CASCADE"))
+    key_id: Mapped[int] = mapped_column(ForeignKey("agent_key.id", ondelete="CASCADE"))
+    kind: Mapped[AgentApprovalKind] = mapped_column(_approval_kind_type())
+    status: Mapped[AgentApprovalStatus] = mapped_column(
+        _approval_status_type(), default=AgentApprovalStatus.PENDING
+    )
+    # The scope the request needed: "write" or "post". Empty for a filing.
+    scope: Mapped[str] = mapped_column(String(16), default="")
+    label: Mapped[str] = mapped_column(String(255))
+    note: Mapped[str | None] = mapped_column(Text)
+
+    # The request, as sent. Empty for a filing.
+    method: Mapped[str] = mapped_column(String(8), default="")
+    path: Mapped[str] = mapped_column(String(512), default="")
+    query: Mapped[str] = mapped_column(String(2048), default="")
+    content_type: Mapped[str | None] = mapped_column(String(255))
+    # The body of anything but a form: JSON, almost always.
+    body: Mapped[bytes | None] = mapped_column(LargeBinary)
+    # A multipart form's text fields, as JSON ``{"name": ["value", …]}``. Its
+    # files are rows of AgentApprovalFile.
+    form: Mapped[str | None] = mapped_column(Text)
+
+    # A filing: what, and for which period.
+    filing_type: Mapped[str | None] = mapped_column(String(32))
+    filing_year: Mapped[int | None] = mapped_column(Integer)
+    filing_period: Mapped[int | None] = mapped_column(Integer)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decided_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("app_user.id", ondelete="SET NULL")
+    )
+    # Why it was declined, in the person's words, for the agent to read.
+    decision_note: Mapped[str | None] = mapped_column(Text)
+    # What the route answered when it ran: status and body (JSON, cut short).
+    result_status: Mapped[int | None] = mapped_column(Integer)
+    result: Mapped[str | None] = mapped_column(Text)
+
+    key: Mapped[AgentKey] = relationship()
+    files: Mapped[list[AgentApprovalFile]] = relationship(
+        back_populates="approval", order_by="AgentApprovalFile.id"
+    )
+
+
+class AgentApprovalFile(Base):
+    """A file in a waiting request: part of its form, or a bilag added to it.
+
+    ``attach`` tells the two apart. A file of the form is sent with the
+    request when it runs. An attachment is a bilag the agent added to a
+    waiting payment (``POST …/godkjenninger/{id}/vedlegg``), so the person sees
+    the receipt in the same approval as the payment it documents; it is sent
+    to the archive route the request's own route names, once the request has
+    run and its voucher exists.
+
+    ``content`` is emptied once the request leaves ``pending``: run, the file
+    is in the bilag archive, which is where five years of keeping belong
+    (bokføringsloven); declined, there is nothing to keep it for. The name and
+    size stay, so the record still says what was sent.
+    """
+
+    __tablename__ = "agent_approval_file"
+    __table_args__ = (Index("ix_agent_approval_file_approval_id", "approval_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    approval_id: Mapped[int] = mapped_column(ForeignKey("agent_approval.id", ondelete="CASCADE"))
+    # The form field it came in, for a file of the form.
+    field: Mapped[str] = mapped_column(String(64))
+    attach: Mapped[bool] = mapped_column(Boolean, default=False)
+    filename: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(255))
+    size: Mapped[int] = mapped_column(Integer)
+    content: Mapped[bytes | None] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    approval: Mapped[AgentApproval] = relationship(back_populates="files")
+
+
 class OAuthLoginAttempt(Base):
     """An in-flight OpenID Connect authorization-code flow.
 
     The ``state``, ``nonce`` and PKCE verifier have to survive the redirect to
-    the provider and come back matched, and the backend runs as stateless
-    containers that sleep between requests — so the flow's short-lived state
-    lives in PostgreSQL like everything else, not in process memory. Rows are
-    single-use: ``consumed_at`` is stamped before the code is exchanged, which
-    is what makes a replayed callback URL useless.
+    the provider and come back matched, and a restart or a deploy can land
+    between the two (``./update.sh`` restarts the unit) — so the flow's
+    short-lived state lives in PostgreSQL like everything else, not in process
+    memory. Rows are single-use: ``consumed_at`` is stamped before the code is
+    exchanged, which is what makes a replayed callback URL useless.
 
     Nothing prunes this table yet. Rows are tiny and expire in minutes, so it is
     a housekeeping job rather than a correctness one — an expired row can never
@@ -548,6 +1071,56 @@ class OAuthLoginAttempt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # See :class:`OAuthIntent`. Every attempt made before the column existed was
+    # a sign-in, which is what its migration backfills.
+    intent: Mapped[OAuthIntent] = mapped_column(_intent_type(), default=OAuthIntent.LOGIN)
+    # Who started a ``link`` flow; NULL for the other two, which nobody is
+    # signed in for yet. The callback refuses unless the session it arrives
+    # with belongs to this same account: otherwise somebody could start a link
+    # on their own account and hand the provider URL to a victim, whose
+    # identity would from then on sign in to the attacker's books.
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("app_user.id", ondelete="CASCADE"), nullable=True
+    )
+
+
+class PendingProviderSignup(Base):
+    """A verified identity with no account yet, waiting for an email address.
+
+    BankID proves who somebody is and says nothing about how to reach them, and
+    an account needs an address: invitations are addressed to one, and the
+    reset link is what answers somebody squatting one. So a BankID signup is two
+    steps with the person's own typing in between. The broker answers, this row
+    holds the answer, and
+    :func:`~myntos.domain.identity.provider_signup.complete_signup` turns it
+    into an account once an address is given.
+
+    Shaped like :class:`UserEmailToken`: 256 random bits handed to the browser
+    once, stored here only as a SHA-256 digest, with a deadline. Unlike that
+    table, rows are **deleted** when used, and expired ones are swept whenever
+    another is written: this one holds a person's name and their pseudonym at
+    the broker, for somebody who may never come back, and there is no audit
+    question it answers afterwards.
+    """
+
+    __tablename__ = "pending_provider_signup"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_pending_provider_signup_token_hash"),
+        CheckConstraint("expires_at > created_at", name="expires_after_creation"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[IdentityProvider] = mapped_column(_provider_type())
+    subject: Mapped[str] = mapped_column(String(255))
+    # The name the provider asserted, which becomes the account's name. Not
+    # editable on the way: that it came from BankID is the point.
+    full_name: Mapped[str] = mapped_column(String(255))
+    token_hash: Mapped[str] = mapped_column(String(TOKEN_HASH_LENGTH))
+    # Carried over from the attempt, so somebody who came from an invitation
+    # goes back to it once the account exists.
+    redirect_to: Mapped[str | None] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class GovernmentLoginAttempt(Base):

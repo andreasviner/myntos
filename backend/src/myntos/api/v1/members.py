@@ -29,6 +29,7 @@ from fastapi import APIRouter, status
 from pydantic import BaseModel, EmailStr, Field
 
 from myntos.api.deps import CurrentCompany, CurrentUser, DbSession, OutgoingMail
+from myntos.auth import agent_keys
 from myntos.core.clock import as_utc
 from myntos.core.config import get_settings
 from myntos.core.mail import Delivery
@@ -36,6 +37,7 @@ from myntos.domain.identity import service
 from myntos.domain.identity.access import Permission, require_permission
 from myntos.domain.identity.invitation_mail import invitation_mail
 from myntos.domain.identity.models import (
+    AgentKeyStop,
     CompanyMembership,
     OrganizationInvitation,
     OrganizationRole,
@@ -78,7 +80,7 @@ class InvitationResponse(BaseModel):
     invited_by: str | None = None
     # The full acceptance link, returned once when the invitation is created and
     # never again — only the token's hash is stored. Myntos emails it to the
-    # invitee when SMTP is configured; the link comes back either way, because
+    # invitee when mail is configured; the link comes back either way, because
     # a deployment without mail still has to be able to invite somebody, and
     # because a message that bounced is one the inviter may want to pass on
     # themselves.
@@ -268,8 +270,11 @@ async def _post_invitation(
             inviter_name=sender.full_name,
             # Reply-To, so an invitee who is unsure the message is genuine
             # answers the colleague who sent it rather than a mailbox nobody
-            # reads.
-            inviter_email=sender.email,
+            # reads. Only once the sender has confirmed that address: anybody
+            # can sign up as somebody else's address, and a message from our
+            # domain must not route a stranger's reply to an address nobody has
+            # shown is theirs. Unconfirmed, the reply goes to MAIL_REPLY_TO.
+            inviter_email=sender.email if sender.email_verified else None,
             recipient_name=invitation.full_name,
             resent=resent,
         )
@@ -305,8 +310,19 @@ async def remove_member(user_id: int, context: CurrentCompany, db: DbSession) ->
     Passing your own user id is how a person walks away from a client's books,
     which needs no permission. Doing it to somebody else needs
     ``member:manage``, and neither may remove the last owner.
+
+    Every key the person made for these books stops with the membership
+    (docs/agents-and-api.md rule 3). A key would stop working anyway, since it
+    acts with a membership that is gone, but stopped rather than idle means
+    that inviting the person back later does not wake their old keys with them.
     """
     target = await service.get_company_membership(
         db, company_id=context.company.id, user_id=user_id
     )
     await service.remove_member(db, actor=context.membership, target=target)
+    await agent_keys.stop_keys(
+        db,
+        reason=AgentKeyStop.MEMBER_REMOVED,
+        user_id=target.user_id,
+        company_id=context.company.id,
+    )

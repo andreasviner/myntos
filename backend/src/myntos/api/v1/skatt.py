@@ -311,6 +311,36 @@ def _reportable(
     return offered
 
 
+async def government_login_for(
+    db: DbSession, user: User, *, missing: str
+) -> tuple[GovernmentLoginAttempt, str]:
+    """The caller's usable government login and its unsealed ID-porten token.
+
+    The one place a sealed token is opened, shared by everything that spends
+    one: the Altinn party list here, and the MVA-melding's validation and
+    submission. ``missing`` is the sentence the person sees when there is no
+    login, because "log in to fetch your companies" and "log in to file" are
+    different requests for the same thing.
+
+    Raises :class:`HTTPException`: 503 when the deployment cannot do this at
+    all, 409 when the person has to log in (again).
+    """
+    if not is_configured() or not vault_is_configured():
+        raise _unavailable()
+    attempt = await _active_attempt(db, user)
+    if attempt is None or attempt.sealed_token is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=missing)
+    try:
+        return attempt, open_sealed(attempt.sealed_token)
+    except TokenVaultError:
+        # The key changed under a stored row. Treated as "log in again", which
+        # is what actually fixes it, rather than as a 500 nobody can act on.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="innloggingen i ID-porten må gjøres på nytt",
+        ) from None
+
+
 async def authorized_parties_for(db: DbSession, user: User) -> list[AuthorizedParty]:
     """Altinn's answer to "which parties may this person act for", for ``user``.
 
@@ -324,25 +354,9 @@ async def authorized_parties_for(db: DbSession, user: User) -> list[AuthorizedPa
     failure here is about the *login*, which is an API-layer fact: unconfigured
     deployment (503), no usable government login (409), Altinn refusing (502).
     """
-    if not is_configured() or not vault_is_configured():
-        raise _unavailable()
-    attempt = await _active_attempt(db, user)
-    if attempt is None or attempt.sealed_token is None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="logg inn med ID-porten for å hente selskapene fra Altinn",
-        )
-
-    try:
-        government_token = open_sealed(attempt.sealed_token)
-    except TokenVaultError:
-        # The key changed under a stored row. Treated as "log in again", which
-        # is what actually fixes it, rather than as a 500 nobody can act on.
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="innloggingen i ID-porten må gjøres på nytt",
-        ) from None
-
+    _, government_token = await government_login_for(
+        db, user, missing="logg inn med ID-porten for å hente selskapene fra Altinn"
+    )
     try:
         altinn_token = await exchange_id_porten_token(government_token)
         return await fetch_authorized_parties(altinn_token.value)

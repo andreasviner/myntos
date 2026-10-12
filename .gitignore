@@ -59,3 +59,7 @@ Desktop.ini
 # They are the reference set the extraction pipeline is measured against, and
 # they are other people's personal data: useful locally, never in the history.
 /regnaskaps_tests/
+
+# Claude Code's agent worktrees: full checkouts of this repository, which
+# `git add -A` would otherwise record as embedded repositories.
+/.claude/worktrees/

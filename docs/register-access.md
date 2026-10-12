@@ -60,8 +60,14 @@ Two properties hold, and both are load-bearing:
 - **Where a name came from outranks how exactly it matches.** A verified name
   agreeing on first-and-last beats an account name agreeing letter for letter:
   anybody can type a name into a signup form, and only the person themselves can
-  pass BankID as it. Exactness breaks ties *within* one source, never across
+  pass ID-porten as it. Exactness breaks ties *within* one source, never across
   them.
+- **A BankID sign-in to Myntos is not a verified name.** An account made with
+  BankID carries the name BankID gave, and it is matched as an account name,
+  `trolig`. Reading it as `bekreftet` would use a BankID login to raise the
+  trust of an identification of our own, which is the ID-veksling BankID's
+  merchant terms forbid ([integrations/bankid.md](integrations/bankid.md)). Only
+  the ID-porten link makes `bekreftet`.
 
 ## What counts as the same name
 
@@ -125,8 +131,8 @@ The `full_name` on it comes from ID-porten's `name` claim, which requires the
 deployment**: the link still exists and a submission is still attributed to it,
 the register match just falls back to the account's own name and says `trolig`
 where it could have said `bekreftet`. See
-[integrations/skatteetaten.md](integrations/skatteetaten.md) and the
-`IDPORTEN_SCOPES` comment in `.env.example`.
+[integrations/maskinporten.md](integrations/maskinporten.md#which-scope-is-where-probed-2026-08-28)
+and the `IDPORTEN_SCOPES` comment in `.env.example`.
 
 ## Where the code is
 

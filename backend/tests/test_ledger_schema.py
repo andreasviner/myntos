@@ -15,6 +15,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import TypedDict
 
+import pytest
 import sqlalchemy as sa
 from alembic.config import Config
 from alembic.migration import MigrationContext
@@ -27,9 +28,11 @@ from myntos.db.base import Base
 # Base.metadata. The migration/model comparison below covers whatever is
 # registered, so a new model module that is not imported here would silently
 # drop out of the check.
+from myntos.domain.bank import models as bank_models  # noqa: F401
 from myntos.domain.bilag import models as bilag_models  # noqa: F401
 from myntos.domain.identity import models as identity_models  # noqa: F401
 from myntos.domain.ledger import models  # noqa: F401
+from myntos.domain.mva import models as mva_models  # noqa: F401
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
@@ -251,8 +254,9 @@ def test_the_settlement_accounts_reach_a_company_that_already_exists() -> None:
     has no companies, so the loop body never runs. What makes this one worth
     testing separately is the grouping rows. A P&L account added after a year is
     open needs one per open year or the SAF-T export has an account it cannot
-    place, and the two new P&L accounts have real næringsspesifikasjon posts
-    rather than "NA" while the three balance-sheet ones do not.
+    place, and the two new P&L accounts have real næringsspesifikasjon posts.
+    The balance-sheet ones were seeded "NA" here and given their real posts by
+    ``b7d40e2c9a15``, which runs after, so this reads the corrected pairs.
     """
     engine = sa.create_engine("sqlite://")
     with engine.begin() as connection:
@@ -305,20 +309,22 @@ def test_the_settlement_accounts_reach_a_company_that_already_exists() -> None:
         # Stamped from the year the books open, not from today.
         assert all(str(row[3]).startswith("2026-01-01") for row in rows)
 
-        grouping = dict(
-            connection.execute(
+        grouping = {
+            str(number): str(pair)
+            for number, pair in connection.execute(
                 sa.text(
-                    "SELECT a.account_number, g.grouping_category FROM account_grouping g "
+                    "SELECT a.account_number, g.grouping_category || '/' || g.grouping_code "
+                    "FROM account_grouping g "
                     "JOIN account a ON a.id = g.account_id "
                     "WHERE a.company_id = 2 AND g.financial_year = 2026 "
                     "AND a.account_number IN ('2740', '8060', '8160')"
                 )
             ).fetchall()
-        )
+        }
         assert grouping == {
-            "2740": "NA",
-            "8060": "finansinntekt",
-            "8160": "finanskostnad",
+            "2740": "kortsiktigGjeld/2740",
+            "8060": "finansinntekt/8060",
+            "8160": "finanskostnad/8160",
         }
 
     engine.dispose()
@@ -592,3 +598,204 @@ def _accounts_with_borrowed_names(connection: sa.Connection) -> None:
             ),
             {"pk": pk, "organization_id": organization_id, "orgnr": orgnr, "name": name},
         )
+
+
+def test_the_low_rate_code_becomes_33_and_keeps_its_postings() -> None:
+    """Code 32 was seeded as "lav sats (12 %)", and in Skatteetaten's list it is fish.
+
+    The rename is in place, so the row keeps its id and every line posted under
+    it keeps pointing at it: the postings were always 12 % sales, and now they
+    say so. A draft invoice line naming the code by string goes with it. The
+    fish code is then added beside it under the number it really has, which
+    only works because the rename runs first.
+    """
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as connection:
+        config = Config(str(BACKEND_ROOT / "alembic.ini"))
+        config.set_main_option("script_location", str(BACKEND_ROOT / "migrations"))
+        script = ScriptDirectory.from_config(config)
+        context = MigrationContext.configure(connection, opts={"target_metadata": Base.metadata})
+        revisions = list(reversed(list(script.walk_revisions())))
+        rename = next(item for item in revisions if item.revision == "e1cb264f0c44")
+
+        with Operations.context(context):
+            for revision in revisions:
+                if revision is rename:
+                    for statement in (
+                        "INSERT INTO organization (id, name, slug, created_at, "
+                        "name_is_placeholder) VALUES (3, 'Ferje AS', 'ferje-as', "
+                        "'2026-01-01', 0)",
+                        "INSERT INTO company (id, organization_id, orgnr, name, country, "
+                        "currency_code, vat_registered, in_foretaksregisteret, plan, "
+                        "ki_enabled) VALUES (3, 3, '910000004', 'Ferje AS', 'NO', 'NOK', 1, "
+                        "0, 'free', 1)",
+                        "INSERT INTO financial_year (id, company_id, year, start_date, "
+                        "end_date) VALUES (3, 3, 2026, '2026-01-01', '2026-12-31')",
+                        "INSERT INTO tax_code (id, company_id, code, description, "
+                        "standard_tax_code, is_reportable) VALUES (30, 3, '32', "
+                        "'Utgående mva, lav sats (12 %)', '32', 1)",
+                        "INSERT INTO tax_rate (tax_code_id, valid_from, rate) "
+                        "VALUES (30, '2026-01-01', 0.120000)",
+                        "INSERT INTO sales_document (id, company_id, document_type, status, "
+                        "buyer_name, buyer_country, buyer_is_business, seller_name, "
+                        "seller_orgnr, seller_country, seller_vat_registered, "
+                        "seller_in_foretaksregisteret, currency_code, payment_reference_auto, "
+                        "reverse_charge, created_at) VALUES (5, 3, 'faktura', 'utkast', "
+                        "'Kunde AS', 'NO', 1, 'Ferje AS', '910000004', 'NO', 1, 0, 'NOK', 1, "
+                        "0, '2026-03-01')",
+                        "INSERT INTO sales_document_line (document_pk, line_no, description, "
+                        "quantity, unit_code, unit_price, discount_rate, tax_code, tax_rate, "
+                        "income_account_number, net_amount, vat_amount) VALUES (5, 1, "
+                        "'Overfart', 1, 'EA', 100.00, 0, '32', 0.120000, '3020', 100.00, 12.00)",
+                    ):
+                        connection.execute(sa.text(statement))
+                revision.module.upgrade()
+
+        codes: dict[str, int] = {
+            str(code): int(pk)
+            for code, pk in connection.execute(
+                sa.text(
+                    "SELECT code, id FROM tax_code WHERE company_id = 3 AND code IN ('32', '33')"
+                )
+            ).fetchall()
+        }
+        # The same row, renamed: postings that reference id 30 are 12 % sales.
+        assert codes["33"] == 30
+        assert codes["32"] != 30
+        fish_rate = connection.execute(
+            sa.text("SELECT rate FROM tax_rate WHERE tax_code_id = :id"), {"id": codes["32"]}
+        ).scalar()
+        assert Decimal(str(fish_rate)) == Decimal("0.111100")
+        line_code = connection.execute(
+            sa.text("SELECT tax_code FROM sales_document_line WHERE document_pk = 5")
+        ).scalar()
+        assert line_code == "33"
+
+        added = {
+            code
+            for (code,) in connection.execute(
+                sa.text("SELECT code FROM tax_code WHERE company_id = 3")
+            ).fetchall()
+        }
+        assert {"12", "14", "15", "51", "84", "85", "88", "89", "91", "92"} <= added
+
+        settings = connection.execute(
+            sa.text("SELECT vat_period_type, vat_category FROM company WHERE id = 3")
+        ).one()
+        assert tuple(settings) == ("toMaaneder", "alminnelig")
+
+    engine.dispose()
+
+
+def test_seeded_groupings_are_corrected_and_hand_set_ones_left_alone() -> None:
+    """What ``b7d40e2c9a15`` infers and what it refuses to guess.
+
+    A row holding exactly the pair the old seed wrote was written by the seed,
+    and is corrected in every year. A row holding anything else was put there
+    by somebody, and stays as it is even when it is also wrong.
+    """
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as connection:
+        config = Config(str(BACKEND_ROOT / "alembic.ini"))
+        config.set_main_option("script_location", str(BACKEND_ROOT / "migrations"))
+        script = ScriptDirectory.from_config(config)
+        context = MigrationContext.configure(connection, opts={"target_metadata": Base.metadata})
+        revisions = list(reversed(list(script.walk_revisions())))
+        correction = next(item for item in revisions if item.revision == "b7d40e2c9a15")
+
+        with Operations.context(context):
+            for revision in revisions:
+                if revision is correction:
+                    for statement in (
+                        "INSERT INTO organization (id, name, slug, created_at, "
+                        "name_is_placeholder) VALUES (4, 'Gammel AS', 'gammel-as', "
+                        "'2025-01-01', 0)",
+                        "INSERT INTO company (id, organization_id, orgnr, name, country, "
+                        "currency_code, vat_registered, in_foretaksregisteret, plan, "
+                        "ki_enabled, vat_period_type, vat_category) VALUES (4, 4, '910000004', "
+                        "'Gammel AS', 'NO', 'NOK', 1, 0, 'free', 1, 'toMaaneder', 'alminnelig')",
+                        "INSERT INTO account (id, company_id, account_number, description, "
+                        "account_type, is_active) VALUES (40, 4, '5000', 'Lønn', 'kostnad', 1), "
+                        "(41, 4, '1920', 'Bank', 'eiendel', 1), "
+                        "(42, 4, '6800', 'Kontor', 'kostnad', 1)",
+                        "INSERT INTO account_grouping (account_id, financial_year, "
+                        "grouping_category, grouping_code) VALUES "
+                        "(40, 2025, 'lonnskostnad', '5000'), (40, 2026, 'lonnskostnad', '5000'), "
+                        "(41, 2026, 'NA', 'NA'), "
+                        "(42, 2026, 'annenDriftskostnad', '6500')",
+                    ):
+                        connection.execute(sa.text(statement))
+                revision.module.upgrade()
+
+        rows = connection.execute(
+            sa.text(
+                "SELECT a.account_number, g.financial_year, "
+                "g.grouping_category || '/' || g.grouping_code FROM account_grouping g "
+                "JOIN account a ON a.id = g.account_id WHERE a.company_id = 4 "
+                "ORDER BY a.account_number, g.financial_year"
+            )
+        ).fetchall()
+        assert [tuple(row) for row in rows] == [
+            ("1920", 2026, "balanseverdiForOmloepsmiddel/1920"),
+            ("5000", 2025, "loennskostnad/5000"),
+            ("5000", 2026, "loennskostnad/5000"),
+            # Not the old seed's pair, so somebody chose it: left exactly as is.
+            ("6800", 2026, "annenDriftskostnad/6500"),
+        ]
+
+    engine.dispose()
+
+
+def _run_until(connection: sa.Connection, target: str, before: list[str]) -> None:
+    """Every revision in order, running ``before`` just ahead of ``target``."""
+    config = Config(str(BACKEND_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(BACKEND_ROOT / "migrations"))
+    script = ScriptDirectory.from_config(config)
+    context = MigrationContext.configure(connection, opts={"target_metadata": Base.metadata})
+    with Operations.context(context):
+        for revision in reversed(list(script.walk_revisions())):
+            if revision.revision == target:
+                for statement in before:
+                    connection.execute(sa.text(statement))
+            revision.module.upgrade()
+
+
+def test_the_bankid_migration_refuses_a_vipps_identity_rather_than_deleting_it() -> None:
+    """Vipps Login is gone, and its rows could no longer be read.
+
+    The column is a VARCHAR without a CHECK, so the database would keep one
+    forever and the first /auth/me of that account would fail in the ORM.
+    Production never configured Vipps; if a row exists anyway it is somebody's
+    only way into their books, and the migration stops instead of guessing.
+    """
+    engine = sa.create_engine("sqlite://")
+    with engine.connect() as connection, pytest.raises(RuntimeError, match="vipps"):
+        _run_until(
+            connection,
+            "7a3e5c1d9b24",
+            [
+                "INSERT INTO user_identity (id, user_id, provider, subject, created_at) "
+                "VALUES (1, 1, 'vipps', 'vipps-sub', '2026-09-01 12:00:00')"
+            ],
+        )
+    engine.dispose()
+
+
+def test_an_attempt_from_before_the_bankid_migration_was_a_sign_in() -> None:
+    """Nothing but a sign-in could start a flow before ``intent`` existed."""
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as connection:
+        _run_until(
+            connection,
+            "7a3e5c1d9b24",
+            [
+                "INSERT INTO oauth_login_attempt (id, provider, state, nonce, code_verifier, "
+                "created_at, expires_at) VALUES (1, 'google', 's', 'n', 'v', "
+                "'2026-10-09 12:00:00', '2026-10-09 12:15:00')"
+            ],
+        )
+        row = connection.execute(
+            sa.text("SELECT intent, user_id FROM oauth_login_attempt WHERE id = 1")
+        ).one()
+        assert tuple(row) == ("login", None)
+    engine.dispose()

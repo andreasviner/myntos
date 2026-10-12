@@ -47,13 +47,19 @@ from myntos.core.config import Settings, get_settings
 # per token, and the key lives for a year — there is nothing to save here.
 _KEY_SIZE = 4096
 
-_CLIENTS = ("maskinporten", "idporten")
+# ``bankid`` is not a Digdir client, but its key is read the same way and
+# registered the same way, as public key material pasted into a dashboard
+# (Idura's: the application's OpenID Connect settings, "Client JWKS"), so it is
+# shown here rather than by a second tool that would say the same thing.
+_CLIENTS = ("maskinporten", "idporten", "bankid")
 
 
 def _key_path(settings: Settings, client: str) -> tuple[Path | None, str | None]:
     """The configured key file and ``kid`` for one client."""
     if client == "maskinporten":
         return settings.maskinporten_key_file, settings.maskinporten_kid
+    if client == "bankid":
+        return settings.bankid_key_file, settings.bankid_kid
     return settings.idporten_key_file, settings.idporten_kid
 
 
@@ -85,6 +91,11 @@ def _show(client: str) -> int:
     jwk = public_jwk(signing_key.key, kid=signing_key.kid)
     print(f"{client}: {path}")
     print(f"kid: {signing_key.kid}")
+    if client == "bankid":
+        # Idura's guide registers a JWK *set*, so that is what is printed.
+        print("Public JWKS to register as the broker application's client JWKS:")
+        print(json.dumps({"keys": [jwk]}, indent=2))
+        return 0
     print("Public JWK to register in Samarbeidsportalen:")
     print(json.dumps(jwk, indent=2))
     return 0
@@ -149,7 +160,7 @@ def _generate(out: Path) -> int:
     print("for a Maskinporten client:")
     print(f"  MASKINPORTEN_JWK_PATH={out}")
     print(f"  MASKINPORTEN_KID={jwk['kid']}")
-    print("or the IDPORTEN_ equivalents for an ID-porten client.")
+    print("or the IDPORTEN_ or BANKID_ equivalents for those clients.")
     print()
     print("Read the kid back from the portal after registering: Digdir assigns")
     print("its own (a UUID) rather than keeping the one above, and the portal's")

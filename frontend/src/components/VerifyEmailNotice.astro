@@ -1,0 +1,89 @@
+---
+---
+
+{/* Merknaden om ubekreftet e-postadresse, på forsiden for den som er logget inn.
+
+    En egen komponent med eget skript, slik at forsiden bare får én linje mer.
+    Den vises bare når to ting er sanne: kontoen er ikke bekreftet, og
+    installasjonen sender e-post. Uten e-post finnes det ingen lenke å be om,
+    og en merknad man ikke kan gjøre noe med er bare støy.
+
+    Den sperrer ingenting. En ubekreftet konto kan alt den kunne før, fordi
+    alle passordkontoer laget før denne funksjonen fantes er ubekreftet. Det
+    eneste som venter på bekreftelsen er at invitasjoner du sender får adressen
+    din som svaradresse, og det står her, så merknaden har en grunn. */}
+
+<div class="card verify-notice" id="verify-notice" hidden>
+  <p class="verify-text">
+    <strong>Bekreft e-postadressen din.</strong> Vi sendte en lenke til
+    <span id="verify-address"></span>. Til den er bekreftet, får invitasjoner du sender ikke din
+    adresse som svaradresse.
+  </p>
+  <div class="verify-actions">
+    <button class="btn btn-ghost" type="button" id="verify-resend">Send lenken på nytt</button>
+    <p class="status" id="verify-status" hidden></p>
+  </div>
+</div>
+
+<style>
+  .verify-notice {
+    margin-bottom: 1.25rem;
+  }
+  .verify-text {
+    margin: 0 0 0.75rem;
+  }
+  .verify-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .verify-actions .status {
+    margin: 0;
+  }
+</style>
+
+<script>
+  import { ApiError, getProviders, sendVerificationMail } from '../lib/api';
+  import { el, setStatus, show } from '../lib/dom';
+  import { loadSession } from '../lib/session';
+
+  const notice = el<HTMLDivElement>('#verify-notice');
+  const resend = el<HTMLButtonElement>('#verify-resend');
+  const status = el<HTMLParagraphElement>('#verify-status');
+
+  void Promise.all([loadSession(), getProviders()])
+    .then(([session, providers]) => {
+      if (session === null || session.user.email_verified || !providers.email_delivery) return;
+      el('#verify-address').textContent = session.user.email;
+      show(notice, true);
+    })
+    .catch(() => {
+      // Uten svar vises ingen merknad. Den er en påminnelse, ikke en sperre.
+    });
+
+  resend.addEventListener('click', () => {
+    resend.disabled = true;
+    setStatus(status, '');
+    void sendVerificationMail()
+      .then(({ sent }) => {
+        setStatus(
+          status,
+          sent
+            ? 'Sendt. Den forrige lenken virker ikke lenger.'
+            : 'Vi fikk ikke sendt e-posten. Prøv igjen om litt.',
+          sent ? 'ok' : 'error',
+        );
+        resend.disabled = sent;
+      })
+      .catch((error: unknown) => {
+        // 409: adressen ble bekreftet i en annen fane i mellomtiden.
+        if (error instanceof ApiError && error.code === 'email_already_verified') {
+          show(notice, false);
+          return;
+        }
+        setStatus(status, error instanceof ApiError ? error.message : 'Vi fikk ikke sendt e-posten.');
+        resend.disabled = false;
+      });
+  });
+</script>

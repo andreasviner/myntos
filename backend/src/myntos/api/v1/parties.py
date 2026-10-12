@@ -14,7 +14,7 @@ has never been used is harmless.
 from fastapi import APIRouter, status
 from pydantic import BaseModel, Field
 
-from myntos.api.deps import CurrentCompany, DbSession
+from myntos.api.deps import KEY_READ, CurrentCompany, DbSession, key_write
 from myntos.domain.identity.access import Permission, require_permission
 from myntos.domain.ledger import parties
 from myntos.domain.ledger.models import Party, PartyType
@@ -68,19 +68,59 @@ def _party_response(party: Party) -> PartyResponse:
     )
 
 
-@router.get("/companies/{company_id}/parties")
+@router.get("/companies/{company_id}/parties", openapi_extra=KEY_READ)
 async def list_parties(
     context: CurrentCompany, db: DbSession, party_type: PartyType | None = None
 ) -> list[PartyResponse]:
+    """The company's customers and suppliers, by type and then by name.
+
+    A party is who the company trades with: a customer (``kunde``) an invoice is
+    addressed to, or a supplier (``leverandor``) a payment went to. It is master
+    data rather than bookkeeping, and SAF-T exports it as the customer and
+    supplier ledgers (kunde- og leverandørreskontro). ``party_type=kunde`` or
+    ``party_type=leverandor`` narrows the list to one kind.
+
+    Two numbers, and they are easy to mix up. ``id`` is the one the API takes
+    back: it is what ``party_id`` means on an invoice and in
+    ``…/faktura/neste-nummer``. ``party_id`` here is the number the person knows
+    the party by, generated from 10000 for customers and 20000 for suppliers.
+
+    A party carries no bank account number. Any role that may read the books
+    may call it.
+    """
     require_permission(context.membership.role, Permission.LEDGER_READ)
     found = await parties.list_parties(db, company=context.company, party_type=party_type)
     return [_party_response(party) for party in found]
 
 
-@router.post("/companies/{company_id}/parties", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/companies/{company_id}/parties",
+    status_code=status.HTTP_201_CREATED,
+    openapi_extra=key_write("legge til en kunde eller leverandør"),
+)
 async def create_party(
     payload: CreatePartyRequest, context: CurrentCompany, db: DbSession
 ) -> PartyResponse:
+    """Register a customer (``kunde``) or a supplier (``leverandor``).
+
+    Changes nothing in the ledger. ``name`` is required. ``orgnr``, the
+    nine-digit Norwegian organisasjonsnummer, is optional, since private persons
+    and foreign companies have none, but its check digit is verified when given.
+    ``party_id``, the number the person will know the party by, is generated
+    when omitted: from 10000 for customers and from 20000 for suppliers.
+
+    The type and that number can never be changed afterwards, because posted
+    vouchers and SAF-T exports refer to them, and there is no delete. Look in
+    ``GET …/parties`` first so the same customer is not registered twice. A
+    customer an invoice will be addressed to needs an orgnr or an address
+    (``address_line`` or ``postal_code``), or the invoice cannot be issued
+    (bokføringsforskriften § 5-1-2).
+
+    Refusals: 409 ``duplicate_party`` when that ``party_id`` is already taken for
+    this type (leave it out and one is generated); 422 ``invalid_orgnr`` when
+    the number's check digit is wrong (look it up in Enhetsregisteret, or leave
+    it out).
+    """
     require_permission(context.membership.role, Permission.LEDGER_WRITE)
     party = await parties.create_party(
         db,
@@ -96,10 +136,28 @@ async def create_party(
     return _party_response(party)
 
 
-@router.patch("/companies/{company_id}/parties/{party_pk}")
+@router.patch(
+    "/companies/{company_id}/parties/{party_pk}",
+    openapi_extra=key_write("endre en kunde eller leverandør"),
+)
 async def update_party(
     party_pk: int, payload: UpdatePartyRequest, context: CurrentCompany, db: DbSession
 ) -> PartyResponse:
+    """Correct a customer's or supplier's name, orgnr and address.
+
+    Replaces all four: a field left out is cleared, not kept. Read the party
+    from ``GET …/parties`` first and send back the values that are not changing.
+    The type and the number (``party_id``) cannot be changed, because posted
+    vouchers and SAF-T exports refer to them.
+
+    An issued invoice keeps the buyer details it was issued with, for good. A
+    draft copies the customer's details when it is saved with that customer, so
+    a draft saved before this change shows the old ones until it is saved again
+    with ``party_id``.
+
+    Refusals: 404 ``party_not_found`` when the id is not one of this company's
+    parties; 422 ``invalid_orgnr`` when the number's check digit is wrong.
+    """
     require_permission(context.membership.role, Permission.LEDGER_WRITE)
     party = await parties.update_party(
         db,

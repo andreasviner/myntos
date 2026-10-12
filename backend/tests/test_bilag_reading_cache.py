@@ -18,21 +18,21 @@ def a_key(content: bytes = b"%PDF-1.7 elektra", *, filename: str = "faktura.pdf"
     return key(content, filename=filename, content_type="application/pdf", use_loynd=True)
 
 
-def test_a_reading_comes_back_for_the_same_bytes():
+def test_a_reading_comes_back_for_the_same_bytes() -> None:
     cache = ReadingCache()
     cache.put(a_key(), TEXT)
 
     assert cache.get(a_key()) == TEXT
 
 
-def test_different_bytes_are_a_different_document():
+def test_different_bytes_are_a_different_document() -> None:
     cache = ReadingCache()
     cache.put(a_key(b"one"), TEXT)
 
     assert cache.get(a_key(b"two")) is None
 
 
-def test_the_same_bytes_under_another_name_are_read_again():
+def test_the_same_bytes_under_another_name_are_read_again() -> None:
     """The extractor is told the filename, so the name is part of the reading.
 
     Two screenshots with identical bytes and different names went to a reader
@@ -46,7 +46,7 @@ def test_the_same_bytes_under_another_name_are_read_again():
     assert cache.get(a_key(filename="uskarp.png")) is None
 
 
-def test_a_company_with_ki_off_never_gets_the_models_reading():
+def test_a_company_with_ki_off_never_gets_the_models_reading() -> None:
     """The switch has to hold here too, or it is not a switch.
 
     The same PDF read by the vision model and read by pypdf are two different
@@ -62,7 +62,7 @@ def test_a_company_with_ki_off_never_gets_the_models_reading():
     assert cache.get(without) is None
 
 
-def test_an_entry_expires():
+def test_an_entry_expires() -> None:
     cache = ReadingCache(ttl=60.0)
     cache.put(a_key(), TEXT, now=1000.0)
 
@@ -72,7 +72,7 @@ def test_an_entry_expires():
     assert len(cache) == 0
 
 
-def test_the_oldest_goes_first_when_it_is_full():
+def test_the_oldest_goes_first_when_it_is_full() -> None:
     cache = ReadingCache(max_entries=2)
     cache.put(a_key(b"a"), TEXT)
     cache.put(a_key(b"b"), TEXT)
@@ -83,7 +83,7 @@ def test_the_oldest_goes_first_when_it_is_full():
     assert cache.get(a_key(b"c")) == TEXT
 
 
-def test_reading_one_keeps_it_from_being_evicted():
+def test_reading_one_keeps_it_from_being_evicted() -> None:
     """The file somebody is working on is the last thing to throw away."""
     cache = ReadingCache(max_entries=2)
     cache.put(a_key(b"a"), TEXT)
@@ -95,7 +95,7 @@ def test_reading_one_keeps_it_from_being_evicted():
     assert cache.get(a_key(b"b")) is None
 
 
-def test_an_empty_reading_is_remembered_too():
+def test_an_empty_reading_is_remembered_too() -> None:
     """ "This file yields no text" is an answer, and a repeatable one.
 
     Re-asking a vision model for it on every edit is the exact cost this exists

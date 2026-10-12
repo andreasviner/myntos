@@ -1,6 +1,11 @@
 # Install once with:  uv run --directory backend pre-commit install
 # Update hook versions with:  pre-commit autoupdate
 
+# Vendored validation artefacts are checked against the publisher's checksums
+# (backend/tests/fixtures/ehf/README.md); no hook may rewrite them, and the
+# compiled CEN XSLT is larger than the large-file limit on purpose.
+exclude: ^backend/tests/fixtures/ehf/
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0

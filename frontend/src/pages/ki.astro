@@ -91,6 +91,34 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     </p>
   </section>
 
+  {/*
+    Den andre veien, sagt på siden folk leter etter den.
+
+    Alt over handler om hva Myntos selv sender til en modell, og svaret er
+    Løynd og ingenting annet. Din egen assistent er det motsatte: den henter
+    regnskapet, Myntos sender ingenting, og hvor det havner avgjøres av
+    modellen du valgte. To så forskjellige løfter må stå hver for seg, ellers
+    leses det ene som det andre. Selve nøklene står under Tilgang, fordi en
+    nøkkel er tilgang til regnskapet; se docs/agents-and-api.md.
+  */}
+  <section class="card">
+    <h2>Bruk din egen KI-assistent</h2>
+    <p>
+      Vil du heller at ChatGPT, Claude eller en modell du kjører selv skal hjelpe deg med
+      regnskapet, kan du gi den en nøkkel. Da er det assistenten din som henter regnskapet, ikke
+      Myntos som sender det, og det er modellen du har valgt som bestemmer hvor opplysningene
+      havner. En modell du kjører selv holder dem hos deg.
+    </p>
+    <p>
+      Trykk «Inviter en KI» under
+      <a href="/organisasjon/#tilgang">Innstillinger for selskapet → Tilgang</a>. Det samme gjelder et
+      program eller et skript du eller en utvikler har laget. Du velger for hver nøkkel hva den får
+      gjøre selv, og hva den må spørre deg om først; det den spør om, godkjenner du under
+      <a href="/godkjenning/">Godkjenning</a>. Ingen nøkkel kan sende noe til Skatteetaten, flytte
+      penger eller endre kontonummer.
+    </p>
+  </section>
+
   {/* Innstillingen gjelder ett selskap: det du står i.
 
       Her sto det en selskapsvelger, og da var spørsmålet «hvilket selskap

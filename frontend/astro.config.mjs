@@ -1,4 +1,6 @@
 // @ts-check
+import { fileURLToPath } from 'node:url';
+
 import cloudflare from '@astrojs/cloudflare';
 import sitemap from '@astrojs/sitemap';
 import { defineConfig } from 'astro/config';
@@ -15,6 +17,21 @@ export default defineConfig({
     // Cloudflare cannot run sharp at runtime; optimize images at build time.
     imageService: 'compile',
   }),
+  vite: {
+    server: {
+      fs: {
+        // /llms.txt and /llms/<skill>.md are read from docs/agents at build
+        // time (src/pages/llms*), which is outside this project, so the dev
+        // server has to be allowed to read it. That folder and nothing wider:
+        // allowing the repository root would let the dev server hand out the
+        // repo's .env and secrets/ to anything that can reach it.
+        allow: [
+          fileURLToPath(new URL('.', import.meta.url)),
+          fileURLToPath(new URL('../docs/agents', import.meta.url)),
+        ],
+      },
+    },
+  },
   integrations: [
     sitemap({
       // The application pages prerender as empty shells — everything on them
