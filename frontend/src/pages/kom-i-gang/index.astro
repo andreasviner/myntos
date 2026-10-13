@@ -99,7 +99,8 @@ const sjekketNorsk = new Date(SJEKKET).toLocaleDateString('nb-NO', {
     flyttes uten forvarsel, så hver guide har kildene sine nederst. De er alltid ferskere enn oss.
   </div>
 
-  <div class="cta card">
+  {/* Den innloggede har allerede konto: kortet viser dem dit filene lastes opp. */}
+  <div class="cta card" data-auth-only="ut">
     <div>
       <h2 class="cta-title">Klar til å begynne?</h2>
       <p class="card-hint">
@@ -107,6 +108,15 @@ const sjekketNorsk = new Date(SJEKKET).toLocaleDateString('nb-NO', {
       </p>
     </div>
     <a class="btn btn-primary btn-large" href="/registrer/">Opprett konto</a>
+  </div>
+  <div class="cta card" data-auth-only="inn">
+    <div>
+      <h2 class="cta-title">Har du eksporten?</h2>
+      <p class="card-hint">
+        Last opp SAF-T-filene, én per år, så henter Myntos regnskapet, også tidligere år.
+      </p>
+    </div>
+    <a class="btn btn-primary btn-large" href="/tidligere-program/">Hent regnskapet</a>
   </div>
 </BaseLayout>
 

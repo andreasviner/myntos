@@ -69,10 +69,11 @@ def test_a_milk_settlement_books_every_line_where_it_belongs(client: TestClient)
     assert entry["type_label"] == "Sammensatt bilag"
     assert entry["direction"] == "inn"
     assert entry["gross_amount"] == "6800.00"
-    # The VAT that moved with the money: output on the milk less input on the
-    # feed. The levy and the share carry none.
-    assert entry["vat_amount"] == "1500.00"
-    assert entry["net_amount"] == "5300.00"
+    # The VAT that moved with the money: output on the milk, less the levy's
+    # share of it (the dairy charges 25 % on the price after the levy), less
+    # input on the feed. The share carries none.
+    assert entry["vat_amount"] == "1480.00"
+    assert entry["net_amount"] == "5320.00"
     assert entry["tax_code"] is None
 
     parts = [
@@ -89,22 +90,22 @@ def test_a_milk_settlement_books_every_line_where_it_belongs(client: TestClient)
     ]
     assert parts == [
         ("landbruk_melk", "inn", "3071", "3", "10000.00", "2500.00", "12500.00"),
-        # Against the sale, without VAT: the levy is the farmer's own debt.
-        ("landbruk_trekk_avgift", "ut", "3071", "0", "100.00", "0.00", "100.00"),
+        # Against the sale, and the sale's VAT goes down with it.
+        ("landbruk_trekk_avgift", "ut", "3071", "3", "80.00", "20.00", "100.00"),
         # On the balance sheet: the share is still the farmer's money.
         ("landbruk_trekk_andel", "ut", "1355", "0", "600.00", "0.00", "600.00"),
         ("landbruk_kraftfor", "ut", "4020", "1", "4000.00", "1000.00", "5000.00"),
     ]
 
     summary = client.get(f"/api/v1/companies/{company['id']}/cashflow/summary").json()
-    assert summary["output_vat"] == "2500.00"
+    assert summary["output_vat"] == "2480.00"
     assert summary["input_vat"] == "1000.00"
     assert summary["total_in"] == "6800.00"
     assert summary["by_type"][0]["type_label"] == "Sammensatt bilag"
 
 
 def test_a_settlement_reaches_the_mva_melding_line_by_line(client: TestClient) -> None:
-    """The sale's VAT basis is the gross price: the levy deducted is not a discount."""
+    """The levy comes off the sale's VAT basis, as the dairy's own settlement takes it off."""
     company = books(client)
     enabled = write(
         client, "PUT", f"/api/v1/companies/{company['id']}/landbruk", json={"enabled": True}
@@ -115,8 +116,8 @@ def test_a_settlement_reaches_the_mva_melding_line_by_line(client: TestClient) -
 
     period = first_period(client, company["id"])
     lines = [(ln["mva_kode"], ln["grunnlag"], ln["merverdiavgift"]) for ln in period["lines"]]
-    assert lines == [("3", "10000.00", "2500.00"), ("1", None, "-1000.00")]
-    assert period["fastsatt_merverdiavgift"] == "1500.00"
+    assert lines == [("3", "9920.00", "2480.00"), ("1", None, "-1000.00")]
+    assert period["fastsatt_merverdiavgift"] == "1480.00"
     assert period["reconciliation"]["difference"] == "0.00"
 
 
@@ -250,7 +251,8 @@ def test_an_ordinary_entry_can_be_split_after_the_fact(client: TestClient) -> No
     assert corrected["gross_amount"] == "6800.00"
 
     summary = client.get(f"/api/v1/companies/{company['id']}/cashflow/summary").json()
-    assert summary["output_vat"] == "2500.00"
+    # The milk's 2 500, less the 20 the levy takes off it.
+    assert summary["output_vat"] == "2480.00"
     assert summary["entry_count"] == 1
 
 
@@ -275,3 +277,49 @@ def test_the_listing_reads_a_composite_entry_back_line_by_line(client: TestClien
         "Trekk: andelsinnskudd i samvirke",
         "Kraftfôr",
     ]
+
+
+def test_a_slaughter_settlement_books_its_levy_against_the_slaughter(
+    client: TestClient,
+) -> None:
+    """Fatland's slakteavregning: everything at 25 %, the levy moved off the milk.
+
+    The levy's category books to 3071 because milk is where most settlements
+    come from; on a slaughter settlement the person moves the line to 3041
+    under «Konto», and it must land there. Left on 3071, the levy would
+    understate the milk and overstate the slaughter by the same amount, and the
+    parallel run against Tripletex would differ on both accounts. Figures are
+    tests/test_landbruk.py's SLAKTEAVREGNING: 50 666,16 of animals, supplements
+    and kvalitetstilskudd, a levy of 334,95, 25 % on what is left.
+    """
+    company = farm_company(client)
+    response = composite(
+        client,
+        company["id"],
+        [
+            {"type_code": "landbruk_slakt", "gross_amount": "63332.70"},
+            {
+                "type_code": "landbruk_trekk_avgift",
+                "gross_amount": "418.69",
+                "account_number": "3041",
+            },
+        ],
+        description="Avregning 01234567",
+    )
+    assert response.status_code == 201, response.text
+    entry = response.json()
+    # What the settlement prints: «Total 62 914,01», «Moms 12 582,80».
+    assert entry["gross_amount"] == "62914.01"
+    assert entry["vat_amount"] == "12582.80"
+    assert [(p["account_number"], p["net_amount"]) for p in entry["parts"]] == [
+        ("3041", "50666.16"),
+        ("3041", "334.95"),
+    ]
+
+    # The settlement as one line, which is how Landbrukets Dataflyt posts it:
+    # every post carries the same 25 %, so the amount paid out gives the same
+    # VAT to the øre.
+    single = record(
+        client, company["id"], type_code="landbruk_slakt", gross_amount="62914.01"
+    ).json()
+    assert (single["net_amount"], single["vat_amount"]) == ("50331.21", "12582.80")

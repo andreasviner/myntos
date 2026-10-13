@@ -47,12 +47,14 @@ account with no company yet sees «Ingen regnskap ennå» instead:
 4. «Siste bevegelser» lists the latest payments: «Dato», «Beskrivelse»,
    «Type», «Beløp». A corrected payment is one line with «Rettet. 2 eldre
    bilag.» under it; a reversed one is struck through with «Motpostert …
-   Går i null.». «Se hele kontantstrømmen →» opens the full register.
+   Går i null.». «Se hele kontantstrømmen →» opens the full register, and
+   «Se alle bilag →» every voucher in the books, including those brought over
+   from another program, which the payments list never shows.
 5. «Største poster i år» lists the largest types of income and cost this
    year, each marked «Inn» or «Ut», with «Antall» and «Sum».
 6. The note at the bottom links to the pages that are not in the top menu:
-   «Mva-melding», «SAF-T», «Bankavstemming», «Inngående balanse» and
-   «Årsavslutning»:
+   «Mva-melding», «SAF-T», «Bankavstemming», «Hent regnskapet fra et annet
+   program», «Inngående balanse» and «Årsavslutning»:
    [Find the pages that are not in the menu](https://myntos.no/llms/help/overview/find-the-pages-not-in-the-menu.md).
 
 ## If something stops them
@@ -61,7 +63,7 @@ account with no company yet sees «Ingen regnskap ennå» instead:
 | --- | --- | --- |
 | «ubekreftet» next to the company's name | Nobody has yet proved through Altinn that they may act for the company. The books work as before | Click it; it leads to the company page, where an administrator confirms the company with ID-porten |
 | «Bekreft e-postadressen din.» | The account's email address is not confirmed | Click the link in the email, or «Send lenken på nytt»: [Confirm your email address](https://myntos.no/llms/help/getting-started/confirm-your-email-address.md) |
-| «Ingenting ført ennå. Registrer den første betalingen.» | No payments in this company yet | [Record a payment from a receipt](https://myntos.no/llms/help/payments/record-a-payment-from-a-receipt.md) |
+| «Ingen betalinger registrert i Myntos ennå.» | No payment registered in Myntos this year; vouchers from another program are on «Bilag» | [Record a payment from a receipt](https://myntos.no/llms/help/payments/record-a-payment-from-a-receipt.md), or [See every voucher in the books](https://myntos.no/llms/help/vouchers/see-every-voucher.md) |
 | The wrong company's figures | Another company is selected | [Switch to another company](https://myntos.no/llms/help/overview/switch-company.md) |
 
 ## Good to know

@@ -35,7 +35,9 @@ Find the page in the table and follow the path.
 | VAT adjustments | From the VAT return page | `https://myntos.no/mva-justeringer/` |
 | SAF-T, the file Skatteetaten can ask for | «Oversikt» → «SAF-T» in the note at the bottom | `https://myntos.no/saft/` |
 | Bank reconciliation | «Oversikt» → «Bankavstemming» in the note at the bottom | `https://myntos.no/bank/` |
-| Opening balance from an earlier system | «Oversikt» → «Inngående balanse» in the note at the bottom | `https://myntos.no/inngaende-balanse/` |
+| Every voucher in the books, and an account's movements («Bilag») | «Oversikt» → «Se alle bilag →» under «Siste bevegelser» | `https://myntos.no/bilag/` |
+| The books from another program's SAF-T files | «Oversikt» → «Hent regnskapet» on the card shown while the books are empty, or «Hent regnskapet fra et annet program» in the note at the bottom | `https://myntos.no/tidligere-program/` |
+| Opening balance typed in or from a saldobalanse | «Oversikt» → «Inngående balanse» in the note at the bottom | `https://myntos.no/inngaende-balanse/` |
 | Closing a year | «Oversikt» → «Årsavslutning» in the note at the bottom | `https://myntos.no/arsavslutning/` |
 | Customers and suppliers | «Faktura» → «Kunder og leverandører», or «Betaling» → «Se motpartene dine» under «Motpart» | `https://myntos.no/parter/` |
 | The chart of accounts («kontoplanen») | The company page → «kontoplanen» under the company's details | `https://myntos.no/kontoplan/` |

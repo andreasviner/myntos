@@ -34,6 +34,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from myntos.api.deps import KEY_SCOPE_EXTENSION, get_document_storage, get_mailer
+from myntos.api.v1.saft_innlesing import get_import_sessions
 from myntos.auth import agent_keys
 from myntos.core.config import Settings, get_settings
 from myntos.core.mail import Delivery, Mail
@@ -49,6 +50,7 @@ from myntos.domain.ledger import models as ledger_models  # noqa: F401  (registe
 from myntos.domain.mva import models as mva_models  # noqa: F401  (registers tables)
 from myntos.integrations import brreg, norgesbank
 from myntos.main import create_app
+from myntos.saft import models as saft_models  # noqa: F401  (registers tables)
 from myntos.storage.local import LocalDocumentStorage
 
 # The frontend origin the tests pretend to be. Cookie-authenticated writes are
@@ -276,6 +278,9 @@ def client(database_url: str, tmp_path: Path, outbox: RecordingMailer) -> Iterat
     storage = LocalDocumentStorage(tmp_path / "bilag")
     app.dependency_overrides[get_document_storage] = lambda: storage
     app.dependency_overrides[get_mailer] = lambda: outbox
+    # The SAF-T import works after its request has answered, in sessions of its
+    # own: they must open on this database too.
+    app.dependency_overrides[get_import_sessions] = lambda: session_factory
     with TestClient(app, base_url=TEST_ORIGIN) as test_client:
         yield test_client
     engine.sync_engine.dispose()

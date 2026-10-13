@@ -81,6 +81,11 @@ SALES_JOURNAL_TYPE = "salg"
 SETTLEMENT_JOURNAL_ID = "MVA"
 SETTLEMENT_JOURNAL_DESCRIPTION = "Mva-oppgjør"
 SETTLEMENT_JOURNAL_TYPE = "mva"
+# The voucher type of a settlement, in that journal and wherever else one is
+# posted: a term the previous program filed and settled comes across in the
+# ``IMPORT`` journal with this type (myntos.saft.voucher_import), and has to be
+# left out of the year's VAT figures exactly as Myntos's own are.
+SETTLEMENT_VOUCHER_TYPE = "mva_avregning"
 
 # The opening balance of a company whose earlier years were kept elsewhere
 # (myntos.domain.arsoppgjor.opening). A journal of its own for two reasons. The
@@ -93,12 +98,63 @@ OPENING_JOURNAL_ID = "IB"
 OPENING_JOURNAL_DESCRIPTION = "Inngående balanse"
 OPENING_JOURNAL_TYPE = "ib"
 
+# The vouchers of the year so far, brought from the previous program's SAF-T
+# file when a company moves in the middle of a year or runs both programs side
+# by side (myntos.saft.voucher_import). A journal of its own, numbered as the old
+# program numbered them, so «bilag 240» is the same voucher in both and can be
+# looked up in the old program's archive, where its documentation stays. The
+# register does not list it: it can read a voucher back only as one of its own
+# categories, and these were booked by somebody else's rules.
+IMPORT_JOURNAL_ID = "IMPORT"
+IMPORT_JOURNAL_DESCRIPTION = "Bilag fra tidligere regnskapsprogram"
+IMPORT_JOURNAL_TYPE = "import"
+IMPORT_VOUCHER_TYPE = "importert"
+IMPORT_VOUCHER_LABEL = "Bilag fra tidligere program"
+
 # Årsavslutning: the tax cost and the disposition of the year's result
 # (myntos.domain.arsoppgjor.closing). Its own journal so that a reopened year's
 # closing vouchers, and their reversals, read as one event in the export.
 CLOSING_JOURNAL_ID = "AVS"
 CLOSING_JOURNAL_DESCRIPTION = "Årsavslutning"
 CLOSING_JOURNAL_TYPE = "avs"
+
+# The farm's year-end count of livestock and stock, and its list of private
+# uttak (myntos.domain.arsoppgjor.buskap, .uttak). Each voucher is the posting
+# of a stored list that documents it, and is corrected by posting a corrected
+# list, so the register's reversal refuses both: undone from there, the voucher
+# and its list would part.
+COUNT_JOURNAL_ID = "TELLING"
+COUNT_JOURNAL_DESCRIPTION = "Telling av buskap og varelager ved årsslutt"
+COUNT_JOURNAL_TYPE = "beholdning"
+WITHDRAWAL_JOURNAL_ID = "UTTAK"
+WITHDRAWAL_JOURNAL_DESCRIPTION = "Private uttak av egne produkter"
+WITHDRAWAL_JOURNAL_TYPE = "uttak"
+
+# Manual vouchers (manuelt bilag): accounts and debit/credit typed by a person,
+# with no bank line, for what no register category describes: the accountant's
+# year-end adjustments, accruals, reclassifications, corrections
+# (myntos.domain.manuelt_bilag). A journal of its own because each voucher
+# carries a written reason the others do not, and is reversed and corrected
+# only from its own page, where that reason is asked for again; and because the
+# register can read a voucher back only as one of its categories, which these
+# are not. "manuelt" is seven characters, inside SAF-T's nine for a journal
+# type.
+MANUAL_JOURNAL_ID = "MANUELT"
+MANUAL_JOURNAL_DESCRIPTION = "Manuelle bilag"
+MANUAL_JOURNAL_TYPE = "manuelt"
+MANUAL_VOUCHER_TYPE = "manuelt"
+MANUAL_VOUCHER_LABEL = "Manuelt bilag"
+
+# The year's depreciation from the anleggsregister (myntos.domain.anlegg.avskrivning):
+# one voucher per year, dated its last day, whose lines are recorded per saldo
+# beside it (fixed_asset_depreciation). A journal of its own because the next
+# year's saldo is built on what this voucher posted, so it is corrected only
+# from Anlegg, where the record and the voucher are reversed together; the
+# register's reversal refuses it. "avskr" is inside SAF-T's nine characters.
+DEPRECIATION_JOURNAL_ID = "AVSKR"
+DEPRECIATION_JOURNAL_DESCRIPTION = "Avskrivninger"
+DEPRECIATION_JOURNAL_TYPE = "avskr"
+DEPRECIATION_VOUCHER_TYPE = "avskrivning"
 
 # VAT code meaning "no VAT treatment" — the default for wages, interest,
 # insurance and everything else outside the VAT system. Excluded from the
@@ -638,7 +694,70 @@ LANDBRUK_ACCOUNTS_BY_NUMBER: dict[str, SeedAccount] = {a.number: a for a in LAND
 #: anyone is varekostnad). The proposal's *neighbour* rule still reads only the
 #: starter chart (``ACCOUNTS_BY_NUMBER``): a hairdresser adding a 4575 should
 #: not be steered by a farm's avløserlag.
-KNOWN_ACCOUNTS: dict[str, SeedAccount] = ACCOUNTS_BY_NUMBER | LANDBRUK_ACCOUNTS_BY_NUMBER
+# --- The accounts the depreciation voucher posts to (docs/anlegg.md) ---------------------
+#
+# Created the first time a depreciation voucher needs one, for any business,
+# and never seeded: a company with no driftsmidler has no use for them. Listed
+# with their grouping because the proposal's neighbour rule would put 6010 and
+# 6015 on 6004 «Annen avskrivning», and the næringsspesifikasjon wants every
+# depreciation of a varig driftsmiddel on 6000. 6020 (immaterielle eiendeler,
+# goodwill, time-limited rights) is the one that belongs on 6004. Gains and
+# losses on 3880 and 7880 and income from a negative saldo on 3895 are the
+# list's own posts, which is why the numbers are those and not 3800 or 7800
+# (myntos.domain.anlegg.rules).
+ANLEGG_ACCOUNTS: tuple[SeedAccount, ...] = (
+    SeedAccount(
+        "3880",
+        "Gevinst ved avgang av driftsmidler",
+        AccountType.INNTEKT,
+        "annenDriftsinntekt",
+        "3880",
+    ),
+    SeedAccount(
+        "3895", "Inntekt fra negativ saldo", AccountType.INNTEKT, "annenDriftsinntekt", "3895"
+    ),
+    SeedAccount(
+        "6000",
+        "Avskrivning på bygninger og anlegg",
+        AccountType.KOSTNAD,
+        "annenDriftskostnad",
+        "6000",
+    ),
+    SeedAccount(
+        "6010",
+        "Avskrivning på transportmidler",
+        AccountType.KOSTNAD,
+        "annenDriftskostnad",
+        "6000",
+    ),
+    SeedAccount(
+        "6015",
+        "Avskrivning på maskiner, inventar og utstyr",
+        AccountType.KOSTNAD,
+        "annenDriftskostnad",
+        "6000",
+    ),
+    SeedAccount(
+        "6020",
+        "Avskrivning på immaterielle eiendeler",
+        AccountType.KOSTNAD,
+        "annenDriftskostnad",
+        "6004",
+    ),
+    SeedAccount(
+        "7880",
+        "Tap ved avgang av driftsmidler",
+        AccountType.KOSTNAD,
+        "annenDriftskostnad",
+        "7880",
+    ),
+)
+
+ANLEGG_ACCOUNTS_BY_NUMBER: dict[str, SeedAccount] = {a.number: a for a in ANLEGG_ACCOUNTS}
+
+KNOWN_ACCOUNTS: dict[str, SeedAccount] = (
+    ACCOUNTS_BY_NUMBER | LANDBRUK_ACCOUNTS_BY_NUMBER | ANLEGG_ACCOUNTS_BY_NUMBER
+)
 
 # Internal code == standard code. Keeping them equal costs nothing and removes
 # a translation step that would otherwise be wrong in exactly one place.

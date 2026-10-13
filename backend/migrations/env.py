@@ -20,6 +20,7 @@ from myntos.domain.faktura import models as _faktura_models  # noqa: F401
 from myntos.domain.identity import models as _identity_models  # noqa: F401
 from myntos.domain.ledger import models as _ledger_models  # noqa: F401
 from myntos.domain.mva import models as _mva_models  # noqa: F401
+from myntos.saft import models as _saft_models  # noqa: F401
 
 config = context.config
 

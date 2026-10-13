@@ -499,9 +499,27 @@ its current system, with its accountant checking the books and the year-end.
 - [x] Settlements read as sales: `issued_by_buyer` in the bilag reader, and
       the model told so for farm books
 - [x] Skill `myntos-landbruk`, help area `farming`
-- [ ] **The pilot.** Reime Gard's opening balance (from its current system),
-      a month of settlements booked in both, the accountant's review of the
-      groupings and of booking omsetningsavgift against the sale
+- [x] The opening balance read from the old program's SAF-T file
+      (`POST …/inngaende-balanse/saft`), checked end to end on the farm's own
+      Tripletex files (`regnaskaps_tests/saft_pilot.py`); the pilot's bilag as
+      fixtures in `regnaskaps_tests/` with their FASIT
+- [x] The year's vouchers from the same file (`POST …/saft/bilag`) and the
+      parallel run's check (`POST …/saft/sammenligning`), page
+      `/tidligere-program/`. On the farm's 2026 file: 596 vouchers, no
+      difference in any account, party or VAT term, each filed term's melding
+      equal to Tripletex's settlement
+- [x] The books from the SAF-T files on the server, earlier years too
+      (`POST …/saft/innlesing`, page `/tidligere-program/`), and every voucher
+      on `/bilag/`: after the farmer uploaded the files and could not find the
+      vouchers (2026-10-13)
+- [ ] **The pilot.** The parallel run starts from 1 January 2026, with
+      January to the export day brought over from Tripletex's file. In
+      production: the farm's company set up and the opening balance posted
+      (the accountant's review of the groupings and of the bank on 2390 first),
+      the year's vouchers imported, then every new bilag entered in both and a
+      fresh Tripletex file compared after each VAT term. Tripletex files every
+      VAT return during the run. Also the accountant's review of booking
+      omsetningsavgift with the sale's VAT
 - [ ] Two VAT returns in one company (FEATURES 23b)
 - [ ] Manual journal entries for the year-end adjustments (FEATURES 23a), then
       the livestock and feed count at the takseringsregler rates

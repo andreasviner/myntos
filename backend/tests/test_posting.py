@@ -10,6 +10,7 @@ from decimal import Decimal
 import pytest
 
 from myntos.domain.ledger.models import (
+    DimensionValue,
     TaxCode,
     TaxRate,
     Transaction,
@@ -335,14 +336,29 @@ def test_dimension_allocation_may_be_partial() -> None:
     validate(make_transaction(cost, line("2", credit="1000.00")))
 
 
+def _value(value_id: int, dimension_id: int) -> DimensionValue:
+    return DimensionValue(id=value_id, dimension_type_id=dimension_id, value=str(value_id))
+
+
 def test_dimension_allocation_cannot_exceed_the_line() -> None:
+    """Two values of one dimension split a line; together they cannot be more than it."""
     cost = line("1", debit="1000.00")
     cost.analysis = [
-        TransactionLineAnalysis(dimension_value_id=1, amount=kr("600.00")),
-        TransactionLineAnalysis(dimension_value_id=2, amount=kr("600.00")),
+        TransactionLineAnalysis(dimension_value=_value(1, 1), amount=kr("600.00")),
+        TransactionLineAnalysis(dimension_value=_value(2, 1), amount=kr("600.00")),
     ]
     with pytest.raises(PostingError, match="allocates"):
         validate(make_transaction(cost, line("2", credit="1000.00")))
+
+
+def test_a_line_is_allocated_in_full_once_per_dimension() -> None:
+    """A driftsgren and an avdeling each carry the whole line: one amount, sorted two ways."""
+    cost = line("1", debit="1000.00")
+    cost.analysis = [
+        TransactionLineAnalysis(dimension_value=_value(1, 1), amount=kr("1000.00")),
+        TransactionLineAnalysis(dimension_value=_value(2, 2), amount=kr("1000.00")),
+    ]
+    validate(make_transaction(cost, line("2", credit="1000.00")))
 
 
 # --- Reversal ------------------------------------------------------------

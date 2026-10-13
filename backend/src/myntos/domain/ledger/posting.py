@@ -26,6 +26,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 
+from myntos.domain.ledger.errors import LedgerError
 from myntos.domain.ledger.models import (
     TaxCode,
     Transaction,
@@ -50,8 +51,15 @@ class ImmutablePostingError(PostingError):
     """An attempt to change a transaction that has already been posted."""
 
 
-class TaxRateNotFoundError(PostingError):
-    """No tax rate is in force for the requested code and date."""
+class TaxRateNotFoundError(PostingError, LedgerError):
+    """No tax rate is in force for the requested code and date.
+
+    Also a :class:`LedgerError`, so the API answers it as a refusal and not as
+    a crash: since the previous program's earlier years can be brought over
+    (:func:`myntos.domain.ledger.service.open_earlier_years`), a year Myntos
+    holds may have no rate for a code nobody proved, and an entry there with
+    that code is refused rather than given an invented rate.
+    """
 
 
 class AmbiguousTaxRateError(PostingError):
@@ -107,7 +115,10 @@ def rate_on(tax_code: TaxCode, on: date) -> Decimal:
         r for r in tax_code.rates if r.valid_from <= on and (r.valid_to is None or on < r.valid_to)
     ]
     if not matches:
-        raise TaxRateNotFoundError(f"No rate for tax code {tax_code.code!r} on {on.isoformat()}")
+        raise TaxRateNotFoundError(
+            f"Myntos har ingen sats for mva-kode {tax_code.code} {on:%d.%m.%Y}. Satsene for årene "
+            "som ble hentet fra det gamle programmet, gjelder bare kodene filene brukte"
+        )
     if len(matches) > 1:
         raise AmbiguousTaxRateError(
             f"{len(matches)} overlapping rates for tax code {tax_code.code!r} on {on.isoformat()}"
@@ -285,17 +296,43 @@ def _validate_line_tax(line: TransactionLine, label: str) -> None:
     _check_amount(line.credit_tax_amount, f"{label} credit_tax_amount")
 
 
+def _dimension_of(allocation: TransactionLineAnalysis) -> object:
+    """Which dimension an allocation is in, read without loading anything.
+
+    The value's dimension when the value object is on the allocation (every new
+    allocation has it: myntos.domain.ledger.dimensions.allocate). A reversal's
+    copy of a loaded allocation carries only the value's id, and is keyed by
+    that: its original was checked when it was posted, and a mirror of it
+    cannot break the rule.
+    """
+    value = allocation.__dict__.get("dimension_value")
+    if value is None:
+        return ("value", allocation.dimension_value_id)
+    if value.dimension_type_id is not None:
+        return ("dimension", value.dimension_type_id)
+    return ("dimension-object", id(value.__dict__.get("dimension_type")))
+
+
 def _validate_line_analysis(line: TransactionLine, label: str, line_amount: Decimal) -> None:
-    """Dimension allocations may be partial, but never exceed the line."""
+    """Dimension allocations may be partial, but never exceed the line, per dimension.
+
+    Per dimension and not summed across them: a line on the milk production in
+    the farm department is allocated in full twice, once to its driftsgren and
+    once to its avdeling, and that is one amount sorted two ways, not twice the
+    amount. Summed, it was refused the first time a line had two dimensions.
+    """
     if not line.analysis:
         return
-    allocated = ZERO
+    allocated: dict[object, Decimal] = {}
     for allocation in line.analysis:
-        allocated += _check_amount(allocation.amount, f"{label} analysis amount")
-    if allocated > line_amount:
-        raise PostingError(
-            f"{label} allocates {allocated} across dimensions but the line is only {line_amount}"
-        )
+        amount = _check_amount(allocation.amount, f"{label} analysis amount")
+        key = _dimension_of(allocation)
+        allocated[key] = allocated.get(key, ZERO) + amount
+    for total in allocated.values():
+        if total > line_amount:
+            raise PostingError(
+                f"{label} allocates {total} to one dimension but the line is only {line_amount}"
+            )
 
 
 def assert_mutable(transaction: Transaction) -> None:
@@ -409,8 +446,16 @@ def _copy_allocation(allocation: TransactionLineAnalysis) -> TransactionLineAnal
         dimension_value_id=allocation.dimension_value_id,
         amount=allocation.amount,
     )
-    if allocation.dimension_value is not None:
-        copy.dimension_value = allocation.dimension_value
+    # The object too, but only when it is already on the allocation: a new one,
+    # or one whose query loaded it. Reading the relationship otherwise is a lazy
+    # load, which an async session refuses (MissingGreenlet), and every
+    # reversal path that did not ask for the values would have raised on the
+    # first allocated line it met. Without the object the copy is checked per
+    # value rather than per dimension (_dimension_of), which its original
+    # already passed.
+    value = allocation.__dict__.get("dimension_value")
+    if value is not None:
+        copy.dimension_value = value
     return copy
 
 

@@ -1411,3 +1411,75 @@ def test_an_ordinary_norwegian_invoice_is_not_read_as_voec() -> None:
 def test_a_camera_roll_name_says_nothing() -> None:
     assert interpretation.is_camera_roll("IMG 9461")
     assert not interpretation.is_camera_roll("Order details eBay")
+
+
+#: A samlefaktura from a farm shop, laid out the way Coop's comes out of its text
+#: layer: the payment line prints the kontonummer *after* the amount, with spaces,
+#: and the register's name stands in front of the organisasjonsnummer.
+SAMLEFAKTURA = """Faktura
+Fakturanr / Fakturadato
+9001 / 30.09.2026
+Bankkonto
+1503.84.20000
+Vi tilbyr faktura på e-post og EHF. Ta kontakt:
+E-post: regnskap@landhandel.example
+Tlf: 51 00 00 00 - Butikkregnskap
+Foretaksregisteret: NO910000020MVA
+Fakturaavsender
+BYGDELAGET LANDHANDEL SA
+Postboks 12
+7435 Trondheim
+Fakturamottaker
+NORDMANN CONSULTING AS
+Fakturaer (bonger) i samlefaktura Netto Mva. Totalt Mva.%
+Totalt for avgiftssats     12.000,00     3.000,00     15.000,00 25
+ Totalt samlefaktura     12.000,00     3.000,00     15.000,00
+NOK 15.000,00  betales til kontonummer 1503 84 20000
+"""
+
+
+def test_a_kontonummer_after_the_amount_is_not_the_amount() -> None:
+    """Coop's payment line came back as an invoice of 20 000 kroner.
+
+    The total is the last figure on a "betales" line, and the spaced kontonummer
+    behind the amount read as three more figures, the last of them 20000.
+    """
+    assert amounts_in("NOK 15.000,00  betales til kontonummer 1503 84 20000") == [
+        Decimal("15000.00")
+    ]
+    assert read(SAMLEFAKTURA, today=TODAY, own_orgnr=OWN_ORGNR).gross_amount == Decimal("15000.00")
+
+
+def test_the_register_in_front_of_the_number_is_not_the_sender() -> None:
+    """ "Foretaksregisteret: NO968712233MVA" named Coop and Tripletex alike.
+
+    The label and the "NO" were alternatives in the pattern, so only the "NO"
+    came off and the register's name was what was left of the line.
+    """
+    found = read(SAMLEFAKTURA, today=TODAY, own_orgnr=OWN_ORGNR)
+    assert found.seller_name == "BYGDELAGET LANDHANDEL SA"
+    assert _clean_name("Foretaksregisteret") is None
+
+
+def test_a_vat_column_headed_with_the_percent_sign_is_read() -> None:
+    """ "Netto Mva. Totalt Mva.%" over "... 15.000,00 25": the sign is in the heading."""
+    found = read(SAMLEFAKTURA, today=TODAY, own_orgnr=OWN_ORGNR)
+    assert found.vat_rate == Decimal("0.25")
+
+
+def test_a_street_written_short_is_not_a_name() -> None:
+    """ "Bedriftsvn 21" was Q-Meieriene's name in the books for one run."""
+    assert _clean_name("Bedriftsvn 21") is None
+    assert _clean_name("Meierivegen 4") is None
+    assert _clean_name("Q-Meieriene AS") == "Q-Meieriene AS"
+
+
+def test_an_orgnr_with_mva_behind_it_is_never_an_amount() -> None:
+    """ "Foretagsreg: NO 913 251 342 MVA" was a slaughter settlement's VAT.
+
+    The line carries «MVA», and the spaced number reads as nine hundred million
+    kroner. Recognised by its shape and check digit, not by the label's spelling.
+    """
+    assert amounts_in("Foretagsreg: NO 910 000 039 MVA") == []
+    assert amounts_in("Org.nr. 910.000.039 MVA  Sum 1 250,00") == [Decimal("1250.00")]
+    assert read(PURCHASE, today=TODAY).vat_amount == Decimal("361.75")

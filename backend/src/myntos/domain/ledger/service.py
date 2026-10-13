@@ -17,12 +17,12 @@ account and a VAT code (:mod:`.cashflow`).
 from __future__ import annotations
 
 import enum
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import ColumnElement, Select, and_, func, select
+from sqlalchemy import ColumnElement, Select, and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
@@ -35,7 +35,15 @@ from myntos.domain.identity.models import (
     OrganizationRole,
     User,
 )
-from myntos.domain.ledger import cashflow, kontoplan, landbruk, parties, posting, vatstatus
+from myntos.domain.ledger import (
+    cashflow,
+    dimensions,
+    kontoplan,
+    landbruk,
+    parties,
+    posting,
+    vatstatus,
+)
 from myntos.domain.ledger.bankkonto import format_bank_account, validate_bank_account
 from myntos.domain.ledger.cashflow import CashFlowDirection
 from myntos.domain.ledger.chart import (
@@ -45,14 +53,19 @@ from myntos.domain.ledger.chart import (
     CASH_JOURNAL_ID,
     CASH_JOURNAL_TYPE,
     CLOSING_JOURNAL_ID,
+    COUNT_JOURNAL_ID,
+    IMPORT_JOURNAL_ID,
     INPUT_VAT_ACCOUNT,
     LANDBRUK_ACCOUNTS_BY_NUMBER,
+    MANUAL_JOURNAL_ID,
     OPENING_JOURNAL_ID,
     OUTPUT_VAT_ACCOUNT,
     SETTLEMENT_JOURNAL_ID,
+    SETTLEMENT_VOUCHER_TYPE,
     STANDARD_ACCOUNTS,
     STANDARD_TAX_CODES,
     TAX_CODES_BY_CODE,
+    WITHDRAWAL_JOURNAL_ID,
 )
 from myntos.domain.ledger.errors import (
     AccountNotFoundError,
@@ -83,6 +96,7 @@ from myntos.domain.ledger.models import (
     Company,
     CompanyBankAccount,
     CompanyRegisterSnapshot,
+    DimensionValue,
     FinancialYear,
     Journal,
     Party,
@@ -90,6 +104,7 @@ from myntos.domain.ledger.models import (
     TaxRate,
     Transaction,
     TransactionLine,
+    TransactionLineAnalysis,
 )
 from myntos.domain.ledger.orgnr import validate_orgnr
 from myntos.integrations.brreg import RegisteredUnit
@@ -859,6 +874,69 @@ async def ensure_financial_year(db: AsyncSession, company: Company, year: int) -
     return await _open_financial_year(db, company, year)
 
 
+async def open_earlier_years(
+    db: AsyncSession,
+    company: Company,
+    first: int,
+    *,
+    observed_rates: Mapping[str, set[Decimal]] | None = None,
+) -> list[int]:
+    """Open every year from ``first`` up to the company's first one, for the books brought over.
+
+    Only for :mod:`myntos.saft.move`, which brings earlier years over from the
+    previous program's SAF-T files: everything else is refused a year before
+    the first (:func:`ensure_financial_year`). Two things that rule protects are
+    taken care of here instead:
+
+    - **The VAT rates.** The seeded rates claim only the first year, because
+      claiming them for 2019 would be a fabrication: the low rate was 8 % and
+      then 6 % for most of 2020 and 2021. So a code's seeded rate is carried
+      back to ``first`` only when the files prove it, every line they carry
+      with that code having had that rate (``observed_rates``, by code, as
+      fractions). A code the files did not use, or used at another rate, gets
+      no rate for those years, and a new entry with it there is refused as
+      before rather than given an invented one. The imported lines carry the
+      rate the file reported whatever happens here. Only a code's seeded row
+      moves (the one starting on the old first year's 1 January); a rate
+      somebody added stays as it is.
+    - **The seeded accounts**, dated the first year's 1 January as the seed is,
+      move back with it, so the chart says they were there for the years they
+      are used in.
+
+    No floor on how far back: the years are the person's books, and what they
+    can bring is what their old program can export.
+
+    Returns the years opened, oldest first. Nothing is opened when ``first`` is
+    not before the first year.
+    """
+    earliest = await db.scalar(
+        select(func.min(FinancialYear.year)).where(FinancialYear.company_id == company.id)
+    )
+    if earliest is None or first >= int(earliest):
+        return []
+    old_start = date(int(earliest), 1, 1)
+    new_start = date(first, 1, 1)
+    seen = observed_rates or {}
+    for code, rate in (
+        await db.execute(
+            select(TaxCode.code, TaxRate)
+            .join(TaxCode, TaxCode.id == TaxRate.tax_code_id)
+            .where(TaxCode.company_id == company.id, TaxRate.valid_from == old_start)
+        )
+    ).tuples():
+        if seen.get(code) == {rate.rate}:
+            rate.valid_from = new_start
+    for account in await db.scalars(
+        select(Account).where(Account.company_id == company.id, Account.created_date == old_start)
+    ):
+        account.created_date = new_start
+    opened: list[int] = []
+    for year in range(first, int(earliest)):
+        await _open_financial_year(db, company, year)
+        opened.append(year)
+    return opened
+
+
 # --- Recording a payment --------------------------------------------------------
 
 
@@ -1185,6 +1263,22 @@ def _numbered(lines: list[TransactionLine]) -> list[TransactionLine]:
     return lines
 
 
+def _allocate(trade: _Trade, values: Sequence[DimensionValue]) -> None:
+    """Put the avdeling, prosjekt or driftsgren the person chose on the trade's own lines.
+
+    The basis line, and any further line on the same account: the
+    non-deductible VAT on an import is part of what the purchase cost the
+    driftsgren. Not the VAT lines and not the bank line, which are balance-sheet
+    movements no result per avdeling reads.
+    """
+    if not values:
+        return
+    basis = trade.lines[0]
+    for line in trade.lines:
+        if line is basis or line.account is basis.account:
+            dimensions.allocate(line, values)
+
+
 async def record_cash_flow(
     db: AsyncSession,
     *,
@@ -1199,6 +1293,7 @@ async def record_cash_flow(
     corrects_pk: int | None = None,
     created_by_user_id: int | None = None,
     account_number: str | None = None,
+    dimension_value_ids: Sequence[int] = (),
 ) -> Transaction:
     """Record one payment in or out as a posted voucher.
 
@@ -1234,6 +1329,11 @@ async def record_cash_flow(
     ``account_number`` books the amount to another account of the same type
     than the category's own, one the company added to its kontoplan; see
     :func:`_basis_account` for what may be chosen.
+
+    ``dimension_value_ids`` are the avdeling, prosjekt or driftsgren the trade
+    belongs to, at most one per dimension, resolved through the company
+    (:func:`myntos.domain.ledger.dimensions.resolve`) and put on the trade's own
+    lines (:func:`_allocate`).
     """
     entry_type = cashflow.get_type(type_code)
     landbruk.require_segment(company, entry_type.segment)
@@ -1248,6 +1348,7 @@ async def record_cash_flow(
         if party_pk is None
         else await parties.get_party(db, company=company, party_pk=party_pk)
     )
+    chosen = await dimensions.resolve(db, company=company, value_ids=dimension_value_ids)
     trade = await _trade(
         db,
         company=company,
@@ -1260,6 +1361,7 @@ async def record_cash_flow(
         party=party,
         accounts=accounts,
     )
+    _allocate(trade, chosen)
     is_incoming = trade.cash > ZERO
     payment_line = TransactionLine(
         account=accounts[payment_method.account_number],
@@ -1317,6 +1419,10 @@ class CompositePart:
     tax_code: str | None = None
     account_number: str | None = None
     description: str | None = None
+    #: The avdeling, prosjekt or driftsgren this line belongs to: a settlement's
+    #: milk to the milk production, the feed set off against it perhaps to the
+    #: sheep.
+    dimension_value_ids: tuple[int, ...] = ()
 
 
 async def record_composite(
@@ -1374,6 +1480,10 @@ async def record_composite(
         if party_pk is None
         else await parties.get_party(db, company=company, party_pk=party_pk)
     )
+    chosen = [
+        await dimensions.resolve(db, company=company, value_ids=part.dimension_value_ids)
+        for part in parts
+    ]
     trades = [
         await _trade(
             db,
@@ -1389,6 +1499,8 @@ async def record_composite(
         )
         for entry_type, part, gross in zip(types, parts, grosses, strict=True)
     ]
+    for trade, values in zip(trades, chosen, strict=True):
+        _allocate(trade, values)
     net = sum((trade.cash for trade in trades), ZERO)
     if net == ZERO:
         raise InvalidCompositeEntryError(
@@ -1440,7 +1552,11 @@ def _voucher_query() -> Select[tuple[Transaction]]:
             selectinload(Transaction.lines).selectinload(TransactionLine.account),
             selectinload(Transaction.lines).selectinload(TransactionLine.party),
             selectinload(Transaction.lines).selectinload(TransactionLine.tax_code),
-            selectinload(Transaction.lines).selectinload(TransactionLine.analysis),
+            # With the values, so a reversal's copy of an allocation knows its
+            # dimension (posting._dimension_of) without a lazy load.
+            selectinload(Transaction.lines)
+            .selectinload(TransactionLine.analysis)
+            .selectinload(TransactionLineAnalysis.dimension_value),
         )
     )
 
@@ -1477,6 +1593,27 @@ async def reverse_cash_flow(
     if journal_code in {OPENING_JOURNAL_ID, CLOSING_JOURNAL_ID}:
         raise CannotReverseHereError(
             "inngående balanse og årsavslutning rettes fra sine egne sider, ikke fra registeret"
+        )
+    # A voucher brought from the previous program is that program's entry,
+    # documented in its archive. Corrected there, it comes across as the old
+    # program's own reversal; reversed here, the two sets of books would part.
+    if journal_code == IMPORT_JOURNAL_ID:
+        raise CannotReverseHereError(
+            "bilag hentet fra det gamle regnskapsprogrammet rettes der, ikke fra registeret"
+        )
+    # The farm's count and its private uttak are the postings of a stored list
+    # (myntos.domain.arsoppgjor.buskap, .uttak). Reversed from here, the voucher
+    # would be gone while its list still claimed to stand.
+    if journal_code in {COUNT_JOURNAL_ID, WITHDRAWAL_JOURNAL_ID}:
+        raise CannotReverseHereError(
+            "telling av buskap og private uttak rettes fra sine egne sider, ikke fra registeret"
+        )
+    # A manual voucher is documented by a written reason, and so is undoing one
+    # (bokføringsforskriften § 5-12). Its own page asks for that reason; this
+    # route has nowhere to put it (myntos.domain.manuelt_bilag).
+    if journal_code == MANUAL_JOURNAL_ID:
+        raise CannotReverseHereError(
+            "manuelle bilag reverseres og rettes under Manuelt bilag, med en begrunnelse"
         )
     already = await db.scalar(
         select(Transaction.id).where(Transaction.reverses_transaction_pk == original.id)
@@ -1527,6 +1664,8 @@ class CashFlowPart:
     account_description: str
     tax_code: str | None
     description: str
+    #: The avdeling, prosjekt or driftsgren the line was allocated to, by id.
+    dimension_value_ids: tuple[int, ...] = ()
 
 
 def _parts(transaction: Transaction) -> tuple[CashFlowPart, ...]:
@@ -1558,6 +1697,7 @@ def _parts(transaction: Transaction) -> tuple[CashFlowPart, ...]:
                 account_description=line.account.description,
                 tax_code=code,
                 description=line.description,
+                dimension_value_ids=dimensions.allocated_ids(line),
             )
         )
     return tuple(parts)
@@ -1599,6 +1739,9 @@ class CashFlowView:
     # The lines of a composite entry (type_code ``sammensatt``); empty for an
     # ordinary one, whose single line is the fields above.
     parts: tuple[CashFlowPart, ...] = ()
+    # The avdeling, prosjekt or driftsgren of an ordinary entry, by id. Empty on
+    # a composite entry, whose lines carry their own in ``parts``.
+    dimension_value_ids: tuple[int, ...] = ()
 
 
 def describe(
@@ -1697,6 +1840,7 @@ def describe(
         # facts, and the interface says «ukjent» for the second one only.
         created_by_name=created_by_name,
         created_via=created_via,
+        dimension_value_ids=dimensions.allocated_ids(basis),
     )
 
 
@@ -1774,8 +1918,15 @@ async def list_cash_flows(
     # The opening balance is not a payment, though it puts money on 1920: it is
     # what the bank held when the books arrived, and listed here it would read
     # as the year's largest receipt.
+    # Nor the vouchers brought from the previous program: the register reads a
+    # voucher back as one of its own categories, and those were booked by
+    # another program's rules. They count in the year's figures all the same.
+    # Nor manual vouchers, for the same reason: a reclassification onto 1920
+    # read back as a payment would show a category nobody chose. They are listed
+    # on their own page, and count in the figures too.
     query = _voucher_query().where(
-        Journal.company_id == company.id, Journal.journal_id != OPENING_JOURNAL_ID
+        Journal.company_id == company.id,
+        Journal.journal_id.not_in((OPENING_JOURNAL_ID, IMPORT_JOURNAL_ID, MANUAL_JOURNAL_ID)),
     )
     if financial_year is not None:
         query = query.where(Transaction.financial_year == financial_year)
@@ -1908,6 +2059,24 @@ def _still_stands() -> ColumnElement[bool]:
     )
 
 
+def not_a_settlement() -> tuple[ColumnElement[bool], ...]:
+    """Leaves out the vouchers that settle a filed VAT term onto 2740.
+
+    Myntos's own are in the ``MVA`` journal; a term the previous program
+    settled came across in the ``IMPORT`` journal with the settlement's
+    voucher type. Both move the term's VAT to be paid, and neither changes what
+    the VAT was. ``voucher_type`` is NULL on old vouchers, which a plain ``!=``
+    would drop.
+    """
+    return (
+        Journal.journal_id != SETTLEMENT_JOURNAL_ID,
+        or_(
+            Transaction.voucher_type.is_(None),
+            Transaction.voucher_type != SETTLEMENT_VOUCHER_TYPE,
+        ),
+    )
+
+
 def _movement_query(
     company_id: int, account_numbers: frozenset[str]
 ) -> Select[tuple[str | None, Decimal, Decimal, int]]:
@@ -1995,7 +2164,7 @@ async def summarise(db: AsyncSession, *, company: Company, financial_year: int) 
                 # A settled period's VAT is still the year's VAT. The settlement
                 # moves it to 2740 to be paid, and counting that move here would
                 # show a company that has filed as one that owes nothing.
-                Journal.journal_id != SETTLEMENT_JOURNAL_ID,
+                *not_a_settlement(),
                 _still_stands(),
             )
             .group_by(Account.account_number)

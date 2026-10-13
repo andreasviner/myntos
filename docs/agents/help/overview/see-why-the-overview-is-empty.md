@@ -1,6 +1,6 @@
 ---
 title: See why the overview is empty
-description: What it means when the Myntos front page shows «Ingen regnskap ennå», «Ingenting ført ennå» or «Ingen tall å vise for i år», and what the person does next, including when they are not allowed to add a company. Use when someone asks why their Myntos overview is empty, shows no figures, or asks them to add a company.
+description: What it means when the Myntos front page shows «Ingen regnskap ennå», «Ingen betalinger registrert i Myntos ennå» or «Ingen tall å vise for i år», and what the person does next, including when they are not allowed to add a company. Use when someone asks why their Myntos overview is empty, shows no figures, or asks them to add a company.
 pages: /
 skill: myntos-selskap
 ---
@@ -34,10 +34,17 @@ They need to be signed in.
    en administrator om å gjøre det.»** under that card: they may not add
    companies. An administrator adds the company, or invites them to one that
    exists.
-4. **«Ingenting ført ennå. Registrer den første betalingen.»** under
-   «Siste bevegelser», and «Ingen tall å vise for i år.» under «Største
-   poster i år»: the company exists but has no payments yet this year. Click
-   «Registrer betaling» to register the first one.
+4. **«Ingen betalinger registrert i Myntos ennå.»** under «Siste bevegelser»,
+   and «Ingen tall å vise for i år.» under «Største poster i år»: no payment
+   has been registered in Myntos this year. Click «Registrer betaling» to
+   register the first one. Vouchers brought over from another program, the
+   opening balance and manual vouchers are never listed there: «alle bilag» in
+   the same line, or «Se alle bilag →», opens «Bilag», where they are:
+   [See every voucher in the books](https://myntos.no/llms/help/vouchers/see-every-voucher.md).
+   While the books are empty, the card «Kommer du fra et annet
+   regnskapsprogram?» with «Hent regnskapet» leads to the import from the old
+   program's SAF-T files; while an import is being read or waits to be checked,
+   the same card says so («Myntos leser SAF-T-filene», «SAF-T-filene er lest»).
 5. **«Vi fikk ikke hentet oversikten.»**, or another message at the top:
    loading failed. Reload the page.
 

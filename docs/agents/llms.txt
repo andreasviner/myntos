@@ -45,12 +45,15 @@ Everything below is one of two kinds, and which you need depends on how you meet
 - [Requests that wait for the person's approval, and asking the person to file](https://myntos.no/llms/skills/myntos-godkjenning.md)
 - [Which company, its register data and financial years](https://myntos.no/llms/skills/myntos-selskap.md)
 - [Payments in and out, receipts read by KI, payments split into lines, the bilag archive, corrections](https://myntos.no/llms/skills/myntos-kontantstrom.md)
+- [Every posted voucher, from every journal, and one account's movements with its balance](https://myntos.no/llms/skills/myntos-bilag.md)
 - [Sales invoices and credit notes](https://myntos.no/llms/skills/myntos-faktura.md)
 - [Customers and suppliers](https://myntos.no/llms/skills/myntos-parter.md)
 - [Bank statements and reconciliation](https://myntos.no/llms/skills/myntos-bank.md)
 - [The VAT period, its figures, preparing the MVA-melding](https://myntos.no/llms/skills/myntos-mva.md)
 - [VAT adjustments](https://myntos.no/llms/skills/myntos-mva-justering.md)
 - [The opening balance](https://myntos.no/llms/skills/myntos-inngaende-balanse.md)
+- [The previous program: its books brought over from its SAF-T files on the server, earlier years too, and the two compared in a parallel run](https://myntos.no/llms/skills/myntos-tidligere-program.md)
+- [Manual vouchers: year-end adjustments, reclassifications and corrections typed as debit and credit](https://myntos.no/llms/skills/myntos-manuelt-bilag.md)
 - [Closing and reopening a financial year](https://myntos.no/llms/skills/myntos-arsavslutning.md)
 - [The chart of accounts](https://myntos.no/llms/skills/myntos-kontoplan.md)
 - [Farming: the landbruk add-on, settlements from Tine and Nortura, subsidies, farm VAT](https://myntos.no/llms/skills/myntos-landbruk.md)
@@ -101,6 +104,11 @@ You have no access to the books here and must not ask for a password or a key. I
 - [See who recorded a payment](https://myntos.no/llms/help/payments/see-who-recorded-a-payment.md)
 - [Split a payment into several lines](https://myntos.no/llms/help/payments/split-a-payment-into-lines.md)
 - [Understand the figures beside the register](https://myntos.no/llms/help/payments/understand-the-payment-figures.md)
+
+### Bilag: every voucher in the books
+
+- [See every voucher in the books](https://myntos.no/llms/help/vouchers/see-every-voucher.md)
+- [See what went in and out of the bank](https://myntos.no/llms/help/vouchers/see-what-went-in-and-out-of-the-bank.md)
 
 ### Faktura: sales invoices
 
@@ -166,14 +174,21 @@ You have no access to the books here and must not ask for a password or a key. I
 
 ### Opening balance and year-end
 
+- [Bring your books over from the previous program's SAF-T files, earlier years too](https://myntos.no/llms/help/opening-balance-and-year-end/bring-your-books-over-from-saf-t-files.md)
 - [Close a financial year](https://myntos.no/llms/help/opening-balance-and-year-end/close-a-financial-year.md)
+- [Compare Myntos with the previous program](https://myntos.no/llms/help/opening-balance-and-year-end/compare-myntos-with-the-previous-program.md)
+- [Correct a manual voucher](https://myntos.no/llms/help/opening-balance-and-year-end/correct-a-manual-voucher.md)
 - [Correct an opening balance](https://myntos.no/llms/help/opening-balance-and-year-end/correct-an-opening-balance.md)
 - [Decide whether you need an opening balance](https://myntos.no/llms/help/opening-balance-and-year-end/decide-whether-you-need-an-opening-balance.md)
 - [Enter an opening balance](https://myntos.no/llms/help/opening-balance-and-year-end/enter-an-opening-balance.md)
 - [Enter the tax when closing a year](https://myntos.no/llms/help/opening-balance-and-year-end/enter-the-tax-when-closing-a-year.md)
 - [Fix a year that will not close](https://myntos.no/llms/help/opening-balance-and-year-end/fix-a-year-that-will-not-close.md)
 - [Import a saldobalanse](https://myntos.no/llms/help/opening-balance-and-year-end/import-a-saldobalanse.md)
+- [Import the opening balance from a SAF-T file](https://myntos.no/llms/help/opening-balance-and-year-end/import-a-saf-t-file.md)
+- [Make the year-end adjustments](https://myntos.no/llms/help/opening-balance-and-year-end/make-year-end-adjustments.md)
+- [Post a manual voucher](https://myntos.no/llms/help/opening-balance-and-year-end/post-a-manual-voucher.md)
 - [Reopen a financial year](https://myntos.no/llms/help/opening-balance-and-year-end/reopen-a-financial-year.md)
+- [Reverse a manual voucher](https://myntos.no/llms/help/opening-balance-and-year-end/reverse-a-manual-voucher.md)
 - [Reverse an opening balance](https://myntos.no/llms/help/opening-balance-and-year-end/reverse-an-opening-balance.md)
 - [Review an opening balance](https://myntos.no/llms/help/opening-balance-and-year-end/review-an-opening-balance.md)
 - [Split customers and suppliers in the opening balance](https://myntos.no/llms/help/opening-balance-and-year-end/split-customers-and-suppliers-in-the-opening-balance.md)

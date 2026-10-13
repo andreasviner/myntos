@@ -58,6 +58,7 @@ export function isFinal(approval: Pick<Approval, 'scope'>): boolean {
 const PAGES: [string, string, string][] = [
   ['/mva/spesifikasjoner', '/mva-justeringer/', 'Mva-justeringer'],
   ['/inngaende-balanse', '/inngaende-balanse/', 'Inngående balanse'],
+  ['/saft/bilag', '/tidligere-program/', 'Tidligere regnskapsprogram'],
   ['/arsavslutning', '/arsavslutning/', 'Årsavslutning'],
   ['/kontoplan', '/kontoplan/', 'Kontoplanen'],
   ['/cashflow', '/kontantstrom/', 'Betaling'],

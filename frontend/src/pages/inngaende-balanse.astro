@@ -19,12 +19,26 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
   <p class="lead">
     Har selskapet ført regnskap et annet sted før, starter det ikke på null her. Før saldoene fra
-    balansen ved årsskiftet, helst rett fra saldobalansen i det gamle systemet, så blir bankkontoen,
-    kundene og egenkapitalen riktige fra første dag.
+    balansen ved årsskiftet, helst rett fra SAF-T-filen eller saldobalansen i det gamle systemet,
+    så blir bankkontoen, kundene og egenkapitalen riktige fra første dag.
   </p>
 
   <p class="status" id="page-status" hidden></p>
   <div class="empty" id="loading">Henter …</div>
+
+  {/* Den vanligste veien hit er en flytting, og da er SAF-T-filene bedre lest
+      inn på siden som tar hele regnskapet: balansen, bilagene og tidligere år
+      på én gang, på serveren. Dette skjemaet er for balansen alene. */}
+  <aside class="move" id="move-hint" hidden>
+    <div>
+      <strong>Flytter du fra et annet regnskapsprogram?</strong>
+      <p>
+        Last opp SAF-T-filene under «Hent regnskapet fra et annet program» i stedet. Myntos fører
+        inngående balanse fra det første året, og bilagene for hvert år, på én gang.
+      </p>
+    </div>
+    <a class="btn btn-primary" href="/tidligere-program/">Hent regnskapet</a>
+  </aside>
 
   {/* Det som står nå. Retting er reversering pluss ny balanse, aldri endring. */}
   <section class="card" id="standing" hidden>
@@ -51,13 +65,36 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   <section class="card" id="form-card" hidden>
     <h2 class="card-title" id="form-title">Saldoer per 1. januar <span id="form-year"></span></h2>
     <label class="field">
-      <span>Last inn saldobalanse (CSV)</span>
-      <input type="file" id="csv" accept=".csv,text/csv,text/plain" />
+      <span>Last inn SAF-T-fil eller saldobalanse</span>
+      <input
+        type="file"
+        id="csv"
+        accept=".xml,.zip,.csv,application/xml,text/xml,application/zip,text/csv,text/plain"
+      />
       <span class="field-hint">
-        Eksporter saldobalansen etter årsoppgjøret fra det gamle systemet. Myntos leser kontonummer
-        og utgående saldo, og fyller inn skjemaet under. Ingenting føres før du har kontrollert det.
+        SAF-T-filen (XML eller ZIP) for året du starter i Myntos, eller for hele året før, eller
+        saldobalansen etter årsoppgjøret (CSV). Myntos leser kontoene, saldoene og kundene og
+        leverandørene med åpne poster, og fyller inn skjemaet under. Ingenting føres før du har
+        kontrollert det.
       </span>
     </label>
+
+    {/* Det SAF-T-filen nevner som Myntos ikke har ennå. Legges til gjennom de
+        vanlige rutene for kontoplan og kunder/leverandører, og filen leses på
+        nytt etterpå, så linjene havner på de nye kontoene og partene. */}
+    <div class="saft-missing" id="saft-missing" hidden>
+      <h3>Dette mangler i Myntos før balansen kan føres</h3>
+      <p class="card-hint" id="saft-missing-intro"></p>
+      <ul class="missing" id="saft-accounts"></ul>
+      <ul class="missing" id="saft-parties"></ul>
+      <div class="actions">
+        <button type="button" class="btn btn-primary" id="saft-add">Legg til kontoer og parter</button>
+      </div>
+      <p class="card-hint" id="saft-add-hint" hidden>
+        Bare en administrator eller eier kan legge til kontoer i kontoplanen.
+      </p>
+    </div>
+    <ul class="findings notes" id="saft-notes" hidden></ul>
     <form id="opening-form" novalidate>
       <div class="table-scroll">
         <table class="lines">
@@ -163,6 +200,36 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   .history {
     padding-left: 1.2rem;
   }
+  .saft-missing {
+    margin: 1rem 0;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--border, #ddd);
+    border-radius: 0.5rem;
+  }
+  .saft-missing h3 {
+    margin: 0 0 0.25rem;
+    font-size: 1rem;
+  }
+  .missing {
+    margin: 0.5rem 0;
+    padding-left: 1.2rem;
+  }
+  .move {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem 1.25rem;
+    margin-bottom: 1rem;
+    padding: 0.9rem 1.1rem;
+    border: 1px solid var(--accent-line);
+    border-radius: var(--radius);
+    background: var(--accent-soft);
+  }
+  .move p {
+    margin: 0.2rem 0 0;
+    max-width: 44rem;
+  }
 </style>
 
 <script>
@@ -170,7 +237,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     ApiError,
     getOpeningState,
     listParties,
+    createAccount,
+    createParty,
     postOpening,
+    readSaft,
     readSaldobalanse,
     reverseOpening,
     reviewOpening,
@@ -179,6 +249,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     type OpeningLineInput,
     type OpeningState,
     type Party,
+    type SaftOpening,
   } from '../lib/api';
   import { normaliseAmount } from '../lib/amount';
   import { currentCompany, loadCompanies } from '../lib/company';
@@ -328,6 +399,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     }
     show(el('#standing-actions'), standing !== null && state.allowed && mayWrite);
 
+    show(el('#move-hint'), state.allowed && mayWrite && standing === null);
+
     // Skjemaet vises når det kan brukes: ingen balanse ført ennå, eller en
     // retting er valgt.
     show(el('#form-card'), state.allowed && mayWrite && (standing === null || correcting));
@@ -407,21 +480,153 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       });
   });
 
+  // SAF-T-filen fra det gamle programmet, holdt til den er lest på nytt etter
+  // at kontoene og partene den nevner er lagt til.
+  let saftFile: File | null = null;
+  let saftRead: SaftOpening | null = null;
+
+  /** Koden på merknadene SAF-T-lesingen selv gir; resten kommer igjen ved «Kontroller». */
+  const SAFT_NOTES = new Set([
+    'udisponert_resultat',
+    'mva_flyttet_til_2740',
+    'kontoer_slatt_sammen',
+    'gruppering_avviker',
+    'gruppering_fra_filen_brukes_ikke',
+    'reskontro_avviker',
+    'bankkonto_utenfor_1920',
+  ]);
+
+  function renderSaft(read: SaftOpening | null): void {
+    const accounts = read?.accounts_to_add ?? [];
+    const partiesToAdd = read?.parties_to_add ?? [];
+    show(el('#saft-missing'), accounts.length + partiesToAdd.length > 0);
+    el('#saft-missing-intro').textContent =
+      `Filen har saldoer på ${accounts.length} kontoer som ikke er i kontoplanen, og åpne poster på ` +
+      `${partiesToAdd.length} kunder og leverandører som ikke er registrert. De legges til med navnet, ` +
+      'nummeret og grupperingen fra filen.';
+    list(
+      el('#saft-accounts'),
+      accounts.map(
+        (add) => `${add.number} ${add.description} (fra ${add.source_accounts.join(', ')})`,
+      ),
+    );
+    list(
+      el('#saft-parties'),
+      partiesToAdd.map(
+        (add) =>
+          `${add.party_id ?? ''} ${add.name} (${add.party_type === 'kunde' ? 'kunde' : 'leverandør'}` +
+          `${add.orgnr === null ? '' : `, org.nr. ${orgnummer(add.orgnr)}`})`.trim(),
+      ),
+    );
+    // Spurt her, der knappen tegnes, og ikke husket: selskapet kan skifte.
+    const mayChart = canInCompany(company, 'ledger:chart');
+    el<HTMLButtonElement>('#saft-add').disabled = accounts.length > 0 && !mayChart;
+    show(el('#saft-add-hint'), accounts.length > 0 && !mayChart);
+    list(
+      el('#saft-notes'),
+      (read?.findings ?? []).filter((f) => SAFT_NOTES.has(f.code)).map((f) => f.message),
+    );
+  }
+
+  async function readSaftFile(file: File): Promise<void> {
+    const read = await readSaft(company.id, file);
+    saftFile = file;
+    saftRead = read;
+    fill(read.lines);
+    renderSaft(read);
+    const which = read.source.balances === 'inngaende' ? 'inngående' : 'utgående';
+    const year = read.source.start_date.slice(0, 4);
+    setStatus(
+      formStatus,
+      `Leste ${read.lines.length} linjer fra SAF-T-filen${read.source.software ? ` fra ${read.source.software}` : ''} ` +
+        `(${which} saldoer for ${year}). Se over linjene og kontroller.`,
+      'ok',
+    );
+  }
+
   el<HTMLInputElement>('#csv').addEventListener('change', (event) => {
     const file = (event.target as HTMLInputElement).files?.[0];
     if (file === undefined) return;
     setStatus(formStatus, '');
-    readSaldobalanse(company.id, file)
-      .then((review) => {
-        fill(review.lines);
+    saftFile = null;
+    saftRead = null;
+    renderSaft(null);
+    const reading = /\.(xml|zip)$/i.test(file.name)
+      ? readSaftFile(file)
+      : readSaldobalanse(company.id, file).then((review) => {
+          fill(review.lines);
+          setStatus(
+            formStatus,
+            `Leste ${review.lines.length} kontoer fra filen. Se over linjene, fordel 1500 og 2400 på kunder og leverandører hvis du vil, og kontroller.`,
+            'ok',
+          );
+        });
+    reading.catch((error: unknown) => {
+      setStatus(formStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke lest filen.');
+    });
+  });
+
+  el('#saft-add').addEventListener('click', () => {
+    const read = saftRead;
+    const file = saftFile;
+    if (read === null || file === null) return;
+    const button = el<HTMLButtonElement>('#saft-add');
+    const label = button.textContent;
+    button.disabled = true;
+    setStatus(formStatus, '');
+    const year = state.year ?? Number(read.source.start_date.slice(0, 4));
+    const total = read.accounts_to_add.length + read.parties_to_add.length;
+    let done = 0;
+    // Én om gangen: hver konto svarer med hele kontoplanen, og rekkefølgen er
+    // den filen ga, så en feil stopper på et sted man kan peke på.
+    const steps = async (): Promise<void> => {
+      for (const add of read.accounts_to_add) {
+        done += 1;
+        button.textContent = `Legger til konto ${add.number} … ${done} av ${total}`;
+        await createAccount(company.id, year, {
+          number: add.number,
+          description: add.description,
+          account_type: add.account_type,
+          grouping_category: add.grouping_category,
+          grouping_code: add.grouping_code,
+        });
+      }
+      for (const add of read.parties_to_add) {
+        done += 1;
+        button.textContent = `Legger til ${add.name} … ${done} av ${total}`;
+        await createParty(company.id, {
+          party_type: add.party_type,
+          name: add.name,
+          orgnr: add.orgnr,
+          party_id: add.party_id,
+          address_line: add.address_line,
+          postal_code: add.postal_code,
+          city: add.city,
+        });
+      }
+    };
+    steps()
+      .then(async () => {
+        // Det som ble bedt om er gjort. Å lese filen på nytt er sidens sak, og
+        // en feil der er ikke en feil ved å legge til.
+        parties = await listParties(company.id);
+        await readSaftFile(file);
         setStatus(
           formStatus,
-          `Leste ${review.lines.length} kontoer fra filen. Se over linjene, fordel 1500 og 2400 på kunder og leverandører hvis du vil, og kontroller.`,
+          `La til ${read.accounts_to_add.length} kontoer og ${read.parties_to_add.length} kunder og leverandører, og leste filen på nytt. Se over linjene og kontroller.`,
           'ok',
         );
       })
       .catch((error: unknown) => {
-        setStatus(formStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke lest filen.');
+        setStatus(
+          formStatus,
+          (error instanceof ApiError ? error.message : 'Vi fikk ikke lagt til alt.') +
+            ` ${done - 1} av ${total} ble lagt til før dette.`,
+        );
+      })
+      .finally(() => {
+        button.textContent = label;
+        button.disabled = false;
       });
   });
 

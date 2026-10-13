@@ -9,6 +9,7 @@ down, and the VAT rates that are the reason the farm categories exist at all.
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -257,3 +258,150 @@ def test_a_farm_reads_a_melkeoppgjor_as_money_in() -> None:
 def test_self_billing_is_money_in_for_everyone() -> None:
     assert interpretation.issued_by_buyer("Selvfaktura nr 12 utstedt av kjøper")
     assert not interpretation.issued_by_buyer("Avregning strøm oktober")
+
+
+#: A dairy's avregningsoppgave in the shape Q-Meieriene prints it: the period's
+#: date beside the payout date, the posts summed to a net with the VAT on that
+#: net, a membership fee below it with VAT of its own, and the letterhead in a
+#: footer five lines above the organisasjonsnummer. Figures invented.
+AVREGNINGSOPPGAVE = """Avregningsoppgave
+Bilagsnr:  1234 Periode: Oktober , 2026
+Produsentnr: 1111 2222 00 Avregningsdato: 31.10.2026
+Gårds/Bruksnr: 1-2/3/0 Utbetalingsdato: 09.11.2026
+Nordmann Gard
+Varenr Tekst Mengde Pris Beløp
+1001 Kumelk innenfor kvote 10.000,0 6,0000 60.000,00
+1005 Omsetningsavgift -10.000,0 ,1000 -1.000,00
+Netto avregnet: 59.000,00
+25,0% merverdiavgift av 59.000,00 14.750,00
+Beløp inkl. mva.: 73.750,00 *
+7001 Medlemsavg HK -1,0 1.000,0000 -1.000,00
+Beløp inkl. mva.: -1.250,00 *
+Godskrives, overført til bankkonto: 1234.56.78903 72.500,00
+Bygdemeieriet AS
+Meierivn 1
+4353  Klepp st
+Tlf:  51000000
+Meierinr.:  123
+Org.nr.:  NO910000020 MVA
+"""
+
+
+def test_a_dairys_avregningsoppgave_is_read_as_the_settlement_it_is() -> None:
+    """Q-Meieriene's September 2026 settlement, the pilot's first, in its shape.
+
+    Every field below came back wrong the first time: «Avregningsoppgave» was not
+    a settlement word, the payout date was read as the bilag's date because
+    «utbetalingsdato» contains «betalingsdato», the larger «Beløp inkl. mva.»
+    (the sale before the fee) was the amount, the street was the counterparty,
+    and the sum check told the farmer to check a total that was right.
+    """
+    found = interpretation.suggest(
+        AVREGNINGSOPPGAVE,
+        today=date(THIS_YEAR, 11, 12),
+        own_orgnr="910000012",
+        own_name="Nordmann Gard",
+        farm=True,
+    )
+    assert found.direction is CashFlowDirection.INN
+    assert found.issued_by_buyer
+    assert any("salgsdokumentet ditt" in warning for warning in found.warnings)
+    # The day the period was settled: a December settlement paid in January is
+    # still the year before's sale.
+    assert found.occurred_on == date(2026, 10, 31)
+    # What reached the bank: the sale less the fee.
+    assert found.gross_amount == Decimal("72500.00")
+    assert found.counterparty_name == "Bygdemeieriet AS"
+    assert not any("summerer seg ikke" in warning for warning in found.warnings)
+
+
+#: A slaughterhouse's settlement in the shape Fatland prints its «Avregning»:
+#: the name set by a logo over two lines, the register spelt «Foretagsreg» with
+#: the number spaced and «MVA» behind it, no word for the trade anywhere, the
+#: varenr and the skrottnr as the first two columns, and the sum, the VAT and the
+#: total in a column too narrow for six figures, so each wraps at its thousands
+#: space. Figures invented; the layout is the one that came back wrong.
+SLAKTEAVREGNING = """BYGDE
+Slakteri AS
+Slakterivegen 250
+4300 Sandnes
+Telefon: 51 00 00 00
+Telefaks: 51 00 00 01
+Foretagsreg: NO 910 000 039 MVA
+Avregning nr. 01234567
+Dato: 2026-10-08
+Leverandørnr: 1234
+Produsentnr: 1111222200
+Kommune 1119
+Utbetalingsdato:2026-10-20
+NORDMANN GARD Bankkonto: 12345678903
+NORDMANN 1
+4365 - NÆRBØ
+Varenr
+Øre/
+Skrottnr Tekst USR
+Kjøtt/
+Fett% Antall Vekt Pris Beløp
+162060 341 UNG OKSE O+ 3- 1,00 344,00 65,60 22 566,40
+162050 346 UNG OKSE O 3 1,00 325,90 63,20 20 596,88
+RetInmstor Rett innmelding storfe 2,00 669,90 2,00 1 339,80
+SfKuO_Bedr Kvalitetstilskudd storfe 2,00 669,90 9,20 6 163,08
+OmsAvgStor Omsetningsavgift Storfe 2,00 669,90 -0,50 -334,95
+Sum brutto 50
+331,21
+Moms 12 582,80
+Total 62
+914,01
+Vedtaket om tilskudd kan påklages til Statens
+landbruks-
+forvaltning, jf. forvaltningsloven kap. VI.
+Utbetalt:
+62 914,01
+Hittil i år avregnet: 740 109,52 Hittil i år utbetalt bank: 490 323,82
+"""
+
+
+def test_a_slaughterhouses_avregning_is_read_as_the_settlement_it_is() -> None:
+    """Fatland's slakteavregning for September 2026, the pilot's second settlement.
+
+    It came back as a purchase of 255 kroner, with 913 251 342 kroner of VAT,
+    from «Foretagsreg», and the model, offered only money-out categories, chose
+    a credit note on a slaughter settlement. Every field was ours to get wrong.
+    """
+    found = interpretation.read(
+        SLAKTEAVREGNING, today=date(THIS_YEAR, 11, 12), own_orgnr="910000012"
+    )
+    # «Total 62» over «914,01» is one figure, and the orgnr is not VAT.
+    assert found.gross_amount == Decimal("62914.01")
+    assert found.vat_amount == Decimal("12582.80")
+    assert found.net_amount == Decimal("50331.21")
+    assert found.vat_rate == Decimal("0.25")
+    # Varenr 162060 and skrottnr 341 pass the check digit together.
+    assert found.orgnrs == ("910000039",)
+    assert found.seller_name == "BYGDE Slakteri AS"
+    assert (found.invoice_number, found.number_kind) == ("01234567", "Avregning")
+    assert found.invoice_date == date(2026, 10, 8)
+    assert found.due_date == date(2026, 10, 20)
+
+    farm = interpretation.suggest(
+        SLAKTEAVREGNING,
+        today=date(THIS_YEAR, 11, 12),
+        own_orgnr="910000012",
+        own_name="Nordmann Gard",
+        reading=found,
+        farm=True,
+    )
+    assert farm.direction is CashFlowDirection.INN
+    assert farm.issued_by_buyer
+    assert farm.tax_code == "3"
+    assert farm.counterparty_orgnr == "910000039"
+    assert farm.description is not None
+    assert farm.description.startswith("Avregning 01234567")
+
+
+def test_an_avregning_is_a_settlement_only_when_it_pays_out_and_only_on_a_farm() -> None:
+    """«Avregning» is also the power company's word; what it says about the money differs."""
+    assert interpretation.issued_by_buyer(SLAKTEAVREGNING, farm=True)
+    assert not interpretation.issued_by_buyer(SLAKTEAVREGNING)
+    power = "Avregning strøm oktober\nÅ betale 1 200,00\nForfallsdato 20.11.2026"
+    assert not interpretation.issued_by_buyer(power, farm=True)

@@ -9,19 +9,24 @@ from myntos.api.v1 import (
     arsoppgjor,
     auth,
     bank,
+    bilag,
     cashflow,
     companies,
+    dimensjoner,
     enhetsregisteret,
     faktura,
     health,
     kontoplan,
     landbruk,
+    manuelt_bilag,
     members,
     mva,
     mva_justering,
     organizations,
     parties,
     saft,
+    saft_import,
+    saft_innlesing,
     skatt,
 )
 
@@ -38,10 +43,15 @@ api_router.include_router(enhetsregisteret.router)
 api_router.include_router(skatt.router)
 api_router.include_router(mva.router)
 api_router.include_router(saft.router)
+api_router.include_router(saft_import.router)
+api_router.include_router(saft_innlesing.router)
+api_router.include_router(bilag.router)
 api_router.include_router(account.router)
 api_router.include_router(bank.router)
 api_router.include_router(arsoppgjor.router)
+api_router.include_router(manuelt_bilag.router)
 api_router.include_router(kontoplan.router)
+api_router.include_router(dimensjoner.router)
 api_router.include_router(landbruk.router)
 api_router.include_router(mva_justering.router)
 api_router.include_router(agent.router)

@@ -247,3 +247,44 @@ def test_the_doubt_outranks_the_driftsmiddel_question() -> None:
     assert asked[0].text.startswith("Er dette «Varekjøp»")
     # And the model's own sentence is still last of the three.
     assert asked[-1].text == "Hva skal kortene brukes til?"
+
+
+def test_a_settlement_is_not_asked_whether_it_was_a_sale() -> None:
+    """The document said the buyer wrote it; asking if it was an owner's deposit is noise."""
+    asked = compose(
+        suggestion(
+            direction=CashFlowDirection.INN,
+            gross_amount=Decimal("72500.00"),
+            type_code="landbruk_melk",
+            tax_code="3",
+            issued_by_buyer=True,
+        ),
+        InvoiceReading(vat_rate=Decimal("0.25")),
+    )
+    assert asked == []
+    unrecognised = compose(
+        suggestion(
+            direction=CashFlowDirection.INN,
+            gross_amount=Decimal("72500.00"),
+            type_code="landbruk_melk",
+            tax_code="3",
+        ),
+        InvoiceReading(vat_rate=Decimal("0.25")),
+    )
+    assert [question.field for question in unrecognised] == ["type_code"]
+
+
+def test_feed_over_the_threshold_is_not_asked_about_as_an_asset() -> None:
+    """A month of kraftfôr is tens of thousands of kroner, and is eaten within the season."""
+    feed = compose(
+        suggestion(gross_amount=Decimal("64000.00"), type_code="landbruk_kraftfor", tax_code="1"),
+        InvoiceReading(vat_rate=Decimal("0.25")),
+    )
+    assert feed == []
+    # A purchase that may be a thing kept for years still is: two graphics
+    # cards at 12 639 each, the utlegg/ fixture.
+    goods = compose(
+        suggestion(gross_amount=Decimal("25278.00"), type_code="varekjop", tax_code="0"),
+        InvoiceReading(),
+    )
+    assert [question.field for question in goods] == ["type_code"]

@@ -55,9 +55,11 @@ Desktop.ini
 
 # --- Real bilag used as extraction fixtures (never commit) ---
 # regnaskaps_tests/ holds actual invoices, receipts and Finn/eBay/AliExpress
-# screenshots with real names, addresses, order numbers and card digits on them.
-# They are the reference set the extraction pipeline is measured against, and
-# they are other people's personal data: useful locally, never in the history.
+# screenshots with real names, addresses, order numbers and card digits on them,
+# and the farm pilot's SAF-T files and Tripletex postings: a sole trader's whole
+# books, which are personal data. They are the reference set the extraction
+# pipeline and the SAF-T import are measured against: useful locally, never in
+# the history.
 /regnaskaps_tests/
 
 # Claude Code's agent worktrees: full checkouts of this repository, which

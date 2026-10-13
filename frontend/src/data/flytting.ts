@@ -308,7 +308,7 @@ export const sjekkliste: Steg[] = [
   {
     tittel: 'Flytt ved et periodeskille',
     tekst:
-      'Et årsskifte er best, et kvartalsskifte går fint. Å flytte midt i en mva-termin betyr at du må hente tall fra to systemer for å levere én melding.',
+      'Et årsskifte er best. Midt i et år henter Myntos årets bilag fra SAF-T-filen, og da er skillet mellom to mva-terminer det enkleste: terminene før sender det gamle programmet, resten sender du fra Myntos.',
   },
   {
     tittel: 'Fullfør lønnsåret i det gamle programmet',
@@ -334,9 +334,9 @@ export const sjekkliste: Steg[] = [
 
 /**
  * Hva som faktisk skjer i Myntos etterpå. Dette er dagens sannhet, ikke
- * planen: automatisk innlesing av SAF-T står i veikartet og er ikke bygget,
- * og en flytteguide som later som noe annet er verdiløs akkurat i det
- * øyeblikket noen prøver å følge den.
+ * planen: SAF-T-filene leses inn, tidligere år og året man står i, mens
+ * dokumentene bak bilagene ikke gjør det, og en flytteguide som later som noe
+ * annet er verdiløs akkurat i det øyeblikket noen prøver å følge den.
  */
 export const startISteg: Steg[] = [
   {
@@ -345,20 +345,30 @@ export const startISteg: Steg[] = [
       'Registrer deg, og legg inn selskapet med organisasjonsnummer. Kontoplan med næringsspesifikasjon, mva-koder og regnskapsår settes opp automatisk.',
   },
   {
-    tittel: 'Legg inn kunder og leverandører',
+    tittel: 'Last opp SAF-T-filene under «Hent regnskapet fra et annet program»',
     tekst:
-      'Har du en kundeliste fra det gamle programmet, er dette stedet den hører hjemme. Hver part får en balansekonto, slik SAF-T krever.',
+      'Én fil per regnskapsår, så langt tilbake du vil ha regnskapet i Myntos, og filen for året du står i fram til i dag. Myntos leser dem på serveren, så du kan lukke siden mens det pågår, og viser hva som blir ført: inngående balanse fra det første året, bilagene for hvert år, og kontoene, kundene og leverandørene som legges til.',
+  },
+  {
+    tittel: 'Se over og før',
+    tekst:
+      'Alt føres i én operasjon når du sier ja, med bilagsnumrene fra det gamle programmet. Bilagene ser du under Bilag. Fører du i begge programmene en stund, sammenligner du dem på samme side med en ny fil så ofte du vil. Tidligere år som er ferdige, avslutter du under Årsavslutning.',
+  },
+  {
+    tittel: 'Legg inn nye kunder og leverandører når de kommer',
+    tekst:
+      'De som står i SAF-T-filene, kom med derfra. Nye legger du inn når du handler med dem. Hver part får en balansekonto, slik SAF-T krever.',
   },
   {
     tittel: 'Før fra og med datoen du flyttet',
     tekst:
-      'Registrer inn- og utbetalinger med type og PDF. Historikken fram til flyttedatoen ligger i SAF-T-filen og bilagsarkivet fra det gamle programmet, og den skal ikke føres på nytt.',
+      'Registrer inn- og utbetalinger med type og PDF. Dokumentasjonen for bilagene som ble hentet, ligger i bilagsarkivet til det gamle programmet: ta vare på det sammen med SAF-T-filene.',
   },
 ];
 
 /** Statusen på import, skrevet én gang og gjenbrukt på alle sidene. */
 export const importStatus = {
-  tittel: 'Automatisk import er ikke bygget ennå',
+  tittel: 'Myntos henter regnskapet fra SAF-T-filene, også tidligere år',
   tekst:
-    'Myntos kan i dag ikke lese en SAF-T-fil inn i regnskapet ditt, og inngående balanse legges ikke inn via skjermbildene. Det står i veikartet, og datamodellen er formet for det, men det virker ikke i dag. Derfor handler guidene her om å få dataene trygt ut av det gamle programmet, og om å begynne i Myntos på et periodeskille. Det er den flyttingen som faktisk lar seg gjennomføre nå.',
+    'Last opp SAF-T-filene under «Hent regnskapet fra et annet program», én per regnskapsår. Myntos henter kontoene, kundene og leverandørene, inngående balanse fra det første året og bilagene for hvert år, og året du står i fram til datoen filen ble tatt ut. Det som ikke er i SAF-T, kommer ikke med: dokumentene bak bilagene (PDF-ene), lønn, timer og prosjekter. Derfor handler guidene her også om å få dataene trygt ut av det gamle programmet før du sier det opp.',
 };

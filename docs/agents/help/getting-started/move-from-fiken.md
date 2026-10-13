@@ -59,9 +59,16 @@ article's steps 6 to 9.
   invoices and Excel overviews; payslips, if they ran payroll.
 - **Starting on 1 January**, the SAF-T file up to and including 31 December
   the year before is the starting point.
-- **Myntos does not import the SAF-T file.** It stays the record of the
-  years in Fiken. The opening balance is entered on «Inngående balanse»:
-  [Enter an opening balance](https://myntos.no/llms/help/opening-balance-and-year-end/enter-an-opening-balance.md).
+- **Myntos brings the books over from the SAF-T files, earlier years too.** On
+  «Hent regnskapet fra et annet program», upload one file per year, as far
+  back as they want the books in Myntos, and the running year's file up to
+  today. Myntos reads them on its server (the page can be closed meanwhile),
+  shows what will be posted, and posts the opening balance from the earliest
+  file and every year's vouchers, under Fiken's own voucher numbers. In a
+  parallel run, a fresh file later shows whether the two agree:
+  [Bring your books over from the previous program's SAF-T files](https://myntos.no/llms/help/opening-balance-and-year-end/bring-your-books-over-from-saf-t-files.md).
+  The documents behind the vouchers (the PDFs) are not in SAF-T and stay in
+  Fiken's archive.
 
 ## Related
 

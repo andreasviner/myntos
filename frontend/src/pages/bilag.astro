@@ -1,0 +1,447 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Bilag | Myntos"
+  description="Alle bilag som er ført i regnskapet, med linjene, og hva som har gått inn og ut på en konto."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Bilag</p>
+      {/* Selskapet er overskriften: listen er ett regnskaps bilag. */}
+      <h1 data-session-company></h1>
+      <p class="muted orgnr" id="orgnr"></p>
+    </div>
+  </header>
+
+  <p class="lead">
+    Alt som er ført, uansett hvor det kom fra: betalinger, fakturaer, mva-oppgjør, inngående
+    balanse, bilag hentet fra det gamle programmet, manuelle bilag og årsavslutningen. Velg en
+    konto for å se hva som har gått inn og ut av den, med saldo.
+  </p>
+
+  <p class="status" id="page-status" hidden></p>
+  <div class="empty" id="loading">Henter …</div>
+
+  {/* Utvalget. Står i adressen også, så en lenke fra innlesingen
+      (?journal=IMPORT) eller fra oversikten (?konto=1920) åpner riktig utvalg. */}
+  <form class="card filters" id="filters" hidden novalidate>
+    <div class="filter-row">
+      <label class="field">
+        <span>År</span>
+        <select id="f-year"></select>
+      </label>
+      <label class="field">
+        <span>Måned</span>
+        <select id="f-month">
+          <option value="">Hele året</option>
+          <option value="1">Januar</option>
+          <option value="2">Februar</option>
+          <option value="3">Mars</option>
+          <option value="4">April</option>
+          <option value="5">Mai</option>
+          <option value="6">Juni</option>
+          <option value="7">Juli</option>
+          <option value="8">August</option>
+          <option value="9">September</option>
+          <option value="10">Oktober</option>
+          <option value="11">November</option>
+          <option value="12">Desember</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Ført fra</span>
+        <select id="f-journal"><option value="">Alle</option></select>
+      </label>
+      <label class="field">
+        <span>Konto</span>
+        <input type="text" id="f-account" inputmode="numeric" placeholder="For eksempel 1920" />
+      </label>
+      <label class="field grow">
+        <span>Søk</span>
+        <input type="search" id="f-search" placeholder="Tekst eller bilagsnummer" />
+      </label>
+    </div>
+    <div class="actions">
+      <button type="submit" class="btn btn-primary">Vis</button>
+      <button type="button" class="btn btn-ghost" id="f-bank">Inn og ut av banken (1920)</button>
+      <button type="button" class="btn btn-ghost" id="f-clear">Nullstill</button>
+    </div>
+  </form>
+
+  <section class="card" id="result" hidden aria-live="polite">
+    <p class="summary" id="summary"></p>
+    <div class="table-scroll">
+      <table class="data" id="vouchers">
+        <thead id="vouchers-head"></thead>
+        <tbody id="vouchers-body"></tbody>
+      </table>
+    </div>
+    <p class="empty" id="none" hidden>Ingen bilag i utvalget.</p>
+    <div class="actions">
+      <button type="button" class="btn btn-ghost" id="more" hidden>Vis flere</button>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .page-head {
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .orgnr {
+    margin: 0.2rem 0 0;
+  }
+  .lead {
+    max-width: 46rem;
+  }
+  .filter-row {
+    display: grid;
+    gap: 0 0.9rem;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    align-items: end;
+  }
+  .filter-row .grow {
+    grid-column: span 2;
+  }
+  @media (max-width: 40rem) {
+    .filter-row .grow {
+      grid-column: auto;
+    }
+  }
+  .filter-row .field {
+    margin-bottom: 0.4rem;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
+  }
+  .summary {
+    margin: 0 0 0.75rem;
+  }
+
+  /* Radene bygges av skriptet, så reglene når dem gjennom :global(),
+     forankret i tabellen som står i malen. */
+  #vouchers :global(.journal) {
+    display: inline-block;
+    padding: 0.05rem 0.5rem;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--border-strong);
+    font-size: 0.76rem;
+    font-weight: 650;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  #vouchers :global(.journal[data-journal='IMPORT']) {
+    border-color: var(--gold);
+    background: var(--gold-soft);
+    color: var(--fg);
+  }
+  #vouchers :global(.source) {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--faint);
+  }
+  #vouchers :global(tr.lines-row > td) {
+    background: var(--bg-tint);
+    padding-top: 0.2rem;
+  }
+  #vouchers :global(.lines) {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.86rem;
+  }
+  #vouchers :global(.lines td) {
+    padding: 0.3rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  #vouchers :global(.lines .muted) {
+    color: var(--faint);
+  }
+  #vouchers :global(.voucher-no) {
+    font-family: var(--font-numeric);
+    font-size: 0.85rem;
+    white-space: nowrap;
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    listFinancialYears,
+    listVouchers,
+    type Company,
+    type Voucher,
+    type VoucherPage,
+  } from '../lib/api';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import { isoDate, kroner, orgnummer } from '../lib/format';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+
+  /** Kortere navn på journalene enn de lagrede, til merkelappen på raden. */
+  const JOURNAL_LABELS: Record<string, string> = {
+    KONTANT: 'Betaling',
+    SALG: 'Faktura',
+    MVA: 'Mva-oppgjør',
+    IB: 'Inngående balanse',
+    IMPORT: 'Tidligere program',
+    MANUELT: 'Manuelt bilag',
+    AVS: 'Årsavslutning',
+  };
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const year = el<HTMLSelectElement>('#f-year');
+  const month = el<HTMLSelectElement>('#f-month');
+  const journal = el<HTMLSelectElement>('#f-journal');
+  const account = el<HTMLInputElement>('#f-account');
+  const search = el<HTMLInputElement>('#f-search');
+  const body = el<HTMLTableSectionElement>('#vouchers-body');
+  const more = el<HTMLButtonElement>('#more');
+
+  let company: Company;
+  let shown = 0;
+  let total = 0;
+
+  function cell(text: string, className?: string): HTMLTableCellElement {
+    const td = document.createElement('td');
+    td.textContent = text;
+    if (className !== undefined) td.className = className;
+    return td;
+  }
+
+  function journalLabel(code: string, description: string): string {
+    return JOURNAL_LABELS[code] ?? description;
+  }
+
+  function filter(offset = 0) {
+    return {
+      year: Number(year.value),
+      month: month.value ? Number(month.value) : null,
+      journal: journal.value || null,
+      account: account.value.trim() || null,
+      search: search.value.trim() || null,
+      offset,
+    };
+  }
+
+  /** Utvalget i adressen, så det kan lenkes til og overlever en omlasting. */
+  function remember(): void {
+    const query = new URLSearchParams();
+    query.set('aar', year.value);
+    if (month.value) query.set('maaned', month.value);
+    if (journal.value) query.set('journal', journal.value);
+    if (account.value.trim()) query.set('konto', account.value.trim());
+    if (search.value.trim()) query.set('sok', search.value.trim());
+    window.history.replaceState(null, '', `${window.location.pathname}?${query.toString()}`);
+  }
+
+  function heading(withAccount: boolean): void {
+    const row = document.createElement('tr');
+    const columns: [string, boolean][] = withAccount
+      ? [['Dato', false], ['Bilag', false], ['Tekst', false], ['Ført fra', false], ['Inn', true], ['Ut', true], ['Saldo', true]]
+      : [['Dato', false], ['Bilag', false], ['Tekst', false], ['Ført fra', false], ['Beløp', true]];
+    for (const [text, numeric] of columns) {
+      const th = document.createElement('th');
+      th.textContent = text;
+      if (numeric) th.className = 'num';
+      row.append(th);
+    }
+    el('#vouchers-head').replaceChildren(row);
+  }
+
+  function linesRow(voucher: Voucher, span: number): HTMLTableRowElement {
+    const row = document.createElement('tr');
+    row.className = 'lines-row';
+    row.hidden = true;
+    const td = document.createElement('td');
+    td.colSpan = span;
+    const table = document.createElement('table');
+    table.className = 'lines';
+    for (const line of voucher.lines) {
+      const tr = document.createElement('tr');
+      const extra = [line.party_name, line.tax_code ? `mva-kode ${line.tax_code}` : null, ...line.dimensions]
+        .filter((part): part is string => part !== null)
+        .join(' · ');
+      tr.append(
+        cell(`${line.account_number} ${line.account_description}`),
+        cell(line.description ?? ''),
+        cell(extra, 'muted'),
+        cell(Number(line.debit) === 0 ? '' : kroner(line.debit), 'num'),
+        cell(Number(line.credit) === 0 ? '' : kroner(line.credit), 'num'),
+      );
+      table.append(tr);
+    }
+    td.append(table);
+    if (voucher.created_by_name !== null) {
+      const who = document.createElement('p');
+      who.className = 'source';
+      who.textContent = `Ført av ${voucher.created_by_name}`;
+      td.append(who);
+    }
+    row.append(td);
+    return row;
+  }
+
+  function voucherRows(voucher: Voucher, withAccount: boolean): HTMLTableRowElement[] {
+    const row = document.createElement('tr');
+    row.dataset.reversed = String(voucher.reversed_by_id !== null);
+    const span = withAccount ? 7 : 5;
+    const lines = linesRow(voucher, span);
+
+    const number = document.createElement('td');
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'row-toggle voucher-no';
+    toggle.textContent = voucher.voucher_no;
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.setAttribute('aria-label', `Vis linjene i bilag ${voucher.voucher_no}`);
+    toggle.addEventListener('click', () => {
+      const open = toggle.getAttribute('aria-expanded') !== 'true';
+      toggle.setAttribute('aria-expanded', String(open));
+      lines.hidden = !open;
+    });
+    number.append(toggle);
+
+    const text = cell(voucher.description);
+    if (voucher.source_document !== null) {
+      const source = document.createElement('span');
+      source.className = 'source';
+      source.textContent = voucher.source_document;
+      text.append(source);
+    }
+    const from = document.createElement('td');
+    const badge = document.createElement('span');
+    badge.className = 'journal';
+    badge.dataset.journal = voucher.journal;
+    badge.textContent = journalLabel(voucher.journal, voucher.journal_description);
+    from.append(badge);
+
+    row.append(cell(isoDate(voucher.transaction_date)), number, text, from);
+    if (withAccount) {
+      const movement = Number(voucher.movement ?? '0');
+      row.append(
+        cell(movement > 0 ? kroner(voucher.movement ?? '0') : '', 'num amount-in'),
+        cell(movement < 0 ? kroner(String(-movement)) : '', 'num amount-out'),
+        cell(voucher.balance === null ? '' : kroner(voucher.balance), 'num'),
+      );
+    } else {
+      row.append(cell(kroner(voucher.total), 'num'));
+    }
+    return [row, lines];
+  }
+
+  function render(page: VoucherPage, append: boolean): void {
+    const withAccount = page.account_number !== null;
+    if (!append) {
+      heading(withAccount);
+      body.replaceChildren();
+      shown = 0;
+    }
+    total = page.total_count;
+    for (const voucher of page.vouchers) body.append(...voucherRows(voucher, withAccount));
+    shown += page.vouchers.length;
+
+    // Journalene teller hele året, uansett utvalg, så valget kan ikke føre til
+    // en tom liste uten at tallet sa det.
+    const chosen = journal.value;
+    journal.replaceChildren(new Option('Alle', ''));
+    for (const item of page.journals) {
+      const option = new Option(`${journalLabel(item.code, item.description)} (${item.vouchers})`, item.code);
+      option.selected = item.code === chosen;
+      journal.append(option);
+    }
+
+    const count = `${total.toLocaleString('nb-NO')} ${total === 1 ? 'bilag' : 'bilag'}`;
+    el('#summary').textContent = withAccount
+      ? `Konto ${page.account_number} ${page.account_description ?? ''}: ${count}. Saldo før ` +
+        `perioden ${kroner(page.opening_balance ?? '0')}, etter ${kroner(page.closing_balance ?? '0')}.`
+      : `${count}${shown < total ? `, viser ${shown}` : ''}.`;
+    show(el('#none'), total === 0);
+    show(more, shown < total);
+    show(el('#result'), true);
+  }
+
+  async function run(offset = 0): Promise<void> {
+    setStatus(pageStatus, '');
+    remember();
+    try {
+      render(await listVouchers(company.id, filter(offset)), offset > 0);
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet bilagene.');
+    }
+  }
+
+  el<HTMLFormElement>('#filters').addEventListener('submit', (event) => {
+    event.preventDefault();
+    void run();
+  });
+  el('#f-bank').addEventListener('click', () => {
+    account.value = '1920';
+    journal.value = '';
+    void run();
+  });
+  el('#f-clear').addEventListener('click', () => {
+    month.value = '';
+    journal.value = '';
+    account.value = '';
+    search.value = '';
+    void run();
+  });
+  more.addEventListener('click', () => {
+    more.disabled = true;
+    void run(shown).finally(() => {
+      more.disabled = false;
+    });
+  });
+
+  async function load(): Promise<void> {
+    if (!canInCompany(company, 'ledger:read')) {
+      setStatus(pageStatus, 'Du har ikke tilgang til å lese regnskapet.');
+      return;
+    }
+    const years = (await listFinancialYears(company.id)).map((item) => item.year).sort((a, b) => b - a);
+    const params = new URLSearchParams(window.location.search);
+    const thisYear = new Date().getFullYear();
+    const wanted = Number(params.get('aar')) || (years.includes(thisYear) ? thisYear : years[0] ?? thisYear);
+    year.replaceChildren(...years.map((value) => new Option(String(value), String(value), false, value === wanted)));
+    if (!years.includes(wanted)) year.append(new Option(String(wanted), String(wanted), true, true));
+    month.value = params.get('maaned') ?? '';
+    account.value = params.get('konto') ?? '';
+    search.value = params.get('sok') ?? '';
+    const journalWanted = params.get('journal');
+    if (journalWanted) journal.append(new Option(journalWanted, journalWanted, true, true));
+    show(el('#filters'), true);
+    await run();
+  }
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      const current = currentCompany(companies);
+      if (current === undefined) return;
+      company = current;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      await load();
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet selskapet.');
+    } finally {
+      el('#loading').hidden = true;
+    }
+  });
+</script>

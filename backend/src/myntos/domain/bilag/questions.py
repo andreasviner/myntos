@@ -57,7 +57,13 @@ from myntos.domain.bilag.interpretation import (
     InvoiceReading,
     InvoiceSuggestion,
 )
-from myntos.domain.ledger.cashflow import CashFlowDirection, CashFlowType, get_type
+from myntos.domain.ledger import landbruk
+from myntos.domain.ledger.cashflow import (
+    CASH_FLOW_TYPES,
+    CashFlowDirection,
+    CashFlowType,
+    get_type,
+)
 
 #: How many are shown. Three is what fits above a text box without the box
 #: looking like an exam.
@@ -89,6 +95,15 @@ def _written(value: Decimal) -> str:
     # The same spelling myntos.domain.bilag.interpretation._written uses, so a
     # figure quoted in a question reads identically to the one in the field.
     return f"{value:,.2f}".replace(",", "\u00a0").replace(".", ",")
+
+
+def _never_an_asset(type_code: str | None) -> bool:
+    entry = CASH_FLOW_TYPES.get(type_code) if type_code is not None else None
+    if entry is None:
+        return False
+    if entry.reverses is not None or entry.deducts_from_sale:
+        return True
+    return entry.segment == landbruk.SEGMENT and entry.account_number.startswith("4")
 
 
 def compose(
@@ -141,9 +156,14 @@ def compose(
     #    the same for three very different postings, and this is the question
     #    the `finn/` fixture exists to demonstrate: an owner covering a purchase
     #    out of pocket looks exactly like a sale on a bank statement.
+    #
+    #    Not on a settlement the buyer wrote: the document has already said it
+    #    is a sale, and asking a farmer whether the dairy's melkeoppgjør might
+    #    be an owner's deposit reads as not having read it.
     elif (
         suggestion.direction is CashFlowDirection.INN
         and suggestion.party_id is None
+        and not suggestion.issued_by_buyer
         and not has_note
     ):
         asked.append(
@@ -215,10 +235,17 @@ def compose(
     #    neither card is — which is precisely the `utlegg/` fixture. The register
     #    cannot tell one expensive thing from two ordinary ones, and the person
     #    who bought them can.
+    #
+    #    Not for what can never be an asset: a farm's feed, fertiliser and vet,
+    #    which are used up within the season and come in invoices over the
+    #    threshold every month (the pilot farm's first Coop samlefaktura, one
+    #    month of kraftfôr, was asked whether it was one item), nor a kreditnota
+    #    or a deduction on a settlement, which are not purchases at all.
     if (
         suggestion.gross_amount is not None
         and suggestion.gross_amount >= CAPITALISATION_THRESHOLD
         and suggestion.direction is CashFlowDirection.UT
+        and not _never_an_asset(suggestion.type_code)
     ):
         asked.append(
             Question(

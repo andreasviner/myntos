@@ -983,6 +983,12 @@ class AgentApproval(Base):
     filing_type: Mapped[str | None] = mapped_column(String(32))
     filing_year: Mapped[int | None] = mapped_column(Integer)
     filing_period: Mapped[int | None] = mapped_column(Integer)
+    # Which of the company's meldinger, by its meldingskategori, when the
+    # company files two (docs/integrations/mva.md, «Two returns»): a farm with
+    # other business beside it has a «3. termin» in both, and the request has
+    # to say which. NULL is the main melding, which is all a request made
+    # before there could be two ever meant.
+    filing_category: Mapped[str | None] = mapped_column(String(32))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

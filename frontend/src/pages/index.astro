@@ -212,6 +212,23 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
         one by one is noise, and «laster» once is the fact.
     */}
     <div id="overview" hidden>
+      {/* Veien inn for den som kommer fra et annet program, der den trengs:
+          på oversikten til et regnskap som ikke har noe i seg ennå, og så
+          lenge en innlesing er i gang eller venter på å bli sett over. Den
+          sto bare i notatet nederst, og en bonde som hadde lastet opp filene
+          fant verken dem eller bilagene igjen. */}
+      <div class="card start-import" id="start-import" hidden>
+        <div>
+          <h2 class="card-title" id="start-import-title">Kommer du fra et annet regnskapsprogram?</h2>
+          <p class="card-hint" id="start-import-text">
+            Last opp SAF-T-filene fra Tripletex, Fiken, PowerOffice eller et annet program. Myntos
+            henter kontoene, kundene og leverandørene, inngående balanse og bilagene, også for
+            tidligere år, og gjør jobben på serveren mens du gjør noe annet.
+          </p>
+        </div>
+        <a class="btn btn-primary" id="start-import-link" href="/tidligere-program/">Hent regnskapet</a>
+      </div>
+
       <div class="grid stats">
         <div class="card stat">
           <p class="stat-label">Inn i år</p>
@@ -283,10 +300,17 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
           </table>
         </div>
         <p class="empty" id="recent-empty" hidden>
-          Ingenting ført ennå. <a href="/kontantstrom/">Registrer den første betalingen</a>.
+          Ingen betalinger registrert i Myntos ennå.
+          <a href="/kontantstrom/">Registrer den første betalingen</a>, eller se
+          <a href="/bilag/">alle bilag</a>, også de som er hentet fra et annet program.
         </p>
+        {/* «Siste bevegelser» er betalingene registrert i Myntos. Alt annet som
+            er ført (inngående balanse, bilag fra det gamle programmet,
+            manuelle bilag) står under Bilag, og den lenken står her fordi det
+            er her man leter. */}
         <p class="card-hint see-all">
           <a href="/kontantstrom/">Se hele kontantstrømmen →</a>
+          <a href="/bilag/">Se alle bilag →</a>
         </p>
       </div>
 
@@ -333,9 +357,10 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
         <a href="/bank/">Bankavstemming</a>.
         {/* Samme begrunnelse: begge gjøres én gang i året, eller én gang i
             regnskapets liv, og hører hjemme ved årets tall, ikke i menyen. */}
-        Balansen fra et tidligere system fører du under
-        <a href="/inngaende-balanse/">Inngående balanse</a>, og et år som er over avslutter du
-        under <a href="/arsavslutning/">Årsavslutning</a>.
+        Regnskapet fra et annet program, tidligere år og året du står i, henter du under
+        <a href="/tidligere-program/">Hent regnskapet fra et annet program</a>, og en balanse
+        du skriver inn selv fører du under <a href="/inngaende-balanse/">Inngående balanse</a>.
+        Et år som er over avslutter du under <a href="/arsavslutning/">Årsavslutning</a>.
       </p>
     </div>
   </section>
@@ -601,7 +626,23 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
     color: var(--muted);
   }
   .see-all {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.4rem;
     margin-top: 0.9rem;
+  }
+  .start-import {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem 1.5rem;
+    margin-bottom: 1rem;
+    background: linear-gradient(140deg, var(--accent-soft), var(--surface) 65%);
+    border-color: var(--accent-line);
+  }
+  .start-import > div {
+    max-width: 44rem;
   }
 </style>
 
@@ -610,6 +651,7 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
     ApiError,
     getSummary,
     listCashFlow,
+    listSaftImports,
     type CashFlowEntry,
     type Company,
     type Session,
@@ -620,7 +662,8 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
   import { foldCorrections, foldNote } from '../lib/corrections';
   import { el, setStatus, show } from '../lib/dom';
   import { isoDate, kroner, orgnummer } from '../lib/format';
-  import { can, loadSession, setActiveCompany } from '../lib/session';
+  import { currentImport, isWorking } from '../lib/saftimport';
+  import { can, canInCompany, loadSession, setActiveCompany } from '../lib/session';
 
   const RECENT_LIMIT = 6;
 
@@ -751,6 +794,42 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
     renderRecent(recent);
     overview.hidden = false;
     settled();
+    // Bare når det kan bety noe: et regnskap uten registrerte betalinger, for
+    // den som kan føre. Én forespørsel til, og bare da.
+    if (recent.length === 0 && canInCompany(company, 'ledger:write')) {
+      void listSaftImports(company.id)
+        .then((imports) => renderImportInvite(imports))
+        .catch(() => {
+          // Kortet er en snarvei, ikke en del av oversikten: uten svar står det ikke.
+        });
+    }
+  }
+
+  function renderImportInvite(imports: Awaited<ReturnType<typeof listSaftImports>>): void {
+    const job = currentImport(imports);
+    const card = el('#start-import');
+    const title = el('#start-import-title');
+    const text = el('#start-import-text');
+    const link = el<HTMLAnchorElement>('#start-import-link');
+    if (job === null) {
+      show(card, true);
+      return;
+    }
+    if (job.status === 'posted') return;
+    if (isWorking(job)) {
+      title.textContent = job.status === 'posting' ? 'Myntos fører regnskapet' : 'Myntos leser SAF-T-filene';
+      text.textContent = `${job.step ?? 'Arbeidet pågår.'} Det skjer på serveren; du kan gjøre noe annet imens.`;
+      link.textContent = 'Se innlesingen';
+    } else if (job.status === 'ready') {
+      title.textContent = 'SAF-T-filene er lest';
+      text.textContent = 'Se over hva som blir ført, og før det når du er klar.';
+      link.textContent = 'Se over og før';
+    } else {
+      title.textContent = 'SAF-T-filene kunne ikke leses';
+      text.textContent = job.error ?? 'Last dem opp på nytt.';
+      link.textContent = 'Se hva som gikk galt';
+    }
+    show(card, true);
   }
 
   /**

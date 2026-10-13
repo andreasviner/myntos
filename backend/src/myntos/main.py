@@ -20,6 +20,7 @@ from myntos.api.errors import (
     unhandled_error_middleware,
 )
 from myntos.api.v1.router import api_router
+from myntos.api.v1.saft_innlesing import get_import_sessions
 from myntos.auth.approvals import ApprovalHeld
 from myntos.core.config import get_settings
 from myntos.core.security import security_headers_middleware
@@ -28,6 +29,7 @@ from myntos.domain.faktura.errors import FakturaError
 from myntos.domain.identity.errors import IdentityError
 from myntos.domain.ledger.errors import LedgerError
 from myntos.integrations.brreg import BrregError
+from myntos.saft import jobs
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +53,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await connection.execute(text("select 1"))
     except Exception:  # startup must survive a database that is briefly unreachable
         logger.warning("Could not reach the database at startup", exc_info=True)
+    # SAF-T imports a restart stopped halfway start again (myntos.saft.jobs).
+    # Through the dependency, so a test's database is the one looked in.
+    sessions = app.dependency_overrides.get(get_import_sessions, get_import_sessions)
+    jobs.resume_in_background(sessions)
     yield
 
 

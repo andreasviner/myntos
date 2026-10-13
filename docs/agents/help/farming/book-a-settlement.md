@@ -12,8 +12,9 @@ or the timber buyer is the farm's own **sales document**: the buyer writes it
 for the farmer (bokføringsforskriften § 5-2-1). So it is money in, even with
 the buyer's name at the top. What the buyer pays is the sale less what it
 deducted: omsetningsavgift, the share in the cooperative (andelsinnskudd), feed
-it sold the farm. Each of those is booked as a line of its own, so the sale and
-its VAT stay at the full amount.
+it sold the farm. Each of those is booked as a line of its own, so the sale, the
+VAT and every deduction land where they belong, and the VAT in the books is the
+VAT printed on the settlement.
 
 ## They might ask
 
@@ -37,12 +38,16 @@ its VAT stay at the full amount.
 3. Check «Hva gjaldt det?»: «Melkeoppgjør», «Slakteoppgjør», «Kornoppgjør og
    salg av frø» or «Tømmeroppgjør og salg av ved».
 4. Click «Del opp i flere linjer». The first line is the sale; set its «Beløp
-   inkl. mva» to the **gross** sale with VAT as the settlement shows it, not
-   the amount paid out.
+   inkl. mva» to the sale with VAT as the settlement shows it, not the amount
+   paid out. On a melkeoppgjør the posts down to «Netto avregnet» (milk price,
+   supplements, omsetningsavgift) are the sale, and the VAT is calculated on
+   that net: the line is the net plus 25 %, which is the settlement's first
+   «Beløp inkl. mva.» once the pristilskudd is taken out as its own line.
 5. Add a line for each deduction with «Legg til linje»:
-   - «Trekk: omsetningsavgift og forskningsavgift». On a slaughter or grain
-     settlement, choose 3041 or 3001 under «Konto» on that line, so it reduces
-     the right sale.
+   - «Trekk: omsetningsavgift og forskningsavgift», only if the sale line was
+     entered before the levy. It has 25 % VAT, and its «Beløp inkl. mva» is the
+     levy plus 25 %. On a slaughter or grain settlement, choose 3041 or 3001
+     under «Konto» on that line, so it reduces the right sale.
    - «Trekk: andelsinnskudd i samvirke» for the share kept back.
    - «Kraftfôr» for feed set off, with its own 25 % VAT.
    - «Husdyrkontroll» if it is deducted.
@@ -66,8 +71,24 @@ its VAT stay at the full amount.
 - Milk delivered to the dairy, slaughter animals, live animals and grain are
   sold at **25 %** VAT, not 15 %: they are not food until processed. The types
   propose 25 %; keep it unless the settlement says otherwise.
-- The omsetningsavgift is the farmer's own levy that the buyer collects. It
-  carries no VAT, and the sale's VAT is still calculated on the full price.
+- The omsetningsavgift is the farmer's own levy that the buyer collects, and
+  the dairy and the slaughterhouse calculate the VAT on the price after it.
+  That is why «Trekk: omsetningsavgift og forskningsavgift» has 25 %: the VAT
+  in the books must be the VAT on the settlement, which is the farm's sales
+  document. If a settlement shows VAT on the price before the levy, set the
+  line's mva to 0.
+- Posts printed below the VAT line, such as «Medlemsavg HK» for
+  husdyrkontrollen, have their own VAT and are their own lines
+  («Husdyrkontroll»).
+- A slaughter settlement where every post has the same 25 % (Fatland's
+  «Avregning»: the animals, «kilo pluss», the slaughterhouse's own
+  supplements, «Kvalitetstilskudd storfe» and «Omsetningsavgift» summed to
+  «Sum brutto», with «Moms» on that sum) can be one line: «Slakteoppgjør»,
+  with the amount paid out. The VAT then comes out exactly as the settlement
+  prints it, and there is no need to click «Del opp i flere linjer».
+- «Kvalitetstilskudd storfe» is paid by the state through the slaughterhouse
+  and has 25 % VAT on the settlement; keep it in the «Slakteoppgjør» line. It
+  is not a distriktstilskudd.
 - The share in the cooperative is not a cost: it stays the farmer's money, on
   account 1355, and is paid back when the farm stops delivering.
 - Tine's etterbetaling is booked as «Melkeoppgjør», in the year the annual

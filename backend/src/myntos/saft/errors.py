@@ -1,4 +1,4 @@
-"""Refusals from the SAF-T export.
+"""Refusals from the SAF-T export, and from reading another program's SAF-T file.
 
 Subclasses of :class:`~myntos.domain.ledger.errors.LedgerError` so the ledger's
 handler renders them; the status codes are in :mod:`myntos.api.errors`.
@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from myntos.domain.ledger.errors import LedgerError
 
 if TYPE_CHECKING:
+    from myntos.domain.arsoppgjor.findings import Finding as ImportFinding
     from myntos.saft.check import Finding
 
 
@@ -35,5 +36,38 @@ class SaftNotExportableError(SaftError):
     """
 
     def __init__(self, message: str, findings: list[Finding]) -> None:
+        super().__init__(message)
+        self.findings = findings
+
+
+class SaftImportError(SaftError):
+    """Base class for a SAF-T file that cannot be read into these books."""
+
+
+class InvalidSaftFileError(SaftImportError):
+    """The upload is not a SAF-T Financial file this reader can make sense of."""
+
+
+class SaftWrongCompanyError(SaftImportError):
+    """The file is another company's books.
+
+    Refused outright rather than reported as a finding: there is nothing in
+    another company's balances that belongs in this one's opening balance, and
+    showing them as lines to edit would invite exactly the mistake.
+    """
+
+
+class SaftWrongYearError(SaftImportError):
+    """The file covers a year that says nothing about this opening balance."""
+
+
+class InvalidVoucherImportError(SaftImportError):
+    """The year's vouchers cannot be posted from the file yet.
+
+    Carries the review's findings, the way an opening balance's refusal does:
+    which accounts and parties to add first, which vouchers do not balance.
+    """
+
+    def __init__(self, message: str, findings: list[ImportFinding]) -> None:
         super().__init__(message)
         self.findings = findings

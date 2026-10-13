@@ -1,0 +1,131 @@
+---
+title: Bring your books over from the previous program's SAF-T files
+description: How a person moving to Myntos from Tripletex, Fiken, PowerOffice, Visma or another program uploads that program's SAF-T files, one per year, on the page «Hent regnskapet fra et annet program», lets Myntos read them on the server, checks what will be posted and posts it, earlier years and the unfinished current year alike. Use when someone asks how to import SAF-T, whether earlier years or this year's vouchers can come over, why the import is slow, or whether they can leave the page while it runs.
+pages: /tidligere-program/
+skill: myntos-tidligere-program
+---
+
+# Bring your books over from the previous program's SAF-T files
+
+Every Norwegian accounting program exports **SAF-T files**, one per financial
+year, with the chart of accounts, every balance, the customers and suppliers and
+every voucher. Myntos reads them and brings **every year in them** over in one
+go: the opening balance (inngående balanse) from the earliest file, the
+accounts, customers, suppliers and avdelinger it needs, and each year's vouchers
+under the old program's own numbers. Earlier years are fine, as far back as the
+files go, and so is the year the person is in (its file runs to the day it was
+taken). The reading and the posting happen on Myntos's server: once the files
+are uploaded the person may close the page. Once posted, the vouchers cannot be
+edited, only corrected in the old program. The receipts and invoices behind
+them (the PDFs) are not in SAF-T and stay in the old program's archive, which
+the person must keep.
+
+## They might ask
+
+- «Kan Myntos hente inn regnskapet fra Tripletex?»
+- «Kan jeg ta med tidligere år også?»
+- «Jeg har lastet opp SAF-T-filene, men finner ikke bilagene»
+- «Må jeg holde siden åpen mens filene leses?»
+- "Can I import my SAF-T files into Myntos?"
+
+## Before they start
+
+- The role «Medlem», «Administrator» or «Eier». When the files need accounts
+  the chart of accounts does not have, only «Administrator» or «Eier» can post.
+- The SAF-T files from the old program: one per year, each from 1 January,
+  the years one after another with none missing, every year but the last one
+  whole. ZIP or XML, at most 200 MB each, in one part. Where to find them in
+  each program:
+  [Move your books to Myntos](https://myntos.no/llms/help/getting-started/move-your-books-to-myntos.md).
+- Nothing registered in Myntos yet for the months the files cover. If there is,
+  they choose a date before the first of those entries under «Flere valg» →
+  «Til og med (valgfritt)».
+
+## Steps
+
+1. Open `https://myntos.no/tidligere-program/`: the button «Hent regnskapet» on
+   «Oversikt» (shown while the books are empty), on «Inngående balanse», on
+   the move guides under «Kom i gang», or the link «Hent regnskapet fra et
+   annet program» in the note at the bottom of «Oversikt».
+2. In the card «Last opp SAF-T-filene», drag the files into the box «SAF-T-filer
+   fra det gamle programmet», or press it to choose them. They are listed with
+   their size; «Fjern» takes one out.
+3. Press «Last opp og les filene». A bar shows the upload; keep the page open
+   until it says «Lastet opp. Myntos leser filene nå.»
+4. The card «Myntos leser filene» shows how far it has come («Leser «2025.zip»
+   (1 av 2)»). **They may close the page now**: the work is on the server, and
+   the result is there when they come back (the overview shows «SAF-T-filene
+   er lest» with «Se over og før»).
+5. «Dette blir ført» shows the review:
+   - one sentence summing it up («Filene fra Tripletex gir 601 nye bilag for
+     2025–2026. Regnskapet i Myntos starter da i 2025, ikke i 2026.»);
+   - a row per year, with the period, the number of vouchers, the months, and
+     marks «Nytt år i Myntos», «Ikke ferdig» or «… hentet før»;
+   - what happens to the opening balance;
+   - under «Legges til i Myntos», tiles with how many accounts, customers and
+     suppliers, and avdelinger and products will be added. Each opens to a
+     short list, with «Søk i listen» when it is long;
+   - anything in red stops the post; «… merknader å lese» opens the notes.
+6. Press «Før … bilag» (it names the number). This cannot be undone. The card
+   shows «Myntos fører regnskapet» and may be closed again.
+7. «Regnskapet er hentet» says what was posted. From there: «Se bilagene»
+   (the vouchers on «Bilag»), «Inn og ut av banken», and «Avslutt …» for an
+   earlier year.
+8. Check the running year with a fresh file:
+   [Compare Myntos with the previous program](https://myntos.no/llms/help/opening-balance-and-year-end/compare-myntos-with-the-previous-program.md).
+
+«Forkast» throws away files read by mistake, before anything is posted.
+
+## The notes Myntos may show
+
+| The note starts | What it means |
+| --- | --- |
+| «Regnskapet i Myntos starter i …, ikke i …» | The files go further back than the books in Myntos did; those years are added |
+| «Filen for … har ingen saldoer per 1. januar …» | The books began in that year in the old program (the farm's Tripletex books began in June). Nothing to post as opening balance; everything is in the vouchers |
+| «Inngående balanse for … (bilag …) reverseres, og en ny føres per 1. januar …» | An opening balance posted for a later year is replaced by one from the earliest file, so nothing counts twice. Accounts the person had moved in it (the driftskreditt to 1920) are moved in the new one too |
+| «Årene … er ferdige i det gamle programmet, men åpne i Myntos.» | Close them under «Årsavslutning», oldest first: [What closing a year locks](https://myntos.no/llms/help/opening-balance-and-year-end/what-closing-a-year-locks.md) |
+| «Bilagene har mva, og Mva-siden i Myntos regner dem med …» | The old program filed those VAT returns. **Never send them again from Myntos**; mark the terms «Sendt fra et annet program» on the MVA page |
+| «… bilag i filen har linjer på flere datoer …» | Tripletex keeps an invoice and its payment in one voucher. Myntos posts each date as its own voucher, with the date after the number (2026-1-0109) |
+| «Filen fører mva på 2711 …» | Myntos keeps output VAT on 2700 and input VAT on 2710; the line's text keeps the old account |
+| «Saldoene i filen går ikke i null: differansen … er underskudd for …» | The old program had not moved the year before's result to equity; it is put on 2050 |
+| «Filen grupperer … som …, som ikke passer …» | A new account got Myntos's own post in the næringsspesifikasjon; the accountant can look at it under «Kontoplan» |
+
+## If something stops them
+
+| What they see | Why | What to do |
+| --- | --- | --- |
+| «Filene kunne ikke leses» with «… slutter …. Bare det siste året kan være uferdig» | A year before the last is cut short | Export that year whole, and upload again |
+| «filen for … mangler. Årene må komme etter hverandre …» | A year missing between two files | Upload the missing year too |
+| «… og … gjelder begge …» | Two files for one year | Upload one per year |
+| «filen er regnskapet til org.nr. …» | Another company's file | Choose the right company at the top, or export this company's |
+| «filen sier at den har … bilag, men Myntos fant …» | The download was cut short | Download the file again |
+| «SAF-T-filen er delt i … deler …» | The program split a large file | Export a shorter period |
+| «Myntos har allerede … bilag fra … til … som ikke kom fra filen.» (in red) | Payments already registered in Myntos for those months | «Forkast», upload again with «Til og med» the day before the first of them |
+| «Ingenting ble ført: regnskapet har endret seg siden filene ble lest.» | Something was registered between reading and posting | Read the new review, and post again if it is right |
+| «Før …» is greyed out, with «Bare en administrator eller eier kan legge til kontoer …» | The person is «Medlem» and the files need new accounts | Ask an administrator or owner to post it |
+| «Regnskapsåret … er avsluttet i Myntos …» | A year in the files is closed in Myntos | Reopen it under «Årsavslutning», or leave its file out |
+
+## Good to know
+
+- The vouchers are not listed under «Betaling», which shows payments
+  registered in Myntos. They are under «Bilag», where «Ført fra» → «Tidligere
+  program» picks them out:
+  [See every voucher in the books](https://myntos.no/llms/help/vouchers/see-every-voucher.md).
+  They count in every balance, the MVA page, the year-end and the SAF-T export.
+- Uploading the same files again brings only what is new; vouchers already
+  brought over are skipped. «Tidligere innlesinger» lists what was posted, and
+  when.
+- Myntos keeps the uploaded files only until they are posted or thrown away,
+  and at most 14 days. Keep them, and the old program's archive: they are the
+  documentation of those years.
+- An opening balance on its own, without vouchers, is entered on «Inngående
+  balanse»:
+  [Import the opening balance from a SAF-T file](https://myntos.no/llms/help/opening-balance-and-year-end/import-a-saf-t-file.md).
+
+## Related
+
+- [Compare Myntos with the previous program](https://myntos.no/llms/help/opening-balance-and-year-end/compare-myntos-with-the-previous-program.md)
+- [See every voucher in the books](https://myntos.no/llms/help/vouchers/see-every-voucher.md)
+- [Move your books to Myntos](https://myntos.no/llms/help/getting-started/move-your-books-to-myntos.md)
+- An agent with a key can do this through the API:
+  [myntos-tidligere-program](https://myntos.no/llms/skills/myntos-tidligere-program.md)

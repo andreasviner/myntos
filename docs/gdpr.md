@@ -25,6 +25,7 @@ any column that points at `app_user`, or the session list.
 | | Who chose an account's næringsspesifikasjon post (`account_grouping.chosen_by_user_id`) |
 | The tokens of every key the person made for an agent (`agent_token`), and the name of the program that last used each key (`agent_key.last_used_client`) | Each key the person made, stopped: its name, its company, its dates (`agent_key`), because a voucher registered through it says so (`gl_transaction.created_via_agent_key_id`) |
 | The files in requests those keys were still waiting to have approved (`agent_approval_file.content`) | The requests themselves, as a record of what was asked and decided (`agent_approval`, with `decided_by_user_id` SET NULL like every actor column) |
+| | SAF-T imports and who started and posted them (`saft_import`, actor columns SET NULL like every other: the vouchers it posted name their author themselves, so the row keeps no one's name). The uploaded files (`saft_import_file.content`) are the company's books, not the person's, and are emptied once posted, thrown away or 14 days old whatever happens to the person |
 | Every company and account membership | The person's **id and name**, on a tombstone row, when any of the above names them |
 | Invitations addressed to them, pending or accepted | Invitations they *sent* to somebody else |
 

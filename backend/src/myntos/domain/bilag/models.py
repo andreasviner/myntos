@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from myntos.core.clock import utc_now
@@ -171,3 +171,42 @@ class Attachment(Base):
     )
 
     transaction: Mapped[Transaction] = relationship()
+
+
+class VoucherExplanation(Base):
+    """Why a voucher was posted, in the words of the person who posted it.
+
+    A payment is documented by somebody else's paper: the receipt, the invoice,
+    the bank's statement. An accrual, a reclassification, a change in stock or a
+    correction has no such paper, because the company itself decided it, and
+    bokføringsforskriften § 5-12 asks that the documentation of such a
+    disposition "skal vise årsaken til at disposisjonen gjennomføres og
+    bokføres"; for an estimate, § 6-4 asks for the method and the assumptions.
+    This is that text, kept beside the voucher as the archive keeps a file.
+
+    Append-only like :class:`Attachment`, and for the same reason: bokføringsloven
+    § 10 says documentation is not changed after it is issued. There is no
+    update path. A reason that was wrong is answered by reversing the voucher
+    with a reason of its own, or by a correction whose replacement carries one.
+
+    One per voucher, written in the same request that posts it. No author or
+    time of its own: the voucher's ``created_by_user_id`` and
+    ``system_entry_date`` are both, since nothing writes one later. That also
+    keeps this table out of the account erasure's list (docs/gdpr.md): the
+    person it would name is already named by the voucher.
+
+    Generic on purpose. :mod:`myntos.domain.manuelt_bilag` is the first writer;
+    any other voucher a person posts without outside documentation (a
+    depreciation, a write-down) may carry one the same way.
+    """
+
+    __tablename__ = "voucher_explanation"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Denormalised from the voucher's journal, as on Attachment, so the tenancy
+    # check is one predicate on this table.
+    company_id: Mapped[int] = mapped_column(ForeignKey("company.id", ondelete="CASCADE"))
+    transaction_pk: Mapped[int] = mapped_column(
+        ForeignKey("gl_transaction.id", ondelete="CASCADE"), unique=True
+    )
+    text: Mapped[str] = mapped_column(Text)

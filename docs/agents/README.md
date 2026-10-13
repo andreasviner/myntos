@@ -58,12 +58,15 @@ search this folder for the old label.
 | `myntos-godkjenning` | Requests that wait for the person's approval, and asking the person to file |
 | `myntos-selskap` | Which company, its register data, its financial years, Enhetsregisteret lookups |
 | `myntos-kontantstrom` | Payments in and out, proposals read off a bilag, the bilag archive, corrections |
+| `myntos-bilag` | Every posted voucher, from every journal; one account's movements with its balance |
 | `myntos-faktura` | Sales invoices and credit notes |
 | `myntos-parter` | Customers and suppliers |
 | `myntos-bank` | Bank statements, matching lines, a voucher for a bank line |
 | `myntos-mva` | The VAT period, its review, the settings |
 | `myntos-mva-justering` | VAT adjustments (spesifikasjoner) |
 | `myntos-inngaende-balanse` | The opening balance |
+| `myntos-tidligere-program` | The previous program's books from its SAF-T files, read and posted on the server, earlier years too; and the two programs compared |
+| `myntos-manuelt-bilag` | Manual vouchers: year-end adjustments and corrections typed as debit and credit |
 | `myntos-arsavslutning` | Closing and reopening a financial year |
 | `myntos-kontoplan` | The chart of accounts |
 | `myntos-landbruk` | The farming add-on: switching it, settlements, subsidies, farm VAT |
@@ -197,11 +200,12 @@ features in the order a person does.
 | `getting-started` | `/registrer/`, `/logg-inn/`, `/bekreft-epost/`, `/glemt-passord/`, `/nytt-passord/`, `/fullfor-registrering/`, `/invitasjon/`, `/nytt-selskap/`, `/kom-i-gang/` | – |
 | `overview` | `/` | `myntos-selskap` |
 | `payments` | `/kontantstrom/` | `myntos-kontantstrom` |
+| `vouchers` | `/bilag/` | `myntos-bilag` |
 | `invoices` | `/faktura/` | `myntos-faktura` |
 | `customers-and-suppliers` | `/parter/` | `myntos-parter` |
 | `bank` | `/bank/` | `myntos-bank` |
 | `vat` | `/mva/`, `/mva-justeringer/` | `myntos-mva`, `myntos-mva-justering` |
-| `opening-balance-and-year-end` | `/inngaende-balanse/`, `/arsavslutning/` | `myntos-inngaende-balanse`, `myntos-arsavslutning` |
+| `opening-balance-and-year-end` | `/inngaende-balanse/`, `/tidligere-program/`, `/manuelt-bilag/`, `/arsavslutning/` | `myntos-inngaende-balanse`, `myntos-tidligere-program`, `myntos-manuelt-bilag`, `myntos-arsavslutning` |
 | `chart-of-accounts` | `/kontoplan/` | `myntos-kontoplan` |
 | `farming` | The «Landbruk» card on `/kontoplan/`, the farm types on `/kontantstrom/` | `myntos-landbruk` |
 | `saf-t` | `/saft/` | `myntos-saft` |

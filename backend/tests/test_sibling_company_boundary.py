@@ -387,6 +387,51 @@ def _an_adjustment(client: TestClient, company_id: int) -> tuple[int, Callable[[
     return adjustment_id, readable
 
 
+def _a_dimension(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """A dimension the other company sorts its books by, with nothing posted to it.
+
+    Unused, so a DELETE aimed at it would succeed for its owner, and the only
+    thing left to refuse it here is the company filter.
+    """
+    response = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company_id}/dimensjoner",
+        json={"code": "HEMMELIG", "description": "Hemmelig dimensjon"},
+    )
+    assert response.status_code == 201, response.text
+    dimension_id = int(next(item for item in response.json() if item["code"] == "HEMMELIG")["id"])
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/dimensjoner")
+        assert owner.status_code == 200, owner.text
+        assert dimension_id in {item["id"] for item in owner.json()}
+
+    return dimension_id, readable
+
+
+def _a_dimension_value(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """An avdeling in the other company's books: its name would say how it is organised."""
+    dimension_id, _ = _a_dimension(client, company_id)
+    response = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company_id}/dimensjoner/{dimension_id}/verdier",
+        json={"value": "20", "description": "Hemmelig avdeling"},
+    )
+    assert response.status_code == 201, response.text
+    dimension = next(item for item in response.json() if item["id"] == dimension_id)
+    value_id = int(dimension["values"][0]["id"])
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/dimensjoner")
+        assert owner.status_code == 200, owner.text
+        ids = {value["id"] for item in owner.json() for value in item["values"]}
+        assert value_id in ids
+
+    return value_id, readable
+
+
 # Keyed by the path parameter's own name, because that is what the schema hands
 # over and what a new route will spell out. A name missing from here is a
 # failure below, never a skip.
@@ -439,6 +484,30 @@ def _an_approval(client: TestClient, company_id: int) -> tuple[int, Callable[[],
     return approval_id, readable
 
 
+def _an_import(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """The sibling's SAF-T files, uploaded to be read on the server.
+
+    Reading it through this company's URL would show the other client's books
+    as its old program kept them; posting it would bring them into these; and
+    throwing it away would lose the other client's upload. Any file will do:
+    one that cannot be read is still an import, and still the sibling's.
+    """
+    made = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company_id}/saft/innlesing",
+        files={"files": ("saft.xml", b"<AuditFile/>", "application/xml")},
+    )
+    assert made.status_code == 202, made.text
+    import_id = int(made.json()["id"])
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/saft/innlesing/{import_id}")
+        assert owner.status_code == 200, owner.text
+
+    return import_id, readable
+
+
 FACTORIES: dict[str, Callable[[TestClient, int], tuple[int, Callable[[], None]]]] = {
     "document_id": _a_document,
     "voucher_id": _a_voucher,
@@ -465,6 +534,13 @@ FACTORIES: dict[str, Callable[[TestClient, int], tuple[int, Callable[[], None]]]
     # What a key asked to do and waits for its person: approving the sibling's
     # would post in the other client's books.
     "approval_id": _an_approval,
+    # A dimension and one of its values: renaming the sibling's avdeling, or
+    # reading its result, crosses into the other client's books.
+    "dimension_id": _a_dimension,
+    "dimension_value_id": _a_dimension_value,
+    # The previous program's files, read on the server: the other client's
+    # books as they were before Myntos.
+    "import_id": _an_import,
 }
 
 
@@ -519,6 +595,18 @@ _PARTY_BODY: dict[str, Any] = {"name": "Rettet Navn AS"}
 # be what answered rather than the company filter this file is about.
 _BANK_ACCOUNT_BODY: dict[str, Any] = {"label": "Rettet navn"}
 
+# A balanced manual voucher, so the correction gets past its own review and as
+# far as looking the original up.
+_MANUAL_BODY: dict[str, Any] = {
+    "occurred_on": "2026-03-31",
+    "description": "Periodisering",
+    "explanation": "Husleie for april betalt i mars.",
+    "lines": [
+        {"account_number": "1700", "debit": "1000.00"},
+        {"account_number": "6300", "credit": "1000.00"},
+    ],
+}
+
 _COMPANIES = "/api/v1/companies/{company_id}"
 
 REQUESTS: dict[tuple[str, str], dict[str, Any]] = {
@@ -528,6 +616,13 @@ REQUESTS: dict[tuple[str, str], dict[str, Any]] = {
         "files": {"file": ("kvittering.pdf", PDF_BYTES, "application/pdf")}
     },
     ("POST", f"{_COMPANIES}/cashflow/{{voucher_id}}/reversal"): {},
+    # The factory's voucher is a payment, which the manual-voucher routes do not
+    # know either; test_manuelt_bilag.py smuggles a sibling's real manual voucher.
+    ("GET", f"{_COMPANIES}/manuelt-bilag/{{voucher_id}}"): {},
+    ("PUT", f"{_COMPANIES}/manuelt-bilag/{{voucher_id}}"): {"json": _MANUAL_BODY},
+    ("POST", f"{_COMPANIES}/manuelt-bilag/{{voucher_id}}/reversering"): {
+        "json": {"explanation": "Ført to ganger ved en feil."}
+    },
     ("GET", f"{_COMPANIES}/dokument/{{attachment_id}}"): {},
     # The fixture attachment is a PDF, which has no thumbnail, so the owner gets
     # a 404 here too. The wall on this route is tested with a photograph in
@@ -591,6 +686,20 @@ REQUESTS: dict[tuple[str, str], dict[str, Any]] = {
         }
     },
     ("POST", f"{_COMPANIES}/mva/spesifikasjoner/{{adjustment_id}}/reversering"): {},
+    ("PATCH", f"{_COMPANIES}/dimensjoner/{{dimension_id}}"): {"json": {"description": "Rettet"}},
+    ("DELETE", f"{_COMPANIES}/dimensjoner/{{dimension_id}}"): {},
+    # A code neither company has, so the duplicate check cannot be what answers.
+    ("POST", f"{_COMPANIES}/dimensjoner/{{dimension_id}}/verdier"): {
+        "json": {"value": "99", "description": "Ny verdi"}
+    },
+    ("GET", f"{_COMPANIES}/dimensjoner/{{dimension_id}}/resultat"): {},
+    ("PATCH", f"{_COMPANIES}/dimensjonsverdier/{{dimension_value_id}}"): {
+        "json": {"description": "Rettet"}
+    },
+    ("DELETE", f"{_COMPANIES}/dimensjonsverdier/{{dimension_value_id}}"): {},
+    ("GET", f"{_COMPANIES}/saft/innlesing/{{import_id}}"): {},
+    ("DELETE", f"{_COMPANIES}/saft/innlesing/{{import_id}}"): {},
+    ("POST", f"{_COMPANIES}/saft/innlesing/{{import_id}}/foring"): {},
 }
 
 

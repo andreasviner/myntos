@@ -114,8 +114,11 @@ def signed_amounts_in(line: str) -> list[tuple[Decimal, bool]]:
     coming back.
     """
     found: list[tuple[Decimal, bool]] = []
+    numbers = _number_spans(line)
     for match in _AMOUNT_RE.finditer(line):
         if _PERCENT_AFTER.match(line, match.end()) is not None:
+            continue
+        if _inside(match, numbers):
             continue
         value = parse_amount(match.group())
         if value is not None:
@@ -130,13 +133,60 @@ def amounts_in(line: str) -> list[Decimal]:
     is what lets ``Mva 25 % 312,50`` be read for its 312,50.
     """
     found: list[Decimal] = []
+    numbers = _number_spans(line)
     for match in _AMOUNT_RE.finditer(line):
         if _PERCENT_AFTER.match(line, match.end()) is not None:
+            continue
+        if _inside(match, numbers):
             continue
         value = parse_amount(match.group())
         if value is not None:
             found.append(value)
     return found
+
+
+def _number_spans(line: str) -> list[tuple[int, int]]:
+    """Where on the line a number is printed that is never an amount."""
+    return _kontonummer_spans(line) + _registration_spans(line)
+
+
+def _registration_spans(line: str) -> list[tuple[int, int]]:
+    """Where on the line an organisasjonsnummer is printed with «MVA» behind it.
+
+    That is how the law has a seller print its number (bokføringsforskriften
+    § 5-1-1 nr. 2), and it is never an amount. Spaced, it reads as one: Fatland's
+    slakteavregning heads its letterhead «Foretagsreg: NO 913 251 342 MVA», the
+    word «MVA» made it a VAT line, and its slaughter came back with 913 251 342
+    kroner of VAT. «Foretaksregisteret» had been kept off VAT lines by name, and
+    a buyer that spells the register differently got through. Recognised by the
+    shape and the check digit, so the next spelling does too.
+    """
+    spans: list[tuple[int, int]] = []
+    for match in _REGISTRATION.finditer(line):
+        try:
+            validate_orgnr(re.sub(r"\D", "", match.group()))
+        except InvalidOrgnrError:
+            continue
+        spans.append(match.span())
+    return spans
+
+
+def _kontonummer_spans(line: str) -> list[tuple[int, int]]:
+    """Where on the line a bank account number is printed.
+
+    A kontonummer is never an amount, and the spaced form reads as three of
+    them: "NOK 15.000,00 betales til kontonummer 1503 84 20000" is how Coop writes its whole
+    payment line, and it came back as an invoice of 20 000 kroner, because the
+    total is the *last* figure on a "betales" line and the account's last group
+    of five digits is a figure. The dotted form never matched, which is why the
+    rule held as long as every invoice printed the account in front of the
+    amount or with dots.
+    """
+    return [match.span() for match in _KONTONUMMER.finditer(line)]
+
+
+def _inside(match: re.Match[str], spans: list[tuple[int, int]]) -> bool:
+    return any(start <= match.start() and match.end() <= end for start, end in spans)
 
 
 # --- Dates ----------------------------------------------------------------------
@@ -233,6 +283,15 @@ _TOTAL_LABELS: tuple[tuple[str, ...], ...] = (
         # kontonummer in front of it.
         "betales til",
         "betales",
+        # A settlement the buyer wrote says what it paid rather than what is
+        # owed: «Godskrives, overført til bankkonto: <kontonummer> <beløp>»
+        # on Q-Meieriene's avregningsoppgave, under two «Beløp inkl. mva.»
+        # lines, the sale's and the deductions'. Without these the larger of
+        # those two was the total, which is the sale before the deductions and
+        # not what reached the bank. «Utbetalt» is left out on purpose: the same
+        # documents print «utbetalt hittil i år», which is the year so far.
+        "godskrives",
+        "til utbetaling",
         # What an AliExpress VOEC invoice calls the gross, in front of the
         # foreign figure and the kroner one. Without it the bare "Total" below
         # wins instead, and on those invoices "Total" heads the VAT summary:
@@ -286,6 +345,10 @@ _NOT_A_TOTAL = (
 #: if they were nine separate claims on the account.
 _KONTONUMMER = re.compile(r"\b\d{4}([. ])\d{2}\1\d{5}\b")
 
+#: An organisasjonsnummer followed by «MVA», as a seller prints it. See
+#: _registration_spans.
+_REGISTRATION = re.compile(r"(?i)(?<!\d)(?:NO\s?)?\d{3}([ .]?)\d{3}\1\d{3}\s*MVA\b")
+
 #: The heading `myntos.api.v1.cashflow` writes above each file when a bilag has
 #: more than one. Known here because the total is worked out per document and
 #: then added up, and this is what says where one document ends.
@@ -327,6 +390,11 @@ _INVOICE_DATE_LABELS = (
     "fakturadato",
     "faktura dato",
     "bilagsdato",
+    # The settlement's own date, the day the buyer closed the period: the sale
+    # belongs to that day and that year, whenever the money follows. A
+    # December melkeoppgjør is paid in January and is the year before's income.
+    "avregningsdato",
+    "oppgjørsdato",
     "kjøpsdato",
     "kjopsdato",
     "ordredato",
@@ -341,7 +409,18 @@ _INVOICE_DATE_LABELS = (
     "date of purchase",
     "transaction date",
 )
-_DUE_LABELS = ("forfall", "betalingsfrist", "betales innen", "due date", "payment due")
+# «Utbetalingsdato» is when the buyer of a settlement will pay, which makes it
+# the settlement's due date and not its date. It has to be named here, because
+# it contains «betalingsdato», which is a receipt's own date (the day the money
+# moved): matched as that, Q-Meieriene's September milk was dated 9 October.
+_DUE_LABELS = (
+    "forfall",
+    "betalingsfrist",
+    "betales innen",
+    "utbetalingsdato",
+    "due date",
+    "payment due",
+)
 _GENERIC_DATE_LABELS = ("dato", "date")
 
 # Most specific first, and the bare words last: "Faktura 2026-014" is a number
@@ -363,6 +442,11 @@ _NUMBER_LABELS = (
     "kvitteringsnummer",
     "receipt number",
     "receipt no",
+    "avregningsnummer",
+    "avregningsnr",
+    "avregning nr",
+    "oppgjørsnummer",
+    "oppgjørsnr",
     "faktura",
     "kreditnota",
 )
@@ -381,11 +465,21 @@ _ORDER_LABELS = frozenset(
         "receipt no",
     }
 )
+# The labels that number a settlement the buyer wrote. Named as what it is for
+# the same reason: Fatland's «Avregning nr. 02163961» is the farm's own sales
+# document, and the ledger calling it «Faktura 02163961» would say the farm
+# invoiced the slaughterhouse.
+_SETTLEMENT_LABELS = frozenset(
+    {"avregningsnummer", "avregningsnr", "avregning nr", "oppgjørsnummer", "oppgjørsnr"}
+)
 # Who the document is addressed to, for a sales invoice we issued ourselves.
 _BUYER_LABELS = ("kunde", "kjøper", "fakturamottaker", "fakturaadresse", "customer", "bill to")
 # Who sent it, said outright. A webshop receipt has no organisasjonsnummer to
 # anchor the name to, but it does say "Sold by" or "Items bought from".
 _SELLER_LABELS = (
+    # Coop's samlefaktura heads its letterhead «Fakturaavsender» and puts the
+    # name on the next line.
+    "fakturaavsender",
     "selger",
     "solgt av",
     "levert av",
@@ -485,7 +579,13 @@ _LABEL_SUFFIX = re.compile(r"(?i)(?:dato|nummer|nr|kode)$")
 _ITEM_SEARCH_LINES = 12
 
 _RATE_RE = re.compile(r"(\d{1,2}(?:[.,]\d)?)\s*%")
-_ORGNR_RE = re.compile(r"(?i)(?<!\d)(?:NO\s?)?(\d{3})[ .]?(\d{3})[ .]?(\d{3})(?!\d)")
+# The same separator twice or none at all, because that is how an orgnr is
+# printed: «913 251 342», «913.251.342», «913251342». Either separator on its own
+# also read the first two columns of a slaughter settlement, varenr «162060» and
+# skrottnr «341», as one number, and two carcasses in seven passed the check
+# digit. A bilag whose only real orgnr is the reader's own was then no longer
+# one that names only us.
+_ORGNR_RE = re.compile(r"(?i)(?<!\d)(?:NO\s?)?(\d{3})([ .]?)(\d{3})\2(\d{3})(?!\d)")
 # The separator between the label and the number. The full stop is in the class
 # because Norwegian invoices abbreviate: "Fakturanr.: 1075" left the parser
 # looking at ".: 1075", finding nothing, and falling through to the next label
@@ -501,9 +601,11 @@ _LETTER = re.compile(r"[A-Za-zÆØÅæøå]")
 _NAME_PREFIX = re.compile(r"(?i)^(?:fra|selger|leverandør|utstedt av)\b\s*[:\-]?\s*")
 # A street or postal line, which is what sits between a sender's name and its
 # organisasjonsnummer and would otherwise be mistaken for the name.
+# «Bedriftsvn 21» is Q-Meieriene's street: «vn» is how a footer abbreviates
+# «veien», and «veg»/«vegen» is the nynorsk spelling half of Rogaland uses.
 _ADDRESS_LINE = re.compile(
     r"(?i)\b\d{4}\b|\bpostboks\b|\bp\.?b\.?\s*\d|"
-    r"(?:vei|veien|gate|gaten|gata|gt|allé|alle|plass|torg|brygge)\s*\.?\s*\d"
+    r"(?:vei|veien|vn|veg|vegen|gate|gaten|gata|gt|allé|alle|plass|torg|brygge)\s*\.?\s*\d"
 )
 
 # The rates the seeded VAT codes know about, as fractions.
@@ -574,7 +676,19 @@ _PURCHASE_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("varekjop", ("varekjøp", "varelinjer", "engros", "videresalg")),
 )
 
-_TITLE_WORDS = ("faktura", "kreditnota", "invoice", "kvittering", "purring", "betalingsvarsel")
+# «Avregning» is how a slaughterhouse heads the settlement it writes for the
+# farmer («Avregning nr. 02163961»), and it sits at the top of the page where a
+# letterhead would.
+_TITLE_WORDS = (
+    "faktura",
+    "kreditnota",
+    "invoice",
+    "kvittering",
+    "purring",
+    "betalingsvarsel",
+    "avregning",
+    "avregningsoppgave",
+)
 # Field labels, which are what is left on a line once the value beside them has
 # been stripped off. "Org.nr: NO 991 107 711 MVA" minus the number is "Org.nr",
 # and "Kundenummer 4595670" split at the label is "nummer" — both of which used
@@ -607,6 +721,12 @@ _LABEL_WORDS = frozenset(
         "organisasjonsnr",
         "organisasjonsnummer",
         "foretaksnavn",
+        # The register a seller is in, without the number that followed it, in
+        # the spellings the pilot's paperwork has used. «Foretaksregisteret»
+        # itself is in NOT_A_PARTY.
+        "foretaksreg",
+        "foretagsreg",
+        "foretagsregisteret",
         "nummer",
         "kundenummer",
         "kundenr",
@@ -881,6 +1001,37 @@ def _labelled_amounts(
     return found_all
 
 
+#: The two halves of an amount a narrow table cell wrapped at its thousands
+#: space: «Total 255» over «835,31». The tail is exactly one group of three
+#: and the øre, which is what is left when a cell breaks there.
+_WRAPPED_HEAD = re.compile(r"(?:^|\s)\d{1,3}$")
+_WRAPPED_TAIL = re.compile(r"^\d{3}[.,]\d{2}$")
+
+
+def _rejoin_wrapped_amounts(lines: list[str]) -> list[str]:
+    """The lines with every amount a cell wrapped put back on one line.
+
+    Fatland's slakteavregning prints its sum, VAT and total in a column too
+    narrow for six figures, and the text layer hands them over as «Sum brutto
+    204», «668,25», «Moms 51 167,06», «Total 255», «835,31». The label's last
+    figure is the one taken (_labelled_amounts), so a slaughter of 255 835,31
+    kroner came back as 255. The line below a label is only read when it is a
+    figure alone, which «835,31» is, but only for a label with no figure of its
+    own, which «Total 255» is not.
+    """
+    joined: list[str] = []
+    for line in lines:
+        if (
+            joined
+            and _WRAPPED_TAIL.match(line) is not None
+            and _WRAPPED_HEAD.search(joined[-1]) is not None
+        ):
+            joined[-1] = f"{joined[-1]} {line}"
+            continue
+        joined.append(line)
+    return joined
+
+
 def _shows_a_return(totals: dict[Decimal, bool | None]) -> bool:
     """Whether the bilag shows money going out *and* money coming back.
 
@@ -1065,8 +1216,15 @@ _BARE_RATE = re.compile(r"^[\s(\[]*\d{1,2}(?:[.,]\d)?\s*%[\s)\]]*$")
 #: amount before it, so no separator is required in front of the figure.
 _ROW_RATE = re.compile(r"(\d{1,2}(?:[.,]\d)?)\s*%\s*$")
 
-#: A table heading whose last column is the VAT one, "IMVA" and "Mva." included.
-_MVA_LAST_COLUMN = re.compile(r"(?i)\S*(?:mva|moms|vat)[.:]?\s*$")
+#: A table heading whose last column is the VAT one, "IMVA" and "Mva." included,
+#: and "Mva.%", which says the cells below are rates printed without the sign.
+_MVA_LAST_COLUMN = re.compile(r"(?i)\S*(?:mva|moms|vat)[.:]?\s*%?\s*$")
+_PERCENT_HEADING = re.compile(r"%\s*$")
+
+#: A row ending in a bare rate, for a heading that carries the "%" itself:
+#: Coop's «Netto Mva. Totalt Mva.%» over «… 15.000,00 25». Only the rates Norway
+#: has, so that a quantity or a page number in the last column is not one.
+_ROW_BARE_RATE = re.compile(r"(?<![\d.,])(0|12|15|25)\s*$")
 
 #: How many column names a line needs before it counts as a table heading. A
 #: lone "Mva" over a total is a label, not a column, and reading it as one would
@@ -1162,11 +1320,24 @@ def _column_rates(lines: list[str]) -> list[Decimal]:
     mva 25 %" outright is answering the question directly, and a column is a
     weaker way of being told the same thing.
     """
-    if not any(_is_mva_heading(line) for line in lines):
+    headings = [index for index, line in enumerate(lines) if _is_mva_heading(line)]
+    if not headings:
         return []
+    # Under a heading that carries the "%" itself, a cell is a bare number, and
+    # a bare number ends plenty of lines that are not rows: «Postboks 12» read
+    # as a second rate of 12 %. So a bare rate counts only below such a heading
+    # and only at the end of a row of money figures.
+    bare_from = next((index for index in headings if _PERCENT_HEADING.search(lines[index])), None)
     found: list[Decimal] = []
-    for line in lines:
+    for index, line in enumerate(lines):
         match = _ROW_RATE.search(line.strip())
+        if (
+            match is None
+            and bare_from is not None
+            and index > bare_from
+            and len(amounts_in(line)) >= 2
+        ):
+            match = _ROW_BARE_RATE.search(line.strip())
         # The row has to be a row. A percentage on a line with no amounts on it
         # is prose, a footnote or a heading, not a cell in the MVA column.
         if match is None or not amounts_in(line):
@@ -1234,8 +1405,8 @@ def _invoice_number(lines: list[str]) -> tuple[str | None, str | None]:
     """The document's own number, and the word for what kind of number it is.
 
     The word is ``None`` for an invoice, which is what the description already
-    assumes, and ``"Ordre"`` when the label said so — so that a webshop receipt
-    is described as the order it is.
+    assumes, ``"Ordre"`` when the label said so — so that a webshop receipt is
+    described as the order it is — and ``"Avregning"`` for a settlement.
     """
     for line in lines:
         low = line.lower()
@@ -1245,7 +1416,11 @@ def _invoice_number(lines: list[str]) -> tuple[str | None, str | None]:
                 continue
             match = _INVOICE_NUMBER_RE.match(line, position + len(label))
             if match is not None and len(match.group(1)) <= 32:
-                return match.group(1), ("Ordre" if label in _ORDER_LABELS else None)
+                if label in _ORDER_LABELS:
+                    return match.group(1), "Ordre"
+                if label in _SETTLEMENT_LABELS:
+                    return match.group(1), "Avregning"
+                return match.group(1), None
     return None, None
 
 
@@ -1258,7 +1433,7 @@ def _orgnrs(text: str) -> tuple[str, ...]:
     """
     found: list[str] = []
     for match in _ORGNR_RE.finditer(text):
-        digits = "".join(match.groups())
+        digits = match.group(1) + match.group(3) + match.group(4)
         try:
             valid = validate_orgnr(digits)
         except InvalidOrgnrError:
@@ -1348,6 +1523,10 @@ NOT_A_PARTY = frozenset(
         "behandles",
         "fullført",
         "last opp",
+        # The register a business is in, printed beside its number by law
+        # (foretaksregisterloven § 10-2): «Foretaksregisteret: NO968712233MVA».
+        "foretaksregisteret",
+        "enhetsregisteret",
     }
 )
 
@@ -1448,10 +1627,15 @@ def _seller_name(lines: list[str], orgnr: str | None, *, guess: bool = True) -> 
     phone screenshot. See :func:`read`.
     """
     if orgnr is not None:
+        # The label and the "NO" in front of the number are separate pieces:
+        # «Foretaksregisteret: NO968712233MVA» has both, and as alternatives
+        # only the "NO" was taken off, which left «Foretaksregisteret» as the
+        # name of every Coop and Tripletex invoice. The register is matched by
+        # its stem, because Fatland writes «Foretagsreg:», and that was the
+        # name of a slaughterhouse for one run.
         printed = re.compile(
-            r"(?i)(?:org\.?\s*nr\.?|organisasjonsnummer|foretaksregisteret|NO)?[:\s]*"
-            + r"[ .]?".join(orgnr)
-            + r"\s*(?:MVA)?",
+            r"(?i)(?:(?:org\.?\s*nr\.?|organisasjonsnummer|foreta[kg]s\w*\.?)[:\s]*)?"
+            r"(?:NO)?[:\s]*" + r"[ .]?".join(orgnr) + r"\s*(?:MVA)?",
         )
         for index, line in enumerate(lines):
             if printed.search(line) is None:
@@ -1459,9 +1643,19 @@ def _seller_name(lines: list[str], orgnr: str | None, *, guess: bool = True) -> 
             remainder = _clean_name(printed.sub("", line))
             if remainder is not None:
                 return remainder
-            for above in lines[max(0, index - 4) : index]:
-                candidate = _clean_name(above)
+            for above in range(max(0, index - 4), index):
+                candidate = _name_on(lines, above)
                 if candidate is not None:
+                    return candidate
+            # A footer with a telephone and a second number between the address
+            # and the organisasjonsnummer puts the name further up than four
+            # lines: Q-Meieriene's is name, street, postal code, «Tlf»,
+            # «Meierinr.», then «Org.nr.». Further up is only believed for a line
+            # that ends in a legal form, because further up is also where the
+            # body of the page ends, and a sentence there is not a company.
+            for above in range(max(0, index - 8), max(0, index - 4)):
+                candidate = _name_on(lines, above)
+                if candidate is not None and _has_legal_form(candidate):
                     return candidate
             break
 
@@ -1482,6 +1676,48 @@ def _seller_name(lines: list[str], orgnr: str | None, *, guess: bool = True) -> 
         if candidate is not None:
             return candidate
     return None
+
+
+def _has_legal_form(name: str) -> bool:
+    words = [word for word in re.split(r"[^0-9a-zæøå]+", name.lower()) if word]
+    return bool(words) and words[-1] in _LEGAL_FORMS
+
+
+#: One word in capitals: how a logo sets the first half of a name.
+_LOGO_WORD = re.compile(r"[A-ZÆØÅ][A-ZÆØÅ-]{2,}")
+
+
+def _name_on(lines: list[str], index: int) -> str | None:
+    """The name on ``lines[index]``, with the half a logo put on its own line.
+
+    Fatland's letterhead sets «FATLAND» large and «Jæren AS» under it, so the
+    text layer has the company in two lines, and only the second ends in a
+    legal form. Read a line at a time, the slaughterhouse was «Jæren AS». A
+    word in capitals directly over a name with a legal form, or a name with a
+    legal form directly under one, is put back together. Only a single word in
+    capitals: a heading or a contact line over a name is not part of it, and
+    «FAKTURA» never gets this far, because it is not a name to begin with.
+    """
+    candidate = _clean_name(lines[index])
+    if candidate is None:
+        return None
+    if _LOGO_WORD.fullmatch(candidate) is not None and index + 1 < len(lines):
+        rest = _clean_name(lines[index + 1])
+        if rest is not None and _has_legal_form(rest):
+            return _logo_name(candidate, rest) or candidate
+    if _has_legal_form(candidate) and index > 0:
+        logo = _clean_name(lines[index - 1])
+        if logo is not None and _LOGO_WORD.fullmatch(logo) is not None:
+            return _logo_name(logo, candidate) or candidate
+    return candidate
+
+
+def _logo_name(logo: str, rest: str) -> str | None:
+    """«FATLAND» and «Jæren AS» as one name, if the first is not a label."""
+    if logo.lower() in _BUYER_LABELS + _SELLER_LABELS or _has_legal_form(logo):
+        return None
+    joined = f"{logo} {rest}"
+    return joined if len(joined.split()) <= _MAX_NAME_WORDS else None
 
 
 def _labelled_name(lines: list[str], labels: tuple[str, ...]) -> str | None:
@@ -1681,7 +1917,7 @@ def read(
             seller_named_by_title=named_by_title is not None,
         )
 
-    lines = [line.strip() for line in text.splitlines()]
+    lines = _rejoin_wrapped_amounts([line.strip() for line in text.splitlines()])
     gross, gross_is_negative = _total(lines)
     net = _labelled_amount(lines, _NET_LABELS)
     vat = _labelled_amount(lines, _VAT_LABELS, exclude=_NOT_VAT, allow_zero=True)
@@ -1897,6 +2133,10 @@ class InvoiceSuggestion:
     # from. The UI marks them accordingly instead of presenting a guess as if
     # the user had made it.
     sources: dict[str, FieldSource] = field(default_factory=dict)
+    # The document says the buyer wrote it (issued_by_buyer): a settlement, the
+    # farm's own sales document. Read by the questions, which otherwise ask
+    # whether money in from an unregistered sender is a sale at all.
+    issued_by_buyer: bool = False
     warnings: list[str] = field(default_factory=list)
     # The subset of `warnings` that belongs to the current category. Kept apart
     # so that replacing the category (apply_type) takes the previous one's advice
@@ -2067,19 +2307,34 @@ _FARM_SETTLEMENTS = (
     "leveranseoppgjør",
     "avregning levert melk",
     "avregning for levert",
+    # Q-Meieriene's heading. Without it the September melkeoppgjør was read
+    # as a sale only because the farm's own name was at the top, with no word
+    # that it was a settlement and no prompt to split it into lines.
+    "avregningsoppgave",
     "oppgjør for levert",
 )
+
+#: How the writer of an «avregning» says it is paying the reader. Fatland heads
+#: its slaughter settlement «Avregning nr.» and names no product or trade word
+#: anywhere: what makes it a settlement and not a power company's avregning is
+#: that it is paid out («Utbetalingsdato», «Utbetalt:»), where a bill says what
+#: is owed and when it falls due.
+_PAID_OUT = ("utbetalingsdato", "utbetalt", "utbetales", "til utbetaling", "godskrives")
 
 
 def issued_by_buyer(text: str, *, farm: bool = False) -> bool:
     """Whether the document says it was written by the buyer, for the seller.
 
     ``farm`` adds the settlement names a farm's buyers use, which mean that in a
-    farm's books and could mean something else in anyone else's.
+    farm's books and could mean something else in anyone else's, and an
+    «avregning» that pays out: a farm's buyer may call its settlement no more
+    than that.
     """
     lowered = " ".join(text.lower().split())
     words = _SELF_BILLED + (_FARM_SETTLEMENTS if farm else ())
-    return any(word in lowered for word in words)
+    if any(word in lowered for word in words):
+        return True
+    return farm and "avregning" in lowered and any(word in lowered for word in _PAID_OUT)
 
 
 def _normalise_name(name: str) -> str:
@@ -2425,6 +2680,7 @@ def suggest(
     # and since the category menu is narrowed by direction, the model was never
     # even offered «Melkeoppgjør».
     by_buyer = issued_by_buyer(text, farm=farm)
+    suggestion.issued_by_buyer = by_buyer
     if by_buyer:
         suggestion.direction = CashFlowDirection.INN
         suggestion.mark("direction")
@@ -2489,8 +2745,12 @@ def suggest(
         suggestion.gross_amount = found.gross_amount
         suggestion.vat_amount = found.vat_amount
         suggestion.mark("gross_amount")
+        # Not on a settlement: what the buyer pays out is the sale less what it
+        # deducted, so it is meant not to be the net plus the VAT, and «Kontroller
+        # totalen» sent the farmer checking a total that was right.
         if (
-            found.net_amount is not None
+            not by_buyer
+            and found.net_amount is not None
             and found.vat_amount is not None
             and abs(found.gross_amount - (found.net_amount + found.vat_amount)) > 1
         ):

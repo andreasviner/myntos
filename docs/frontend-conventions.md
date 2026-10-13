@@ -194,6 +194,27 @@ against the layout, not only against the page.
   picker at all: a person holds exactly one account that may add companies
   (signup makes one, and nobody joins another), so there is nothing to ask.
 
+## Work the server finishes after answering
+
+`/tidligere-program/` is the first page whose work outlives its request: the
+SAF-T files go up once and are read and posted on the server
+(ARCHITECTURE.md § Work done after the answer). The shape, for the next one:
+
+- **Show the upload, then let go.** The upload is the only part that needs the
+  tab, and it gets a bar (`uploadSaftFiles` in `lib/api.ts` uses
+  XMLHttpRequest, because fetch cannot report upload progress) and says to keep
+  the page open until it is done. After that the page says, in so many words,
+  that it can be closed.
+- **Poll the record, never hold it.** The page asks for the import every 1.5 s
+  while it is `reading` or `posting`, and a lost answer is not an error: the
+  next poll asks again. On load it finds the import to show from the list
+  (`currentImport` in `lib/saftimport.ts`), so a person coming back lands on
+  the same state they left.
+- **Long lists fold.** What an import adds was a bullet list on the page, and
+  62 parties made the review four screens long. Counts first, as tiles; the
+  list behind each in a `<details>` with a fixed height and a filter once it is
+  long; notes folded under «… merknader å lese», errors never folded.
+
 ## A window is a `<dialog>`, and only for something you came to do
 
 «Inviter en KI» on `/organisasjon/` is the first popup on the site, and the

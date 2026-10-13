@@ -762,6 +762,17 @@ The rules, and why:
   `corrects_transaction_pk`, in one request. The register's reversal route
   refuses `IB` and `AVS` vouchers (`cannot_reverse_here`), so neither can be
   undone around its own rules.
+- **The old program's years**, from its SAF-T files, one per year, go into an
+  `IMPORT` journal under the old program's voucher numbers, never over a period
+  Myntos already has entries in. The earliest file's opening balances are the
+  opening balance, and **years before the first year in Myntos are opened to
+  take them** (`ledger.service.open_earlier_years`, the one exception to
+  "nothing before the first year"): the seeded VAT rates are carried back only
+  for codes whose lines in the files all had today's rate, so no rate is
+  claimed that nobody proved. An opening balance standing in a later year is
+  replaced by one in the earliest, in one step. The register neither lists nor
+  reverses those vouchers; `/bilag/` lists them, and everything else counts
+  them ([saf-t.md](integrations/saf-t.md#the-books-brought-over-on-the-server-built-2026-10-13)).
 
 **Årsavslutning.** At most two vouchers in the `AVS` journal on 31 December: the
 **tax cost** an AS states (8300/2500; Myntos does not compute tax or deferred
@@ -773,6 +784,12 @@ tax, and says so when an AS with a profit states none), and the
 | AS | covers udekket tap first (8990 → 2080), the rest to annen egenkapital (8960 → 2050) | covered by free equity on 2050, the rest carried as udekket tap on 2080 | 2060 with a balance is a merknad: an AS has no privatkonto |
 | ENK | 8800 → 2050 | 2050 → 8800 | privatkonto 2060 closed against 2050; tax refused, the owner is the taxpayer |
 | anything else | refused by name | | |
+
+**A year brought over from the old program keeps what was booked there.** Its
+tax cost (8300) and disposition (8800/8960/8990) in the `IMPORT` journal stand
+as reported, and the closing disposes only what is left; refusing them as
+"already disposed", as for anything on those accounts posted in Myntos, would
+have left an imported year open for good, and every year after it.
 
 Then `financial_year.closed_at` is set (every posting path already goes through
 `ensure_financial_year`, which refuses a closed year), a `financial_year_event`
@@ -794,6 +811,32 @@ supplier invoice into the wrong year.
 
 Accounts 2000, 2080, 2500, 8300, 8800, 8960 and 8990 joined the seed chart for
 this, and migration `c3f9a2d71e58` backfills them with the year log table.
+
+## Work done after the answer
+
+Since 2026-10-13 one feature does its work after its request has answered: the
+previous program's SAF-T files, uploaded once into `saft_import`, are read and
+posted by `myntos.saft.jobs` in FastAPI's `BackgroundTasks`, and the page polls.
+A year of vouchers was otherwise a tab that had to stay open through a long
+upload, a read, a hundred small requests and a second and third upload of the
+same file. The rules that hold it, so the next feature that needs the same
+does not invent another:
+
+- **No queue, no worker.** One uvicorn process, so the work runs in it, and
+  which imports are in hand is a set in the process, like the agent keys'
+  counters. More than one process would need a claim in the database first.
+- **A restart loses nothing.** A read stores nothing until it is done and a
+  post is one transaction, so the startup hook (`jobs.resume`, from the
+  lifespan) simply runs again whatever a deploy stopped halfway.
+- **The preview is the posting, rolled back.** The read runs the whole posting
+  in a transaction it then rolls back; the post runs it again and commits. A
+  preview made any other way can disagree with what is posted.
+- **Sessions of its own**, through a dependency (`get_import_sessions`) so the
+  tests' database is the one used: the request's session is gone by then.
+- **Files in the database, not the document store**, emptied once posted,
+  thrown away or after 14 days: the store is append-only on purpose
+  (bokføringsloven § 13), and a working copy that must go again does not belong
+  in it.
 
 ## Frontend
 
@@ -847,6 +890,8 @@ everywhere is no easier to find than one present where you are.
 | `/mva/` | The MVA-melding per period: every line, the deadline, Skatteetaten's check, a confirmation step before filing, the receipt and payment information afterwards, and the melding as XML for upload by hand. Reached from the VAT figure on the overview, not from the top menu. See [integrations/mva.md](integrations/mva.md#what-myntos-does) |
 | `/bank/` | Bank reconciliation: upload a camt.053 file, see each movement next to the voucher that books it, confirm a suggested voucher or post a new one from the line through the register's own path. Matching is a link and never edits a voucher. Reached from the note under the overview's figures. See [integrations/bank.md](integrations/bank.md) |
 | `/inngaende-balanse/` | The opening balance of books brought from another system: saldobalanse CSV or typed lines, open items per customer and supplier, the backend's review, then one voucher; correction is reversal plus replacement. Reached from the overview's note. See [§ Where the books start](#where-the-books-start-and-where-each-year-ends) |
+| `/tidligere-program/` | «Hent regnskapet fra et annet program»: the old program's SAF-T files, one per year, uploaded once and read and posted on the server (see [§ Work done after the answer](#work-done-after-the-answer)); the review in tiles and folded lists; the parallel run's comparison. Reached from the overview (a card while the books are empty, and the note), `/inngaende-balanse/` and the move guides |
+| `/bilag/` | The bilagsjournal: every posted voucher of a year from every journal, with its lines; narrowed to an account, its movements and balance (1920: the bank's ins and outs). Reached from «Se alle bilag →» on the overview and from a finished import |
 | `/arsavslutning/` | One financial year's result, tax (AS) and disposition, shown line by line before a confirmed close; reopening with a reason and the log of both. Reached from the overview's note |
 | `/parter/` | Customers and suppliers (SAF-T `Party`) for the active company: the register a counterparty is picked from. Reached from `/faktura/` and the register's entry form, not from the menu |
 | `/ki/` | Where KI is used in Myntos and who runs the model, public; signed in, also the switch (`Company.ki_enabled`) that turns it off for one set of books, naming the company it applies to. See [§ KI](#ki-anywhere-in-the-product-one-provider-only) |

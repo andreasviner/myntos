@@ -108,10 +108,11 @@ client the same way, and each company's books are separate.
   [Confirm the company](https://myntos.no/llms/help/company-and-access/confirm-the-company.md).
 - **The ID-porten login is not the Myntos login.** It asks Altinn which
   companies the person may act for, and nothing more here.
-- **Nothing is imported.** Myntos cannot read a SAF-T file from another
-  program into the books. A company with history enters an opening balance
-  instead:
-  [Enter an opening balance](https://myntos.no/llms/help/opening-balance-and-year-end/enter-an-opening-balance.md).
+- **A company with history brings it from the old program's SAF-T files**:
+  the opening balance, and the vouchers of every year uploaded, earlier years
+  included. Years before «Første regnskapsår i Myntos» are added when the files
+  reach further back:
+  [Bring your books over from the previous program's SAF-T files](https://myntos.no/llms/help/opening-balance-and-year-end/bring-your-books-over-from-saf-t-files.md).
 - **More companies later** are added the same way, with «Legg til selskap».
 
 ## Related

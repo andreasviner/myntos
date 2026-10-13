@@ -70,3 +70,56 @@ class AdjustmentNotFoundError(MvaError):
 
 class InvalidAdjustmentError(MvaError):
     """The spesifikasjon cannot be recorded with that code, amount or account."""
+
+
+class UnknownNaeringError(UnsupportedCategoryError):
+    """The company files no melding of that category.
+
+    A company files one melding, or two when it has a primærnæring and other
+    business above 30 000 kroner beside it (docs/integrations/mva.md, «Two
+    returns»). Asking for the other one before it is set up is asking for terms
+    the company does not have.
+    """
+
+
+class FiledElsewhereError(FilingNotSubmittableError):
+    """The term is marked as filed from another program.
+
+    A second melding for a term *replaces* the first at Skatteetaten, so
+    checking or sending one from Myntos for a term the previous program filed
+    would overwrite that program's melding with whatever Myntos has, which
+    during a parallel run is exactly what nobody wants. The mark is taken back
+    first when a correction from Myntos is what the person means.
+    """
+
+
+class AlreadyFiledError(FilingNotSubmittableError):
+    """The term was filed from Myntos, so it cannot be said to be filed elsewhere."""
+
+
+class NotFiledElsewhereError(FilingNotSubmittableError):
+    """Only a standing «filed from another program» statement can be taken back."""
+
+
+class FiledLinesWouldMoveError(MeldingChangedError):
+    """A change to the næringer would move VAT out of, or into, a term already filed.
+
+    Which melding a line belongs to is read from its account and date when the
+    melding is built, so moving an account to the other melding, moving the day
+    the second melding starts, or swapping the categories would change what a
+    filed (or filed-elsewhere) melding says after the fact. Refused rather than
+    allowed with a warning: a posted voucher is history, and so is the melding
+    that reported it. A line booked on the wrong account is corrected the way
+    every posted line is, by a reversal and a new entry, and the correction then
+    shows on the term as a change to file. A 409 like the other "the books moved"
+    refusals, which is why it is a kind of :class:`MeldingChangedError`.
+    """
+
+
+class InvalidFilingDateError(InvalidPeriodError):
+    """The day a term was filed from another program cannot be that day.
+
+    A day in the future is a statement about something that has not happened.
+    A 422 like an impossible period, which is what it is a kind of: a date the
+    term cannot have.
+    """

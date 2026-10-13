@@ -42,6 +42,7 @@ chosen, as «Administrator» or «Eier».
 | «Selskapet har ingen registrert organisasjonsform, …» | Myntos does not know if it is an AS or an ENK | Fetch the company's details again with «Hent på nytt» on the company page: [Fetch the company from Enhetsregisteret again](https://myntos.no/llms/help/company-and-access/fetch-from-enhetsregisteret-again.md) |
 | «Myntos avslutter foreløpig bare aksjeselskap (AS) og enkeltpersonforetak (ENK). …» | Another company form | Myntos cannot close it yet; the accountant handles the year-end |
 | «Året har allerede … på skatte- og disponeringskontoene (8300, 8800, 8960, 8990) …» | Someone posted tax or a disposition by hand | Find and correct that entry first; Myntos posts those itself |
+| «Det gamle programmet har ført skattekostnad … Den står, så oppgi ikke skatt på nytt her.» | The year came over from the previous program with its tax cost already booked | Leave «Betalbar skatt for året» empty and close; what the old program booked stands, and Myntos disposes only the rest |
 | «Skattekostnaden kan ikke være negativ.» or «… brøkdeler av et øre.» | A wrong tax figure | Correct «Betalbar skatt for året» |
 | «Et enkeltpersonforetak betaler ikke skatt selv. …» | Tax entered for an ENK | Empty the tax field |
 | «Regnskapsåret … er allerede avsluttet.» | Already closed | Nothing to do; to change it, [reopen it](https://myntos.no/llms/help/opening-balance-and-year-end/reopen-a-financial-year.md) |

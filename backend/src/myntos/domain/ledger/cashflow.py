@@ -860,16 +860,27 @@ _FARM: tuple[CashFlowType, ...] = (
         label="Trekk: omsetningsavgift og forskningsavgift",
         direction=CashFlowDirection.UT,
         # Against the sale, as NIBIO's coding does (tillegg/trekk 33002 for
-        # milk, 43004 for slaughter, both on the product's own account). The
-        # levy is the farmer's own debt that the buyer collects, not a price
-        # reduction, so it carries no VAT and the sale's VAT basis stays the
-        # gross price.
+        # milk, 43004 for slaughter, both on the product's own account).
+        #
+        # With the sale's 25 %, because that is what the settlement says. This
+        # used to carry no VAT, on the reasoning that the levy is the farmer's
+        # own debt the buyer collects and so not a price reduction. The first
+        # real settlement in the pilot (Q-Meieriene, September 2026) disagrees:
+        # the levy is a post above «Netto avregnet» and the 25 % is «av» that net,
+        # and Landbrukets Dataflyt posts it into 3071 under the milk's own code.
+        # A settlement the buyer wrote is the farm's sales document
+        # (bokføringsforskriften § 5-2-1), so the output VAT in the books is the
+        # VAT printed on it; booked without VAT, the levy left 25 % of itself as
+        # output VAT the dairy never charged, and the lines no longer added up to
+        # what reached the bank. A buyer that charges VAT on the price before the
+        # levy is answered by setting this line to 0.
         account_number="3071",
-        default_tax_code=NO_VAT_CODE,
+        default_tax_code="3",
         note=(
-            "Avgiften er din; kjøperen krever den bare inn. Den har ikke mva og trekkes fra "
-            "salget på samme konto som varen: 3071 for melk, 3041 for slakt, 3001 for korn. "
-            "Bytt konto hvis oppgjøret ikke er for melk."
+            "Avgiften trekkes fra salget på samme konto som varen: 3071 for melk, 3041 for "
+            "slakt, 3001 for korn. Meieriet og slakteriet beregner mva av prisen etter trekket, "
+            "så linja har 25 % og gir tilbake utgående mva. Beløpet er inkludert mva. Viser "
+            "oppgjøret mva av prisen før trekket, sett mva til 0 på linja."
         ),
         deducts_from_sale=True,
         segment=_LANDBRUK,

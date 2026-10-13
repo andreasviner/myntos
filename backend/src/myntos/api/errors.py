@@ -28,6 +28,8 @@ from myntos.auth.approvals import ApprovalHeld
 from myntos.core.clock import as_utc
 from myntos.core.config import get_settings
 from myntos.domain.arsoppgjor.errors import (
+    FarmListConflictError,
+    FarmListInvalidError,
     FinancialYearNotFoundError,
     InvalidOpeningBalanceError,
     InvalidSaldobalanseError,
@@ -115,6 +117,13 @@ from myntos.domain.identity.errors import (
     UnverifiedProviderEmailError,
     WeakPasswordError,
 )
+from myntos.domain.ledger.dimensions import (
+    DimensionInUseError,
+    DimensionNotFoundError,
+    DuplicateDimensionError,
+    InactiveDimensionError,
+    InvalidDimensionError,
+)
 from myntos.domain.ledger.errors import (
     AccountInUseError,
     AccountNotFoundError,
@@ -148,6 +157,8 @@ from myntos.domain.ledger.errors import (
     UnknownTaxCodeError,
     VoucherNotFoundError,
 )
+from myntos.domain.ledger.posting import TaxRateNotFoundError
+from myntos.domain.manuelt_bilag.errors import InvalidManualVoucherError
 from myntos.domain.mva.errors import (
     AdjustmentNotFoundError,
     ConfirmationRequiredError,
@@ -168,7 +179,12 @@ from myntos.integrations.brreg import (
     UnitDeletedError,
     UnitNotFoundError,
 )
-from myntos.saft.errors import SaftYearNotFoundError, UnsupportedSaftVersionError
+from myntos.saft.errors import (
+    SaftImportError,
+    SaftYearNotFoundError,
+    UnsupportedSaftVersionError,
+)
+from myntos.saft.jobs import ImportBusyError, ImportNotFoundError, ImportNotPostableError
 
 # Errors this module knows how to render. Every hierarchy is handled the same
 # way; keeping one table means a new error cannot be given a status code in one
@@ -290,6 +306,9 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     UnknownCashFlowTypeError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     UnknownTaxCodeError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     PeriodOutsideBooksError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    # 422: a code with no rate on the date, in a year brought over from the
+    # previous program whose files never used it (ledger.service.open_earlier_years).
+    TaxRateNotFoundError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     UnsupportedDocumentError: status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
     DocumentTooLargeError: status.HTTP_413_CONTENT_TOO_LARGE,
     # --- Bank import ---
@@ -327,6 +346,15 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     # 409: the category exists, and these books have not switched on the
     # add-on it belongs to. A setting stands in the way, not the request.
     SegmentNotEnabledError: status.HTTP_409_CONFLICT,
+    # --- Dimensions: avdelinger, prosjekter, driftsgrener ---
+    # 404 like every sub-resource: another company's value does not exist.
+    DimensionNotFoundError: status.HTTP_404_NOT_FOUND,
+    DuplicateDimensionError: status.HTTP_409_CONFLICT,
+    # 409: lines carry it, so it is switched off rather than deleted.
+    DimensionInUseError: status.HTTP_409_CONFLICT,
+    # 409: it exists and is switched off; switching it on is the fix.
+    InactiveDimensionError: status.HTTP_409_CONFLICT,
+    InvalidDimensionError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     # --- Fakturering ---
     InvoiceNotFoundError: status.HTTP_404_NOT_FOUND,
     # 404 on the XML resource, not on the invoice: the document exists, the
@@ -370,6 +398,13 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     # 404: the year is a thing the company does or does not have, like a filing.
     SaftYearNotFoundError: status.HTTP_404_NOT_FOUND,
     UnsupportedSaftVersionError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    # Reading another program's file: what was sent is the problem.
+    SaftImportError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    # An import on the server: another company's is not found, like every
+    # sub-resource; one being worked on is the state of things, not the request.
+    ImportNotFoundError: status.HTTP_404_NOT_FOUND,
+    ImportBusyError: status.HTTP_409_CONFLICT,
+    ImportNotPostableError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     # --- Inngående balanse og årsavslutning ---
     FinancialYearNotFoundError: status.HTTP_404_NOT_FOUND,
     # 409 for every refusal that comes from the state the books are in rather
@@ -384,8 +419,15 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     # are answered by their routes with the list rather than through here.
     InvalidOpeningBalanceError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     YearNotClosableError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    # A manual voucher's findings, answered by its routes with the list like
+    # the two above. Its not-found is the ledger's VoucherNotFoundError, 404.
+    InvalidManualVoucherError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     InvalidSaldobalanseError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     ReopeningReasonRequiredError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    # The farm's count and private uttak: each refusal a subclass of one of
+    # these, so the code says which list (count_exists, no_uttak, …).
+    FarmListConflictError: status.HTTP_409_CONFLICT,
+    FarmListInvalidError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     # --- Enhetsregisteret ---
     UnitNotFoundError: status.HTTP_404_NOT_FOUND,
     UnitDeletedError: status.HTTP_410_GONE,

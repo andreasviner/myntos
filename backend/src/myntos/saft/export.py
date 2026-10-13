@@ -174,6 +174,9 @@ class AnalysisValue:
     type_description: str
     analysis_id: str
     id_description: str
+    #: ``Active`` or ``Closed``: a value (or its whole dimension) switched off
+    #: in Myntos is closed for new entries and still on the lines that have it.
+    status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -459,6 +462,9 @@ def _analysis_table(master: ET.Element, values: Sequence[AnalysisValue]) -> None
         _sub(entry, "AnalysisTypeDescription", value.type_description or NOT_AVAILABLE)
         _sub(entry, "AnalysisID", value.analysis_id)
         _sub(entry, "AnalysisIDDescription", value.id_description or NOT_AVAILABLE)
+        # After StartDate and EndDate in the schema's sequence, which Myntos
+        # does not keep: a value is on or off, not dated.
+        _opt(entry, "Status", value.status)
 
 
 def _amount(parent: ET.Element, name: str, amount: Decimal, line: Line | None = None) -> None:

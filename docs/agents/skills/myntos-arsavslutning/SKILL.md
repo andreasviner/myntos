@@ -147,7 +147,9 @@ Each finding has a `severity` (`feil` blocks, `merknad` informs), a stable
 | `organisasjonsform_ikke_stottet` | Not an AS or an ENK | Myntos cannot close it yet; the person's accountant does the disposition |
 | `ugyldig_skatt` | Negative tax or fractions of an øre | Ask for the figure again |
 | `skatt_for_enk` | Tax stated for an ENK | Send `"0.00"`; the owner's tax is not in the business's books |
-| `allerede_disponert` | Something already sits on 8300, 8800, 8960 or 8990 this year | Myntos posts those itself. Find the voucher with the person and reverse it in the payments register first |
+| `allerede_disponert` | Something already sits on 8300, 8800, 8960 or 8990 this year, posted in Myntos | Myntos posts those itself. Find the voucher with the person and reverse it in the payments register first |
+| `avsluttet_i_tidligere_program` | merknad: the vouchers brought over from the previous program carry the year's tax cost or disposition | Nothing: they stand, and Myntos disposes only what is left. Give no `skattekostnad` (422 `skatt_allerede_fort` otherwise) |
+| `skatt_allerede_fort` | A tax cost was given, and the old program already booked one | Close without `skattekostnad` |
 | `ingen_skattekostnad` (merknad) | An AS with a profit and no tax stated | Ask whether that is right before closing |
 | `privatkonto_i_as` (merknad) | An AS with a balance on 2060 Privatkonto | An AS has no private account: money taken out by a shareholder is a loan or a dividend. Tell the person to ask their accountant; the balance stays untouched |
 | `mva_ikke_gjort_opp` (merknad) | VAT for a period of the year is not settled onto 2740 | Once closed, the settlement cannot be posted in the year. Suggest settling the VAT first ([myntos-mva](https://myntos.no/llms/skills/myntos-mva.md)) |

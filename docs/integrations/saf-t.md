@@ -209,6 +209,210 @@ was the seed's, because nothing let a person edit a grouping. Since the
 kontoplan became editable that is false, and the new migration must also
 require `account_grouping.chosen_at IS NULL`, which exists for exactly this.
 
+## Reading another program's file (built 2026-10-12)
+
+The other direction: a company moving to Myntos brings the SAF-T file its old
+program writes, and the **opening balance** is read from it. Built for the farm
+pilot, whose Tripletex files were the first ones read (docs/landbruk.md), and
+general: every rule below is something that file did.
+
+`POST /companies/{id}/inngaende-balanse/saft` (`KEY_PREVIEW`, `ledger:write`)
+takes the XML or the ZIP and answers with the review the saldobalanse upload
+gives, plus `accounts_to_add` and `parties_to_add`. The page adds those through
+the ordinary kontoplan and party routes and reads the file again; posting is
+the existing `POST …/inngaende-balanse`. Nothing is stored, the file included.
+
+| Module | Does |
+| --- | --- |
+| `saft.reader` | Pure. `read`: the header and the balances, and nothing after: parsing stops where `GeneralLedgerEntries` starts, so a year of vouchers costs nothing, and at most 64 MB is read before that. `read_entries`: the vouchers too, each `Transaction` built as a small tree, converted and dropped, at most 1 GB of XML and 300 000 lines; the file's own `NumberOfEntries` and `TotalDebit` are checked against what was read, so a download cut short is refused rather than read as a shorter year. Expat with every DTD refused, as `domain/bank/camt.py` does. A ZIP is opened (one XML, or the `_1_n` part; for the vouchers, a file in several parts is refused) |
+| `saft.opening_import` | What the balances become in these books, with findings |
+| `saft.voucher_import` | The year's vouchers as vouchers of the `IMPORT` journal: the review, and the post |
+| `saft.compare` | The old program's year so far against Myntos's, per account, party and VAT term |
+
+**What it refuses outright:** another company's file (`saft_wrong_company`,
+by organisasjonsnummer; nothing of it is shown), and a file that is neither the
+company's first year in Myntos (its opening balances are read) nor the whole
+year before it (its closing balances, with the income statement summed into
+the result). Both readings of the farm's files give the same voucher.
+
+**The decisions, each with its reason in the module:**
+
+- **Account ids: the first four digits.** Tripletex's farm module writes
+  NIBIO's department and product after them (`145120512`); the rest goes into
+  the line's text, and several ids on one account stay separate lines.
+- **New accounts take the file's grouping only when it is usable:** in the
+  year's list, of a category the account's class can hold, and not an IFRS
+  post. Tripletex grouped a driftskreditt as «Positiv egenkapital» and an ENK's
+  cash deposit on «Avsatt utbytte - IFRS» (account 2055, post 2055); both get
+  Myntos's default by number, with a `merknad`. A pair that passes every rule
+  and is still wrong (NIBIO's 118x installations on post 1180
+  «Investeringseiendommer») is the accountant's to see, which is why every
+  difference between the file's grouping and Myntos's is reported.
+- **The undisposed result goes on 2050**, and only when the file proves that is
+  what the gap is: a first-year file whose own movements balance, or a
+  year-before file whose gap equals its income statement. Tripletex leaves the
+  year's result off equity in the next year's opening, so a file read straight
+  does not balance.
+- **Open items per party** only when the file's sub-ledger adds up to the
+  account exactly; parties are matched by organisasjonsnummer, then name, and
+  new ones keep the old program's number when it is free.
+- **VAT accounts** (2700, 2710, anything the file groups as «Skyldig
+  merverdiavgift») go on 2740, as the review already requires.
+- **The company's own bank account** found in an account's text on another
+  account than 1920 is a `merknad`, not a move.
+
+**Checked against the real file.** `regnaskaps_tests/saft_pilot.py`
+(gitignored, beside the file) reads the farm's 2026 and 2025 files through the
+API, adds what they ask for, posts, exports Myntos's own 2026 file, validates it
+against the 1.40 XSD and compares every account's and party's opening balance
+with Tripletex's: no differences, from either file. `tests/test_saft_import.py`
+is the same flow on a synthetic file in Tripletex's shape.
+
+**Not read:** the documents behind any voucher, which stay in the old
+program's bilag archive. Earlier years' vouchers are read since 2026-10-13,
+below.
+
+### The year so far, and the parallel run (built 2026-10-12)
+
+A company that moves in October needs January to September in Myntos, and one
+that books in both programs for a while (the farm pilot's parallel run) needs
+that and a way to see whether the two agree. Both read the same file, uploaded
+with every call and kept by nobody (`api/v1/saft_import.py`):
+
+| Route | Key | Does |
+| --- | --- | --- |
+| `POST …/saft/bilag/kontroll` | `KEY_PREVIEW`, `ledger:write` | What the import would post, per month, with `accounts_to_add`, `parties_to_add` and findings |
+| `POST …/saft/bilag` | `key_post`, `ledger:write` | Posts it, all or nothing, into the `IMPORT` journal |
+| `POST …/saft/sammenligning` | `KEY_READ`, `ledger:read` | The file's year so far against Myntos's books |
+
+The page is `/tidligere-program/`.
+
+**The import's decisions** (`saft.voucher_import`, each with its reason there):
+
+- **The opening balance first, and nothing else in the period.** Any posted
+  voucher outside `IB` and `IMPORT` between 1 January and `til` is
+  `bilag_i_perioden`: the same trade would be booked twice. Once a parallel
+  run has started, the import cannot run over it, which is the point; the
+  comparison takes over.
+- **One voucher per date.** Tripletex adds a payment to the invoice's voucher,
+  each line dated by `ValueDate`. Split by date when every date balances on its
+  own (the farm's 467 vouchers became 596, all balanced); taken whole on
+  `GLPostingDate` otherwise.
+- **The old program's numbers:** `2026-240`, and `2026-1-0109` for a later
+  date. Unique in the journal, so a second import skips what is there.
+  `SourceDocumentID` points at the old archive («Tripletex bilag 240-2026»).
+- **Accounts** as the opening balance placed them: the first four digits, unless
+  the standing `IB` voucher moved that file account (its lines' text starts with
+  the file's id), as when the accountant has the driftskreditt put on 1920.
+  270x goes on 2700 and 271x on 2710, because Myntos's MVA page and settlement
+  read those two (Tripletex keeps 15 % input VAT on 2711).
+- **VAT copied, not recomputed:** code (the file's `StandardTaxCode`), rate,
+  basis and both amounts. `UTTAK-`, `TAP-`, `JUST-` and `TILB-` codes become
+  the melding's spesifikasjon; `-K` compensation codes are refused.
+- **The old program's settlements stay settlements.** A voucher of VAT accounts
+  against 2740 with only øre beside it gets the settlement's voucher type
+  (`mva_avregning`), and `ledger.service.not_a_settlement()` leaves it out of
+  the year's VAT figures and the MVA page's reconciliation as it does Myntos's
+  own. Without it every term the old program filed would reconcile to nothing.
+- **Not in the register**, which lists what was registered in Myntos and cannot
+  read another program's voucher back as a category; the register refuses to
+  reverse one (`cannot_reverse_here`). It counts everywhere else.
+
+**The comparison** (`saft.compare`) compares *movements* from 1 January to the
+file's last voucher (or `til`), the opening balance left out of both sides, so
+the decisions made there (VAT on 2740, the result on 2050, the bank on 1920) are
+not differences. All VAT accounts are one row, because each program settles a
+term into 2740 only when it files it; whether the VAT agrees is compared per
+term and code instead. Parties are compared on 1500 and 2400 only, since the
+register names the party on the cost line too. Each differing account says in
+which months it parts.
+
+**Checked against the real file.** `saft_pilot.py` takes the farm's 2026 file
+through all of it: opening balance, 61 accounts and 62 parties added, 596
+vouchers posted, a second read finding nothing new, the comparison finding no
+difference in 93 accounts, 81 parties and 5 terms, each term's melding in Myntos
+equal to the settlement Tripletex posted when it filed it (terms 1-4), Myntos's
+own 2026 file valid against the 1.40 XSD, and every closing balance per account
+and party equal to the opening plus Tripletex's movement.
+`tests/test_saft_voucher_import.py` is the same on a synthetic file.
+
+**Not done:** the PDFs (not in SAF-T), dimensions (Tripletex's department and
+product are kept in the line's text; FEATURES 37), and a "filed elsewhere"
+mark on the MVA page: Myntos shows a term the old program filed as not sent,
+and only the import's `mva_meldinger_sendt` note and the help say not to send
+it again.
+
+## The books brought over, on the server (built 2026-10-13)
+
+The farm pilot's farmer uploaded his Tripletex files himself and wrote back
+that the accounts had come over and he could not tell whether the vouchers had,
+and could find no overview of the payments. Three things were wrong, and this
+is what each became:
+
+- **Earlier years were refused.** The vouchers could only be read for the
+  company's first year in Myntos, and the files he had were the years before
+  it as well. Now every file comes over: `saft.move` takes one file per year,
+  the years in a row and only the last unfinished, posts the opening balance
+  from the earliest file's opening balances and every year's vouchers, and
+  opens the years before Myntos's first one to take them
+  (`ledger.service.open_earlier_years`). There is no floor on how far back.
+  The seeded VAT rates, which claim only the first year, move back only for a
+  code whose every line in the files had today's rate: the low rate was 6 % for
+  much of 2020-2021, and a rate nobody proved is not claimed. Another code in
+  such a year has no rate, and a new entry with it there is refused
+  (`tax_rate_not_found`, now a 422 and not a crash).
+- **It was slow, and the page had to stay open.** The page uploaded the file to
+  read it, added 120 accounts and parties one request at a time, uploaded it
+  again to read it again, and a third time to post; the avdelinger a farm file
+  needs had no button at all, so its import stopped at `dimensjoner_mangler`.
+  Now the files are uploaded once (`saft_import`, `saft_import_file`) and read
+  and posted on the server (`saft.jobs`, see ARCHITECTURE.md § Work done after
+  the answer): accounts, parties and dimension values are added by the post
+  itself, in the same transaction as the vouchers. The review is that posting,
+  rolled back, so the two cannot disagree; the post runs it again on the books
+  as they then are, and posts nothing if they changed (`review_changed`).
+- **Imported vouchers were nowhere to be seen.** The register lists payments
+  registered in Myntos, and the overview's «Siste bevegelser» is the register.
+  `/bilag/` (`GET …/bilag`, `domain/ledger/vouchers.py`) lists every voucher of
+  every journal, and narrowed to an account carries its balance: 1920 is the
+  bank's ins and outs.
+
+| Route | Key | Does |
+| --- | --- | --- |
+| `POST …/saft/innlesing` | `KEY_PREVIEW`, `ledger:write` (`ledger:read` with `sammenlign=true`) | Upload one file per year, or one to compare; 202, read in the background |
+| `GET …/saft/innlesing`, `GET …/saft/innlesing/{import_id}` | `KEY_READ` | The imports, their progress, the review, the result |
+| `POST …/saft/innlesing/{import_id}/foring` | `key_post`, `ledger:write` (+ `ledger:chart` when accounts are added) | Post it, all or nothing; 202 |
+| `DELETE …/saft/innlesing/{import_id}` | `key_write` | Throw away one not posted |
+
+The upload is a preview for a key: it changes nothing in the books, and holding
+a 200 MB file for approval would not fit the approval's 30 MB anyway. The post
+that waits for approval is a request with no body.
+
+**The opening balance.** Posted from the earliest file when none stands; kept
+when one stands for that year (the person may have checked it line by line);
+**replaced** when one stands for a later year, reversed and posted anew in one
+step, or that year's balance would count twice, once from the postings and
+once from the voucher. An account the person had moved in the replaced one
+(the driftskreditt onto 1920) is moved in the new one too, read off its lines'
+text the way the vouchers already follow it.
+
+**Year-end of an imported year.** A complete earlier year comes over open, and
+`closing.plan_closing` takes the tax cost and disposition its file carries as
+booked: Tripletex's own year-end vouchers stand, and Myntos disposes only what
+is left (`avsluttet_i_tidligere_program`). They used to be refused as
+`allerede_disponert`, which would have kept such a year, and every later one,
+open for good.
+
+**The single-file routes stay** (`…/inngaende-balanse/saft`, `…/saft/bilag`,
+`…/saft/sammenligning`): an agent may want an answer in the same call, and
+`/api/v1` is additive. They still bring only the first year.
+
+**Checked against:** `tests/test_saft_innlesing.py`, an earlier year with a
+sale and Tripletex's year-end and the running year cut at February, brought
+over in one go, closed, compared, and listed. Not yet run on the farm's real
+files: `regnaskaps_tests/saft_pilot.py` drives the single-file routes and needs
+a variant for the import.
+
 ## The kontoplan is editable (built 2026-10-09)
 
 `domain/ledger/kontoplan.py`, `/kontoplan/`, routes under

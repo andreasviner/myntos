@@ -154,7 +154,8 @@ class CannotReverseHereError(LedgerError):
     """The voucher belongs to a flow that corrects it in its own way.
 
     An opening balance is replaced through its own page, and a year-end closing
-    is undone only by reopening the year, which records who did it and why.
+    is undone only by reopening the year, which records who did it and why. A
+    voucher brought from the previous program is corrected in that program.
     """
 
 

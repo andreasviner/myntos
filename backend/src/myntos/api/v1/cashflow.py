@@ -79,7 +79,14 @@ from myntos.domain.ledger.cashflow import (
     CashFlowDirection,
     types_for,
 )
-from myntos.domain.ledger.chart import LANDBRUK_ACCOUNTS, STANDARD_TAX_CODES
+from myntos.domain.ledger.chart import (
+    IMPORT_VOUCHER_LABEL,
+    IMPORT_VOUCHER_TYPE,
+    LANDBRUK_ACCOUNTS,
+    MANUAL_VOUCHER_LABEL,
+    MANUAL_VOUCHER_TYPE,
+    STANDARD_TAX_CODES,
+)
 from myntos.domain.ledger.models import Account, AccountType, Company, PartyType
 from myntos.domain.ledger.service import (
     COMPOSITE_LABEL,
@@ -184,6 +191,9 @@ class CashFlowPartResponse(BaseModel):
     account_description: str
     tax_code: str | None
     description: str
+    #: The avdeling, prosjekt or driftsgren this line belongs to, by value id
+    #: (``GET …/dimensjoner``). Empty when nobody chose one.
+    dimension_value_ids: list[int] = []
 
 
 class CashFlowResponse(BaseModel):
@@ -226,6 +236,9 @@ class CashFlowResponse(BaseModel):
     #: (each line has its own) and ``vat_amount`` is the VAT that moved with
     #: the money, netted across the lines.
     parts: list[CashFlowPartResponse] = []
+    #: The avdeling, prosjekt or driftsgren of an ordinary entry, by value id.
+    #: Empty on a composite entry, whose lines carry their own in ``parts``.
+    dimension_value_ids: list[int] = []
 
 
 class TypeTotalResponse(BaseModel):
@@ -358,6 +371,11 @@ class CreateCashFlowRequest(BaseModel):
     # Another account of the same type than the category's own, from the
     # company's kontoplan. Left out, the category's account is used.
     account_number: str | None = Field(default=None, max_length=32)
+    # The avdeling, prosjekt or driftsgren the payment belongs to, at most one
+    # per dimension. Optional, like the party: most companies have no
+    # dimensions, and one that does still has entries that belong to none.
+    # Nine is a ceiling on a list nobody needs more than three of.
+    dimension_value_ids: list[int] = Field(default_factory=list, max_length=9)
 
 
 class CompositeLineRequest(BaseModel):
@@ -372,6 +390,9 @@ class CompositeLineRequest(BaseModel):
     # The line's own text, when it needs one ("Omsetningsavgift 0,10 kr/l").
     # Left out, the line carries the voucher's description.
     description: str | None = Field(default=None, max_length=255)
+    # Per line, because one settlement is several driftsgrener: the milk to
+    # the milk production, the feed deducted from it perhaps to the sheep.
+    dimension_value_ids: list[int] = Field(default_factory=list, max_length=9)
 
 
 class CreateCompositeRequest(BaseModel):
@@ -390,6 +411,7 @@ def _composite_parts(payload: CreateCompositeRequest) -> list[CompositePart]:
             tax_code=line.tax_code,
             account_number=line.account_number,
             description=line.description,
+            dimension_value_ids=tuple(line.dimension_value_ids),
         )
         for line in payload.lines
     ]
@@ -769,6 +791,12 @@ async def _to_kroner(suggestion: interpretation.InvoiceSuggestion, *, on: date) 
 def _label_for(type_code: str | None) -> str | None:
     if type_code == COMPOSITE_TYPE:
         return COMPOSITE_LABEL
+    if type_code == IMPORT_VOUCHER_TYPE:
+        return IMPORT_VOUCHER_LABEL
+    # A manual voucher on the bank account (a driftskreditt moved onto 1920)
+    # counts in the year's money in and out, under its own name.
+    if type_code == MANUAL_VOUCHER_TYPE:
+        return MANUAL_VOUCHER_LABEL
     entry_type = CASH_FLOW_TYPES.get(type_code) if type_code is not None else None
     return entry_type.label if entry_type is not None else None
 
@@ -785,6 +813,7 @@ def _part_response(part: CashFlowPart) -> CashFlowPartResponse:
         account_description=part.account_description,
         tax_code=part.tax_code,
         description=part.description,
+        dimension_value_ids=list(part.dimension_value_ids),
     )
 
 
@@ -826,6 +855,7 @@ def _cash_flow_response(
         created_via=view.created_via,
         attachments=[_attachment_response(a) for a in attachments or []],
         parts=[_part_response(part) for part in view.parts],
+        dimension_value_ids=list(view.dimension_value_ids),
     )
 
 
@@ -1608,6 +1638,11 @@ async def record_entry(
     ``payment_method`` is ``bank`` (account 1920, the default) or ``kontant``
     (the cash box, 1900). ``party_id`` names a registered customer or supplier
     and may be left out. The net amount and the VAT are worked out here.
+    ``dimension_value_ids`` puts the entry on an avdeling, prosjekt or, on a
+    farm, a driftsgren: value ids from ``GET
+    /api/v1/companies/{company_id}/dimensjoner``, at most one per dimension,
+    optional. They go on the cost or income line, not on the VAT or bank line,
+    and are what the result per avdeling or driftsgren is read from.
 
     There is no draft. The voucher is posted immediately with the next
     bilagsnummer, and from then on it can be reversed or corrected but never
@@ -1625,7 +1660,10 @@ async def record_entry(
     ``closed_financial_year``), an account of another type or one Myntos keeps
     for itself (422 ``invalid_account_number``), a switched-off account (409
     ``inactive_account``), and a party that is not this company's (404
-    ``party_not_found``). Needs the role Medlem or above.
+    ``party_not_found``). Refuses too a dimension value that is not this
+    company's (404 ``dimension_not_found``), one switched off or in a
+    switched-off dimension (409 ``inactive_dimension``), and two values of the
+    same dimension (422 ``invalid_dimension``). Needs the role Medlem or above.
     """
     require_permission(context.membership.role, Permission.LEDGER_WRITE)
     transaction = await ledger_service.record_cash_flow(
@@ -1639,6 +1677,7 @@ async def record_entry(
         payment_method=payload.payment_method,
         party_pk=payload.party_id,
         account_number=payload.account_number,
+        dimension_value_ids=payload.dimension_value_ids,
         # Who is entering it. Taken from the session and never from the payload:
         # a client-supplied author is a client-supplied answer to "who booked
         # this", which is the one question the field exists to answer.
@@ -1726,6 +1765,7 @@ async def edit_entry(
         corrects_pk=voucher_id,
         created_by_user_id=user.id,
         account_number=payload.account_number,
+        dimension_value_ids=payload.dimension_value_ids,
     )
     view = ledger_service.describe(
         transaction, created_by_name=user.full_name, created_via=_via(context)
@@ -1762,7 +1802,11 @@ async def record_composite(
     milk line (money in, 12 500) and the share line (money out, 600), and the
     bank line becomes 11 900 in. The lines must not net to zero. ``occurred_on``,
     ``description``, ``payment_method`` and ``party_id`` belong to the whole
-    voucher. Between 2 and 40 lines; one line is an ordinary payment.
+    voucher. Between 2 and 40 lines; one line is an ordinary payment. Each
+    line may carry its own ``dimension_value_ids`` (avdeling, prosjekt,
+    driftsgren), as for ``POST /api/v1/companies/{company_id}/cashflow``: a
+    settlement's milk to the milk production and the feed deducted from it to
+    another driftsgren.
 
     Posted at once, one bilagsnummer, immutable like any other entry: show the
     person every line and the net amount before calling this, and attach the
@@ -1917,8 +1961,8 @@ async def reverse(
 
     Refuses an entry already reversed or corrected (409 ``already_reversed``),
     one in a closed financial year (409 ``closed_financial_year``), the opening
-    balance and the year-end closing, which have pages of their own (409
-    ``cannot_reverse_here``), and an id that is not this company's (404
+    balance, the year-end closing and manual vouchers, which have pages of their
+    own (409 ``cannot_reverse_here``), and an id that is not this company's (404
     ``voucher_not_found``). Needs the role Medlem or above.
     """
     require_permission(context.membership.role, Permission.LEDGER_WRITE)
@@ -1954,6 +1998,10 @@ async def upload_document(
     purpose. Bokføringsloven requires primary documentation to stay available
     for five years after the financial year ends, and a delete button is how
     that requirement quietly stops being met.
+
+    Any voucher of the company's takes a document here, not only a payment: a
+    manual voucher (``/manuelt-bilag``) is documented the same way, with the
+    stock count list or the depreciation schedule beside its written reason.
 
     One file per request, as multipart ``file``; a bilag of several files is
     several requests. PDF, PNG, JPEG, WebP, GIF and HEIC are taken, decided

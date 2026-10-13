@@ -77,6 +77,31 @@ at once and cannot be deleted). Never repeat a key back to the person.
    myntos-kontantstrom), with one line per post on the settlement, using the
    table below. Show every line and the net first, and check that the net
    equals what the bank received.
+
+   How a melkeoppgjør is laid out (Q-Meieriene's «Avregningsoppgave», Tine's
+   alike): the price posts, the supplements and the omsetningsavgift are
+   summed to «Netto avregnet», and the 25 % VAT is computed **on that net**,
+   after the levy. Below the VAT line come posts with VAT of their own, such as
+   the membership in husdyrkontrollen. Every line's `gross_amount` includes
+   VAT. The simplest correct booking is therefore the milk at the net price
+   posts times 1.25, the pristilskudd («Pristilskudd sone …») as its own
+   `landbruk_distriktstilskudd_melk` line the same way, and each post below the
+   VAT line as its own line with its own VAT. Splitting the levy out as its own
+   line is also right, at the levy times 1.25: it gives back the VAT on it.
+   Rounding per line can differ from the settlement by a few øre; adjust one
+   line so the net equals the bank.
+
+   How a slakteoppgjør can be laid out (Fatland's «Avregning nr. …»): one row
+   per animal (varenr, skrottnr, class, weight, price), «kilo pluss» rows, the
+   slaughterhouse's supplements («Rett innmelding», «Puljetillegg», «Ny
+   bruker»), «Kvalitetstilskudd storfe» and «Omsetningsavgift», summed to
+   «Sum brutto», with «Moms» (25 %) on that sum and «Total» paid out. Every
+   post carries the same 25 %, so the simplest correct booking is **one
+   ordinary entry** (`POST /api/v1/companies/{company_id}/cashflow`, a composite
+   needs two lines) with `landbruk_slakt` and the amount paid out: its VAT is
+   the settlement's to the øre. To split the levy out, send it as
+   `landbruk_trekk_avgift` with `"account_number": "3041"`; without it the
+   levy lands on 3071, the milk.
 5. Attach the settlement PDF to the voucher (myntos-kontantstrom, step 7).
 
 ## Which category takes which line
@@ -85,7 +110,7 @@ at once and cannot be deleted). Never repeat a key back to the person.
 | --- | --- | --- | --- |
 | Milk delivered (melk), and Tine's etterbetaling | `landbruk_melk` | in | 25 % |
 | Distrikts- and grunntilskudd paid with the milk price | `landbruk_distriktstilskudd_melk` | in | 25 % |
-| Slaughter animals (slakt) | `landbruk_slakt` | in | 25 % |
+| Slaughter animals (slakt), the slaughterhouse's supplements, and «Kvalitetstilskudd storfe» paid with the price | `landbruk_slakt` | in | 25 % |
 | Distriktstilskudd on the slakteoppgjør | `landbruk_distriktstilskudd_slakt` | in | 25 % |
 | Live animals sold (livdyr) | `landbruk_livdyr` | in | 25 % |
 | Grain and seed (korn, frø) | `landbruk_korn` | in | 25 % |
@@ -94,7 +119,7 @@ at once and cannot be deleted). Never repeat a key back to the person.
 | Wool, skins | `landbruk_ull` | in | 25 % |
 | Contract work for others (leiekjøring) | `landbruk_leiekjoring` | in | 25 % |
 | Timber, firewood, chips | `landbruk_skogsvirke` | in | 25 % |
-| Omsetningsavgift, forskningsavgift deducted | `landbruk_trekk_avgift` | out | none; booked against the sale (move it to 3041 or 3001 with `account_number` on a slaughter or grain settlement) |
+| Omsetningsavgift, forskningsavgift deducted | `landbruk_trekk_avgift` | out | 25 %, given back against the sale's output VAT: the buyer computes VAT on the price after the levy. The amount includes it. Booked against the sale (move it to 3041 or 3001 with `account_number` on a slaughter or grain settlement); `tax_code` `0` only if the settlement shows VAT on the price before the levy |
 | Andelsinnskudd (share in Tine, Nortura, Felleskjøpet) deducted | `landbruk_trekk_andel` | out | none; an asset, not a cost |
 | Skogfond deducted on a timber settlement | `landbruk_trekk_skogfond` | out | none |
 | Kraftfôr set off on the settlement | `landbruk_kraftfor` | out | 25 % deductible |

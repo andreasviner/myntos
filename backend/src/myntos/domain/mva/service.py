@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import ColumnElement, Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -47,6 +47,7 @@ from myntos.domain.ledger.chart import (
     SETTLEMENT_JOURNAL_DESCRIPTION,
     SETTLEMENT_JOURNAL_ID,
     SETTLEMENT_JOURNAL_TYPE,
+    SETTLEMENT_VOUCHER_TYPE,
 )
 from myntos.domain.ledger.models import (
     Account,
@@ -57,6 +58,7 @@ from myntos.domain.ledger.models import (
     TransactionLine,
 )
 from myntos.domain.mva import melding as melding_module
+from myntos.domain.mva import naering as naering_module
 from myntos.domain.mva.codes import SUPPORTED_CATEGORIES, Meldingskategori
 from myntos.domain.mva.errors import (
     FilingNotFoundError,
@@ -65,7 +67,7 @@ from myntos.domain.mva.errors import (
     UnsupportedCategoryError,
 )
 from myntos.domain.mva.melding import Melding, TaxedLine, Valideringsresultat
-from myntos.domain.mva.models import FilingStatus, MvaFiling, MvaFilingDocument
+from myntos.domain.mva.models import FilingStatus, MvaFiling, MvaFilingDocument, MvaFilingElsewhere
 from myntos.domain.mva.periods import (
     PeriodType,
     Termin,
@@ -75,7 +77,6 @@ from myntos.domain.mva.periods import (
 )
 
 SETTLEMENT_ACCOUNT = "2740"
-SETTLEMENT_VOUCHER_TYPE = "mva_avregning"
 
 ZERO = Decimal("0.00")
 
@@ -84,20 +85,13 @@ ZERO = Decimal("0.00")
 
 
 def period_type_of(company: Company) -> PeriodType:
-    try:
-        return parse_period_type(company.vat_period_type)
-    except UnknownPeriodError:
-        # A value written by hand into the database. Two months is the law's
-        # default, and the settings card shows the value so it can be fixed.
-        return PeriodType.TO_MAANEDER
+    """The main melding's term length. A second melding has its own (:mod:`.naering`)."""
+    return naering_module.main_period_type(company)
 
 
 def category_of(company: Company) -> Meldingskategori:
-    try:
-        category = Meldingskategori(company.vat_category)
-    except ValueError:
-        return Meldingskategori.ALMINNELIG
-    return category if category in SUPPORTED_CATEGORIES else Meldingskategori.ALMINNELIG
+    """The main melding's category. A second melding has the other one (:mod:`.naering`)."""
+    return naering_module.main_category(company)
 
 
 def update_settings(
@@ -186,16 +180,77 @@ async def taxed_lines(
     return [(row[0], _taxed(row)) for row in rows]
 
 
-def _build(company: Company, termin: Termin, lines: list[TaxedLine]) -> Melding:
+async def taxed_lines_by_naering(
+    db: AsyncSession,
+    company: Company,
+    start: date,
+    end: date,
+    setup: naering_module.Naeringer,
+) -> list[tuple[date, Meldingskategori, TaxedLine]]:
+    """The same lines, each with the melding it belongs to (:mod:`.naering`)."""
+    rows = await db.execute(
+        _company_lines(company.id)
+        .add_columns(Account.account_number)
+        .join(Account, Account.id == TransactionLine.account_id)
+        .where(Transaction.gl_posting_date >= start, Transaction.gl_posting_date <= end)
+    )
+    return [(row[0], setup.of_line(row[0], str(row[8])), _taxed(tuple(row)[:8])) for row in rows]
+
+
+def _build(
+    company: Company,
+    termin: Termin,
+    lines: list[TaxedLine],
+    category: Meldingskategori | None = None,
+) -> Melding:
     try:
         return melding_module.build(
-            lines, termin=termin, category=category_of(company), orgnr=company.orgnr
+            lines,
+            termin=termin,
+            category=category if category is not None else category_of(company),
+            orgnr=company.orgnr,
         )
     except melding_module.MeldingError as error:
         raise MeldingNotBuildableError(str(error)) from error
 
 
-async def build_melding(db: AsyncSession, company: Company, termin: Termin) -> Melding:
+async def build_melding(
+    db: AsyncSession,
+    company: Company,
+    termin: Termin,
+    naering: naering_module.Naering | None = None,
+    setup: naering_module.Naeringer | None = None,
+) -> Melding:
+    """One term's melding as the books have it now: the main melding's unless ``naering`` says.
+
+    With one melding every reportable line of the term is in it, exactly as
+    before there could be two. With two, each line goes to the melding its
+    account and date say (:meth:`~.naering.Naeringer.of_line`).
+    """
+    if setup is None:
+        setup = await naering_module.load(db, company)
+    chosen = naering if naering is not None else setup.main
+    if not setup.is_split:
+        rows = await taxed_lines(db, company, termin.start, termin.end)
+        return _build(company, termin, [line for _, line in rows], chosen.category)
+    split = await taxed_lines_by_naering(db, company, termin.start, termin.end, setup)
+    return _build(
+        company,
+        termin,
+        [line for _, category, line in split if category is chosen.category],
+        chosen.category,
+    )
+
+
+async def build_all_naeringer(db: AsyncSession, company: Company, termin: Termin) -> Melding:
+    """Every reportable line in the term's dates, whichever melding it belongs to.
+
+    Not a melding anybody files. It is what the VAT accounts 2700 and 2710 hold
+    for those dates, so it is what the reconciliation compares them with: the
+    accounts cannot tell the two meldinger apart, and a difference between them
+    and *all* the coded lines is still exactly "something was booked on a VAT
+    account without a code".
+    """
     rows = await taxed_lines(db, company, termin.start, termin.end)
     return _build(company, termin, [line for _, line in rows])
 
@@ -275,7 +330,7 @@ async def vat_balances(
         .group_by(Account.account_number)
     )
     if not include_settlement:
-        query = query.where(Journal.journal_id != SETTLEMENT_JOURNAL_ID)
+        query = query.where(*ledger_service.not_a_settlement())
     output = ZERO
     input_ = ZERO
     for number, debit, credit in await db.execute(query):
@@ -296,34 +351,83 @@ class PeriodSummary:
     termin: Termin
     deadline: date
     melding: Melding
+    # The newest row for the term that still stands: a statement taken back
+    # (``opphevet``) is history, and says nothing about the term now.
     latest: MvaFiling | None
     # The most recent filing that actually reached Skatteetaten, which is the
     # one the ledger is compared against.
     filed: MvaFiling | None
+    # A standing «filed from another program» statement, if there is one.
+    elsewhere: MvaFiling | None = None
 
     @property
     def changed_since_filed(self) -> bool:
         return self.filed is not None and self.filed.content_hash != content_hash(self.melding)
 
+    @property
+    def closed(self) -> bool:
+        """Filed from Myntos or said to be filed elsewhere: nothing is due here."""
+        return self.filed is not None or self.elsewhere is not None
 
-async def year_overview(db: AsyncSession, company: Company, year: int) -> list[PeriodSummary]:
-    """Every period of ``year``, each with its melding as the ledger has it now.
+
+def standing(filings: Sequence[MvaFiling]) -> list[MvaFiling]:
+    """The rows that still say something about the term, newest first."""
+    return [f for f in filings if f.status != FilingStatus.OPPHEVET.value]
+
+
+def standing_elsewhere(filings: Sequence[MvaFiling]) -> MvaFiling | None:
+    return next((f for f in filings if f.status == FilingStatus.ANNET_PROGRAM.value), None)
+
+
+def _filings_where(
+    company: Company,
+    chosen: naering_module.Naering,
+    setup: naering_module.Naeringer,
+) -> tuple[ColumnElement[bool], ...]:
+    """Which filing rows belong to ``chosen``'s terms.
+
+    With one melding, every row of the term length, whatever its category: a
+    company that changed category kept seeing what it had filed before, and a
+    company with one melding still does. With two, the category tells them
+    apart, since both may well file every two months.
+    """
+    where: tuple[ColumnElement[bool], ...] = (
+        MvaFiling.company_id == company.id,
+        MvaFiling.period_type == chosen.period_type.value,
+    )
+    if setup.is_split:
+        where += (MvaFiling.category == chosen.category.value,)
+    return where
+
+
+async def year_overview(
+    db: AsyncSession,
+    company: Company,
+    year: int,
+    naering: naering_module.Naering | None = None,
+    setup: naering_module.Naeringer | None = None,
+) -> list[PeriodSummary]:
+    """Every period of ``year`` of one melding, each as the ledger has it now.
 
     One query for the lines and one for the filings, partitioned here, rather
-    than a pair per period: a monthly filer has twelve.
+    than a pair per period: a monthly filer has twelve. The second melding has
+    no terms before the day it starts.
     """
-    period_type = period_type_of(company)
-    category = category_of(company)
-    periods = terminer(period_type, year)
-    rows = await taxed_lines(db, company, periods[0].start, periods[-1].end)
+    if setup is None:
+        setup = await naering_module.load(db, company)
+    chosen = naering if naering is not None else setup.main
+    periods = chosen.terminer(year)
+    if not periods:
+        return []
+    if setup.is_split:
+        split = await taxed_lines_by_naering(db, company, periods[0].start, periods[-1].end, setup)
+        rows = [(day, line) for day, category, line in split if category is chosen.category]
+    else:
+        rows = await taxed_lines(db, company, periods[0].start, periods[-1].end)
     filings = list(
         await db.scalars(
             select(MvaFiling)
-            .where(
-                MvaFiling.company_id == company.id,
-                MvaFiling.year == year,
-                MvaFiling.period_type == period_type.value,
-            )
+            .where(*_filings_where(company, chosen, setup), MvaFiling.year == year)
             .order_by(MvaFiling.id.desc())
         )
     )
@@ -331,27 +435,37 @@ async def year_overview(db: AsyncSession, company: Company, year: int) -> list[P
     summaries: list[PeriodSummary] = []
     for termin in periods:
         lines = [line for day, line in rows if termin.contains(day)]
-        mine = [f for f in filings if f.period_index == termin.index]
+        mine = standing([f for f in filings if f.period_index == termin.index])
         summaries.append(
             PeriodSummary(
                 termin=termin,
-                deadline=termin.deadline(category),
-                melding=_build(company, termin, lines),
+                deadline=termin.deadline(chosen.category),
+                melding=_build(company, termin, lines, chosen.category),
                 latest=mine[0] if mine else None,
                 filed=next((f for f in mine if FilingStatus(f.status).is_filed), None),
+                elsewhere=standing_elsewhere(mine),
             )
         )
     return summaries
 
 
-async def filings_for(db: AsyncSession, company: Company, termin: Termin) -> list[MvaFiling]:
+async def filings_for(
+    db: AsyncSession,
+    company: Company,
+    termin: Termin,
+    naering: naering_module.Naering | None = None,
+    setup: naering_module.Naeringer | None = None,
+) -> list[MvaFiling]:
+    """Every row for one term of one melding, newest first, statements taken back included."""
+    if setup is None:
+        setup = await naering_module.load(db, company)
+    chosen = naering if naering is not None else setup.main
     return list(
         await db.scalars(
             select(MvaFiling)
             .where(
-                MvaFiling.company_id == company.id,
+                *_filings_where(company, chosen, setup),
                 MvaFiling.year == termin.year,
-                MvaFiling.period_type == termin.period_type.value,
                 MvaFiling.period_index == termin.index,
             )
             .options(selectinload(MvaFiling.documents))
@@ -495,26 +609,134 @@ def _side(
     )
 
 
+async def _settled_already(
+    db: AsyncSession, company: Company, termin: Termin, category: Meldingskategori
+) -> VatBalances:
+    """What earlier filings of this term of this melding already moved onto 2740.
+
+    Read from the settlement vouchers those filings point at, not from the VAT
+    accounts: with two meldinger the accounts hold both meldingers' VAT for the
+    same dates and cannot say whose a krone is. A term recorded as filed from
+    another program counts the old program's own settlement, when the statement
+    was made from the voucher the import brought over: that voucher moved the
+    term's VAT onto 2740 as surely as one of Myntos's.
+    """
+    term = (
+        MvaFiling.company_id == company.id,
+        MvaFiling.year == termin.year,
+        MvaFiling.period_type == termin.period_type.value,
+        MvaFiling.period_index == termin.index,
+        MvaFiling.category == category.value,
+    )
+    own = select(MvaFiling.settlement_transaction_pk).where(
+        *term, MvaFiling.settlement_transaction_pk.is_not(None)
+    )
+    theirs = (
+        select(MvaFilingElsewhere.voucher_pk)
+        .join(MvaFiling, MvaFiling.id == MvaFilingElsewhere.filing_id)
+        .where(
+            *term,
+            MvaFiling.status == FilingStatus.ANNET_PROGRAM.value,
+            MvaFilingElsewhere.voucher_pk.is_not(None),
+        )
+    )
+    vouchers = own.union(theirs)
+    rows = await db.execute(
+        select(
+            Account.account_number,
+            func.sum(TransactionLine.debit),
+            func.sum(TransactionLine.credit),
+        )
+        .join(TransactionLine, TransactionLine.account_id == Account.id)
+        .where(
+            Account.company_id == company.id,
+            TransactionLine.transaction_pk.in_(vouchers),
+            Account.account_number.in_((OUTPUT_VAT_ACCOUNT, INPUT_VAT_ACCOUNT)),
+        )
+        .group_by(Account.account_number)
+    )
+    output = ZERO
+    input_ = ZERO
+    for number, debit, credit in rows:
+        # A settlement debits 2700 by the output VAT it moves and credits 2710
+        # by the input VAT, so these are the amounts moved, signed as owed.
+        if number == OUTPUT_VAT_ACCOUNT:
+            output = (debit or ZERO) - (credit or ZERO)
+        else:
+            input_ = (credit or ZERO) - (debit or ZERO)
+    return VatBalances(output=output, input=input_)
+
+
+async def to_settle(
+    db: AsyncSession,
+    company: Company,
+    termin: Termin,
+    naering: naering_module.Naering | None = None,
+    setup: naering_module.Naeringer | None = None,
+) -> VatBalances:
+    """What a settlement of this term would move onto 2740 now.
+
+    **One melding:** the term's balances on 2700 and 2710, settlements
+    included, exactly as it has always been. Whatever sits on the two accounts
+    for the term's dates is the term's, so a correction moves the difference
+    and an amount booked on a VAT account without a code is swept along with
+    the rest.
+
+    **Two meldinger:** the melding's own output and input VAT, less what this
+    melding's earlier settlements of the term moved. The accounts hold both
+    meldingers' VAT and cannot be split, so the melding is the only thing that
+    can say what is this melding's; an amount booked on 2700 without a code
+    stays there, where the reconciliation on the MVA page shows it.
+    """
+    if setup is None:
+        setup = await naering_module.load(db, company)
+    if not setup.is_split:
+        return await vat_balances(db, company, termin, include_settlement=True)
+    chosen = naering if naering is not None else setup.main
+    melding = await build_melding(db, company, termin, chosen, setup)
+    already = await _settled_already(db, company, termin, chosen.category)
+    return VatBalances(
+        output=melding.output_vat - already.output, input=melding.input_vat - already.input
+    )
+
+
 async def post_settlement(
     db: AsyncSession,
     *,
     company: Company,
     termin: Termin,
     created_by_user_id: int | None,
+    naering: naering_module.Naering | None = None,
+    setup: naering_module.Naeringer | None = None,
 ) -> Transaction | None:
     """Move the period's 2700 and 2710 onto 2740, dated the last day of the period.
 
     ``None`` when there is nothing to move, which is the ordinary case for a
     nullmelding and for a correction that changed nothing on the VAT accounts.
+
+    With two meldinger each is settled in a voucher of its own, onto the same
+    2740, and the voucher's text names the melding. One account is enough: no
+    rule asks for one per melding, Skatteetaten answers each filing with its own
+    payment information (KID, amount, due date), and the two payment categories
+    that clear 2740 (``mva_oppgjor``, ``mva_tilgode``) then need no choice of
+    melding. What 2740 holds is what the company owes or is owed in VAT, in
+    total, which is the figure the balance sheet wants.
     """
-    balances = await vat_balances(db, company, termin, include_settlement=True)
+    if setup is None:
+        setup = await naering_module.load(db, company)
+    chosen = naering if naering is not None else setup.main
+    balances = await to_settle(db, company, termin, chosen, setup)
     if balances.output == ZERO and balances.input == ZERO:
         return None
 
     accounts = await ledger_service._accounts_by_number(db, company)
     financial_year = await ledger_service.ensure_financial_year(db, company, termin.end.year)
     journal = await _settlement_journal(db, company)
-    text = f"Mva-oppgjør {termin.label}"
+    text = (
+        f"Mva-oppgjør {chosen.label.lower()} {termin.label}"
+        if setup.is_split
+        else f"Mva-oppgjør {termin.label}"
+    )[:255]
 
     lines: list[TransactionLine] = []
     if balances.output != ZERO:
@@ -551,6 +773,33 @@ async def post_settlement(
     db.add(transaction)
     await db.flush()
     return transaction
+
+
+async def unsettled_terms(db: AsyncSession, company: Company, year: int) -> list[str]:
+    """The year's terms whose VAT has not been moved onto 2740, for the year-end check.
+
+    With one melding, the term's balances on 2700 and 2710, as the year-end has
+    always asked. With two, each melding's own terms, by what is still to
+    settle: a yearly primærnæring melding settles on 31 December what was booked
+    in March, so the two-monthly windows of the accounts would call every
+    alminnelig term open until the yearly one is filed.
+    """
+    if not company.vat_registered:
+        return []
+    setup = await naering_module.load(db, company)
+    labels: list[str] = []
+    if not setup.is_split:
+        for termin in terminer(setup.main.period_type, year):
+            balances = await vat_balances(db, company, termin, include_settlement=True)
+            if balances.output != ZERO or balances.input != ZERO:
+                labels.append(termin.label)
+        return labels
+    for chosen in setup.all:
+        for termin in chosen.terminer(year):
+            remaining = await to_settle(db, company, termin, chosen, setup)
+            if remaining.output != ZERO or remaining.input != ZERO:
+                labels.append(f"{termin.label} ({chosen.label.lower()})")
+    return labels
 
 
 def is_past(termin: Termin, today: date) -> bool:

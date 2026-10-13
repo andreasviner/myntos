@@ -1319,6 +1319,8 @@ export const createParty = (
     party_type: PartyType;
     name: string;
     orgnr?: string | null;
+    /** The number the party is known by; generated when left out. */
+    party_id?: string | null;
     address_line?: string | null;
     postal_code?: string | null;
     city?: string | null;
@@ -2637,6 +2639,412 @@ export const readSaldobalanse = (companyId: number, file: File): Promise<Opening
   form.append('file', file);
   return request<OpeningReview>(`${openingPath(companyId)}/saldobalanse`, { method: 'POST', body: form });
 };
+
+/** An account a SAF-T file has a balance on that the kontoplan does not have yet. */
+export interface SaftAccountToAdd {
+  number: string;
+  description: string;
+  account_type: AccountType;
+  grouping_category: string;
+  grouping_code: string;
+  /** The file's own account ids that land on this number. */
+  source_accounts: string[];
+}
+
+/** A customer or supplier with open items in a SAF-T file that Myntos does not have. */
+export interface SaftPartyToAdd {
+  party_type: PartyType;
+  name: string;
+  orgnr: string | null;
+  party_id: string | null;
+  address_line: string | null;
+  postal_code: string | null;
+  city: string | null;
+  source_id: string;
+}
+
+export interface SaftOpening extends OpeningReview {
+  source: {
+    software: string | null;
+    audit_file_version: string;
+    orgnr: string;
+    company_name: string;
+    start_date: string;
+    end_date: string;
+    /** Which of the file's balances were read: its opening ones, or the year before's closing. */
+    balances: 'inngaende' | 'utgaende';
+  };
+  accounts_to_add: SaftAccountToAdd[];
+  parties_to_add: SaftPartyToAdd[];
+}
+
+/** Reads the previous program's SAF-T file (XML or ZIP) into lines. Nothing is posted or kept. */
+export const readSaft = (companyId: number, file: File): Promise<SaftOpening> => {
+  const form = new FormData();
+  form.append('file', file);
+  return request<SaftOpening>(`${openingPath(companyId)}/saft`, { method: 'POST', body: form });
+};
+
+// --- The old program's vouchers, and the two programs compared ------------------------
+//
+// The same SAF-T file again, read for its vouchers. It is uploaded with every
+// call and kept by nobody, so the page holds on to the File between them.
+
+export interface SaftFileSource {
+  software: string | null;
+  audit_file_version: string;
+  orgnr: string;
+  company_name: string;
+  start_date: string;
+  end_date: string;
+}
+
+export interface SaftVoucherImport {
+  company_id: number;
+  source: SaftFileSource;
+  year: number;
+  /** The last day brought over: `til`, or the file's last voucher. */
+  through: string;
+  vouchers: number;
+  lines: number;
+  first_date: string | null;
+  last_date: string | null;
+  already_imported: number;
+  /** Vouchers dated after `through`, left for later. */
+  later: number;
+  months: { month: number; vouchers: number; total: string }[];
+  accounts_to_add: SaftAccountToAdd[];
+  parties_to_add: SaftPartyToAdd[];
+  findings: YearFinding[];
+  postable: boolean;
+}
+
+export interface ImportedVouchers {
+  company_id: number;
+  posted: number;
+  journal: string;
+  first_voucher_no: string;
+  last_voucher_no: string;
+  first_date: string;
+  last_date: string;
+}
+
+export interface SaftComparison {
+  company_id: number;
+  source: SaftFileSource;
+  start_date: string;
+  through: string;
+  matches: boolean;
+  accounts_compared: number;
+  parties_compared: number;
+  terms_compared: number;
+  accounts: {
+    account_number: string;
+    description: string;
+    in_file: string;
+    in_myntos: string;
+    difference: string;
+    months: number[];
+  }[];
+  parties: {
+    party_type: PartyType;
+    name: string;
+    source_id: string | null;
+    party_id: number | null;
+    in_file: string;
+    in_myntos: string;
+    difference: string;
+  }[];
+  vat: {
+    termin: string;
+    code: string;
+    spesifikasjon: string | null;
+    base_in_file: string;
+    base_in_myntos: string;
+    vat_in_file: string;
+    vat_in_myntos: string;
+  }[];
+  findings: YearFinding[];
+}
+
+const saftPath = (companyId: number): string => `/api/v1/companies/${companyId}/saft`;
+
+function saftForm(file: File, til: string | null): FormData {
+  const form = new FormData();
+  form.append('file', file);
+  if (til !== null && til !== '') form.append('til', til);
+  return form;
+}
+
+/** What bringing the year's vouchers over from `file` would post. Nothing is posted or kept. */
+export const reviewSaftVouchers = (
+  companyId: number,
+  file: File,
+  til: string | null,
+): Promise<SaftVoucherImport> =>
+  request<SaftVoucherImport>(`${saftPath(companyId)}/bilag/kontroll`, {
+    method: 'POST',
+    body: saftForm(file, til),
+  });
+
+/** Posts the year's vouchers from `file`, all of them or none. */
+export const postSaftVouchers = (
+  companyId: number,
+  file: File,
+  til: string | null,
+): Promise<ImportedVouchers> =>
+  request<ImportedVouchers>(`${saftPath(companyId)}/bilag`, {
+    method: 'POST',
+    body: saftForm(file, til),
+  });
+
+/** The old program's books against Myntos's, from a fresh SAF-T file. Nothing is kept. */
+export const compareWithSaft = (
+  companyId: number,
+  file: File,
+  til: string | null,
+): Promise<SaftComparison> =>
+  request<SaftComparison>(`${saftPath(companyId)}/sammenligning`, {
+    method: 'POST',
+    body: saftForm(file, til),
+  });
+
+// --- The previous program's files, read on the server ---------------------------------
+//
+// Uploaded once, then read, compared and posted by the server, which the page
+// polls. Nothing needs the page to stay open after the upload: see
+// backend/src/myntos/saft/jobs.py for why that replaced the calls above.
+
+export type SaftImportStatus = 'reading' | 'ready' | 'posting' | 'posted' | 'failed';
+
+export interface SaftImportFinding extends YearFinding {
+  /** The year it is about, or null for the files as a whole. */
+  year: number | null;
+}
+
+export interface SaftImportYear {
+  year: number;
+  file_name: string;
+  software: string | null;
+  start_date: string;
+  end_date: string;
+  /** Whether the file runs to 31 December; only the last year may not. */
+  complete: boolean;
+  through: string;
+  /** Whether the year is new in Myntos. */
+  opened: boolean;
+  vouchers: number;
+  lines: number;
+  first_date: string | null;
+  last_date: string | null;
+  already_imported: number;
+  later: number;
+  months: { month: number; vouchers: number; total: string }[];
+}
+
+export interface SaftDimensionToAdd {
+  code: string;
+  dimension_description: string;
+  dimension_id: number | null;
+  value: string;
+  description: string;
+}
+
+export interface SaftMoveReview {
+  kind: 'import';
+  postable: boolean;
+  vouchers: number;
+  first_year_before: number | null;
+  first_year_after: number;
+  years_opened: number[];
+  years: SaftImportYear[];
+  opening: {
+    year: number;
+    action: 'post' | 'replace' | 'keep' | 'none';
+    replaces: string | null;
+    replaces_year: number | null;
+    lines: number;
+    total: string;
+  } | null;
+  accounts_to_add: SaftAccountToAdd[];
+  parties_to_add: SaftPartyToAdd[];
+  dimensions_to_add: SaftDimensionToAdd[];
+  findings: SaftImportFinding[];
+}
+
+export type SaftComparisonReview = Omit<SaftComparison, 'company_id' | 'findings'> & {
+  kind: 'sammenligning';
+  findings: SaftImportFinding[];
+};
+
+export interface SaftImport {
+  company_id: number;
+  id: number;
+  purpose: 'import' | 'sammenligning';
+  status: SaftImportStatus;
+  til: string | null;
+  created_at: string;
+  updated_at: string;
+  posted_at: string | null;
+  /** What the server is doing now, in Norwegian. */
+  step: string | null;
+  done: number;
+  total: number;
+  running: boolean;
+  files_kept: boolean;
+  files: { filename: string; size: number; year: number | null }[];
+  review: SaftMoveReview | SaftComparisonReview | null;
+  result: SaftMoveReview | null;
+  error: string | null;
+  error_code: string | null;
+  may_post: boolean;
+}
+
+const importPath = (companyId: number): string => `${saftPath(companyId)}/innlesing`;
+
+/**
+ * Uploads SAF-T files to be read on the server, reporting how much has gone up.
+ *
+ * XMLHttpRequest rather than `request`, because fetch cannot say how far an
+ * upload has come, and a year of vouchers is a long upload on a farm's line:
+ * a bar that does not move reads as a page that froze. The company wall is the
+ * same as `request`'s, checked before sending and on the answer.
+ */
+export function uploadSaftFiles(
+  companyId: number,
+  files: File[],
+  options: { til?: string | null; compare?: boolean },
+  onProgress: (sent: number, total: number) => void,
+): Promise<SaftImport> {
+  const path = importPath(companyId);
+  const active = activeCompanyId();
+  if (active !== null && active !== companyId) {
+    return Promise.reject(
+      new WrongCompanyError(
+        'Vi stoppet en forespørsel som gjaldt et annet selskap enn det du ser på. Last siden på nytt.',
+        active,
+        companyId,
+      ),
+    );
+  }
+  const form = new FormData();
+  for (const file of files) form.append('files', file);
+  if (options.til) form.append('til', options.til);
+  if (options.compare) form.append('sammenlign', 'true');
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API_BASE_URL}${path}`);
+    xhr.withCredentials = true;
+    xhr.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable) onProgress(event.loaded, event.total);
+    });
+    xhr.addEventListener('error', () =>
+      reject(new ApiError(0, 'Fikk ikke kontakt med serveren.', 'network')),
+    );
+    xhr.addEventListener('load', () => {
+      let body: unknown = null;
+      try {
+        body = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+      } catch {
+        body = null;
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        const code =
+          typeof body === 'object' && body !== null && typeof (body as { code?: unknown }).code === 'string'
+            ? (body as { code: string }).code
+            : null;
+        reject(new ApiError(xhr.status, messageFrom(xhr.status, body), code));
+        return;
+      }
+      try {
+        assertCompanyScope(companyId, body);
+      } catch (error) {
+        reject(error);
+        return;
+      }
+      resolve(body as SaftImport);
+    });
+    xhr.send(form);
+  });
+}
+
+export const listSaftImports = (companyId: number): Promise<SaftImport[]> =>
+  request<SaftImport[]>(importPath(companyId));
+
+export const getSaftImport = (companyId: number, importId: number): Promise<SaftImport> =>
+  request<SaftImport>(`${importPath(companyId)}/${importId}`);
+
+/** Starts posting what the review showed. The server does it; poll the import. */
+export const postSaftImport = (companyId: number, importId: number): Promise<SaftImport> =>
+  request<SaftImport>(`${importPath(companyId)}/${importId}/foring`, { method: 'POST' });
+
+export const discardSaftImport = (companyId: number, importId: number): Promise<void> =>
+  request<void>(`${importPath(companyId)}/${importId}`, { method: 'DELETE' });
+
+// --- The bilagsjournal ----------------------------------------------------------------
+
+export interface VoucherLine {
+  account_number: string;
+  account_description: string;
+  description: string | null;
+  debit: string;
+  credit: string;
+  party_name: string | null;
+  tax_code: string | null;
+  dimensions: string[];
+}
+
+export interface Voucher {
+  id: number;
+  journal: string;
+  journal_description: string;
+  voucher_no: string;
+  transaction_date: string;
+  description: string;
+  voucher_type: string | null;
+  source_document: string | null;
+  total: string;
+  reverses_id: number | null;
+  reversed_by_id: number | null;
+  created_by_name: string | null;
+  lines: VoucherLine[];
+  /** With an account asked about: the voucher's movement on it, debit positive. */
+  movement: string | null;
+  balance: string | null;
+}
+
+export interface VoucherPage {
+  company_id: number;
+  year: number;
+  month: number | null;
+  total_count: number;
+  offset: number;
+  vouchers: Voucher[];
+  journals: { code: string; description: string; vouchers: number }[];
+  account_number: string | null;
+  account_description: string | null;
+  opening_balance: string | null;
+  closing_balance: string | null;
+}
+
+export interface VoucherFilter {
+  year: number;
+  month?: number | null;
+  journal?: string | null;
+  account?: string | null;
+  search?: string | null;
+  offset?: number;
+}
+
+export function listVouchers(companyId: number, filter: VoucherFilter): Promise<VoucherPage> {
+  const query = new URLSearchParams({ aar: String(filter.year) });
+  if (filter.month) query.set('maaned', String(filter.month));
+  if (filter.journal) query.set('journal', filter.journal);
+  if (filter.account) query.set('konto', filter.account);
+  if (filter.search) query.set('sok', filter.search);
+  if (filter.offset) query.set('fra', String(filter.offset));
+  return request<VoucherPage>(`/api/v1/companies/${companyId}/bilag?${query.toString()}`);
+}
 
 /** Posts the opening balance; `correct` reverses the standing one and replaces it. */
 export const postOpening = (

@@ -1,0 +1,1215 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Hent regnskapet fra et annet program | Myntos"
+  description="Last opp SAF-T-filene fra det gamle regnskapsprogrammet. Myntos henter tidligere år og året du står i, og sammenligner de to programmene."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Hent regnskapet fra et annet program</p>
+      {/* Selskapet er overskriften: det som hentes, føres i ett regnskap, og
+          navnet skal stå der man ser det før noe føres. */}
+      <h1 data-session-company></h1>
+      <p class="muted orgnr" id="orgnr"></p>
+    </div>
+  </header>
+
+  <p class="lead">
+    Last opp SAF-T-filene fra Tripletex, Fiken, PowerOffice eller et annet program, én fil per
+    regnskapsår. Myntos henter tidligere år og året du står i, viser hva som blir ført, og fører
+    alt på én gang når du sier ja.
+  </p>
+
+  {/* Tre steg, og hvor man står. Siden gjør ett av dem om gangen, og en person
+      som kommer tilbake etter å ha lukket fanen, skal se hvor arbeidet er. */}
+  <ol class="stepper" id="stepper" aria-label="Hvor langt innlesingen har kommet">
+    <li data-step="upload">Last opp</li>
+    <li data-step="review">Se over</li>
+    <li data-step="done">Ført</li>
+  </ol>
+
+  <p class="status" id="page-status" hidden></p>
+  <div class="empty" id="loading">Henter …</div>
+
+  {/* Opplastingen. Filene sendes én gang; alt etterpå skjer på serveren. */}
+  <section class="card" id="upload-card" hidden>
+    <h2 class="card-title">Last opp SAF-T-filene</h2>
+    <form id="upload-form" novalidate>
+      <label class="dropzone" id="dropzone">
+        <input
+          type="file"
+          id="upload-files"
+          multiple
+          accept=".xml,.zip,application/xml,text/xml,application/zip"
+        />
+        <span class="dropzone-title">SAF-T-filer fra det gamle programmet</span>
+        <span class="dropzone-hint">
+          Dra filene hit, eller trykk for å velge. XML eller ZIP, én fil per år fra 1. januar.
+        </span>
+      </label>
+      <ul class="chosen" id="chosen" hidden></ul>
+      <details class="more">
+        <summary>Flere valg</summary>
+        <label class="field">
+          <span>Til og med (valgfritt)</span>
+          <input type="date" id="upload-til" />
+          <span class="field-hint">
+            Tomt for alt i filene. Har du allerede ført bilag i Myntos i år, velg dagen før det
+            første av dem.
+          </span>
+        </label>
+      </details>
+      <div class="actions">
+        <button type="submit" class="btn btn-primary" id="upload-button">Last opp og les filene</button>
+      </div>
+      <div class="progress" id="upload-progress" hidden>
+        <div class="bar"><span id="upload-bar"></span></div>
+        <p class="card-hint" id="upload-progress-text"></p>
+      </div>
+      <p class="status" id="upload-status" hidden></p>
+    </form>
+    <p class="card-hint fineprint">
+      Ingenting føres før du har sett over det. Filene ligger hos Myntos bare til regnskapet er
+      ført eller innlesingen er forkastet, og høyst i 14 dager. Ta vare på dem selv: sammen med
+      det gamle programmets bilagsarkiv er de dokumentasjonen for årene før Myntos.
+    </p>
+  </section>
+
+  {/* Innlesingen slik serveren har den: under arbeid, til gjennomgang, ført
+      eller feilet. Bygges av skriptet; reglene for det som bygges står med
+      :global() under, forankret i #import-card. */}
+  <section class="card" id="import-card" hidden aria-live="polite">
+    <div id="import-body"></div>
+  </section>
+
+  {/* Sammenligningen: for den som fører i begge programmene en stund. */}
+  <section class="card" id="compare-card" hidden>
+    <h2 class="card-title">Sammenlign med det gamle programmet</h2>
+    <p class="card-hint">
+      Fører du i begge programmene en periode, tar du ut en ny SAF-T-fil for året fra det gamle og
+      laster den opp her. Myntos sammenligner det som er ført fra 1. januar per konto, per kunde og
+      leverandør, og mva per termin.
+    </p>
+    <form id="compare-form" novalidate>
+      <label class="field">
+        <span>Ny SAF-T-fil fra det gamle programmet</span>
+        <input
+          type="file"
+          id="compare-file"
+          accept=".xml,.zip,application/xml,text/xml,application/zip"
+        />
+      </label>
+      <label class="field til">
+        <span>Til og med (valgfritt)</span>
+        <input type="date" id="compare-til" />
+        <span class="field-hint">Tomt for til og med det siste bilaget i filen.</span>
+      </label>
+      <div class="actions">
+        <button type="submit" class="btn btn-primary" id="compare-button">Last opp og sammenlign</button>
+      </div>
+      <p class="status" id="compare-status" hidden></p>
+    </form>
+    <div id="compare-body" aria-live="polite"></div>
+  </section>
+
+  <section class="card" id="history-card" hidden>
+    <h2 class="card-title">Tidligere innlesinger</h2>
+    <ul class="history" id="history"></ul>
+  </section>
+</BaseLayout>
+
+<style>
+  .page-head {
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .orgnr {
+    margin: 0.2rem 0 0;
+  }
+  .lead {
+    max-width: 46rem;
+  }
+
+  /* --- Stegene ------------------------------------------------------------ */
+  .stepper {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.6rem;
+    list-style: none;
+    counter-reset: steg;
+    padding: 0;
+    margin: 1.25rem 0 1.25rem;
+    font-size: 0.9rem;
+    color: var(--faint);
+  }
+  .stepper li {
+    counter-increment: steg;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .stepper li::before {
+    content: counter(steg);
+    width: 1.6rem;
+    height: 1.6rem;
+    display: grid;
+    place-items: center;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--border-strong);
+    font-weight: 700;
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .stepper li[data-state='current'] {
+    color: var(--fg-strong);
+    font-weight: 650;
+  }
+  .stepper li[data-state='current']::before {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--accent-fg);
+  }
+  .stepper li[data-state='done'] {
+    color: var(--accent);
+  }
+  .stepper li[data-state='done']::before {
+    content: '✓';
+    border-color: var(--accent-line);
+    background: var(--accent-soft);
+  }
+
+  /* --- Opplastingen ------------------------------------------------------- */
+  .dropzone {
+    position: relative;
+    display: grid;
+    gap: 0.3rem;
+    justify-items: center;
+    text-align: center;
+    padding: 1.6rem 1rem;
+    border: 1.5px dashed var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--surface-2, var(--bg-tint));
+    cursor: pointer;
+    transition:
+      border-color 120ms ease,
+      background 120ms ease;
+  }
+  .dropzone:hover,
+  .dropzone[data-over='true'] {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .dropzone input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+  .dropzone-title {
+    font-weight: 650;
+  }
+  .dropzone-hint {
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  .chosen {
+    list-style: none;
+    padding: 0;
+    margin: 0.75rem 0 0;
+    display: grid;
+    gap: 0.35rem;
+  }
+  .chosen :global(li) {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    align-items: center;
+    padding: 0.45rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    font-size: 0.92rem;
+  }
+  .chosen :global(.size) {
+    color: var(--faint);
+    font-variant-numeric: tabular-nums;
+    margin-left: 0.5rem;
+  }
+  .more {
+    margin-top: 0.9rem;
+  }
+  .more summary {
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 0.92rem;
+  }
+  .til {
+    max-width: 22rem;
+  }
+  .more .field {
+    margin: 0.75rem 0 0;
+    max-width: 22rem;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+  }
+  .fineprint {
+    margin-top: 1rem;
+    font-size: 0.85rem;
+  }
+
+  /* Framdriften. Også brukt av det skriptet bygger i #import-card. */
+  .progress,
+  #import-card :global(.progress) {
+    margin-top: 1rem;
+  }
+  .bar,
+  #import-card :global(.bar) {
+    height: 0.5rem;
+    border-radius: var(--radius-pill);
+    background: var(--border);
+    overflow: hidden;
+  }
+  .bar span,
+  #import-card :global(.bar span) {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: var(--accent);
+    border-radius: inherit;
+    transition: width 200ms ease;
+  }
+  #import-card :global(.bar[data-indeterminate='true'] span) {
+    width: 35%;
+    animation: glide 1.4s ease-in-out infinite;
+  }
+  @keyframes glide {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(300%);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #import-card :global(.bar[data-indeterminate='true'] span) {
+      animation: none;
+      width: 100%;
+      opacity: 0.4;
+    }
+  }
+
+  /* --- Det skriptet bygger: innlesingen ---------------------------------- */
+  #import-card :global(h2),
+  #compare-body :global(h3) {
+    margin: 0 0 0.35rem;
+  }
+  #import-card :global(h3),
+  #compare-body :global(h3) {
+    font-size: 1rem;
+    margin: 1.25rem 0 0.4rem;
+  }
+  #import-card :global(.working-note) {
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius-small);
+    border: 1px solid var(--accent-line);
+    background: var(--accent-soft);
+    font-size: 0.92rem;
+  }
+  #import-card :global(.years),
+  #compare-body :global(table) {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.93rem;
+    font-variant-numeric: tabular-nums;
+  }
+  #import-card :global(.years th),
+  #import-card :global(.years td),
+  #compare-body :global(th),
+  #compare-body :global(td) {
+    text-align: left;
+    padding: 0.45rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+  }
+  #import-card :global(.years th),
+  #compare-body :global(th) {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--faint);
+  }
+  #import-card :global(.num),
+  #compare-body :global(.num) {
+    text-align: right;
+    white-space: nowrap;
+  }
+  #import-card :global(.tag) {
+    display: inline-block;
+    padding: 0.05rem 0.5rem;
+    border-radius: var(--radius-pill);
+    font-size: 0.78rem;
+    font-weight: 650;
+    border: 1px solid var(--border-strong);
+    color: var(--muted);
+  }
+  #import-card :global(.tag[data-tone='accent']) {
+    border-color: var(--accent-line);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  #import-card :global(.tag[data-tone='gold']) {
+    border-color: var(--gold);
+    background: var(--gold-soft);
+    color: var(--fg);
+  }
+
+  /* Det som legges til: tre fliser, hver en <details> med en kort, rullbar
+     liste. Lista var tidligere en punktliste rett på siden, og 62 kunder og
+     leverandører gjorde gjennomgangen lengre enn skjermen ganger fire. */
+  #import-card :global(.adds) {
+    display: grid;
+    gap: 0.6rem;
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    align-items: start;
+  }
+  #import-card :global(.adds details) {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    background: var(--surface);
+  }
+  #import-card :global(.adds summary) {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    cursor: pointer;
+    padding: 0.65rem 0.8rem;
+    list-style: none;
+  }
+  #import-card :global(.adds summary::-webkit-details-marker) {
+    display: none;
+  }
+  #import-card :global(.adds .count) {
+    font-size: 1.35rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  #import-card :global(.adds .what) {
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  #import-card :global(.adds .filter) {
+    margin: 0 0.8rem 0.5rem;
+    width: calc(100% - 1.6rem);
+  }
+  #import-card :global(.adds ul) {
+    list-style: none;
+    margin: 0;
+    padding: 0 0.8rem 0.7rem;
+    max-height: 16rem;
+    overflow-y: auto;
+    font-size: 0.88rem;
+  }
+  #import-card :global(.adds li) {
+    padding: 0.25rem 0;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    gap: 0.6rem;
+  }
+  #import-card :global(.adds li .sub) {
+    color: var(--faint);
+    white-space: nowrap;
+  }
+  #import-card :global(.findings),
+  #compare-body :global(.findings) {
+    margin: 0.75rem 0;
+    padding-left: 1.2rem;
+  }
+  #import-card :global(.findings.errors) {
+    color: var(--negative);
+  }
+  #import-card :global(.notes),
+  #compare-body :global(.notes) {
+    margin-top: 0.75rem;
+  }
+  #import-card :global(.notes summary),
+  #compare-body :global(.notes summary) {
+    cursor: pointer;
+    color: var(--muted);
+  }
+  #import-card :global(.notes li),
+  #compare-body :global(.notes li) {
+    color: var(--muted);
+    margin: 0.35rem 0;
+  }
+  #import-card :global(.year-tag) {
+    font-weight: 650;
+    margin-right: 0.35rem;
+    color: var(--fg);
+  }
+  #import-card :global(.confirm) {
+    margin-top: 1.25rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
+  #import-card :global(.links) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+  }
+
+  .history {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .history :global(li) {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.55rem 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.93rem;
+  }
+  .history :global(li:last-child) {
+    border-bottom: none;
+  }
+  .history :global(.when) {
+    color: var(--faint);
+    font-variant-numeric: tabular-nums;
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    discardSaftImport,
+    getSaftImport,
+    getOpeningState,
+    listSaftImports,
+    postSaftImport,
+    uploadSaftFiles,
+    type Company,
+    type SaftComparisonReview,
+    type SaftImport,
+    type SaftImportFinding,
+    type SaftMoveReview,
+  } from '../lib/api';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import { fileSize, isoDate, kroner, orgnummer } from '../lib/format';
+  import {
+    currentComparison,
+    currentImport,
+    isWorking,
+    postLabel,
+    postedSummary,
+    summary,
+    yearsToClose,
+  } from '../lib/saftimport';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+
+  const MONTHS = [
+    'jan', 'feb', 'mar', 'apr', 'mai', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'des',
+  ];
+  const POLL_MS = 1500;
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const uploadStatus = el<HTMLParagraphElement>('#upload-status');
+  const compareStatus = el<HTMLParagraphElement>('#compare-status');
+  const importBody = el<HTMLDivElement>('#import-body');
+  const compareBody = el<HTMLDivElement>('#compare-body');
+  const fileInput = el<HTMLInputElement>('#upload-files');
+
+  let company: Company;
+  let chosen: File[] = [];
+  let importJob: SaftImport | null = null;
+  let compareJob: SaftImport | null = null;
+  let history: SaftImport[] = [];
+  let timer: number | undefined;
+
+  // --- Små byggeklosser -------------------------------------------------------
+
+  function node<K extends keyof HTMLElementTagNameMap>(
+    tag: K,
+    text?: string,
+    className?: string,
+  ): HTMLElementTagNameMap[K] {
+    const made = document.createElement(tag);
+    if (text !== undefined) made.textContent = text;
+    if (className !== undefined) made.className = className;
+    return made;
+  }
+
+  function link(href: string, text: string, className = 'btn btn-ghost'): HTMLAnchorElement {
+    const made = node('a', text, className);
+    made.href = href;
+    return made;
+  }
+
+  function button(text: string, className: string, onClick: () => void): HTMLButtonElement {
+    const made = node('button', text, className);
+    made.type = 'button';
+    made.addEventListener('click', onClick);
+    return made;
+  }
+
+  function tag(text: string, tone?: 'accent' | 'gold'): HTMLSpanElement {
+    const made = node('span', text, 'tag');
+    if (tone) made.dataset.tone = tone;
+    return made;
+  }
+
+  function stepper(state: 'upload' | 'review' | 'done'): void {
+    const order = ['upload', 'review', 'done'];
+    for (const item of el('#stepper').querySelectorAll<HTMLLIElement>('li')) {
+      const position = order.indexOf(item.dataset.step ?? '');
+      const current = order.indexOf(state);
+      item.dataset.state = position < current ? 'done' : position === current ? 'current' : 'todo';
+    }
+  }
+
+  function findingItem(finding: SaftImportFinding): HTMLLIElement {
+    const item = node('li');
+    if (finding.year !== null) item.append(node('span', String(finding.year), 'year-tag'));
+    item.append(document.createTextNode(finding.message));
+    return item;
+  }
+
+  /** Feilene synlige, merknadene sammenfoldet: de er verdt å lese, ikke å bla forbi. */
+  function findings(target: HTMLElement, all: SaftImportFinding[]): void {
+    const errors = all.filter((f) => f.severity === 'feil');
+    const notes = all.filter((f) => f.severity === 'merknad');
+    if (errors.length > 0) {
+      const list = node('ul', undefined, 'findings errors');
+      list.append(...errors.map(findingItem));
+      target.append(list);
+    }
+    if (notes.length > 0) {
+      const details = node('details', undefined, 'notes');
+      details.append(node('summary', `${notes.length} ${notes.length === 1 ? 'merknad' : 'merknader'} å lese`));
+      const list = node('ul', undefined, 'findings');
+      list.append(...notes.map(findingItem));
+      details.append(list);
+      target.append(details);
+    }
+  }
+
+  /** En flis med antall og en kort, rullbar liste som kan filtreres når den er lang. */
+  function addTile(count: number, what: string, rows: [string, string][]): HTMLDetailsElement | null {
+    if (count === 0) return null;
+    const details = node('details');
+    const head = node('summary');
+    head.append(node('span', count.toLocaleString('nb-NO'), 'count'), node('span', what, 'what'));
+    details.append(head);
+    const list = node('ul');
+    const items = rows.map(([main, sub]) => {
+      const item = node('li');
+      item.append(node('span', main), node('span', sub, 'sub'));
+      return item;
+    });
+    list.append(...items);
+    if (rows.length > 12) {
+      const filter = node('input', undefined, 'filter');
+      filter.type = 'search';
+      filter.placeholder = 'Søk i listen';
+      filter.setAttribute('aria-label', `Søk i ${what}`);
+      filter.addEventListener('input', () => {
+        const wanted = filter.value.trim().toLowerCase();
+        items.forEach((item, index) => {
+          item.hidden = wanted !== '' && !rows[index]!.join(' ').toLowerCase().includes(wanted);
+        });
+      });
+      details.append(filter);
+    }
+    details.append(list);
+    return details;
+  }
+
+  // --- Innlesingen -------------------------------------------------------------
+
+  function renderWorking(job: SaftImport): void {
+    const posting = job.status === 'posting';
+    importBody.append(node('h2', posting ? 'Myntos fører regnskapet' : 'Myntos leser filene', 'card-title'));
+    importBody.append(node('p', job.step ?? 'Venter …', 'card-hint'));
+    const progress = node('div', undefined, 'progress');
+    const bar = node('div', undefined, 'bar');
+    const fill = node('span');
+    // Filene leses ett om gangen; føringen er én operasjon uten delsteg å telle.
+    const known = !posting && job.total > 0;
+    bar.dataset.indeterminate = String(!known);
+    if (known) fill.style.width = `${Math.max(8, Math.round((job.done / job.total) * 100))}%`;
+    bar.append(fill);
+    progress.append(bar);
+    importBody.append(progress);
+    const note = node(
+      'p',
+      'Arbeidet skjer hos Myntos, ikke i nettleseren. Du kan lukke siden eller gjøre noe annet ' +
+        'imens: når du kommer tilbake, står resultatet her.',
+      'working-note',
+    );
+    importBody.append(note);
+  }
+
+  function renderFailed(job: SaftImport): void {
+    importBody.append(node('h2', 'Filene kunne ikke leses', 'card-title'));
+    importBody.append(node('p', 'Ingenting er ført. Rett det meldingen sier, og last opp på nytt over.', 'card-hint'));
+    const status = node('p', job.error ?? 'Ukjent feil.', 'status');
+    status.dataset.tone = 'error';
+    importBody.append(status);
+    const actions = node('div', undefined, 'links');
+    actions.append(button('Forkast', 'btn btn-ghost', () => void discard(job)));
+    importBody.append(actions);
+  }
+
+  function yearsTable(review: SaftMoveReview): HTMLDivElement {
+    const wrap = node('div', undefined, 'table-scroll');
+    const table = node('table', undefined, 'years');
+    const head = node('tr');
+    for (const [text, numeric] of [
+      ['År', false],
+      ['Periode', false],
+      ['Bilag', true],
+      ['Måneder', false],
+      ['', false],
+    ] as const) {
+      head.append(node('th', text, numeric ? 'num' : undefined));
+    }
+    const thead = node('thead');
+    thead.append(head);
+    const body = node('tbody');
+    for (const year of review.years) {
+      const row = node('tr');
+      const status = node('td');
+      if (year.opened) status.append(tag('Nytt år i Myntos', 'accent'), document.createTextNode(' '));
+      if (!year.complete) status.append(tag('Ikke ferdig', 'gold'), document.createTextNode(' '));
+      if (year.already_imported > 0) status.append(tag(`${year.already_imported} hentet før`));
+      row.append(
+        node('td', String(year.year)),
+        node('td', `${isoDate(year.start_date)} – ${isoDate(year.through)}`),
+        node('td', year.vouchers.toLocaleString('nb-NO'), 'num'),
+        node('td', year.months.map((m) => MONTHS[m.month - 1]).join(' ')),
+        status,
+      );
+      body.append(row);
+    }
+    table.append(thead, body);
+    wrap.append(table);
+    return wrap;
+  }
+
+  function openingLine(review: SaftMoveReview): HTMLParagraphElement | null {
+    const opening = review.opening;
+    if (opening === null) return null;
+    const text =
+      opening.action === 'none'
+        ? `Filen for ${opening.year} har ingen saldoer per 1. januar, så regnskapet starter på null` +
+          (opening.replaces !== null
+            ? `. Inngående balanse for ${opening.replaces_year} (bilag ${opening.replaces}) reverseres.`
+            : '.')
+        : opening.action === 'keep'
+          ? `Inngående balanse per 1. januar ${opening.year} er ført fra før og blir stående.`
+        : opening.action === 'replace'
+          ? `Inngående balanse føres per 1. januar ${opening.year} fra filen for ${opening.year}, ` +
+            `${opening.lines} linjer. Den som er ført for ${opening.replaces_year} (bilag ` +
+            `${opening.replaces}), reverseres.`
+          : `Inngående balanse føres per 1. januar ${opening.year} fra filen for ${opening.year}, ` +
+            `${opening.lines} linjer.`;
+    return node('p', text);
+  }
+
+  function renderReview(job: SaftImport, review: SaftMoveReview): void {
+    importBody.append(node('h2', 'Dette blir ført', 'card-title'));
+    if (job.error !== null) {
+      const status = node('p', job.error, 'status');
+      status.dataset.tone = 'error';
+      importBody.append(status);
+    }
+    importBody.append(node('p', summary(review)));
+    importBody.append(yearsTable(review));
+    const opening = openingLine(review);
+    if (opening !== null) importBody.append(opening);
+
+    const adds = node('div', undefined, 'adds');
+    const tiles = [
+      addTile(
+        review.accounts_to_add.length,
+        'kontoer legges til i kontoplanen',
+        review.accounts_to_add.map((add) => [
+          `${add.number} ${add.description}`,
+          add.source_accounts.join(', '),
+        ]),
+      ),
+      addTile(
+        review.parties_to_add.length,
+        'kunder og leverandører legges til',
+        review.parties_to_add.map((add) => [
+          add.name,
+          `${add.party_type === 'kunde' ? 'kunde' : 'leverandør'}${add.orgnr ? `, ${orgnummer(add.orgnr)}` : ''}`,
+        ]),
+      ),
+      addTile(
+        review.dimensions_to_add.length,
+        'avdelinger og produkter legges til',
+        review.dimensions_to_add.map((add) => [
+          `${add.value} ${add.description}`,
+          add.dimension_description,
+        ]),
+      ),
+    ].filter((tile): tile is HTMLDetailsElement => tile !== null);
+    if (tiles.length > 0) {
+      importBody.append(node('h3', 'Legges til i Myntos'));
+      adds.append(...tiles);
+      importBody.append(adds);
+    }
+    findings(importBody, review.findings);
+
+    const confirm = node('div', undefined, 'confirm');
+    if (review.postable) {
+      confirm.append(
+        node(
+          'p',
+          'Alt føres i én operasjon, og bilagene kan ikke endres etterpå. Rettelser gjøres i det ' +
+            'gamle programmet.',
+          'card-hint',
+        ),
+      );
+    }
+    const actions = node('div', undefined, 'links');
+    const post = button(postLabel(review), 'btn btn-primary', () => void startPosting(job));
+    post.disabled = !job.may_post;
+    actions.append(post, button('Forkast', 'btn btn-ghost', () => void discard(job)));
+    confirm.append(actions);
+    if (review.postable && !job.may_post && review.accounts_to_add.length > 0) {
+      confirm.append(
+        node(
+          'p',
+          'Bare en administrator eller eier kan legge til kontoer i kontoplanen, og dermed føre dette.',
+          'card-hint',
+        ),
+      );
+    }
+    if (!job.files_kept) {
+      confirm.append(
+        node('p', 'Filene er slettet etter 14 dager. Forkast og last dem opp på nytt.', 'card-hint'),
+      );
+    }
+    importBody.append(confirm);
+  }
+
+  function renderPosted(result: SaftMoveReview): void {
+    importBody.append(node('h2', 'Regnskapet er hentet', 'card-title'));
+    const done = node('p', postedSummary(result), 'status');
+    done.dataset.tone = 'ok';
+    importBody.append(done);
+    importBody.append(
+      node(
+        'p',
+        'Bilagene står i journalen «Bilag fra tidligere regnskapsprogram». De vises under Bilag, ' +
+          'ikke under Betaling, og teller i saldoene, mva-meldingen og årsoppgjøret.',
+        'card-hint',
+      ),
+    );
+    const links = node('div', undefined, 'links');
+    const last = Math.max(...result.years.map((year) => year.year));
+    links.append(link(`/bilag/?aar=${last}&journal=IMPORT`, 'Se bilagene', 'btn btn-primary'));
+    links.append(link(`/bilag/?aar=${last}&konto=1920`, 'Inn og ut av banken'));
+    const toClose = yearsToClose(result);
+    if (toClose.length > 0) links.append(link('/arsavslutning/', `Avslutt ${toClose[0]}`));
+    importBody.append(links);
+    if (toClose.length > 0) {
+      importBody.append(
+        node(
+          'p',
+          `${toClose.join(', ')} er ferdig i det gamle programmet, men åpent i Myntos. Avslutt ` +
+            'årene under Årsavslutning, eldste først. Har det gamle programmet sendt ' +
+            'mva-meldinger, merk terminene «Sendt fra et annet program» på Mva-siden.',
+          'card-hint',
+        ),
+      );
+    }
+  }
+
+  function renderImport(): void {
+    const job = importJob;
+    importBody.replaceChildren();
+    // Opplastingen står klar når ingenting venter på å bli sett over eller er
+    // under arbeid: før den første, etter en som er ført (neste år, en ny fil)
+    // og etter en som ikke kunne leses.
+    const settled = job === null || job.status === 'posted' || job.status === 'failed';
+    show(el('#upload-card'), canInCompany(company, 'ledger:write') && settled);
+    show(el('#import-card'), job !== null);
+    if (job === null) {
+      stepper('upload');
+      return;
+    }
+    if (isWorking(job)) {
+      renderWorking(job);
+      stepper(job.status === 'posting' ? 'done' : 'upload');
+    } else if (job.status === 'failed') {
+      renderFailed(job);
+      stepper('upload');
+    } else if (job.status === 'ready' && job.review?.kind === 'import') {
+      renderReview(job, job.review);
+      stepper('review');
+    } else if (job.status === 'posted' && job.result !== null) {
+      renderPosted(job.result);
+      stepper('done');
+    }
+  }
+
+  async function discard(job: SaftImport): Promise<void> {
+    try {
+      await discardSaftImport(company.id, job.id);
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke forkastet innlesingen.');
+      return;
+    }
+    history = history.filter((item) => item.id !== job.id);
+    importJob = currentImport(history);
+    renderImport();
+    el('#upload-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  async function startPosting(job: SaftImport): Promise<void> {
+    try {
+      importJob = await postSaftImport(company.id, job.id);
+      renderImport();
+      schedule();
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke startet føringen.');
+    }
+  }
+
+  // --- Sammenligningen ---------------------------------------------------------
+
+  function compareTable(headings: string[], rows: string[][], numeric: number[]): HTMLDivElement {
+    const wrap = node('div', undefined, 'table-scroll');
+    const table = node('table');
+    const head = node('tr');
+    headings.forEach((text, index) => head.append(node('th', text, numeric.includes(index) ? 'num' : undefined)));
+    const thead = node('thead');
+    thead.append(head);
+    const body = node('tbody');
+    for (const values of rows) {
+      const row = node('tr');
+      values.forEach((text, index) => row.append(node('td', text, numeric.includes(index) ? 'num' : undefined)));
+      body.append(row);
+    }
+    table.append(thead, body);
+    wrap.append(table);
+    return wrap;
+  }
+
+  function renderComparison(): void {
+    compareBody.replaceChildren();
+    const job = compareJob;
+    if (job === null) return;
+    if (isWorking(job)) {
+      compareBody.append(node('p', job.step ?? 'Sammenligner …', 'card-hint'));
+      return;
+    }
+    if (job.status === 'failed') {
+      const status = node('p', job.error ?? 'Filen kunne ikke leses.', 'status');
+      status.dataset.tone = 'error';
+      compareBody.append(status);
+      return;
+    }
+    const result = job.review;
+    if (result === null || result.kind !== 'sammenligning') return;
+    renderComparisonResult(result);
+  }
+
+  function renderComparisonResult(result: SaftComparisonReview): void {
+    const span = `fra ${isoDate(result.start_date)} til ${isoDate(result.through)}`;
+    const verdict = node(
+      'p',
+      result.matches
+        ? `Alt stemmer ${span}: ${result.accounts_compared} kontoer, ${result.parties_compared} ` +
+            `kunder og leverandører og mva for ${result.terms_compared} terminer er likt i begge programmene.`
+        : `De to programmene skiller lag ${span}: ${result.accounts.length} kontoer, ` +
+            `${result.parties.length} kunder og leverandører og ${result.vat.length} mva-linjer er ulike.`,
+      'status',
+    );
+    verdict.dataset.tone = result.matches ? 'ok' : 'error';
+    compareBody.append(verdict);
+    if (result.accounts.length > 0) {
+      compareBody.append(node('h3', 'Kontoer'));
+      compareBody.append(
+        compareTable(
+          ['Konto', 'I filen', 'I Myntos', 'Forskjell', 'Måneder'],
+          result.accounts.map((row) => [
+            `${row.account_number} ${row.description}`,
+            kroner(row.in_file),
+            kroner(row.in_myntos),
+            kroner(row.difference),
+            row.months.map((m) => MONTHS[m - 1]).join(' '),
+          ]),
+          [1, 2, 3],
+        ),
+      );
+    }
+    if (result.parties.length > 0) {
+      compareBody.append(node('h3', 'Kunder og leverandører'));
+      compareBody.append(
+        compareTable(
+          ['Navn', 'I filen', 'I Myntos', 'Forskjell'],
+          result.parties.map((row) => [
+            `${row.name}${row.party_id === null ? ' (ikke i Myntos)' : ''}`,
+            kroner(row.in_file),
+            kroner(row.in_myntos),
+            kroner(row.difference),
+          ]),
+          [1, 2, 3],
+        ),
+      );
+    }
+    if (result.vat.length > 0) {
+      compareBody.append(node('h3', 'Mva per termin'));
+      compareBody.append(
+        compareTable(
+          ['Termin', 'Kode', 'Grunnlag i filen', 'Grunnlag i Myntos', 'Mva i filen', 'Mva i Myntos'],
+          result.vat.map((row) => [
+            row.termin,
+            row.spesifikasjon === null ? row.code : `${row.code} (${row.spesifikasjon})`,
+            kroner(row.base_in_file),
+            kroner(row.base_in_myntos),
+            kroner(row.vat_in_file),
+            kroner(row.vat_in_myntos),
+          ]),
+          [2, 3, 4, 5],
+        ),
+      );
+    }
+    if (result.findings.length > 0) {
+      const details = node('details', undefined, 'notes');
+      details.append(node('summary', 'Hva som ble sammenlignet'));
+      const list = node('ul', undefined, 'findings');
+      list.append(...result.findings.map((f) => node('li', f.message)));
+      details.append(list);
+      compareBody.append(details);
+    }
+  }
+
+  // --- Historikk og polling ----------------------------------------------------
+
+  function renderHistory(): void {
+    const posted = history.filter((job) => job.purpose === 'import' && job.status === 'posted');
+    show(el('#history-card'), posted.length > 0);
+    el('#history').replaceChildren(
+      ...posted.map((job) => {
+        const item = node('li');
+        const when = node('span', isoDate((job.posted_at ?? job.created_at).slice(0, 10)), 'when');
+        const what = node('span', job.result ? postedSummary(job.result) : 'Ført');
+        item.append(what, when);
+        return item;
+      }),
+    );
+  }
+
+  function schedule(): void {
+    window.clearTimeout(timer);
+    const working = [importJob, compareJob].filter(
+      (job): job is SaftImport => job !== null && isWorking(job),
+    );
+    if (working.length === 0) return;
+    timer = window.setTimeout(() => {
+      void Promise.all(working.map((job) => getSaftImport(company.id, job.id)))
+        .then((fresh) => {
+          for (const job of fresh) {
+            if (job.purpose === 'import') importJob = job;
+            else compareJob = job;
+            history = [job, ...history.filter((item) => item.id !== job.id)];
+          }
+          renderImport();
+          renderComparison();
+          renderHistory();
+        })
+        .catch(() => {
+          // Et mistet svar er ikke en feil ved innlesingen: neste runde spør igjen.
+        })
+        .finally(schedule);
+    }, POLL_MS);
+  }
+
+  // --- Opplasting --------------------------------------------------------------
+
+  function renderChosen(): void {
+    const list = el<HTMLUListElement>('#chosen');
+    list.replaceChildren(
+      ...chosen.map((file, index) => {
+        const item = node('li');
+        const name = node('span', file.name);
+        name.append(node('span', fileSize(file.size), 'size'));
+        item.append(
+          name,
+          button('Fjern', 'btn btn-ghost btn-small', () => {
+            chosen = chosen.filter((_, i) => i !== index);
+            renderChosen();
+          }),
+        );
+        return item;
+      }),
+    );
+    show(list, chosen.length > 0);
+  }
+
+  function addFiles(files: FileList | null): void {
+    if (files === null) return;
+    const known = new Set(chosen.map((file) => `${file.name}:${file.size}`));
+    for (const file of files) {
+      if (!known.has(`${file.name}:${file.size}`)) chosen.push(file);
+    }
+    renderChosen();
+  }
+
+  fileInput.addEventListener('change', () => {
+    addFiles(fileInput.files);
+    fileInput.value = '';
+  });
+  const dropzone = el<HTMLLabelElement>('#dropzone');
+  dropzone.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    dropzone.dataset.over = 'true';
+  });
+  dropzone.addEventListener('dragleave', () => delete dropzone.dataset.over);
+  dropzone.addEventListener('drop', (event) => {
+    event.preventDefault();
+    delete dropzone.dataset.over;
+    addFiles(event.dataTransfer?.files ?? null);
+  });
+
+  el<HTMLFormElement>('#upload-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (chosen.length === 0) {
+      setStatus(uploadStatus, 'Velg SAF-T-filene fra det gamle programmet først.');
+      return;
+    }
+    const submit = el<HTMLButtonElement>('#upload-button');
+    submit.disabled = true;
+    setStatus(uploadStatus, '');
+    const progress = el('#upload-progress');
+    show(progress, true);
+    const text = el('#upload-progress-text');
+    text.textContent = 'Laster opp …';
+    uploadSaftFiles(
+      company.id,
+      chosen,
+      { til: el<HTMLInputElement>('#upload-til').value || null },
+      (sent, total) => {
+        el<HTMLSpanElement>('#upload-bar').style.width = `${Math.round((sent / total) * 100)}%`;
+        text.textContent =
+          sent < total
+            ? `Laster opp … ${fileSize(sent)} av ${fileSize(total)}. Hold siden åpen til filene er oppe.`
+            : 'Lastet opp. Myntos leser filene nå.';
+      },
+    )
+      .then((job) => {
+        chosen = [];
+        renderChosen();
+        importJob = job;
+        history = [job, ...history];
+        renderImport();
+        schedule();
+      })
+      .catch((error: unknown) => {
+        setStatus(uploadStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke lastet opp filene.');
+      })
+      .finally(() => {
+        submit.disabled = false;
+        show(progress, false);
+        el<HTMLSpanElement>('#upload-bar').style.width = '0';
+      });
+  });
+
+  el<HTMLFormElement>('#compare-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const file = el<HTMLInputElement>('#compare-file').files?.[0];
+    if (file === undefined) {
+      setStatus(compareStatus, 'Velg en ny SAF-T-fil fra det gamle programmet.');
+      return;
+    }
+    const submit = el<HTMLButtonElement>('#compare-button');
+    submit.disabled = true;
+    setStatus(compareStatus, '');
+    compareBody.replaceChildren(node('p', 'Laster opp …', 'card-hint'));
+    uploadSaftFiles(
+      company.id,
+      [file],
+      { compare: true, til: el<HTMLInputElement>('#compare-til').value || null },
+      (sent, total) => {
+        compareBody.replaceChildren(
+          node('p', `Laster opp … ${Math.round((sent / total) * 100)} %`, 'card-hint'),
+        );
+      },
+    )
+      .then((job) => {
+        compareJob = job;
+        renderComparison();
+        schedule();
+      })
+      .catch((error: unknown) => {
+        compareBody.replaceChildren();
+        setStatus(compareStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke sammenlignet.');
+      })
+      .finally(() => {
+        submit.disabled = false;
+      });
+  });
+
+  async function load(): Promise<void> {
+    history = await listSaftImports(company.id);
+    importJob = currentImport(history);
+    compareJob = currentComparison(history);
+    renderImport();
+    renderComparison();
+    renderHistory();
+    // Spurt der kortene tegnes: å hente er å føre, å sammenligne er bare å lese.
+    show(el('#compare-card'), canInCompany(company, 'ledger:read'));
+    if (canInCompany(company, 'ledger:write')) {
+      const state = await getOpeningState(company.id);
+      if (state.standing === null && importJob === null) {
+        setStatus(
+          pageStatus,
+          'Regnskapet har ingen inngående balanse ennå. Den føres fra filen for det første året du laster opp.',
+          'ok',
+        );
+      }
+    }
+    schedule();
+  }
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      const current = currentCompany(companies);
+      if (current === undefined) return;
+      company = current;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      await load();
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet selskapet.');
+    } finally {
+      el('#loading').hidden = true;
+    }
+  });
+</script>

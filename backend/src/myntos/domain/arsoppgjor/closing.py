@@ -81,6 +81,7 @@ from myntos.domain.ledger.chart import (
     CLOSING_JOURNAL_DESCRIPTION,
     CLOSING_JOURNAL_ID,
     CLOSING_JOURNAL_TYPE,
+    IMPORT_JOURNAL_ID,
 )
 from myntos.domain.ledger.errors import ChartIncompleteError
 from myntos.domain.ledger.models import (
@@ -93,7 +94,6 @@ from myntos.domain.ledger.models import (
     TransactionLine,
 )
 from myntos.domain.mva import service as mva_service
-from myntos.domain.mva.periods import terminer
 
 ZERO = Decimal("0.00")
 _CENT = Decimal("0.01")
@@ -163,9 +163,18 @@ def normalised_form(company: Company) -> str | None:
 
 
 async def _net_by_account(
-    db: AsyncSession, company: Company, *, year: int | None = None, up_to: int | None = None
+    db: AsyncSession,
+    company: Company,
+    *,
+    year: int | None = None,
+    up_to: int | None = None,
+    journal: str | None = None,
 ) -> dict[str, Decimal]:
-    """Debit minus credit per account number, for one year or every year up to one."""
+    """Debit minus credit per account number, for one year or every year up to one.
+
+    ``journal`` narrows it to one journal: the vouchers brought from the
+    previous program, for the closing they already carry.
+    """
     query = (
         select(
             Account.account_number,
@@ -182,6 +191,8 @@ async def _net_by_account(
         query = query.where(Transaction.financial_year == year)
     if up_to is not None:
         query = query.where(Transaction.financial_year <= up_to)
+    if journal is not None:
+        query = query.where(Journal.journal_id == journal)
     return {
         number: Decimal(str(debit)) - Decimal(str(credit))
         for number, debit, credit in await db.execute(query)
@@ -200,15 +211,14 @@ async def _financial_year(db: AsyncSession, company: Company, year: int) -> Fina
 
 
 async def _unsettled_terms(db: AsyncSession, company: Company, year: int) -> list[str]:
-    """MVA periods in the year whose 2700/2710 have not been moved onto 2740."""
-    if not company.vat_registered:
-        return []
-    labels = []
-    for termin in terminer(mva_service.period_type_of(company), year):
-        balances = await mva_service.vat_balances(db, company, termin, include_settlement=True)
-        if balances.output != ZERO or balances.input != ZERO:
-            labels.append(termin.label)
-    return labels
+    """MVA periods in the year whose 2700/2710 have not been moved onto 2740.
+
+    The MVA module answers, because with two meldinger (a farm with other
+    business beside it) the accounts' two-monthly windows would call every
+    alminnelig term open until the yearly primærnæring one is settled; only
+    each melding's own terms can say what is still to settle.
+    """
+    return await mva_service.unsettled_terms(db, company, year)
 
 
 # --- The plan ------------------------------------------------------------------------
@@ -347,6 +357,14 @@ async def plan_closing(
         tax = ZERO
 
     this_year = await _net_by_account(db, company, year=year)
+    # A year brought over from the previous program (myntos.saft.move) was
+    # closed there, and its file may carry the tax cost and the disposition the
+    # accountant booked. Those stand: they are the year as it was reported, and
+    # an imported voucher is corrected in the old program, never here. Myntos
+    # then disposes only what is left. Refusing such a year as already
+    # disposed, which is what every closing account used to mean, left it open
+    # for good, and every year after it with it, since years close in order.
+    imported = await _net_by_account(db, company, year=year, journal=IMPORT_JOURNAL_ID)
     types = {
         account.account_number: account.account_type
         for account in await db.scalars(select(Account).where(Account.company_id == company.id))
@@ -354,12 +372,19 @@ async def plan_closing(
     revenue = ZERO
     costs = ZERO
     already = ZERO
+    imported_tax = ZERO
+    imported_disposed = ZERO
     for number, net in this_year.items():
         kind = types.get(number)
         if kind is None or kind.is_balance_account:
             continue
         if number in CLOSING_ACCOUNTS:
-            already += net
+            booked = imported.get(number, ZERO)
+            already += net - booked
+            if number == TAX_COST:
+                imported_tax += booked
+            else:
+                imported_disposed += booked
         elif kind is AccountType.INNTEKT:
             revenue -= net
         else:
@@ -373,8 +398,28 @@ async def plan_closing(
                 "årsavslutningen.",
             )
         )
+    if imported_tax != ZERO and tax > ZERO:
+        findings.append(
+            feil(
+                "skatt_allerede_fort",
+                f"Det gamle programmet har ført skattekostnad {imported_tax} for {year}. Den står, "
+                "så oppgi ikke skatt på nytt her.",
+            )
+        )
+        tax = ZERO
+    if imported_tax != ZERO or imported_disposed != ZERO:
+        findings.append(
+            merknad(
+                "avsluttet_i_tidligere_program",
+                f"Bilagene fra det gamle programmet har skattekostnad {imported_tax} og "
+                f"disponering {imported_disposed} for {year}. De står som de ble ført, og Myntos "
+                "fører bare det som er igjen av resultatet.",
+            )
+        )
     result_before_tax = revenue - costs
-    result = result_before_tax - tax
+    # What is left to dispose: after the tax stated here and the tax and
+    # disposition the old program already booked.
+    result = result_before_tax - tax - imported_tax - imported_disposed
 
     cumulative = await _net_by_account(db, company, up_to=year)
     free_equity = -cumulative.get(SHARE_EQUITY, ZERO)
@@ -389,7 +434,7 @@ async def plan_closing(
                 PlannedLine(TAX_COST, f"Betalbar skatt {year}", debit=tax),
                 PlannedLine(TAX_PAYABLE, f"Betalbar skatt {year}", credit=tax),
             ]
-        elif result_before_tax > ZERO:
+        elif result_before_tax > ZERO and imported_tax == ZERO:
             findings.append(
                 merknad(
                     "ingen_skattekostnad",
@@ -440,7 +485,7 @@ async def plan_closing(
         revenue=revenue,
         costs=costs,
         result_before_tax=result_before_tax,
-        tax=tax,
+        tax=tax + imported_tax,
         result=result,
         tax_lines=tax_lines,
         disposition_lines=disposition,

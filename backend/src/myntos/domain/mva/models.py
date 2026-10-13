@@ -55,10 +55,32 @@ class FilingStatus(enum.StrEnum):
     # The submission started and stopped partway. The instance may exist in
     # Altinn; ``error`` says where it stopped.
     FEILET = "feilet"
+    # Filed from another program: the previous one, during a parallel run or
+    # before a move in the middle of a year. A person's statement, recorded so
+    # Myntos stops offering to file a term somebody else has filed, because a
+    # second melding for the term would *replace* the first at Skatteetaten.
+    # Not a filing (nothing was sent from here), and undoable: details and the
+    # undo are on :class:`MvaFilingElsewhere`.
+    ANNET_PROGRAM = "annet_program"
+    # An ANNET_PROGRAM statement taken back. Kept rather than deleted, so the
+    # term's history still says who said it was filed elsewhere and who
+    # changed their mind.
+    OPPHEVET = "opphevet"
 
     @property
     def is_filed(self) -> bool:
+        """Filed *from Myntos*: there is an Altinn instance and a receipt to fetch."""
         return self in {FilingStatus.SENDT, FilingStatus.MOTTATT}
+
+    @property
+    def closes_term(self) -> bool:
+        """Whether the term needs nothing more from this installation.
+
+        True for a melding Myntos filed and for one somebody says was filed
+        elsewhere: neither is overdue, and neither may be filed again by
+        accident.
+        """
+        return self.is_filed or self is FilingStatus.ANNET_PROGRAM
 
 
 class MvaFiling(Base):
@@ -132,6 +154,12 @@ class MvaFiling(Base):
     documents: Mapped[list[MvaFilingDocument]] = relationship(
         back_populates="filing", cascade="all, delete-orphan", order_by="MvaFilingDocument.id"
     )
+    # Set on a row whose status is ``annet_program`` or ``opphevet``: when the
+    # other program filed it, what it said, and whether the statement stands.
+    # Eager, because every listing of a term's filings shows it.
+    elsewhere: Mapped[MvaFilingElsewhere | None] = relationship(
+        back_populates="filing", cascade="all, delete-orphan", uselist=False, lazy="selectin"
+    )
 
 
 class MvaFilingDocument(Base):
@@ -154,3 +182,113 @@ class MvaFilingDocument(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     filing: Mapped[MvaFiling] = relationship(back_populates="documents")
+
+
+class MvaFilingElsewhere(Base):
+    """A term filed from another program, as a person recorded it.
+
+    The row it belongs to is an :class:`MvaFiling` with status
+    ``annet_program``, so every place that asks "what happened to this term"
+    (the period list, the overdue count, the refusal to file it again, an
+    agent's request to file it) finds it where it finds Myntos's own filings.
+    That row keeps Myntos's own figures for the term as they stood when the
+    statement was made (``fastsatt_merverdiavgift``, ``lines``,
+    ``content_hash``); nothing in it was sent from here, so it has no XML and no
+    validation.
+
+    This table is what the other program said: the day it filed and, when the
+    person knows it, the amount it filed (``amount``, positive owed, negative a
+    refund). ``voucher_pk`` is the old program's settlement voucher the import
+    brought over, when the statement was proposed from one.
+
+    **Undoable**, because it is a statement and not a filing: a person who
+    marked the wrong term, or who wants to file a correction for it from Myntos
+    (a newer melding replaces the old program's at Skatteetaten), takes it back.
+    The row stays, with who took it back and when, and its filing's status
+    becomes ``opphevet``.
+    """
+
+    __tablename__ = "mva_filing_elsewhere"
+    __table_args__ = (UniqueConstraint("filing_id", name="uq_mva_filing_elsewhere_filing_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    filing_id: Mapped[int] = mapped_column(ForeignKey("mva_filing.id", ondelete="CASCADE"))
+    filed_on: Mapped[date] = mapped_column(Date)
+    amount: Mapped[Decimal | None] = mapped_column(MONEY)
+    # SET NULL: the statement is the person's, and outlives the voucher it was
+    # proposed from (an import reversed, a voucher removed with its company).
+    voucher_pk: Mapped[int | None] = mapped_column(
+        ForeignKey("gl_transaction.id", ondelete="SET NULL")
+    )
+    # The key a statement was recorded or taken back through, beside the person
+    # (docs/agents-and-api.md rule 6). The person is on the filing row.
+    created_via_agent_key_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agent_key.id", ondelete="SET NULL")
+    )
+    withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # SET NULL, and kept as a tombstone by erasure, like every actor column
+    # on a filing (docs/gdpr.md).
+    withdrawn_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("app_user.id", ondelete="SET NULL")
+    )
+    withdrawn_via_agent_key_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agent_key.id", ondelete="SET NULL")
+    )
+
+    filing: Mapped[MvaFiling] = relationship(back_populates="elsewhere")
+
+
+class MvaSecondNaering(Base):
+    """The company's second VAT return, when it files two.
+
+    A farm, a forest or a fisherman files the primærnæring melding; other
+    business beside it goes in the same melding only while its taxable sales
+    stay at or under 30 000 kroner a year (merverdiavgiftsloven § 15-1 (1)).
+    Above that the company files an alminnelig melding as well
+    (Merverdiavgiftshåndboken 15-1.3), each on its own terms: the primærnæring
+    one yearly unless Skatteetaten agreed to two months
+    (skatteforvaltningsforskriften §§ 8-3-7, 8-3-8 (3)), the alminnelig one
+    every two months unless it was granted a year (§ 8-3-3).
+
+    The **main** melding is the company's own columns, ``vat_category`` and
+    ``vat_period_type``, untouched, so a company with one melding is exactly
+    what it was. This row is the second one, at most one per company, and its
+    category is always the other of the two Myntos files: there is no such
+    thing as two alminnelige meldinger for one orgnr.
+
+    ``valid_from`` is the day the second melding starts: lines before it belong
+    to the main melding whatever their account, because until then the other
+    business was reported there, as § 15-1 (1) allows.
+    """
+
+    __tablename__ = "mva_second_naering"
+    __table_args__ = (UniqueConstraint("company_id", name="uq_mva_second_naering_company_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("company.id", ondelete="CASCADE"))
+    period_type: Mapped[str] = mapped_column(String(32))
+    valid_from: Mapped[date] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class MvaSecondNaeringAccount(Base):
+    """An account whose VAT goes in the second melding.
+
+    By account, and not by register category or by a choice on every line,
+    because every way a line reaches the ledger already chooses an account (the
+    register, invoices, bank lines, imported vouchers, manual vouchers), so the
+    rule reaches all of them without any of them knowing about it, and a farm
+    keeps its other business on accounts of its own anyway for the
+    næringsspesifikasjon. See docs/integrations/mva.md, «Two returns».
+
+    Unique on the account: an account belongs to one company and to one melding.
+    """
+
+    __tablename__ = "mva_second_naering_account"
+    __table_args__ = (
+        UniqueConstraint("account_id", name="uq_mva_second_naering_account_account_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_id: Mapped[int] = mapped_column(ForeignKey("company.id", ondelete="CASCADE"))
+    account_id: Mapped[int] = mapped_column(ForeignKey("account.id", ondelete="CASCADE"))

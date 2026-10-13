@@ -727,6 +727,10 @@ class DimensionType(Base):
     company_id: Mapped[int] = mapped_column(ForeignKey("company.id", ondelete="CASCADE"))
     code: Mapped[str] = mapped_column(String(32))
     description: Mapped[str] = mapped_column(String(255))
+    # False hides the whole dimension from new entries, as on an account, and
+    # nothing else: every line already allocated keeps its value, and the
+    # report and the SAF-T file still show it. See myntos.domain.ledger.dimensions.
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     values: Mapped[list[DimensionValue]] = relationship(
         back_populates="dimension_type", cascade="all, delete-orphan"
@@ -747,6 +751,11 @@ class DimensionValue(Base):
     )
     value: Mapped[str] = mapped_column(String(64))
     description: Mapped[str] = mapped_column(String(255))
+    # False: a driftsgren the farm has given up, a project that is over. Not
+    # offered for new entries; still on every line that used it, still in the
+    # report and exported with SAF-T's Status «Closed». A value that is in use
+    # is never deleted (the foreign key from gl_line_analysis is RESTRICT).
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     dimension_type: Mapped[DimensionType] = relationship(back_populates="values")
 
@@ -989,6 +998,10 @@ class TransactionLineAnalysis(Base):
     __tablename__ = "gl_line_analysis"
     __table_args__ = (
         UniqueConstraint("line_id", "dimension_value_id", name="uq_gl_line_analysis_line_id"),
+        # The report per avdeling reads by value, and so does the question
+        # «is this value in use», which decides whether it may be deleted. The
+        # unique constraint above leads with the line and helps neither.
+        Index("ix_gl_line_analysis_dimension_value_id", "dimension_value_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

@@ -106,7 +106,10 @@ cooperatives and approved buyers issue it. The name at the top is the
   recognises self-billing for everyone («selvfaktura», «utstedt av kjøper»)
   and, only in farm books, the trade's names for it (melkeoppgjør,
   slakteoppgjør, kornoppgjør, tømmeroppgjør …), since «oppgjør» alone is also
-  the word on a power bill. It outranks the party register, because
+  the word on a power bill, and an «avregning» that pays out («Utbetalingsdato»,
+  «Utbetalt»): Fatland calls its slaughter settlement «Avregning nr.» and
+  nothing else, while a power company's avregning says what is owed and when
+  it falls due. It outranks the party register, because
   Felleskjøpet is the feed supplier and the grain buyer on one orgnr. The
   model is told the same in a fixed sentence (`context._FARM_SAID`). Without
   this a melkeoppgjør came back as a purchase from Tine, and since the
@@ -117,7 +120,7 @@ cooperatives and approved buyers issue it. The name at the top is the
 
   | Deduction | Booked | Why |
   | --- | --- | --- |
-  | Omsetningsavgift, forskningsavgift | `landbruk_trekk_avgift`: against the product's sales account (3071, or moved to 3041/3001), no VAT | NIBIO codes it against the product (tillegg/trekk 33002, 43004). It is the producer's own levy that the buyer collects (forskrift om omsetningsavgift), not a price reduction, so the sale's VAT basis stays the gross price |
+  | Omsetningsavgift, forskningsavgift | `landbruk_trekk_avgift`: against the product's sales account (3071, or moved to 3041/3001), with the sale's 25 %, which it gives back | NIBIO codes it against the product (tillegg/trekk 33002, 43004), and the buyer computes the VAT on the price after it (below) |
   | Andelsinnskudd | `landbruk_trekk_andel`: 1355, balance sheet | The share is the farmer's money; a cost would deduct money the farmer still has |
   | Kraftfôr set off | `landbruk_kraftfor`: a purchase with its own 25 % deduction | Each supply carries its own VAT; netting them would hide both |
   | Skogfond on a timber settlement | `landbruk_trekk_skogfond`: 7761, a deductible cost | Skatte-ABC S-17-14.27 |
@@ -129,6 +132,23 @@ cooperatives and approved buyers issue it. The name at the top is the
   have claimed a deduction on 2710 for tax nobody charged the farm. The
   catalogue refuses a deduction that is not money out onto an income account.
 
+- **The levy comes off the VAT basis, because the settlement takes it off.**
+  This said the opposite until the pilot's first settlement arrived: that the
+  levy is the producer's own debt the buyer collects, not a price reduction,
+  so the sale's VAT basis stays the gross price. Q-Meieriene's avregningsoppgave
+  for September 2026 sums the price posts, the supplements and «Omsetningsavgift»
+  to «Netto avregnet» and prints «25,0% merverdiavgift av» that net; Landbrukets
+  Dataflyt's posting of the same settlement put the levy into 3071 under the
+  milk's own code 3. Whatever the theory, the settlement is the farm's sales
+  document (§ 5-2-1), and the output VAT in the books must be the VAT printed on
+  it: booked without VAT, the levy left 25 % of itself as output VAT the dairy
+  never charged, and the lines no longer added up to the bank. The category's
+  default is 25 % now, and a buyer that computes VAT before the levy is
+  answered by setting the line to 0.
+- **Posts below the VAT line are their own lines.** The same settlement prints
+  the membership in husdyrkontrollen after «Beløp inkl. mva.», with its own
+  25 %: a purchase set off (`landbruk_husdyrkontroll`), not a reduction of
+  the sale.
 - **Etterbetaling** from a cooperative is income in the year the årsmøte
   decides it (Skatte-ABC J-2-7.1), with VAT as part of the price; it goes on
   the product's account (`landbruk_melk` for Tine).
@@ -172,11 +192,89 @@ means the farm cannot do without it; **wish** means it can, with more work.
 | Driftsgrenregnskap (melk, storfe, sau) | Wish | Nothing; the schema has SAF-T analysis dimensions | Departments and dimensions (FEATURES #37) |
 | Private uttak and kår | Law (a list of uttak, bokføringsforskriften § 3-1 nr. 5; kår via a-melding, § 6-52) | VAT uttak on /mva-justeringer/ only | Uttak at takseringsregler rates; kår needs payroll (FEATURES #14) |
 | EHF in through Peppol | Law from 2030, expected now | Nothing | FEATURES #13; access point through invoice.be |
-| SAF-T 1.40 | Law on request | **Built** | – |
+| SAF-T 1.40 | Law on request | **Built**, and the opening balance and the year's vouchers are read from the old program's SAF-T file (Tripletex's farm accounts included), with a comparison for the parallel run | Earlier years' vouchers and the documents (FEATURES #17) |
 | Bank reconciliation | Wish | **Built** (camt.053) | Live bank feed (FEATURES #9) |
 | Approval and payment | Wish | Nothing | FEATURES #11, #36 |
 | Backup to the farm's own OneDrive or SharePoint | Wish | Nothing | Full export (FEATURES #44). The farm's own Microsoft 365 is its choice of storage; Myntos's own archive stays in R2 `eu` |
 | Production data and analysis per driftsgren | Wish, later | Nothing | After dimensions |
+
+## What the pilot's first files taught (2026-10-12)
+
+Roald sent the farm's Tripletex SAF-T files for 2025 and 2026, Tripletex's
+postings of two vouchers, and three bilag. They live in the gitignored
+`regnaskaps_tests/` (`_reime_gard/` for the source material, a folder per
+bilag, and `FASIT.md` with what each should produce, read from the documents
+and checked against how Tripletex booked them). `regnaskaps_tests/saft_pilot.py`
+takes the SAF-T file through Myntos end to end. What changed because of them:
+
+- **The opening balance is read from the SAF-T file**
+  (`POST …/inngaende-balanse/saft`, [integrations/saf-t.md](integrations/saf-t.md)).
+  Tripletex's farm module writes NIBIO's department and product code after the
+  four digits (`145120512` is 1451, jordbruk, kyr), so the four digits are the
+  account and the rest is kept as the line's text. Read through Myntos and
+  exported again, the farm's own 2026 SAF-T file validates against the 1.40
+  XSD and every account's and party's opening balance equals Tripletex's.
+- **Tripletex carries the balance sheet into the new year and leaves the
+  result off equity.** The farm's 2026 opening did not sum to zero; the
+  difference is 2025's result, and it goes on 2050.
+- **Tripletex's groupings need the accountant.** Three kinds were wrong in the
+  farm's file: the driftskreditt (2390) grouped as «Positiv egenkapital», the
+  ENK's «Innskudd kontanter» (2055) on «Avsatt utbytte - IFRS» because the
+  numbers match, and NIBIO's faste tekniske installasjoner (1180-1182) on post
+  1180 «Investeringseiendommer», for the same reason. The import refuses the
+  first two (class and IFRS) and proposes Myntos's default; the third looks
+  right to any rule and is on the accountant's list in `FASIT.md`.
+- **The farm's bank account is a driftskreditt on 2390.** Myntos books every
+  payment on 1920, so the import says so and leaves the move to the
+  accountant. If the opening balance moves it, the year's vouchers follow.
+- **The parallel run starts from 1 January 2026.** The year so far comes from
+  the same file (`POST …/saft/bilag`, page `/tidligere-program/`): 467
+  Tripletex vouchers became 596, because Tripletex keeps an invoice and its
+  payment in one voucher on two dates. Compared with the file afterwards,
+  nothing differs in 93 accounts, 81 parties and 5 VAT terms, and Myntos's
+  melding for each term Tripletex has filed equals the settlement Tripletex
+  posted. From the export day the farm enters every bilag in both, Tripletex
+  files every VAT return, and a fresh file is compared after each term.
+- **The settlement's VAT is on the net** (rule 4 above), and the bilag reader
+  had four bugs a farmer's paperwork found at once: a kontonummer printed after
+  the amount was read as the amount, the register's name in front of an
+  orgnr («Foretaksregisteret: NO…») was read as the sender's name, the dairy's
+  «Avregningsoppgave» was not a settlement word, and «utbetalingsdato» was
+  read as the date of the sale because it contains «betalingsdato».
+
+## What the slaughter settlement taught (2026-10-13)
+
+Roald sent Fatland Jæren's slakteavregning for September 2026 (seven young
+bulls, 255 835,31 paid out) as a Tripletex print-out, with Landbrukets
+Dataflyt's posting on page 1. Fatland's pages are `regnaskaps_tests/fatland/`;
+the print-out is in `_reime_gard/`. It came back as a purchase of 255 kroner
+with 913 251 342 kroner of VAT from «Foretagsreg», and every one of those was
+the parser's:
+
+- **A total wrapped in its cell.** «Total 255» over «835,31», and the same for
+  «Sum brutto». An amount whose cell broke at the thousands space is put back
+  on one line before anything is read.
+- **The orgnr as VAT.** «Foretagsreg: NO 913 251 342 MVA» carries the word
+  «MVA», and the spaced number is an amount to the pattern. «Foretaksregisteret»
+  had been kept off VAT lines by name; now any valid orgnr with «MVA» behind
+  it is never an amount, whatever the label says.
+- **The register's label as the name**, again, in a new spelling; and the
+  name in two lines, because the logo sets «FATLAND» over «Jæren AS».
+- **No settlement word.** See rule 4: an «avregning» that pays out.
+- **Varenr and skrottnr as an orgnr.** «162060 341» passed the check digit
+  for two carcasses in seven. An orgnr's separators are now the same twice
+  or absent.
+
+How it is booked: every post carries the same 25 % («Moms» on «Sum brutto»),
+so one `landbruk_slakt` entry for the amount paid out gives the settlement's
+VAT to the øre, which is what Dataflyt posted (all on 3041). Splitting it is
+also right, with the levy line moved to 3041. The slaughterhouse's supplements
+(innmelding, puljetillegg, ny bruker) are price, on 3041 in NIBIO's coding too.
+**«Kvalitetstilskudd storfe»** is a state tilskudd the slaughterhouse pays
+with the price, at 25 %; NIBIO codes it 45004 to 3048 «Offentlige tilskudd
+utbetalt via varemottaker», which Myntos does not have. It stays in the
+slaughter line until someone asks for 3048: the parallel run compares
+account by account with Tripletex, which has it on 3041.
 
 ## Not built yet
 

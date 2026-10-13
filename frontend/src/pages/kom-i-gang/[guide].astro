@@ -42,6 +42,16 @@ const sjekketNorsk = new Date(SJEKKET).toLocaleDateString('nb-NO', {
     <p class="lead">{guide.ingress}</p>
   </div>
 
+  {/* For den som allerede er logget inn: eksporten er det de kom for, og veien
+      inn for filene står øverst, ikke bare etter stegene de kanskje har gjort. */}
+  <div class="quick" data-auth-only="inn">
+    <p>
+      <strong>Har du SAF-T-filene fra {guide.navn}?</strong> Last dem opp, så henter Myntos
+      regnskapet, også tidligere år.
+    </p>
+    <a class="btn btn-primary" href="/tidligere-program/">Hent regnskapet</a>
+  </div>
+
   <div class="columns">
     <div class="main">
       <h2 class="first">Hent dataene ut av {guide.navn}</h2>
@@ -124,7 +134,11 @@ const sjekketNorsk = new Date(SJEKKET).toLocaleDateString('nb-NO', {
     }
   </div>
 
-  <div class="cta card">
+  {/* To utgaver av samme kort. Den som ikke har en konto, oppretter en mens
+      eksporten pakkes; den som er logget inn, har allerede konto og trenger
+      bare stedet å laste opp filene. Å be en innlogget person opprette konto
+      var feil kort på feil tidspunkt. */}
+  <div class="cta card" data-auth-only="ut">
     <div>
       <h2 class="cta-title">Opprett kontoen mens eksporten pakkes</h2>
       <p class="card-hint">
@@ -133,6 +147,16 @@ const sjekketNorsk = new Date(SJEKKET).toLocaleDateString('nb-NO', {
       </p>
     </div>
     <a class="btn btn-primary btn-large" href="/registrer/">Opprett konto</a>
+  </div>
+  <div class="cta card" data-auth-only="inn">
+    <div>
+      <h2 class="cta-title">Hent regnskapet fra {guide.navn}</h2>
+      <p class="card-hint">
+        Last opp SAF-T-filene, én per år. Myntos leser dem på serveren, viser hva som blir ført, og
+        fører alt på én gang når du sier ja. Du kan lukke siden mens filene leses.
+      </p>
+    </div>
+    <a class="btn btn-primary btn-large" href="/tidligere-program/">Hent regnskapet</a>
   </div>
 </BaseLayout>
 
@@ -342,6 +366,21 @@ const sjekketNorsk = new Date(SJEKKET).toLocaleDateString('nb-NO', {
   .cta-title {
     margin: 0 0 0.2rem;
     font-size: 1.3rem;
+  }
+  .quick {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem 1.25rem;
+    margin: 1rem 0 0;
+    padding: 0.85rem 1.1rem;
+    border: 1px solid var(--accent-line);
+    border-radius: var(--radius);
+    background: var(--accent-soft);
+  }
+  .quick p {
+    margin: 0;
   }
   .cta .card-hint {
     max-width: 34rem;

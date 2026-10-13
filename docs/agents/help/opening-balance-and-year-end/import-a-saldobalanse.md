@@ -38,8 +38,9 @@ it cannot be edited, only corrected with a reversal and a new balance.
 
 1. Open `https://myntos.no/inngaende-balanse/` (from «Oversikt», the link
    «Inngående balanse» in the note under «Største poster i år»).
-2. In the card «Saldoer per 1. januar …», use «Last inn saldobalanse (CSV)»
-   and choose the file.
+2. In the card «Saldoer per 1. januar …», use «Last inn SAF-T-fil eller
+   saldobalanse» and choose the file. (A SAF-T file is read differently:
+   [Import the opening balance from a SAF-T file](https://myntos.no/llms/help/opening-balance-and-year-end/import-a-saf-t-file.md).)
 3. Myntos fills the rows and says «Leste … kontoer fra filen. Se over linjene,
    fordel 1500 og 2400 på kunder og leverandører hvis du vil, og kontroller.»
    The file itself is not stored.

@@ -12,8 +12,10 @@ first day of its first year in Myntos, taken from the books it kept before.
 Myntos posts it as one voucher dated 1 January. **Once posted it cannot be
 edited or deleted**, because a posted voucher is permanent under Norwegian
 bookkeeping law; a mistake is fixed by correcting it, which reverses the old
-one and posts a new one. If the old program can export a saldobalanse file,
-[importing it](https://myntos.no/llms/help/opening-balance-and-year-end/import-a-saldobalanse.md)
+one and posts a new one. If the old program can export its SAF-T file,
+[importing that](https://myntos.no/llms/help/opening-balance-and-year-end/import-a-saf-t-file.md)
+is easiest, and a
+[saldobalanse file](https://myntos.no/llms/help/opening-balance-and-year-end/import-a-saldobalanse.md)
 is easier than typing.
 
 ## They might ask

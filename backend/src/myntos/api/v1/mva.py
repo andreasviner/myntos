@@ -62,11 +62,13 @@ from myntos.domain.identity.models import User
 from myntos.domain.ledger.errors import LedgerError
 from myntos.domain.ledger.models import Company
 from myntos.domain.ledger.posting import PostingError
+from myntos.domain.mva import elsewhere, service
 from myntos.domain.mva import melding as melding_module
-from myntos.domain.mva import service
+from myntos.domain.mva import naering as naering_module
 from myntos.domain.mva.codes import SUPPORTED_CATEGORIES, Meldingskategori
 from myntos.domain.mva.errors import (
     ConfirmationRequiredError,
+    FiledElsewhereError,
     FilingNotSubmittableError,
     MeldingChangedError,
     MeldingNotBuildableError,
@@ -133,12 +135,32 @@ class DocumentResponse(BaseModel):
     byte_size: int
 
 
+class ElsewhereResponse(BaseModel):
+    """A term recorded as filed from another program («Sendt fra et annet program»)."""
+
+    filed_on: date
+    # What the other program filed, when the person said: positive owed,
+    # negative a refund. Null when they did not say.
+    amount: Decimal | None
+    # The old program's settlement voucher the statement was made from, when
+    # it was proposed from the SAF-T import.
+    voucher_id: int | None
+    withdrawn_at: str | None
+    # Myntos's figure for the term minus ``amount``. Null without an amount.
+    # Within a krone counts as agreeing (``agrees``): some programs round the
+    # settlement to whole kroner.
+    difference: Decimal | None
+    agrees: bool | None
+
+
 class FilingResponse(BaseModel):
     id: int
     company_id: int
     year: int
     termin: int
     period_label: str
+    # Which melding: ``alminnelig`` or ``primaernaering``.
+    category: str
     status: str
     fastsatt_merverdiavgift: Decimal
     lines: list[LineResponse]
@@ -165,6 +187,23 @@ class FilingResponse(BaseModel):
     # A checked melding that no longer matches cannot be sent, and the page
     # says so before the button is pressed rather than after.
     matches_ledger: bool | None = None
+    # Set on a row with status ``annet_program`` or ``opphevet``.
+    elsewhere: ElsewhereResponse | None = None
+
+
+class ProposalResponse(BaseModel):
+    """An imported settlement voucher that looks like the old program filed this term."""
+
+    voucher_id: int
+    voucher_no: str
+    date: date
+    description: str
+    # What it moved: output VAT off 2700, input VAT off 2710, net onto 2740.
+    output_vat: Decimal
+    input_vat: Decimal
+    amount: Decimal
+    # Whether Myntos's melding for the term has exactly that output and input.
+    matches: bool
 
 
 class PeriodRowResponse(BaseModel):
@@ -176,11 +215,43 @@ class PeriodRowResponse(BaseModel):
     end: date
     deadline: date
     is_over: bool
+    # Past the deadline with nothing filed and nothing recorded as filed
+    # elsewhere.
+    is_overdue: bool
     fastsatt_merverdiavgift: Decimal
     line_count: int
     status: str | None
     filed_fastsatt: Decimal | None
     changed_since_filed: bool
+    filed_elsewhere: bool
+    filed_elsewhere_amount: Decimal | None
+    elsewhere_difference: Decimal | None
+    elsewhere_proposal: ProposalResponse | None
+
+
+class AccountRef(BaseModel):
+    account_number: str
+    name: str
+
+
+class SecondNaeringResponse(BaseModel):
+    """The company's second VAT return, when it files two."""
+
+    category: str
+    label: str
+    period_type: str
+    valid_from: date
+    accounts: list[AccountRef]
+
+
+class NaeringResponse(BaseModel):
+    """One of the company's meldinger, for choosing which to look at."""
+
+    category: str
+    label: str
+    period_type: str
+    is_main: bool
+    valid_from: date | None
 
 
 class SettingsResponse(BaseModel):
@@ -188,6 +259,8 @@ class SettingsResponse(BaseModel):
     category: str
     period_types: list[dict[str, str]]
     categories: list[dict[str, str]]
+    # The second melding, or null for the ordinary company that files one.
+    second: SecondNaeringResponse | None = None
 
 
 class OverviewResponse(BaseModel):
@@ -195,6 +268,11 @@ class OverviewResponse(BaseModel):
     year: int
     vat_registered: bool
     settings: SettingsResponse
+    # Which melding ``periods`` are: its category.
+    naering: str
+    # Every melding the company files, the main one first. One for almost
+    # every company; two for a farm with other business beside it.
+    naeringer: list[NaeringResponse]
     periods: list[PeriodRowResponse]
 
 
@@ -234,6 +312,11 @@ class PeriodResponse(BaseModel):
     # for upload by hand instead of a button that answers 503.
     submission_available: bool
     changed_since_filed: bool
+    is_overdue: bool
+    # A standing «Sendt fra et annet program» statement for the term, and the
+    # imported voucher that looks like one when there is none yet.
+    filed_elsewhere: FilingResponse | None
+    elsewhere_proposal: ProposalResponse | None
     filings: list[FilingResponse]
 
 
@@ -292,22 +375,58 @@ def _findings(result: Valideringsresultat) -> list[FindingResponse]:
     ]
 
 
-def _filing_response(filing: MvaFiling, *, current_hash: str | None = None) -> FilingResponse:
+def _elsewhere_response(
+    filing: MvaFiling, current_fastsatt: Decimal | None
+) -> ElsewhereResponse | None:
+    detail = filing.elsewhere
+    if detail is None:
+        return None
+    # Against the books as they are now when the caller has just built the
+    # melding, otherwise against Myntos's figure when the statement was made.
+    mine = current_fastsatt if current_fastsatt is not None else filing.fastsatt_merverdiavgift
+    return ElsewhereResponse(
+        filed_on=detail.filed_on,
+        amount=detail.amount,
+        voucher_id=detail.voucher_pk,
+        withdrawn_at=detail.withdrawn_at.isoformat() if detail.withdrawn_at else None,
+        difference=None if detail.amount is None else mine - detail.amount,
+        agrees=elsewhere.agrees(mine, detail.amount),
+    )
+
+
+def _filing_response(
+    filing: MvaFiling,
+    *,
+    current_hash: str | None = None,
+    current_fastsatt: Decimal | None = None,
+) -> FilingResponse:
     termin = service.termin_of_filing(filing)
-    result = melding_module.parse_validation(filing.validation_xml.encode("utf-8"))
+    # A term recorded as filed elsewhere sent nothing from here, so there is
+    # no answer from Skatteetaten to read; parsing the empty string would call
+    # it unreadable, which reads as a refusal.
+    sent_nothing = filing.status in (
+        FilingStatus.ANNET_PROGRAM.value,
+        FilingStatus.OPPHEVET.value,
+    )
+    result = (
+        None
+        if sent_nothing
+        else melding_module.parse_validation(filing.validation_xml.encode("utf-8"))
+    )
     return FilingResponse(
         id=filing.id,
         company_id=filing.company_id,
         year=filing.year,
         termin=filing.period_index,
         period_label=termin.label,
+        category=filing.category,
         status=filing.status,
         fastsatt_merverdiavgift=filing.fastsatt_merverdiavgift,
         lines=[_snapshot_line(raw) for raw in filing.lines],
         merknad=filing.merknad,
         validation_status=filing.validation_status,
-        validation_blocks=result.blocks_submission,
-        findings=_findings(result),
+        validation_blocks=False if result is None else result.blocks_submission,
+        findings=[] if result is None else _findings(result),
         validated_at=filing.validated_at.isoformat(),
         submitted_at=filing.submitted_at.isoformat() if filing.submitted_at else None,
         submitted_by_name=filing.submitted_by_name,
@@ -330,39 +449,112 @@ def _filing_response(filing: MvaFiling, *, current_hash: str | None = None) -> F
             )
             for document in filing.documents
         ],
-        matches_ledger=None if current_hash is None else filing.content_hash == current_hash,
+        matches_ledger=(
+            None if current_hash is None or sent_nothing else filing.content_hash == current_hash
+        ),
+        elsewhere=_elsewhere_response(filing, current_fastsatt),
     )
 
 
-def _settings_response(company: Company) -> SettingsResponse:
+async def _settings_response(
+    db: DbSession, company: Company, setup: naering_module.Naeringer | None = None
+) -> SettingsResponse:
+    if setup is None:
+        setup = await naering_module.load(db, company)
+    second = None
+    if setup.second is not None and setup.second.valid_from is not None:
+        second = SecondNaeringResponse(
+            category=setup.second.category.value,
+            label=setup.second.label,
+            period_type=setup.second.period_type.value,
+            valid_from=setup.second.valid_from,
+            accounts=[
+                AccountRef(account_number=account.account_number, name=account.description)
+                for account in await naering_module.second_accounts(db, company)
+            ],
+        )
     return SettingsResponse(
-        period_type=service.period_type_of(company).value,
-        category=service.category_of(company).value,
+        period_type=setup.main.period_type.value,
+        category=setup.main.category.value,
         period_types=[{"value": p.value, "label": p.label} for p in PeriodType],
         categories=[
-            {"value": c.value, "label": _CATEGORY_LABELS[c]}
+            {"value": c.value, "label": naering_module.CATEGORY_LABELS[c]}
             for c in Meldingskategori
             if c in SUPPORTED_CATEGORIES
         ],
+        second=second,
     )
 
 
-_CATEGORY_LABELS = {
-    Meldingskategori.ALMINNELIG: "Alminnelig næring",
-    Meldingskategori.PRIMAERNAERING: "Primærnæring (jord, skog, fiske)",
-    Meldingskategori.KOMPENSASJON: "Kompensasjon",
-    Meldingskategori.OMVENDT_AVGIFTSPLIKT: "Omvendt avgiftsplikt",
-    Meldingskategori.EHANDEL: "E-handel (VOEC)",
-}
+def _naeringer_response(setup: naering_module.Naeringer) -> list[NaeringResponse]:
+    return [
+        NaeringResponse(
+            category=chosen.category.value,
+            label=chosen.label,
+            period_type=chosen.period_type.value,
+            is_main=chosen.is_main,
+            valid_from=chosen.valid_from,
+        )
+        for chosen in setup.all
+    ]
 
 
-def _blockers(company: Company, termin: Termin, melding: Melding | None) -> list[BlockerResponse]:
+def _proposal_response(proposal: elsewhere.Proposal | None) -> ProposalResponse | None:
+    if proposal is None:
+        return None
+    return ProposalResponse(
+        voucher_id=proposal.voucher_pk,
+        voucher_no=proposal.voucher_no,
+        date=proposal.on,
+        description=proposal.description,
+        output_vat=proposal.output,
+        input_vat=proposal.input,
+        amount=proposal.amount,
+        matches=proposal.matches,
+    )
+
+
+def _is_overdue(company: Company, deadline: date, closed: bool, today: date) -> bool:
+    """Past the deadline with nothing filed: what the page marks «Over fristen».
+
+    A term recorded as filed from another program is not overdue, which is
+    half the reason the statement exists.
+    """
+    return company.vat_registered and not closed and deadline < today
+
+
+_NaeringQuery = Annotated[
+    str | None,
+    Query(
+        max_length=32,
+        description=(
+            "Which melding, by its category (``alminnelig`` or ``primaernaering``), for a "
+            "company that files two. Left out, the main melding."
+        ),
+    ),
+]
+
+
+def _blockers(
+    company: Company, termin: Termin, melding: Melding | None, *, filed_elsewhere: bool = False
+) -> list[BlockerResponse]:
     """What stands between this period and a filing, as the backend sees it.
 
     The same checks the actions make, offered up front so the page can disable
     the button and say why instead of letting someone press it to find out.
     """
     blockers: list[BlockerResponse] = []
+    if filed_elsewhere:
+        blockers.append(
+            BlockerResponse(
+                code="filed_elsewhere",
+                message=(
+                    "Terminen er merket som sendt fra et annet program. En ny melding fra "
+                    "Myntos ville erstattet den hos Skatteetaten; angre merkingen først hvis "
+                    "det er det du vil."
+                ),
+            )
+        )
     if not company.vat_registered:
         blockers.append(
             BlockerResponse(
@@ -406,6 +598,21 @@ def _require_fileable(company: Company, termin: Termin) -> None:
         )
 
 
+def _refuse_if_filed_elsewhere(filings: list[MvaFiling], termin: Termin) -> None:
+    """A term the previous program filed is not checked or sent from here.
+
+    A second melding *replaces* the first at Skatteetaten, so sending one
+    would overwrite the old program's with Myntos's figures, which during a
+    parallel run are often not complete yet. Taking the statement back
+    (``…/angre``) is how a correction from Myntos is meant.
+    """
+    if service.standing_elsewhere(filings) is not None:
+        raise FiledElsewhereError(
+            f"{termin.label} er merket som sendt fra et annet program; angre merkingen først "
+            "hvis du vil sende en ny melding fra Myntos"
+        )
+
+
 def _submission_configured() -> bool:
     try:
         mva_integration.build_client()
@@ -440,6 +647,7 @@ async def overview(
     context: CurrentCompany,
     db: DbSession,
     aar: Annotated[int | None, Query(ge=2000, le=2100)] = None,
+    naering: _NaeringQuery = None,
 ) -> OverviewResponse:
     """Every VAT period (termin) of one year: what each comes to, its deadline, what was filed.
 
@@ -466,24 +674,54 @@ async def overview(
     - ``status``: the latest filing's state, ``null`` when nothing has been
       checked or sent; otherwise ``validert``, ``avvist``, ``sendt``,
       ``mottatt`` or ``feilet`` (see
-      ``GET /companies/{company_id}/mva/innsendinger/{filing_id}``).
+      ``GET /companies/{company_id}/mva/innsendinger/{filing_id}``), or
+      ``annet_program`` when the person recorded that another program filed it.
     - ``filed_fastsatt`` and ``changed_since_filed``: the figure last actually
-      filed, and whether the books for the period have changed since. True
-      means a corrected melding is due; a new one replaces the old.
+      filed from Myntos, and whether the books for the period have changed
+      since. True means a corrected melding is due; a new one replaces the old.
+    - ``is_overdue``: the deadline has passed and nothing is filed or recorded
+      as filed elsewhere.
+    - ``filed_elsewhere``, ``filed_elsewhere_amount`` and
+      ``elsewhere_difference``: the term is recorded as filed from another
+      program («Sendt fra et annet program»), the amount that program filed
+      if the person gave it, and Myntos's figure minus that amount. A
+      difference of a krone or more means the two programs' books disagree on
+      the term, which during a parallel run is the thing to look at.
+    - ``elsewhere_proposal``: on a term not yet filed or marked, an imported
+      settlement voucher from the previous program (SAF-T import) that looks
+      like that program filed it, with ``matches`` true when its output and
+      input VAT are exactly Myntos's. Only a proposal: record it with
+      ``POST /companies/{company_id}/mva/termin/annet-program`` once the person
+      confirms it.
+
+    **Two meldinger.** A farm with other business above 30 000 kroner a year
+    beside it files two: primærnæring and alminnelig, each with its own terms.
+    ``naeringer`` lists the company's meldinger (one for almost every
+    company), ``naering`` says which one ``periods`` are, and the ``naering``
+    query parameter picks it (the main melding when left out).
+    ``settings.second`` describes the second melding.
 
     ``vat_registered`` false means the company is not in
     Merverdiavgiftsregisteret and files no MVA-melding at all.
 
-    Open one period with ``GET /companies/{company_id}/mva/termin``. Needs
-    ``ledger:read``, which every role has; a key needs ``read``.
+    Open one period with ``GET /companies/{company_id}/mva/termin``. Refusals:
+    422 ``unknown_naering`` when the company files no melding of that
+    category. Needs ``ledger:read``, which every role has; a key needs
+    ``read``.
     """
     require_permission(context.membership.role, Permission.LEDGER_READ)
     company = context.company
     year = aar or _today().year
     today = _today()
+    setup = await naering_module.load(db, company)
+    chosen = setup.get(naering)
+    summaries = await service.year_overview(db, company, year, chosen, setup)
+    proposals = await elsewhere.proposals(db, company, summaries, setup)
     rows: list[PeriodRowResponse] = []
-    for summary in await service.year_overview(db, company, year):
+    for summary in summaries:
         latest = summary.latest
+        fastsatt = summary.melding.fastsatt_merverdiavgift
+        marked = summary.elsewhere.elsewhere if summary.elsewhere is not None else None
         rows.append(
             PeriodRowResponse(
                 year=summary.termin.year,
@@ -494,20 +732,31 @@ async def overview(
                 end=summary.termin.end,
                 deadline=summary.deadline,
                 is_over=service.is_past(summary.termin, today),
-                fastsatt_merverdiavgift=summary.melding.fastsatt_merverdiavgift,
+                is_overdue=_is_overdue(company, summary.deadline, summary.closed, today),
+                fastsatt_merverdiavgift=fastsatt,
                 line_count=len(summary.melding.lines),
                 status=latest.status if latest is not None else None,
                 filed_fastsatt=(
                     summary.filed.fastsatt_merverdiavgift if summary.filed is not None else None
                 ),
                 changed_since_filed=summary.changed_since_filed,
+                filed_elsewhere=marked is not None,
+                filed_elsewhere_amount=marked.amount if marked is not None else None,
+                elsewhere_difference=(
+                    fastsatt - marked.amount
+                    if marked is not None and marked.amount is not None
+                    else None
+                ),
+                elsewhere_proposal=_proposal_response(proposals.get(summary.termin.index)),
             )
         )
     return OverviewResponse(
         company_id=company.id,
         year=year,
         vat_registered=company.vat_registered,
-        settings=_settings_response(company),
+        settings=await _settings_response(db, company, setup),
+        naering=chosen.category.value,
+        naeringer=_naeringer_response(setup),
         periods=rows,
     )
 
@@ -523,18 +772,102 @@ class SettingsPayload(BaseModel):
 async def update_settings(
     payload: SettingsPayload, context: CurrentCompany, db: DbSession
 ) -> SettingsResponse:
-    """Change the period length or the category.
+    """Change the main melding's period length («Terminlengde») or category («Meldingstype»).
+
+    ``period_type`` is ``toMaaneder`` (every two months, the default),
+    ``maaned`` or ``aar``; ``category`` is ``alminnelig`` or
+    ``primaernaering`` (a farm, forest or fishery). Either may be left out.
+    Both are what Skatteetaten has decided about the company, so set them to
+    what Skatteetaten's letter says rather than to a preference.
 
     ``organization:manage``, like VAT registration on ``/organisasjon``: how
     often a company files is something Skatteetaten decided about the company,
-    not a bookkeeping entry.
+    not a bookkeeping entry. A key needs ``write``.
+
+    Refusals: 422 ``invalid_period`` or ``unsupported_category`` for a value
+    Myntos does not file; 409 ``filed_lines_would_move`` when the company files
+    two meldinger and has filed for them, because changing the main category
+    swaps the two and would move filed terms between them.
     """
     require_permission(context.membership.role, Permission.ORGANIZATION_MANAGE)
+    if payload.category is not None:
+        await naering_module.guard_main_category(db, context.company, payload.category)
     service.update_settings(
         context.company, period_type=payload.period_type, category=payload.category
     )
     await db.flush()
-    return _settings_response(context.company)
+    return await _settings_response(db, context.company)
+
+
+class SecondNaeringPayload(BaseModel):
+    # ``toMaaneder``, ``maaned`` or ``aar``, as Skatteetaten decided for it.
+    period_type: str = Field(max_length=32)
+    # The first day the second melding covers.
+    valid_from: date
+    # Account numbers whose VAT goes in it from that day. Replaces the list.
+    accounts: list[Annotated[str, Field(max_length=32)]] = Field(max_length=500)
+
+
+@router.put(
+    "/companies/{company_id}/mva/andre-melding",
+    openapi_extra=key_write("sette opp en andre mva-melding"),
+)
+async def set_second_melding(
+    payload: SecondNaeringPayload, context: CurrentCompany, db: DbSession
+) -> SettingsResponse:
+    """Set up, or change, the company's second VAT return («Den andre meldingen»).
+
+    A farm, a forest or a fishery files the **primærnæring** melding, and may
+    report other business (snow ploughing, a farm shop, rented-out machinery)
+    in it only while that business's sales stay at or under 30 000 kroner a
+    year (merverdiavgiftsloven § 15-1 (1)). Above that the company files an
+    **alminnelig** melding as well, each with its own terms and deadlines.
+    This sets up the second one; its category is always the other of the two
+    (the main melding's is ``category`` in ``PATCH
+    /companies/{company_id}/mva/innstillinger``).
+
+    Which melding a posted line goes in is decided by its **account**: a line
+    on one of ``accounts`` dated on or after ``valid_from`` belongs to the
+    second melding, every other line to the main one. So the other business
+    needs accounts of its own (add them with ``POST
+    /companies/{company_id}/kontoplan``), and a cost shared by both is booked
+    as two lines on two accounts. The VAT accounts 2700, 2710 and 2740 cannot
+    be chosen. Calling this again replaces the list.
+
+    Refusals: 422 ``invalid_naering_setup`` (an account the chart does not
+    have, a VAT account, an impossible date); 422 ``invalid_period``; 409
+    ``filed_lines_would_move`` when the change would move VAT into or out of a
+    term already filed or recorded as filed elsewhere (a filed melding is not
+    changed afterwards; the voucher is corrected instead). Needs
+    ``organization:manage``; a key needs ``write``.
+    """
+    require_permission(context.membership.role, Permission.ORGANIZATION_MANAGE)
+    setup = await naering_module.set_second(
+        db,
+        context.company,
+        period_type=payload.period_type,
+        valid_from=payload.valid_from,
+        account_numbers=payload.accounts,
+    )
+    return await _settings_response(db, context.company, setup)
+
+
+@router.delete(
+    "/companies/{company_id}/mva/andre-melding",
+    openapi_extra=key_write("fjerne den andre mva-meldingen"),
+)
+async def remove_second_melding(context: CurrentCompany, db: DbSession) -> SettingsResponse:
+    """Go back to one VAT return: every line in the main melding again.
+
+    For a second melding set up by mistake. Once anything has been checked,
+    sent or recorded as filed for it, it stays (409
+    ``filed_lines_would_move``): its terms are history. Removing a company's
+    only melding is not possible and not needed; calling this without a second
+    one changes nothing. Needs ``organization:manage``; a key needs ``write``.
+    """
+    require_permission(context.membership.role, Permission.ORGANIZATION_MANAGE)
+    setup = await naering_module.remove_second(db, context.company)
+    return await _settings_response(db, context.company, setup)
 
 
 _Year = Annotated[int, Query(ge=2000, le=2100)]
@@ -543,7 +876,11 @@ _Index = Annotated[int, Query(ge=1, le=12)]
 
 @router.get("/companies/{company_id}/mva/termin", openapi_extra=KEY_READ)
 async def period(
-    aar: _Year, termin: _Index, context: CurrentCompany, db: DbSession
+    aar: _Year,
+    termin: _Index,
+    context: CurrentCompany,
+    db: DbSession,
+    naering: _NaeringQuery = None,
 ) -> PeriodResponse:
     """One period's MVA-melding in full, as the books have it now, and what stops it being filed.
 
@@ -574,33 +911,75 @@ async def period(
     - ``period_not_over``: filing opens the day after the period ends.
     - ``not_buildable``: the books hold a VAT code the melding cannot report.
       A voucher has to be corrected; ``lines`` is then empty.
+    - ``filed_elsewhere``: the term is recorded as filed from another program.
+      Myntos does not check or send it while that stands, because a new
+      melding would replace the other program's at Skatteetaten.
 
     ``reconciliation.difference`` other than zero means something was booked
     to the VAT accounts 2700 or 2710 without a VAT code, so the melding and the
-    accounts disagree. Find that voucher before anything is filed.
+    accounts disagree. Find that voucher before anything is filed. With two
+    meldinger the accounts hold both, so the difference is against both
+    meldingers' lines for the term's dates.
 
     ``filings`` is every check and submission for the period, newest first;
     ``matches_ledger`` on each says whether the books still say what it says.
     ``changed_since_filed`` is true when a filed period has changed since. A
     new melding for the period then replaces the earlier one at Skatteetaten.
+    ``filed_elsewhere`` is the standing «Sendt fra et annet program»
+    statement, with ``elsewhere.amount`` (what the other program filed),
+    ``elsewhere.difference`` (Myntos's figure now minus that) and
+    ``elsewhere.agrees``; ``elsewhere_proposal`` is an imported settlement
+    voucher that looks like one, on a term with no statement yet.
+    ``is_overdue`` is true past the deadline with nothing filed or recorded.
     ``submission_available`` false means this installation cannot file; the
     melding can be downloaded with ``GET /companies/{company_id}/mva/termin/xml``
     and uploaded in Skatteetaten's own portal instead.
 
+    ``naering`` picks the melding for a company that files two (``alminnelig``
+    or ``primaernaering``; the main one when left out); ``category`` in the
+    answer says which it is.
+
     Refusals: 422 ``invalid_period`` when the termin does not exist for the
-    company's period length. Needs ``ledger:read``; a key needs ``read``.
+    melding's period length, or is before the second melding starts; 422
+    ``unknown_naering`` when the company files no melding of that category.
+    Needs ``ledger:read``; a key needs ``read``.
     """
     require_permission(context.membership.role, Permission.LEDGER_READ)
     company = context.company
-    period_ = service.termin_of(company, aar, termin)
+    setup = await naering_module.load(db, company)
+    chosen = setup.get(naering)
+    period_ = chosen.termin(aar, termin)
     try:
-        melding: Melding | None = await service.build_melding(db, company, period_)
+        melding: Melding | None = await service.build_melding(db, company, period_, chosen, setup)
     except MeldingNotBuildableError:
         melding = None
     balances = await service.vat_balances(db, company, period_, include_settlement=False)
-    filings = await service.filings_for(db, company, period_)
+    filings = await service.filings_for(db, company, period_, chosen, setup)
     filed = service.latest_filed(filings)
+    marked = service.standing_elsewhere(filings)
     fastsatt = melding.fastsatt_merverdiavgift if melding is not None else Decimal("0.00")
+    # What 2700 and 2710 should agree with: this melding, or with two of them
+    # every coded line in the term's dates, since the accounts hold both.
+    reconciled = fastsatt
+    if setup.is_split:
+        try:
+            reconciled = (
+                await service.build_all_naeringer(db, company, period_)
+            ).fastsatt_merverdiavgift
+        except MeldingNotBuildableError:
+            reconciled = fastsatt
+    proposal = None
+    if filed is None and marked is None and melding is not None:
+        summary = service.PeriodSummary(
+            termin=period_,
+            deadline=period_.deadline(chosen.category),
+            melding=melding,
+            latest=None,
+            filed=None,
+        )
+        proposal = (await elsewhere.proposals(db, company, [summary], setup)).get(period_.index)
+    current_hash = None if melding is None else service.content_hash(melding)
+    deadline = period_.deadline(chosen.category)
     return PeriodResponse(
         company_id=company.id,
         year=period_.year,
@@ -609,8 +988,8 @@ async def period(
         name=period_.name,
         start=period_.start,
         end=period_.end,
-        deadline=period_.deadline(service.category_of(company)),
-        category=service.category_of(company).value,
+        deadline=deadline,
+        category=chosen.category.value,
         orgnr=company.orgnr,
         lines=[_line_response(line) for line in melding.lines] if melding is not None else [],
         output_vat=melding.output_vat if melding is not None else Decimal("0.00"),
@@ -619,20 +998,26 @@ async def period(
         reconciliation=ReconciliationResponse(
             output_account=balances.output,
             input_account=balances.input,
-            difference=balances.net - fastsatt,
+            difference=balances.net - reconciled,
         ),
-        blockers=_blockers(company, period_, melding),
+        blockers=_blockers(company, period_, melding, filed_elsewhere=marked is not None),
         submission_available=_submission_configured(),
         changed_since_filed=(
             filed is not None
             and melding is not None
             and filed.content_hash != service.content_hash(melding)
         ),
+        is_overdue=_is_overdue(
+            company, deadline, filed is not None or marked is not None, _today()
+        ),
+        filed_elsewhere=(
+            None
+            if marked is None
+            else _filing_response(marked, current_hash=current_hash, current_fastsatt=fastsatt)
+        ),
+        elsewhere_proposal=_proposal_response(proposal),
         filings=[
-            _filing_response(
-                filing,
-                current_hash=None if melding is None else service.content_hash(melding),
-            )
+            _filing_response(filing, current_hash=current_hash, current_fastsatt=fastsatt)
             for filing in filings
         ],
     )
@@ -648,21 +1033,32 @@ def _xml_download(content: bytes, filename: str) -> Response:
 
 @router.get("/companies/{company_id}/mva/termin/xml", openapi_extra=KEY_READ)
 async def period_xml(
-    aar: _Year, termin: _Index, context: CurrentCompany, db: DbSession
+    aar: _Year,
+    termin: _Index,
+    context: CurrentCompany,
+    db: DbSession,
+    naering: _NaeringQuery = None,
 ) -> Response:
     """The melding as XML, as the ledger has it now, for reading or uploading by hand.
 
     Skatteetaten's own portal accepts a melding file from an accounting system,
     so this is also the way to file while this installation cannot submit.
+    ``naering`` picks the melding for a company that files two; the file name
+    then carries its category. Refusals as for ``GET
+    /companies/{company_id}/mva/termin``, and 422 ``melding_not_buildable``.
     """
     require_permission(context.membership.role, Permission.LEDGER_READ)
     company = context.company
-    period_ = service.termin_of(company, aar, termin)
-    melding = await service.build_melding(db, company, period_)
+    setup = await naering_module.load(db, company)
+    chosen = setup.get(naering)
+    period_ = chosen.termin(aar, termin)
+    melding = await service.build_melding(db, company, period_, chosen, setup)
     content = melding_module.melding_xml(
         melding, reference=str(uuid.uuid4()), system_version=__version__
     )
-    return _xml_download(content, f"mva-melding-{company.orgnr}-{aar}-{termin}.xml")
+    # Two files for one term must not overwrite each other in a downloads folder.
+    suffix = f"-{chosen.category.value}" if setup.is_split else ""
+    return _xml_download(content, f"mva-melding-{company.orgnr}-{aar}-{termin}{suffix}.xml")
 
 
 # --- Validation -------------------------------------------------------------------
@@ -674,6 +1070,8 @@ class ValidationPayload(BaseModel):
     # Free text sent with the melding. Skatteetaten asks for one when a figure
     # needs explaining, and the validation says so when it does.
     merknad: str | None = Field(default=None, max_length=4000)
+    # Which melding, for a company that files two; the main one when left out.
+    naering: str | None = Field(default=None, max_length=32)
 
 
 @router.post("/companies/{company_id}/mva/termin/kontroll")
@@ -700,18 +1098,28 @@ async def validate_period(
     ``findings`` saying why; then the books are corrected and the period
     checked again. A submission later sends exactly these bytes.
 
-    Refusals: 409 ``not_vat_registered``; 409 ``period_not_over``; 422
+    ``naering`` picks the melding for a company that files two
+    (``alminnelig`` or ``primaernaering``); the main one when left out.
+
+    Refusals: 409 ``not_vat_registered``; 409 ``period_not_over``; 409
+    ``filed_elsewhere`` (the term is recorded as filed from another program:
+    take that back first if a new melding from Myntos is really meant); 422
     ``melding_not_buildable`` (a VAT code the melding cannot carry); 422
-    ``invalid_period``; 409 without a code when the person has no valid
+    ``invalid_period``; 422 ``unknown_naering``; 409 without a code when the person has no valid
     ID-porten login (log in again on the page); 502 when Skatteetaten does not
     answer (try again later); 503 when this installation cannot file. Needs
     ``ledger:write``.
     """
     require_permission(context.membership.role, Permission.LEDGER_WRITE)
     company = context.company
-    period_ = service.termin_of(company, payload.aar, payload.termin)
+    setup = await naering_module.load(db, company)
+    chosen = setup.get(payload.naering)
+    period_ = chosen.termin(payload.aar, payload.termin)
     _require_fileable(company, period_)
-    melding = await service.build_melding(db, company, period_)
+    _refuse_if_filed_elsewhere(
+        await service.filings_for(db, company, period_, chosen, setup), period_
+    )
+    melding = await service.build_melding(db, company, period_, chosen, setup)
     client = _client()
 
     reference = str(uuid.uuid4())
@@ -838,8 +1246,13 @@ async def submit_filing(
     payment information are fetched if they are ready, which makes it
     ``mottatt``. Otherwise ``…/tilbakemelding`` fetches them later.
 
+    With two meldinger each is settled in a voucher of its own, onto the same
+    2740, and the voucher's text names the melding.
+
     Refusals: 409 ``filing_not_submittable`` (refused in the check, already
-    sent, or stopped partway: check again); 422 ``confirmation_required``; 409
+    sent, or stopped partway: check again); 409 ``filed_elsewhere`` (the term
+    was recorded as filed from another program after the check);
+    422 ``confirmation_required``; 409
     ``melding_changed`` (the books moved after the check: check again and
     look); 409 ``not_vat_registered`` or ``period_not_over``; 409 without a
     code when the ID-porten login is missing or expired; 502
@@ -866,7 +1279,15 @@ async def submit_filing(
         )
     termin = service.termin_of_filing(filing)
     _require_fileable(company, termin)
-    current = await service.build_melding(db, company, termin)
+    setup = await naering_module.load(db, company)
+    # With one melding it is the company's, as it always was: a category
+    # changed since the check shows up as a changed melding below. With two,
+    # the filing's own category says which of them it is.
+    chosen = setup.get(filing.category) if setup.is_split else setup.main
+    _refuse_if_filed_elsewhere(
+        await service.filings_for(db, company, termin, chosen, setup), termin
+    )
+    current = await service.build_melding(db, company, termin, chosen, setup)
     if service.content_hash(current) != filing.content_hash:
         raise MeldingChangedError(
             "regnskapet for terminen er endret etter kontrollen; kontroller meldingen på nytt"
@@ -914,7 +1335,12 @@ async def submit_filing(
     try:
         async with db.begin_nested():
             settlement = await service.post_settlement(
-                db, company=company, termin=termin, created_by_user_id=user.id
+                db,
+                company=company,
+                termin=termin,
+                created_by_user_id=user.id,
+                naering=chosen,
+                setup=setup,
             )
         filing.settlement_transaction_pk = settlement.id if settlement is not None else None
     except (LedgerError, PostingError) as error:

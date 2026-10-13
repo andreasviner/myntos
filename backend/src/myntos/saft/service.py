@@ -412,6 +412,7 @@ async def load(
             type_description=dimension.description,
             analysis_id=value.value,
             id_description=value.description,
+            status="Active" if dimension.is_active and value.is_active else "Closed",
         )
         for dimension in dimension_types
         for value in sorted(dimension.values, key=lambda v: v.value)

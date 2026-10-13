@@ -11,6 +11,9 @@ cannot disagree.
     The review of a set of lines. Posts nothing.
 ``POST /companies/{id}/inngaende-balanse/saldobalanse``
     A saldobalanse CSV read into lines, and reviewed. Posts nothing.
+``POST /companies/{id}/inngaende-balanse/saft``
+    The previous program's SAF-T file read into lines, with the accounts and
+    parties the books are missing, and reviewed. Posts nothing.
 ``POST /companies/{id}/inngaende-balanse``
     Post it; with ``korriger`` reverse the standing one and post the replacement.
 ``POST /companies/{id}/inngaende-balanse/reversering``
@@ -37,6 +40,7 @@ from typing import Annotated
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, File, Query, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -57,7 +61,9 @@ from myntos.domain.arsoppgjor.errors import (
 from myntos.domain.arsoppgjor.findings import Finding
 from myntos.domain.arsoppgjor.saldobalanse import MAX_BYTES
 from myntos.domain.identity.access import Permission, require_permission
-from myntos.domain.ledger.models import Transaction
+from myntos.domain.ledger.models import AccountType, PartyType, Transaction
+from myntos.saft import opening_import, reader
+from myntos.saft.errors import InvalidSaftFileError
 
 router = APIRouter(tags=["arsoppgjor"])
 
@@ -345,6 +351,144 @@ async def read_saldobalanse(
     _, checked = await opening.from_saldobalanse(db, company=context.company, content=content)
     response = _review(context.company.id, checked)
     return SaldobalanseResponse(**response.model_dump())
+
+
+class SaftSourceResponse(BaseModel):
+    software: str | None
+    audit_file_version: str
+    orgnr: str
+    company_name: str
+    start_date: date
+    end_date: date
+    balances: str
+
+
+class AccountToAddResponse(BaseModel):
+    number: str
+    description: str
+    account_type: AccountType
+    grouping_category: str
+    grouping_code: str
+    source_accounts: list[str]
+
+
+class PartyToAddResponse(BaseModel):
+    party_type: PartyType
+    name: str
+    orgnr: str | None
+    party_id: str | None
+    address_line: str | None
+    postal_code: str | None
+    city: str | None
+    source_id: str
+
+
+class SaftOpeningResponse(OpeningReviewResponse):
+    source: SaftSourceResponse
+    accounts_to_add: list[AccountToAddResponse]
+    parties_to_add: list[PartyToAddResponse]
+
+
+@router.post("/companies/{company_id}/inngaende-balanse/saft", openapi_extra=KEY_PREVIEW)
+async def read_saft(
+    context: CurrentCompany,
+    db: DbSession,
+    file: Annotated[UploadFile, File()],
+) -> SaftOpeningResponse:
+    """The previous program's SAF-T file read into opening-balance lines. Stores nothing.
+
+    SAF-T Financial is the standard export every Norwegian accounting program
+    writes (Tripletex, Fiken, PowerOffice, Visma …): the chart of accounts with
+    each account's opening and closing balance, the customers and suppliers
+    with theirs, and the vouchers. Upload it as ``multipart/form-data`` in the
+    field ``file``, as the XML or as the ZIP it is downloaded in, at most
+    200 MB. Only the balances are read; the vouchers are not imported.
+
+    The file must be this company's (its organisasjonsnummer), else 422
+    ``saft_wrong_company``. It must cover the company's first financial year in
+    Myntos, whose opening balances are read, or the whole year before it, whose
+    closing balances are; else 422 ``saft_wrong_year``, which names the file to
+    export. 422 ``invalid_saft_file`` when it is not a SAF-T file that can be
+    read.
+
+    The answer is the review ``/kontroll`` gives, for the lines below, plus:
+
+    - ``source``: what the file says it is, and ``balances``: ``inngaende`` or
+      ``utgaende``, which of its balances were used.
+    - ``accounts_to_add``: accounts the file has balances on that the kontoplan
+      does not. Each balance lands on the first four digits of the file's
+      account id (Tripletex writes department and product codes after them),
+      named and grouped as the file has it, or by Myntos's default when the
+      file's grouping is not in Skatteetaten's list or does not fit the
+      account's class. Create them with ``POST …/kontoplan``.
+    - ``parties_to_add``: customers and suppliers with open items that Myntos
+      does not have (matched by organisasjonsnummer, then name), with the old
+      program's number in ``party_id`` when it is free. Create them with
+      ``POST …/parties``.
+
+    Then upload the file again: the lines come back on the new accounts, and 1500
+    and 2400 split per customer and supplier. Send the lines on to ``/kontroll``
+    or ``POST /inngaende-balanse``, edited if need be.
+
+    Findings, besides the review's own (see ``/kontroll``):
+    ``kontoer_mangler`` and ``parter_mangler`` (``feil``: add them first);
+    ``udisponert_resultat`` (the balances did not sum to zero because the old
+    program had not posted last year's result to equity; it is placed on 2050);
+    ``mva_flyttet_til_2740``; ``kontoer_slatt_sammen`` (several of the file's
+    accounts on one four-digit account); ``gruppering_avviker`` and
+    ``gruppering_fra_filen_brukes_ikke`` (the file's næringsspesifikasjon
+    grouping differs from Myntos's, for the accountant to look at);
+    ``reskontro_avviker`` (the file's customer or supplier balances do not add
+    up to the account); ``bankkonto_utenfor_1920`` (the company's bank account
+    is on another account in the file, while Myntos books payments on 1920).
+
+    The file is not kept. Keep it yourself: it is the documentation of the
+    books before Myntos. Needs ``ledger:write``.
+    """
+    require_permission(context.membership.role, Permission.LEDGER_WRITE)
+    if file.size is not None and file.size > reader.MAX_UPLOAD_BYTES:
+        raise InvalidSaftFileError(
+            "filen er større enn 200 MB, som er det største Altinn tar imot av en SAF-T-fil"
+        )
+    found = await run_in_threadpool(reader.read, file.file)
+    result = await opening_import.from_balances(db, company=context.company, found=found)
+    response = _review(context.company.id, result.review)
+    return SaftOpeningResponse(
+        **response.model_dump(),
+        source=SaftSourceResponse(
+            software=result.source.software,
+            audit_file_version=result.source.audit_file_version,
+            orgnr=result.source.orgnr,
+            company_name=result.source.company_name,
+            start_date=result.source.start,
+            end_date=result.source.end,
+            balances=result.source.balances,
+        ),
+        accounts_to_add=[
+            AccountToAddResponse(
+                number=add.number,
+                description=add.description,
+                account_type=add.account_type,
+                grouping_category=add.grouping_category,
+                grouping_code=add.grouping_code,
+                source_accounts=list(add.source_accounts),
+            )
+            for add in result.accounts_to_add
+        ],
+        parties_to_add=[
+            PartyToAddResponse(
+                party_type=add.party_type,
+                name=add.name,
+                orgnr=add.orgnr,
+                party_id=add.party_id,
+                address_line=add.address_line,
+                postal_code=add.postal_code,
+                city=add.city,
+                source_id=add.source_id,
+            )
+            for add in result.parties_to_add
+        ],
+    )
 
 
 @router.post(
