@@ -685,7 +685,10 @@ def test_a_dimension_that_cannot_be_used_is_a_finding(client: TestClient) -> Non
 
     for chosen in ([first, second], [foreign]):
         body = _voucher(
-            [_line("6800", debit="400.00", dimension_value_ids=chosen), _line("1700", credit="400.00")]
+            [
+                _line("6800", debit="400.00", dimension_value_ids=chosen),
+                _line("1700", credit="400.00"),
+            ]
         )
         review = _review(client, mine["id"], body)
         assert "ugyldig_dimensjon" in _codes(review, "feil")

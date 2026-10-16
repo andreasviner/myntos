@@ -1,6 +1,6 @@
 ---
 name: myntos-mva
-description: Read and review a Norwegian company's VAT return (MVA-melding) in Myntos, period by period; say what is owed or refunded and by when; read what was filed, the receipt and the payment details; change the VAT period settings; and ask the person to file. Use when the person asks about mva, the mva-melding, a termin, what they owe Skatteetaten in VAT, a VAT deadline, or whether the return has been sent.
+description: Read and review a Norwegian company's VAT return (MVA-melding) in Myntos, period by period; say what is owed or refunded and by when; read what was filed, the receipt and the payment details; change the VAT period settings, set up a farm's second VAT return, record a termin filed from another program; and ask the person to file. Use when the person asks about mva, the mva-melding, a termin, what they owe Skatteetaten in VAT, a VAT deadline, or whether the return has been sent.
 ---
 
 # MVA-melding: the VAT return
@@ -26,6 +26,8 @@ cannot be withdrawn, only replaced by a newer one for the same termin.
 - «Send mva-meldingen» (you prepare it and ask them to file: see Filing)
 - «Hvor er kvitteringen fra Skatteetaten?» / «Hvilket KID-nummer skal jeg bruke?»
 - «Vi har fått månedlig termin» / «Vi leverer mva én gang i året»
+- «Gården har brøyting ved siden av, vi leverer to mva-meldinger»
+- «Den terminen ble sendt fra Tripletex» / «Vi leverte fra det gamle programmet til og med 4. termin»
 
 ## Before you start
 
@@ -53,8 +55,12 @@ defaults to this year). The answer has `vat_registered`, the `settings`
 `primaernaering`), and `periods`, one row per termin: `termin` (its number in
 the year, which every other call takes), `label` («5. termin 2026
 (september-oktober)», say this to the person), `start`, `end`, `deadline`,
-`is_over`, `fastsatt_merverdiavgift`, `status`, `filed_fastsatt` and
-`changed_since_filed`.
+`is_over`, `is_overdue`, `fastsatt_merverdiavgift`, `status`,
+`filed_fastsatt`, `changed_since_filed`, and the «filed from another program»
+fields (`filed_elsewhere`, `filed_elsewhere_amount`, `elsewhere_difference`,
+`elsewhere_proposal`; see «Filed from another program» below). `naeringer`
+lists the company's meldinger; almost every company has one (see «Two
+meldinger» below).
 
 | `status` | The page says | Means |
 | --- | --- | --- |
@@ -65,6 +71,10 @@ the year, which every other call takes), `label` («5. termin 2026
 | `sendt` | «Sendt, venter på kvittering» | Filed; the receipt has not been fetched yet |
 | `mottatt` | «Sendt og mottatt» | Filed, with the receipt and payment details stored |
 | `feilet` | «Stoppet underveis» | A submission stopped partway (step 3) |
+| `annet_program` | «Sendt fra et annet program» | The person recorded that the previous program filed it. Nothing to file from Myntos |
+
+`is_overdue: true` («Over fristen») means the deadline has passed with nothing
+filed and nothing recorded as filed elsewhere.
 
 `changed_since_filed: true` («Endret etter innsending») means the books for a
 filed termin have changed since. A new melding for that termin is due, and it
@@ -109,6 +119,7 @@ Before you call it ready, check:
   | `not_vat_registered` | The company is not marked as VAT-registered | As in step 1 |
   | `period_not_over` | The termin has not ended | Wait until the day after `end` |
   | `not_buildable` | The books hold a VAT code the melding cannot report; `lines` is empty | Find the entry with that code and have it corrected by a reversal and a new entry (myntos-kontantstrom) |
+  | `filed_elsewhere` | The termin is recorded as filed from another program | Nothing to file. If a correction from Myntos is really meant, see «Filed from another program» |
 
 - **`reconciliation.difference` is `"0.00"`.** Anything else means something
   was booked to the VAT accounts 2700 or 2710 without a VAT code, so the
@@ -134,7 +145,9 @@ When the review is clean and the person has said yes to the figures, ask them
 to file:
 
 `POST /api/v1/companies/{company_id}/godkjenninger/innsending` with
-`{"type": "mva_melding", "aar": 2026, "termin": 5}`.
+`{"type": "mva_melding", "aar": 2026, "termin": 5}`, plus
+`"naering": "alminnelig"` (or `"primaernaering"`) for the second melding of a
+company that files two.
 
 This files nothing. It puts a request on the person's «Godkjenning» page that
 leads to the MVA page, where the person logs in with ID-porten, presses
@@ -142,8 +155,9 @@ leads to the MVA page, where the person logs in with ID-porten, presses
 confirming the amount and presses «Send inn mva-meldingen». Any key may ask
 (it needs only `read`); put the reason in the `Myntos-Note` header. Asking
 again for a termin that already waits returns the same request. It is refused
-with 409 `period_not_over`, 409 `not_vat_registered` and 422 `invalid_period`
-(the same causes as the blockers in step 2), and with 409 `already_filed` for
+with 409 `period_not_over`, 409 `not_vat_registered`, 409 `filed_elsewhere`
+and 422 `invalid_period` (the same causes as the blockers in step 2), and with
+409 `already_filed` for
 any termin that has been filed, **also when a corrected melding is due**
 (`changed_since_filed`). For a correction, tell the person in words that a new
 melding for that termin is due, what changed, and that they send it from the
@@ -194,6 +208,85 @@ From the filing (`GET /api/v1/companies/{company_id}/mva/innsendinger/{filing_id
   Skatteetaten» (`mva_tilgode`). Both go to 2740 and carry no VAT of their
   own. See myntos-kontantstrom.
 
+### Two meldinger: a farm with other business beside it
+
+A farm, forest or fishery files the **primærnæring** melding (usually once a
+year, due 10 April). Other business beside it (snow ploughing, a farm shop,
+machine hire) may go in that melding only while its sales stay at or under
+30 000 kroner a year (merverdiavgiftsloven § 15-1 (1)). Above that the company
+files an **alminnelig** melding as well, with its own terms, usually every two
+months. Myntos files both.
+
+- `GET /api/v1/companies/{company_id}/mva` answers `naeringer` (each with
+  `category`, `label`, `period_type`, `is_main`, `valid_from`) and `naering`,
+  the melding `periods` are for. Add `naering=alminnelig` (or
+  `primaernaering`) to read the other one. The same parameter works on
+  `GET /api/v1/companies/{company_id}/mva/termin` and
+  `GET /api/v1/companies/{company_id}/mva/termin/xml`; left out, it is the main
+  melding. Always name the melding to the person («2. termin, alminnelig
+  næring»): the two have terminer with the same numbers.
+- `settings.second` describes the second melding: `category`, `period_type`,
+  `valid_from` (its first day) and `accounts`.
+- **Which melding a line goes in is decided by its account.** A line on one of
+  the second melding's `accounts`, dated on or after `valid_from`, goes in the
+  second melding; every other line in the main one. The other business
+  therefore needs accounts of its own (myntos-kontoplan), and its sales and
+  costs are booked on them (an entry may name `account_number`,
+  myntos-kontantstrom).
+- **A cost shared by both businesses is not divided by Myntos.** How the input
+  VAT on diesel, a telephone or a machine used by both is to be split between
+  the two meldinger is not settled, so Myntos applies no rule: the whole line
+  goes to the melding of the account it is booked on, and an account in
+  neither list means the main melding. **Do not invent a split.** Ask the
+  person which melding the cost belongs to, or how they and their accountant
+  divide it, and book it on that account, or as two lines on two accounts.
+- Setting it up: `PUT /api/v1/companies/{company_id}/mva/andre-melding` with
+  `{"period_type": "toMaaneder", "valid_from": "2026-01-01", "accounts":
+  ["3550", "4060"]}`. The list replaces the previous one. Removing it:
+  `DELETE /api/v1/companies/{company_id}/mva/andre-melding`, only while
+  nothing has been checked, sent or recorded for it. Both need `write` and the
+  role «Administrator» or «Eier», and may answer 202 `approval_pending`
+  (myntos-godkjenning). Only on what Skatteetaten has registered: a melding of
+  a category Skatteetaten does not hold for the company is refused there.
+- A change that would move VAT into or out of a termin already filed (or
+  recorded as filed elsewhere) is refused with 409 `filed_lines_would_move`.
+  A line on the wrong account is corrected with a reversal and a new entry,
+  never by moving the account.
+- Each melding is settled in its own voucher onto 2740, whose text names the
+  melding.
+
+### Filed from another program
+
+A company that moved to Myntos during a year, or runs Myntos beside its old
+program for a while, has terminer the old program filed. Myntos computes them
+from the imported vouchers and would otherwise call them not sent and overdue.
+**A second melding for a termin replaces the first at Skatteetaten**, so never
+let one of these be filed again from Myntos by accident.
+
+- When a termin has `elsewhere_proposal`, an imported settlement voucher from
+  the old program looks like it filed the termin: `voucher_no`, `date`,
+  `output_vat`, `input_vat`, `amount` (what it moved onto 2740), and
+  `matches` (whether output and input are exactly Myntos's). Show it to the
+  person. It is only a proposal.
+- When the person confirms the termin was filed elsewhere:
+  `POST /api/v1/companies/{company_id}/mva/termin/annet-program` with
+  `{"aar": 2026, "termin": 2, "filed_on": "2026-06-10", "amount": "4312.00",
+  "voucher_id": 812}`. `naering` names the melding when there are two;
+  `amount` (a decimal string) and `voucher_id` are optional. It sends nothing
+  to Skatteetaten. Needs `write` and may answer 202 `approval_pending`. Only
+  on the person's word: the statement takes the termin off the overdue list,
+  so a wrong one hides a deadline.
+- The termin then has `status` `annet_program`, `is_overdue` false, and
+  `elsewhere_difference`: Myntos's figure minus the amount recorded. Under one
+  krone counts as agreeing (some programs round to whole kroner); anything
+  more means the two programs' books disagree on that termin. Tell the person.
+- Taking it back:
+  `POST /api/v1/companies/{company_id}/mva/innsendinger/{filing_id}/angre`,
+  with the id from the termin's `filed_elsewhere.id`. The record stays as `opphevet`.
+  Do this only when the person says the statement was wrong, or when they
+  want to file a correction for that termin from Myntos (take it back, then
+  ask them to file, step 3).
+
 ### The melding as a file
 
 `GET /api/v1/companies/{company_id}/mva/termin/xml?aar=2026&termin=5` gives
@@ -229,6 +322,15 @@ it will do.
 | 404, detail «finner ikke dokumentet» | Skatteetaten's documents are not fetched yet | Ask the person to press «Hent kvittering» on the MVA page |
 | 422 `invalid_period` | No such termin for the period length (termin 7 when two-monthly), or an unknown `period_type` | Use the termin numbers from step 1 |
 | 422 `unsupported_category` | Not `alminnelig` or `primaernaering` | Myntos files only those two; tell the person |
+| 422 `unknown_naering` | `naering` names a melding the company does not file | Use a `category` from `naeringer` |
+| 422 `invalid_naering_setup` | An account the chart does not have, a VAT account (2700, 2710, 2740), or an impossible date | Add the account first (myntos-kontoplan) or choose another |
+| 409 `filed_lines_would_move` | The change would move VAT into or out of a termin already filed or recorded | Leave the setup; correct a wrongly booked entry with a reversal and a new entry |
+| 409 `filed_elsewhere` | The termin is recorded as filed from another program (also when asking the person to file) | Nothing to file; see «Filed from another program» |
+| 409 `already_filed` | Marking a termin Myntos filed itself, or asking to file one already filed | Read `filings`; for a correction, tell the person |
+| 409 `not_filed_elsewhere` | Taking back something that is not a standing statement | Only `annet_program` filings can be taken back |
+| 409 `not_vat_registered`, `period_not_over` | Marking a termin of a company that files no melding, or one not over | As the blockers in step 2 |
+| 422 `invalid_filing_date` | `filed_on` before the termin ended or in the future | Ask the person for the day it was filed |
+| 404 `voucher_not_found` | `voucher_id` is not an imported VAT settlement of this company | Use `elsewhere_proposal.voucher_id`, or leave it out |
 | 422 `melding_not_buildable` | From the XML download: a VAT code the melding cannot report | As the `not_buildable` blocker in step 2 |
 | 422, `detail` a list | `aar` outside 2000–2100 or `termin` outside 1–12 | Fix the query |
 

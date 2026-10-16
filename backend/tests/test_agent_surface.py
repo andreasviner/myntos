@@ -90,6 +90,10 @@ _APPROVING = (
     "Approving or declining what a key asked is the person's yes or no (rule 13). A key that "
     "could approve requests would make every key a key that may do everything."
 )
+_DELETING_A_COMPANY = (
+    "Deleting a company, seeing the ones deleted and opening them again. Deleting a company is "
+    "never a key's (rule 5): it takes the books out of reach of everybody who keeps them."
+)
 _COMPANY_SWITCHES = (
     "Carries ki_enabled, whether the company's bilag may reach a model at all, which is the "
     "company's decision about its tools and not one its tools may make (CLAUDE.md rule 5)."
@@ -132,6 +136,10 @@ _NOT_FOR_AGENTS: dict[str, str] = {
     "GET /api/v1/organizations/{organization_id}": _ONE_COMPANY,
     "PATCH /api/v1/organizations/{organization_id}": _ONE_COMPANY,
     "PATCH /api/v1/companies/{company_id}": _COMPANY_SWITCHES,
+    "GET /api/v1/companies/{company_id}/sletting": _DELETING_A_COMPANY,
+    "POST /api/v1/companies/{company_id}/sletting": _DELETING_A_COMPANY,
+    "GET /api/v1/companies/slettede": _DELETING_A_COMPANY,
+    "POST /api/v1/companies/slettede/{company_id}/gjenapne": _DELETING_A_COMPANY,
     "GET /api/v1/companies/{company_id}/agent-keys": _ACCESS,
     "POST /api/v1/companies/{company_id}/agent-keys": _ACCESS,
     "DELETE /api/v1/companies/{company_id}/agent-keys/{key_id}": _ACCESS,
@@ -488,6 +496,7 @@ def test_every_writing_route_says_what_it_asks() -> None:
 # to keep the books is never here: an AI asked how to do something on it has
 # to find the answer (docs/agents/README.md, the help half).
 _PAGES_WITHOUT_HELP: dict[str, str] = {
+    "/404/": "The answer to an address that does not exist; nothing to do there.",
     "/about/": "About the company behind Myntos; nothing to do there.",
     "/ansvar/": "The disclaimer, read rather than used.",
     "/bankpriser/": "A public price comparison of Norwegian banks, read rather than used.",

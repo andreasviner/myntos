@@ -189,7 +189,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
     if (approval.kind === 'filing') {
       const go = node('a', 'btn btn-primary', 'Gå til MVA-siden');
-      go.href = '/mva/';
+      // Rett til terminen, og til riktig melding når selskapet leverer to.
+      const filing = approval.filing;
+      go.href =
+        filing === null
+          ? '/mva/'
+          : `/mva/#${filing.naering ? `${filing.naering}-` : ''}${filing.aar}-${filing.termin}`;
       actions.append(go);
     } else if (approval.is_own) {
       const approve = node('button', 'btn btn-primary', 'Godkjenn');

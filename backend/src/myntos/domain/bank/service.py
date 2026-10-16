@@ -472,7 +472,10 @@ async def _candidates(
         view = ledger_service.describe(transaction)
         # Only money that went through the bank can be the booking of a bank
         # line. A cash receipt for the same amount on the same day is a
-        # coincidence the register must not offer.
+        # coincidence the register must not offer. 1920 alone, not every
+        # account marked as a bank account: a statement belongs to a
+        # kontonummer, and nothing yet says which ledger account that
+        # kontonummer's money is booked on (docs/integrations/bank.md).
         if view is None or view.payment_account != BANK_ACCOUNT:
             continue
         found.append(

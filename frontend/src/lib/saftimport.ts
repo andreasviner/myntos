@@ -6,7 +6,7 @@
  * The figures themselves are the server's (`review`), never recomputed here.
  */
 
-import type { SaftImport, SaftMoveReview } from './api';
+import type { MvaPeriodRow, SaftImport, SaftMoveReview } from './api';
 
 /** Whether the server is working on it: the page polls until it is not. */
 export function isWorking(job: SaftImport): boolean {
@@ -94,4 +94,31 @@ export function postedSummary(result: SaftMoveReview): string {
 export function yearsToClose(review: SaftMoveReview): number[] {
   const last = Math.max(...review.years.map((year) => year.year));
   return review.years.filter((year) => year.complete && year.year < last).map((year) => year.year);
+}
+
+/**
+ * The VAT terms of the imported years to ask about: over, and neither filed
+ * from Myntos nor already said to be filed elsewhere.
+ *
+ * Asked here because this is the moment a person knows the answer: they have
+ * just brought the old program's books over. Left to the MVA page, every one
+ * of those terms read as overdue and offered «Send», and a second melding for
+ * a term replaces the first at Skatteetaten.
+ */
+export function termsToConfirm(periods: MvaPeriodRow[]): MvaPeriodRow[] {
+  return periods.filter(
+    (row) =>
+      row.is_over && !row.filed_elsewhere && row.status !== 'sendt' && row.status !== 'mottatt',
+  );
+}
+
+/**
+ * The day recorded as the filing day when the person does not give one.
+ *
+ * The deadline once it has passed, today before then: the same default the
+ * MVA page fills in, and always a day the backend accepts (after the term
+ * ended, not in the future).
+ */
+export function defaultFiledOn(row: MvaPeriodRow, today: string): string {
+  return today < row.deadline ? today : row.deadline;
 }

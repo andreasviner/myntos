@@ -459,11 +459,13 @@ def test_a_period_is_checked_filed_settled_and_its_receipt_kept(
         ("2710", "0.00", "250.00"),
         ("2740", "0.00", "2250.00"),
     ]
-    # And the year's figures still say what the year's VAT was.
+    # The year's VAT is still the year's, and the overview still says it is
+    # owed: filed is not paid, and 2740 holds it until the payment clears it.
     summary = client.get(
         f"/api/v1/companies/{company['id']}/cashflow/summary",
         params={"financial_year": LAST_YEAR},
     ).json()
+    assert summary["output_vat"] == "2500.00"
     assert summary["vat_position"] == "2250.00"
 
     overview = client.get(f"/api/v1/companies/{company['id']}/mva", params={"aar": LAST_YEAR})

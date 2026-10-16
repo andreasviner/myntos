@@ -73,6 +73,9 @@ reopens it with a written reason. Closing does **not** send the annual accounts
 
 ## Good to know
 
+- Post the year's depreciation from the anleggsregister first; the review
+  reminds the person if it is missing:
+  [Post the year's depreciation](https://myntos.no/llms/help/opening-balance-and-year-end/post-the-years-depreciation.md).
 - For an AS, a profit first covers any uncovered loss from earlier years
   (udekket tap) and the rest goes to other equity; a loss is covered by other
   equity as far as it goes. For an ENK, the result and the owner's private

@@ -13,7 +13,13 @@ There are **two halves**, because an AI meets Myntos in two different ways:
 | **Help** | An AI *helping a person who uses the web app*: ChatGPT asked «hvordan sender jeg en faktura i Myntos?» | `help/<area>/<topic>.md` | `myntos.no/llms/help/<area>/<topic>.md` |
 
 `llms.txt` is the index of both, one section each, in the order of the tables
-below. It is published as `myntos.no/llms.txt`, and every file in either half
+below. Before them it has one more section, **About Myntos**, for the third way
+an AI meets Myntos: somebody asked it what Myntos is, what it costs or whether
+it can file their VAT return yet. Each line there repeats a public page
+(`/priser/`, `/funksjoner/`, `/kom-i-gang/`, `/ki/`) and links it, so when one
+of those pages changes what it promises, that line changes in the same commit.
+An assistant answers from whichever it read, and the summary is the one it
+reads first. It is published as `myntos.no/llms.txt`, and every file in either half
 is read straight from this folder by the frontend build
 (`frontend/src/pages/llms.txt.ts`, `llms/skills/[skill].md.ts`,
 `llms/help/[...topic].md.ts`), so the published text and the repository never
@@ -59,6 +65,7 @@ search this folder for the old label.
 | `myntos-selskap` | Which company, its register data, its financial years, Enhetsregisteret lookups |
 | `myntos-kontantstrom` | Payments in and out, proposals read off a bilag, the bilag archive, corrections |
 | `myntos-bilag` | Every posted voucher, from every journal; one account's movements with its balance |
+| `myntos-regnskap` | The accounts for every year: resultatregnskap and balanse, side by side |
 | `myntos-faktura` | Sales invoices and credit notes |
 | `myntos-parter` | Customers and suppliers |
 | `myntos-bank` | Bank statements, matching lines, a voucher for a bank line |
@@ -67,9 +74,12 @@ search this folder for the old label.
 | `myntos-inngaende-balanse` | The opening balance |
 | `myntos-tidligere-program` | The previous program's books from its SAF-T files, read and posted on the server, earlier years too; and the two programs compared |
 | `myntos-manuelt-bilag` | Manual vouchers: year-end adjustments and corrections typed as debit and credit |
+| `myntos-anlegg` | The fixed asset register, the saldo per group and the year's depreciation |
 | `myntos-arsavslutning` | Closing and reopening a financial year |
 | `myntos-kontoplan` | The chart of accounts |
+| `myntos-avdelinger` | Dimensions (avdelinger, prosjekter, driftsgrener) and the result per value |
 | `myntos-landbruk` | The farming add-on: switching it, settlements, subsidies, farm VAT |
+| `myntos-landbruk-arsoppgjor` | The farm's year end: the count of livestock and stock, and private uttak |
 | `myntos-saft` | The SAF-T export |
 
 ### Who reads a skill
@@ -201,15 +211,17 @@ features in the order a person does.
 | `overview` | `/` | `myntos-selskap` |
 | `payments` | `/kontantstrom/` | `myntos-kontantstrom` |
 | `vouchers` | `/bilag/` | `myntos-bilag` |
+| `reports` | `/regnskap/` | `myntos-regnskap` |
 | `invoices` | `/faktura/` | `myntos-faktura` |
 | `customers-and-suppliers` | `/parter/` | `myntos-parter` |
 | `bank` | `/bank/` | `myntos-bank` |
 | `vat` | `/mva/`, `/mva-justeringer/` | `myntos-mva`, `myntos-mva-justering` |
-| `opening-balance-and-year-end` | `/inngaende-balanse/`, `/tidligere-program/`, `/manuelt-bilag/`, `/arsavslutning/` | `myntos-inngaende-balanse`, `myntos-tidligere-program`, `myntos-manuelt-bilag`, `myntos-arsavslutning` |
+| `opening-balance-and-year-end` | `/inngaende-balanse/`, `/tidligere-program/`, `/manuelt-bilag/`, `/anlegg/`, `/arsavslutning/` | `myntos-inngaende-balanse`, `myntos-tidligere-program`, `myntos-manuelt-bilag`, `myntos-anlegg`, `myntos-arsavslutning` |
 | `chart-of-accounts` | `/kontoplan/` | `myntos-kontoplan` |
-| `farming` | The «Landbruk» card on `/kontoplan/`, the farm types on `/kontantstrom/` | `myntos-landbruk` |
+| `departments` | `/avdelinger/` | `myntos-avdelinger` |
+| `farming` | The «Landbruk» card on `/kontoplan/`, the farm types on `/kontantstrom/`, NIBIO's driftsgrener on `/avdelinger/`, the year-end count on `/buskap/` and `/private-uttak/` | `myntos-landbruk`, `myntos-avdelinger`, `myntos-landbruk-arsoppgjor` |
 | `saf-t` | `/saft/` | `myntos-saft` |
-| `company-and-access` | `/organisasjon/` | `myntos-selskap` |
+| `company-and-access` | `/organisasjon/`, `/slett-selskap/` | `myntos-selskap` |
 | `ai` | `/ki/`, `/godkjenning/`, the KI part of `/organisasjon/` | `myntos-godkjenning`, `myntos-connect` |
 | `your-account` | `/konto/`, `/bytt-til-epost/` | – |
 

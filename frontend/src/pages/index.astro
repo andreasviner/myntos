@@ -21,8 +21,8 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
 ---
 
 <BaseLayout
-  title="Myntos: regnskap med offentlig kildekode"
-  description="Norsk regnskapsprogram med offentlig kildekode: kontantstrøm og bilag, MVA-håndtering, SAF-T-eksport og innlevering til Skatteetaten."
+  title="Myntos: gratis regnskapsprogram med offentlig kildekode"
+  description="Gratis norsk regnskapsprogram med offentlig kildekode: bilag, faktura, merverdiavgift og SAF-T, bygget for innlevering til Skatteetaten."
   width="wide"
 >
   {/*
@@ -46,8 +46,8 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
       <h1>Myntos: norsk regnskapsprogram<br /><span class="grad">med offentlig kildekode</span></h1>
       <p class="lead">
         Myntos fører inn- og utbetalinger med bilag, regner merverdiavgift, og er bygget for å
-        levere SAF-T og skattemelding til Skatteetaten. Hele kildekoden er offentlig, så du kan se
-        nøyaktig hva som skjer med tallene dine.
+        levere SAF-T og skattemelding til Skatteetaten. Det koster 0 kr, og hele kildekoden er
+        offentlig, så du kan se nøyaktig hva som skjer med tallene dine.
       </p>
       <div class="hero-actions">
         <a class="btn btn-primary btn-large" href="/registrer/">Kom i gang gratis</a>
@@ -167,6 +167,10 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
       {/* Bare handlingen. Hvilket selskap oversikten gjelder, står nå i
           overskriften ved siden av. */}
       <div class="page-head-actions" id="company-controls" hidden>
+        {/* Oversikten er ett år, det som pågår. Alle årene, også de som er
+            hentet fra et annet program, står på en egen side, og veien dit
+            står her fordi det er her man ser at «i år» ikke er hele bildet. */}
+        <a class="btn btn-ghost" href="/regnskap/">Regnskapet år for år</a>
         <a class="btn btn-primary" href="/kontantstrom/">Registrer betaling</a>
       </div>
     </header>
@@ -227,6 +231,25 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
           </p>
         </div>
         <a class="btn btn-primary" id="start-import-link" href="/tidligere-program/">Hent regnskapet</a>
+      </div>
+
+      {/* Når bøkene har stått stille forbi en mva-frist. En bonde som hadde
+          hentet 2025 fra Tripletex så null for 2026 overalt, og mva-kortet
+          viste siste termin i 2025 som til gode i oktober, måneder etter at
+          pengene kom: utbetalingen er et 2026-bilag som ikke er i Myntos.
+          Fristen og ikke nyttår avgjør, ellers står kortet her fra første
+          minutt hvert år. */}
+      <div class="card books-stop" id="books-stop" hidden>
+        <div>
+          <h2 class="card-title" id="books-stop-title"></h2>
+          <p class="card-hint" id="books-stop-text"></p>
+        </div>
+        <div class="books-stop-links">
+          <a class="btn btn-primary" href="/regnskap/">Se regnskapet år for år</a>
+          <a class="btn btn-ghost" id="books-stop-import" href="/tidligere-program/" hidden
+            >Hent fra det gamle programmet</a
+          >
+        </div>
       </div>
 
       <div class="grid stats">
@@ -355,12 +378,22 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
             over stemmer med banken, og hører hjemme ved siden av dem. */}
         Om det som er ført stemmer med banken, ser du under
         <a href="/bank/">Bankavstemming</a>.
+        {/* Resultatet per avdeling er tallene over delt opp, og hører hjemme ved
+            dem. De fleste selskaper har ingen avdelinger, så det er ingen menypost. */}
+        Resultatet per avdeling, prosjekt eller driftsgren ser du under
+        <a href="/avdelinger/">Avdelinger</a>.
         {/* Samme begrunnelse: begge gjøres én gang i året, eller én gang i
             regnskapets liv, og hører hjemme ved årets tall, ikke i menyen. */}
+        {/* Regnskapet for alle årene står også i toppen, som en knapp: det er
+            den siden folk leter etter når «i år» står på null. */}
+        Resultatregnskapet og balansen for hvert år ser du under
+        <a href="/regnskap/">Regnskapet år for år</a>.
         Regnskapet fra et annet program, tidligere år og året du står i, henter du under
         <a href="/tidligere-program/">Hent regnskapet fra et annet program</a>, og en balanse
         du skriver inn selv fører du under <a href="/inngaende-balanse/">Inngående balanse</a>.
-        Et år som er over avslutter du under <a href="/arsavslutning/">Årsavslutning</a>.
+        Årsoppgjørsføringer og omposteringer fører du som <a href="/manuelt-bilag/">Manuelt bilag</a>,
+        driftsmidler og årets avskrivninger under <a href="/anlegg/">Anlegg og avskrivning</a>,
+        og et år som er over avslutter du under <a href="/arsavslutning/">Årsavslutning</a>.
       </p>
     </div>
   </section>
@@ -644,6 +677,26 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
   .start-import > div {
     max-width: 44rem;
   }
+  .books-stop {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem 1.5rem;
+    margin-bottom: 1rem;
+  }
+  .books-stop > div:first-child {
+    max-width: 44rem;
+  }
+  .books-stop-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+  /* Et beløp som er slik det sto den dagen bøkene slutter, ikke i dag. */
+  .stat-value[data-stale='true'] {
+    color: var(--muted);
+  }
 </style>
 
 <script>
@@ -662,6 +715,7 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
   import { foldCorrections, foldNote } from '../lib/corrections';
   import { el, setStatus, show } from '../lib/dom';
   import { isoDate, kroner, orgnummer } from '../lib/format';
+  import { booksBehind, type BooksBehind } from '../lib/regnskap';
   import { currentImport, isWorking } from '../lib/saftimport';
   import { can, canInCompany, loadSession, setActiveCompany } from '../lib/session';
 
@@ -709,10 +763,35 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
     el('#stat-count').textContent =
       `${summary.entry_count} ${summary.entry_count === 1 ? 'føring' : 'føringer'} i ${summary.financial_year}`;
 
+    // Det som skyldes nå, ikke årets mva: terminer som ikke er sendt, og sendte
+    // som ikke er betalt. Årets sum med de sendte trukket ut viste en gård som
+    // hadde levert fire terminer i et annet program som om staten skyldte den
+    // penger, mens den siste terminen skulle betales.
+    //
+    // Men bare så lenge bøkene følger med. Har fristen for terminen de slutter
+    // i gått uten at noe er ført siden, mangler betalingen eller utbetalingen
+    // som skulle vært der, og saldoen er den dagens, ikke dagens. Da står det
+    // ikke noe beløp: en gård som bare hadde hentet 2025 fikk «−303 471,00
+    // kr» her i oktober 2026, for en tilbakebetaling som kom i februar. Et
+    // beløp med en dato under ble fortsatt lest som det man har til gode.
     const vat = Number(summary.vat_position);
-    el('#stat-vat').textContent = kroner(summary.vat_position);
-    el('#stat-vat-note').textContent =
-      vat >= 0 ? 'anslått å betale' : 'anslått til gode';
+    const behind = booksBehind(summary);
+    const vatValue = el('#stat-vat');
+    vatValue.dataset.stale = String(behind !== null);
+    // Uten fortegn, som tekst: et beløp går aldri gjennom et flyttall for å miste minustegnet.
+    const settled = summary.vat_settled.replace(/^-/, '');
+    if (behind !== null) {
+      vatValue.textContent = '–';
+      el('#stat-vat-note').textContent = `ikke kjent: regnskapet slutter ${isoDate(behind.through)}`;
+    } else {
+      vatValue.textContent = kroner(summary.vat_position);
+      el('#stat-vat-note').textContent =
+        (vat >= 0 ? 'anslått å betale' : 'anslått til gode') +
+        // Levert er ikke betalt: en termin står på 2740 til betalingen er
+        // ført, og det er den man glemmer å føre.
+        (Number(settled) !== 0 && vat !== 0 ? `, herav ${kroner(settled)} levert og ikke ført betalt` : '');
+    }
+    renderBooksBehind(summary, behind);
 
     const body = el<HTMLTableSectionElement>('#by-type');
     body.replaceChildren();
@@ -728,6 +807,31 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
       body.append(row);
     }
     show(el('#by-type-empty'), summary.by_type.length === 0);
+  }
+
+  /**
+   * Says where the books stop, once a VAT deadline has passed since they did.
+   *
+   * Never just because the year turned: on 1 January nothing is posted in the
+   * new year yet, and that is not something to point out.
+   */
+  function renderBooksBehind(summary: Summary, behind: BooksBehind | null): void {
+    show(el('#books-stop'), behind !== null);
+    if (behind === null) return;
+    const year = summary.financial_year;
+    const through = isoDate(behind.through);
+    el('#books-stop-title').textContent = behind.emptyYear
+      ? `Ingenting er ført i ${year} ennå`
+      : `Regnskapet er ført til ${through}`;
+    el('#books-stop-text').textContent =
+      (behind.emptyYear
+        ? `Regnskapet i Myntos går til ${through}, så tallene for ${year} står på null. `
+        : `Det er ikke ført noe etter ${through}, og fristen for mva-terminen da er passert. `) +
+      'Merverdiavgiften kan ikke regnes ut for i dag, fordi det som er levert og betalt siden ' +
+      'ikke er ført. Hent resten fra det gamle programmet, eller registrer betalingene og les ' +
+      'inn kontoutskriften under Bankavstemming.';
+    const company = currentCompany(companies);
+    show(el('#books-stop-import'), company !== undefined && canInCompany(company, 'ledger:write'));
   }
 
   function renderRecent(entries: CashFlowEntry[]): void {

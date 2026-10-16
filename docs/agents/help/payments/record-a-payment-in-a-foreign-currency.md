@@ -48,7 +48,7 @@ statement has the real figure.
 - A small difference between the invoice and the payment because the rate
   moved is not a purchase: if it ever has to be booked on its own, the types
   are «Valutatap» and «Valutagevinst».
-- A purchase that becomes more than 15 000 kroner once converted may be a
+- A purchase that becomes 30 000 kroner or more once converted may be a
   large purchase that is written off over several years; Myntos says so under
   the form when it is.
 

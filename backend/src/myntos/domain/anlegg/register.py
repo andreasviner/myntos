@@ -225,9 +225,7 @@ async def _building(
     db: AsyncSession, company: Company, building_id: int, own_id: int | None, error: type[Exception]
 ) -> FixedAsset:
     building = await db.scalar(
-        select(FixedAsset).where(
-            FixedAsset.id == building_id, FixedAsset.company_id == company.id
-        )
+        select(FixedAsset).where(FixedAsset.id == building_id, FixedAsset.company_id == company.id)
     )
     if building is None:
         raise FixedAssetNotFoundError("finner ikke bygningen i anleggsregisteret")
@@ -368,7 +366,10 @@ def _apply(asset: FixedAsset, data: AssetInput, opening_year: int | None) -> Non
     asset.saldogruppe = data.saldogruppe
     asset.rate_variant = data.rate_variant
     asset.account_number = data.account_number or ""
-    assert data.acquired_on is not None and data.cost is not None
+    # _resolve refuses an asset without either, so this is for the type
+    # checker; raised rather than asserted so it holds under ``python -O``.
+    if data.acquired_on is None or data.cost is None:
+        raise InvalidFixedAssetError("oppgi datoen driftsmidlet ble levert og kostprisen")
     asset.acquired_on = data.acquired_on
     asset.cost = data.cost
     asset.grant = data.grant
@@ -605,8 +606,8 @@ async def set_openings(
                 created_by_user_id=created_by_user_id,
             )
         )
-    for row in existing:
-        await db.delete(row)
+    for old in existing:
+        await db.delete(old)
     await db.flush()
     db.add_all(created)
     await db.flush()

@@ -495,7 +495,7 @@ export const unlinkAccountIdentity = (provider: string): Promise<void> =>
  * last owner of books somebody still needs, and the deletion is refused until
  * they hand them on.
  */
-export type CompanyFate = 'leaves' | 'deleted' | 'blocks_members' | 'blocks_books';
+export type CompanyFate = 'leaves' | 'deleted' | 'closed' | 'blocks_members' | 'blocks_books';
 
 /**
  * Carries `company_id` per row but lives outside `/companies/{id}/`, so the
@@ -516,6 +516,66 @@ export const getErasurePlan = (): Promise<ErasurePlan> =>
 /** Delete the account. `password` is required when the account has one. */
 export const eraseAccount = (password: string | null): Promise<void> =>
   json<void>('/api/v1/account/erasure', 'POST', { password });
+
+// --- Deleting a company ----------------------------------------------------------
+//
+// A company with anything entered is not deleted at once: bokføringsloven § 13
+// keeps its books for five years after the last financial year, so they are
+// locked away until `retain_until` and deleted for good the day after. One with
+// nothing entered goes at once. See docs/gdpr.md, «Deleting a company».
+
+export interface ClosurePlan {
+  /** `kept`: locked away until `retain_until`. `deleted`: gone at once. */
+  outcome: 'kept' | 'deleted';
+  retain_until: string | null;
+  /** Years with vouchers, oldest first: one SAF-T file each to download first. */
+  years: number[];
+  members_leaving: number;
+  live_keys: number;
+  requires_password: boolean;
+  recent_login_until: string | null;
+}
+
+export const getClosurePlan = (companyId: number): Promise<ClosurePlan> =>
+  request<ClosurePlan>(`/api/v1/companies/${companyId}/sletting`);
+
+/**
+ * Delete the company. `companyName` is what the person typed to say which books
+ * they meant. `password` is sent only when the account has one
+ * (`requires_password`); an account that signed up with BankID, Google or
+ * Microsoft sends null and must have signed in within the last ten minutes.
+ */
+export const closeCompany = (
+  companyId: number,
+  companyName: string,
+  password: string | null,
+): Promise<{ outcome: ClosurePlan['outcome']; retain_until: string | null }> =>
+  json(`/api/v1/companies/${companyId}/sletting`, 'POST', {
+    company_name: companyName,
+    password,
+  });
+
+/**
+ * A company the person deleted and still owns, while its books are kept.
+ *
+ * Outside `/companies/{id}/` on purpose, like the erasure plan: these are books
+ * nobody is working in, and none of them is ever the active company.
+ */
+export interface ClosedCompany {
+  id: number;
+  orgnr: string;
+  name: string;
+  closed_at: string;
+  /** Deleted for good the day after. */
+  retain_until: string;
+}
+
+export const listClosedCompanies = (): Promise<ClosedCompany[]> =>
+  request<ClosedCompany[]>('/api/v1/companies/slettede');
+
+/** Open deleted books again. Answers with the company, ready to be made active. */
+export const reopenCompany = (companyId: number): Promise<Company> =>
+  json<Company>(`/api/v1/companies/slettede/${companyId}/gjenapne`, 'POST', {});
 
 // --- Companies ------------------------------------------------------------------
 
@@ -1229,7 +1289,8 @@ export interface Approval {
   body: unknown;
   form: Record<string, string[]> | null;
   files: ApprovalFile[];
-  filing: { type: string; aar: number; termin: number } | null;
+  /** `naering` names the second melding of a company that files two; null is the main one. */
+  filing: { type: string; aar: number; termin: number; naering: string | null } | null;
   key_id: number;
   key_name: string;
   person_name: string;
@@ -1465,6 +1526,12 @@ export interface CashFlowEntry {
    * `tax_code` is null, since each line has its own.
    */
   parts: CashFlowPart[];
+  /**
+   * The avdeling, prosjekt or driftsgren the entry is on, at most one value per
+   * dimension (`listDimensions`). Empty on a composite entry, whose lines each
+   * carry their own in `parts`.
+   */
+  dimension_value_ids: number[];
 }
 
 /** One line of a composite entry. */
@@ -1480,6 +1547,7 @@ export interface CashFlowPart {
   account_description: string;
   tax_code: string | null;
   description: string;
+  dimension_value_ids: number[];
 }
 
 /** The voucher type of a composite entry, as the register reads it back. */
@@ -1497,6 +1565,8 @@ export interface CompositeEntry {
     tax_code?: string | null;
     account_number?: string | null;
     description?: string | null;
+    /** Per line, because one settlement can be several driftsgrener. */
+    dimension_value_ids?: number[];
   }[];
 }
 
@@ -1514,11 +1584,62 @@ export interface Summary {
   total_out: string;
   net: string;
   entry_count: number;
+  /** The year's VAT on sales and purchases, settlements of filed terms left out. */
   output_vat: string;
   input_vat: string;
+  /**
+   * What is owed now, across every year: open terms plus filed terms not yet
+   * paid (2700, 2710 and 2740). Positive is owed to Skatteetaten.
+   */
   vat_position: string;
+  /** The part of `vat_position` filed and settled onto 2740, its payment not yet posted. */
+  vat_settled: string;
+  /** What the bank accounts and the cash box hold, across every year. */
   cash_position: string;
+  /** The date of the last voucher in the books, any year, or null when nothing is posted. */
+  books_through: string | null;
+  /**
+   * `books_through` when the VAT deadline of the period the books stop in has
+   * passed with nothing posted since: `vat_position` is that day's, not
+   * today's. Null while the books are current, including on 1 January.
+   */
+  positions_as_of: string | null;
   by_type: TypeTotal[];
+}
+
+/** One account behind a line of the accounts. */
+export interface ReportAccount {
+  account_number: string;
+  description: string;
+  amount: string;
+}
+
+/** One line of a resultatregnskap or balanse; `key` is the same in every year. */
+export interface ReportLine {
+  key: string;
+  label: string;
+  /** `gruppe` sums accounts, listed in `accounts`; `sum` adds up lines above. */
+  kind: 'gruppe' | 'sum';
+  amount: string;
+  accounts: ReportAccount[];
+}
+
+export interface ReportYear {
+  year: number;
+  start_date: string;
+  end_date: string;
+  closed: boolean;
+  voucher_count: number;
+  /** The date of the year's last voucher; null when nothing is posted in it. */
+  last_entry: string | null;
+  resultat: ReportLine[];
+  balanse: ReportLine[];
+}
+
+export interface Accounts {
+  company_id: number;
+  /** Newest first. */
+  years: ReportYear[];
 }
 
 /** Where a proposed category came from. See /ki. */
@@ -1802,6 +1923,10 @@ export const getSummary = (companyId: number, financialYear?: number): Promise<S
       (financialYear === undefined ? '' : `?financial_year=${financialYear}`),
   );
 
+/** Resultat og balanse for every financial year, newest first. */
+export const getAccounts = (companyId: number): Promise<Accounts> =>
+  request<Accounts>(`/api/v1/companies/${companyId}/regnskap`);
+
 export const recordCashFlow = (
   companyId: number,
   payload: {
@@ -1813,6 +1938,7 @@ export const recordCashFlow = (
     payment_method: 'bank' | 'kontant';
     party_id?: number | null;
     account_number?: string | null;
+    dimension_value_ids?: number[];
   },
 ): Promise<CashFlowEntry> =>
   json<CashFlowEntry>(`/api/v1/companies/${companyId}/cashflow`, 'POST', payload);
@@ -1859,6 +1985,7 @@ export const editCashFlow = (
     payment_method: 'bank' | 'kontant';
     party_id?: number | null;
     account_number?: string | null;
+    dimension_value_ids?: number[];
   },
 ): Promise<CashFlowEntry> =>
   json<CashFlowEntry>(`/api/v1/companies/${companyId}/cashflow/${voucherId}`, 'PUT', payload);
@@ -2203,6 +2330,43 @@ export const creditFaktura = (
 export const fakturaPdfUrl = (companyId: number, documentId: number): string =>
   `${API_BASE_URL}/api/v1/companies/${companyId}/faktura/${documentId}/pdf`;
 
+/**
+ * An invoice's PDF as a blob, for showing inside the page, or null.
+ *
+ * `fakturaPdfUrl` is a download: the API answers it with `Content-Disposition:
+ * attachment` and, like every API answer, `X-Frame-Options: DENY`, so the page
+ * cannot frame it from the API's origin. Fetched instead and handed back for
+ * an object URL, which a frame on the page's own origin may show. The outward
+ * check from `request()` runs first, for the reason `fetchThumbnail` gives.
+ *
+ * Null unless the answer says it is a PDF. An object URL takes the page's
+ * origin, so anything else framed through one, an HTML error page from a proxy
+ * say, would run as myntos.no. Null for any other failure too: the preview is
+ * a convenience, and the download link beside it still works.
+ */
+export const fetchFakturaPdf = async (
+  companyId: number,
+  documentId: number,
+): Promise<Blob | null> => {
+  const path = `/api/v1/companies/${companyId}/faktura/${documentId}/pdf`;
+  const active = activeCompanyId();
+  if (active !== null && companyId !== active) {
+    throw new WrongCompanyError(
+      'Vi stoppet en forespørsel som gjaldt et annet selskap enn det du ser på. Last siden på nytt.',
+      active,
+      companyId,
+    );
+  }
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, { credentials: 'include' });
+    const type = response.headers.get('Content-Type') ?? '';
+    if (!response.ok || !type.startsWith('application/pdf')) return null;
+    return await response.blob();
+  } catch {
+    return null;
+  }
+};
+
 export const fakturaEhfUrl = (companyId: number, documentId: number): string =>
   `${API_BASE_URL}/api/v1/companies/${companyId}/faktura/${documentId}/ehf`;
 
@@ -2236,7 +2400,18 @@ export interface MvaFinding {
   detaljer: string | null;
 }
 
-export type MvaFilingStatus = 'validert' | 'avvist' | 'sendt' | 'mottatt' | 'feilet';
+/**
+ * `annet_program` is not a filing: the person recorded that another program
+ * filed the termin. `opphevet` is such a statement taken back.
+ */
+export type MvaFilingStatus =
+  | 'validert'
+  | 'avvist'
+  | 'sendt'
+  | 'mottatt'
+  | 'feilet'
+  | 'annet_program'
+  | 'opphevet';
 
 export interface MvaDocument {
   data_type: string;
@@ -2274,6 +2449,36 @@ export interface MvaFiling {
   documents: MvaDocument[];
   /** On the period page: whether the ledger still says what this filing says. */
   matches_ledger: boolean | null;
+  /** Which melding: `alminnelig` or `primaernaering`. */
+  category: string;
+  /** Set on a termin recorded as filed from another program. */
+  elsewhere: MvaElsewhere | null;
+}
+
+/** «Sendt fra et annet program»: the person's statement, not a filing. */
+export interface MvaElsewhere {
+  filed_on: string;
+  /** What the other program filed, when the person said. */
+  amount: string | null;
+  voucher_id: number | null;
+  withdrawn_at: string | null;
+  /** Myntos's figure minus `amount`. */
+  difference: string | null;
+  /** Within a krone: some programs round the settlement to whole kroner. */
+  agrees: boolean | null;
+}
+
+/** An imported settlement voucher that looks like the old program filed the termin. */
+export interface MvaElsewhereProposal {
+  voucher_id: number;
+  voucher_no: string;
+  date: string;
+  description: string;
+  output_vat: string;
+  input_vat: string;
+  amount: string;
+  /** Output and input exactly Myntos's. */
+  matches: boolean;
 }
 
 export interface MvaPeriodRow {
@@ -2291,6 +2496,12 @@ export interface MvaPeriodRow {
   filed_fastsatt: string | null;
   /** Filed, and the ledger for the period has moved since. */
   changed_since_filed: boolean;
+  /** Past the deadline with nothing filed or recorded as filed elsewhere. */
+  is_overdue: boolean;
+  filed_elsewhere: boolean;
+  filed_elsewhere_amount: string | null;
+  elsewhere_difference: string | null;
+  elsewhere_proposal: MvaElsewhereProposal | null;
 }
 
 export interface MvaChoice {
@@ -2298,11 +2509,30 @@ export interface MvaChoice {
   label: string;
 }
 
+/** The second melding of a company that files two (a farm with other business). */
+export interface MvaSecondMelding {
+  category: string;
+  label: string;
+  period_type: string;
+  valid_from: string;
+  accounts: { account_number: string; name: string }[];
+}
+
 export interface MvaSettings {
   period_type: string;
   category: string;
   period_types: MvaChoice[];
   categories: MvaChoice[];
+  second: MvaSecondMelding | null;
+}
+
+/** One of the company's meldinger. Almost every company has one. */
+export interface MvaNaering {
+  category: string;
+  label: string;
+  period_type: string;
+  is_main: boolean;
+  valid_from: string | null;
 }
 
 export interface MvaOverview {
@@ -2310,6 +2540,9 @@ export interface MvaOverview {
   year: number;
   vat_registered: boolean;
   settings: MvaSettings;
+  /** Which melding `periods` are for. */
+  naering: string;
+  naeringer: MvaNaering[];
   periods: MvaPeriodRow[];
 }
 
@@ -2334,14 +2567,64 @@ export interface MvaPeriod {
   /** False when this installation cannot check or file; offer the XML instead. */
   submission_available: boolean;
   changed_since_filed: boolean;
+  is_overdue: boolean;
+  /** The standing «Sendt fra et annet program» statement, if any. */
+  filed_elsewhere: MvaFiling | null;
+  elsewhere_proposal: MvaElsewhereProposal | null;
   filings: MvaFiling[];
 }
 
-export const getMvaOverview = (companyId: number, year: number): Promise<MvaOverview> =>
-  request<MvaOverview>(`/api/v1/companies/${companyId}/mva?aar=${year}`);
+/** `&naering=…` for the second melding; nothing for the main one. */
+const naeringQuery = (naering?: string | null): string =>
+  naering ? `&naering=${encodeURIComponent(naering)}` : '';
 
-export const getMvaPeriod = (companyId: number, year: number, termin: number): Promise<MvaPeriod> =>
-  request<MvaPeriod>(`/api/v1/companies/${companyId}/mva/termin?aar=${year}&termin=${termin}`);
+export const getMvaOverview = (
+  companyId: number,
+  year: number,
+  naering?: string | null,
+): Promise<MvaOverview> =>
+  request<MvaOverview>(`/api/v1/companies/${companyId}/mva?aar=${year}${naeringQuery(naering)}`);
+
+export const getMvaPeriod = (
+  companyId: number,
+  year: number,
+  termin: number,
+  naering?: string | null,
+): Promise<MvaPeriod> =>
+  request<MvaPeriod>(
+    `/api/v1/companies/${companyId}/mva/termin?aar=${year}&termin=${termin}${naeringQuery(naering)}`,
+  );
+
+/** Set up or change the second melding. `accounts` replaces the list. */
+export const setSecondMvaMelding = (
+  companyId: number,
+  payload: { period_type: string; valid_from: string; accounts: string[] },
+): Promise<MvaSettings> =>
+  json<MvaSettings>(`/api/v1/companies/${companyId}/mva/andre-melding`, 'PUT', payload);
+
+/** Back to one melding; refused once the second has anything filed. */
+export const removeSecondMvaMelding = (companyId: number): Promise<MvaSettings> =>
+  request<MvaSettings>(`/api/v1/companies/${companyId}/mva/andre-melding`, { method: 'DELETE' });
+
+/** Record that another program filed the termin. Sends nothing to Skatteetaten. */
+export const markMvaFiledElsewhere = (
+  companyId: number,
+  payload: {
+    aar: number;
+    termin: number;
+    naering?: string | null;
+    filed_on: string;
+    amount?: string | null;
+    voucher_id?: number | null;
+  },
+): Promise<MvaFiling> =>
+  json<MvaFiling>(`/api/v1/companies/${companyId}/mva/termin/annet-program`, 'POST', payload);
+
+/** Take a «Sendt fra et annet program» statement back. */
+export const withdrawMvaFiledElsewhere = (companyId: number, filingId: number): Promise<MvaFiling> =>
+  request<MvaFiling>(`/api/v1/companies/${companyId}/mva/innsendinger/${filingId}/angre`, {
+    method: 'POST',
+  });
 
 export const updateMvaSettings = (
   companyId: number,
@@ -2359,11 +2642,13 @@ export const checkMvaPeriod = (
   year: number,
   termin: number,
   merknad: string | null,
+  naering?: string | null,
 ): Promise<MvaFiling> =>
   json<MvaFiling>(`/api/v1/companies/${companyId}/mva/termin/kontroll`, 'POST', {
     aar: year,
     termin,
     merknad,
+    naering: naering || null,
   });
 
 /**
@@ -2389,8 +2674,13 @@ export const fetchMvaFeedback = (companyId: number, filingId: number): Promise<M
     method: 'POST',
   });
 
-export const mvaPeriodXmlUrl = (companyId: number, year: number, termin: number): string =>
-  `${API_BASE_URL}/api/v1/companies/${companyId}/mva/termin/xml?aar=${year}&termin=${termin}`;
+export const mvaPeriodXmlUrl = (
+  companyId: number,
+  year: number,
+  termin: number,
+  naering?: string | null,
+): string =>
+  `${API_BASE_URL}/api/v1/companies/${companyId}/mva/termin/xml?aar=${year}&termin=${termin}${naeringQuery(naering)}`;
 
 export const mvaFiledXmlUrl = (companyId: number, filingId: number): string =>
   `${API_BASE_URL}/api/v1/companies/${companyId}/mva/innsendinger/${filingId}/melding.xml`;
@@ -3124,6 +3414,129 @@ export const reopenYear = (
 ): Promise<{ company_id: number; year: number; reversals: PostedYearVoucher[] }> =>
   json(`${closingPath(companyId)}/gjenapning`, 'POST', { aar: year, begrunnelse: reason, bekreftet: true });
 
+// --- Manuelt bilag ----------------------------------------------------------------
+//
+// Accounts with debit and credit and a written reason, no bank line: the
+// year-end adjustments. Review-then-post like the opening balance, and the
+// review is the backend's. Corrections and reversals are their own routes,
+// because the register's reversal refuses a manual voucher.
+
+/** One line as typed. With a `tax_code` the amount includes VAT. */
+export interface ManualLineInput {
+  account_number: string;
+  debit: string;
+  credit: string;
+  description: string | null;
+  party_id: number | null;
+  tax_code: string | null;
+  /** Kept through a correction so it does not drop what an agent or the register set. */
+  dimension_value_ids?: number[];
+}
+
+export interface ManualVoucherInput {
+  occurred_on: string;
+  description: string;
+  /** Why it is posted (bokføringsforskriften § 5-12). Filed beside the voucher for good. */
+  explanation: string;
+  lines: ManualLineInput[];
+}
+
+/** A line as it is (or would be) posted. `generated` marks the VAT lines Myntos adds. */
+export interface ManualLine {
+  from_line: number;
+  account_number: string;
+  account_description: string | null;
+  description: string;
+  debit: string;
+  credit: string;
+  party_id: number | null;
+  party_name: string | null;
+  tax_code: string | null;
+  vat_amount: string | null;
+  generated: boolean;
+  dimension_value_ids: number[];
+}
+
+export interface ManualReview {
+  company_id: number;
+  year: number;
+  occurred_on: string;
+  description: string;
+  explanation: string;
+  corrects_id: number | null;
+  lines: ManualLine[];
+  total_debit: string;
+  total_credit: string;
+  difference: string;
+  postable: boolean;
+  findings: YearFinding[];
+}
+
+export interface ManualVoucher {
+  company_id: number;
+  id: number;
+  voucher_no: string;
+  journal: string;
+  occurred_on: string;
+  posted_at: string | null;
+  description: string;
+  explanation: string | null;
+  total: string;
+  lines: ManualLine[];
+  /** The voucher as it was typed: what a correction starts from. */
+  input_lines: (ManualLineInput & { dimension_value_ids: number[] })[];
+  is_reversal: boolean;
+  reverses_id: number | null;
+  reversed_by_id: number | null;
+  corrects_id: number | null;
+  corrected_by_id: number | null;
+  created_by_id: number | null;
+  created_by_name: string | null;
+  created_via: string | null;
+  attachments: AttachmentInfo[];
+}
+
+export interface ManualVoucherList {
+  company_id: number;
+  year: number;
+  closed: boolean;
+  tax_codes: TaxCode[];
+  entries: ManualVoucher[];
+}
+
+const manualPath = (companyId: number): string => `/api/v1/companies/${companyId}/manuelt-bilag`;
+
+export const listManualVouchers = (companyId: number, year: number): Promise<ManualVoucherList> =>
+  request<ManualVoucherList>(`${manualPath(companyId)}?aar=${year}`);
+
+export const getManualVoucher = (companyId: number, voucherId: number): Promise<ManualVoucher> =>
+  request<ManualVoucher>(`${manualPath(companyId)}/${voucherId}`);
+
+/** The review. Stores nothing; `correctsId` reviews it as the replacement of that voucher. */
+export const reviewManualVoucher = (
+  companyId: number,
+  voucher: ManualVoucherInput,
+  correctsId: number | null = null,
+): Promise<ManualReview> =>
+  json<ManualReview>(`${manualPath(companyId)}/kontroll`, 'POST', { ...voucher, corrects_id: correctsId });
+
+export const postManualVoucher = (companyId: number, voucher: ManualVoucherInput): Promise<ManualVoucher> =>
+  json<ManualVoucher>(manualPath(companyId), 'POST', voucher);
+
+/** Reverses `voucherId` and posts `voucher` in its place, linked. Answers with the replacement. */
+export const correctManualVoucher = (
+  companyId: number,
+  voucherId: number,
+  voucher: ManualVoucherInput,
+): Promise<ManualVoucher> => json<ManualVoucher>(`${manualPath(companyId)}/${voucherId}`, 'PUT', voucher);
+
+export const reverseManualVoucher = (
+  companyId: number,
+  voucherId: number,
+  explanation: string,
+): Promise<ManualVoucher> =>
+  json<ManualVoucher>(`${manualPath(companyId)}/${voucherId}/reversering`, 'POST', { explanation });
+
 // --- Kontoplan --------------------------------------------------------------------
 
 export interface LedgerAccount {
@@ -3142,6 +3555,11 @@ export interface LedgerAccount {
   grouping_code: string | null;
   /** Set when a person chose the post; null when the seed or the default did. */
   grouping_chosen_at: string | null;
+  /**
+   * The company's money sits here, so the overview counts it as the bank:
+   * always 1920 and 1900, and any other account marked as a bank account.
+   */
+  is_bank_account: boolean;
 }
 
 export interface GroupingOption {
@@ -3189,7 +3607,7 @@ export const updateAccount = (
   companyId: number,
   accountId: number,
   year: number,
-  payload: { description?: string; is_active?: boolean },
+  payload: { description?: string; is_active?: boolean; is_bank_account?: boolean },
 ): Promise<Kontoplan> =>
   json<Kontoplan>(`/api/v1/companies/${companyId}/kontoplan/${accountId}?aar=${year}`, 'PATCH', payload);
 
@@ -3228,6 +3646,377 @@ export const getLandbruk = (companyId: number): Promise<Landbruk> =>
 /** `true` on, `false` off, `null` to hand the decision back to the næringskode. */
 export const setLandbruk = (companyId: number, enabled: boolean | null): Promise<Landbruk> =>
   json<Landbruk>(`/api/v1/companies/${companyId}/landbruk`, 'PUT', { enabled });
+
+// --- Landbruk: the year-end count and private uttak ---------------------------------
+//
+// Review-then-post, as the opening balance: the values, the VAT and the voucher
+// are the backend's (`…/kontroll`), never computed here. The year is a query or
+// body field, so the company id stays the only id in a path.
+
+export type CountKind = 'buskap' | 'egenprodusert' | 'innkjopt';
+export type CountValuation = 'normalverdi' | 'snitt' | 'kostpris' | 'verdsatt';
+
+/** Which year's takseringsregler the catalogue is from, and whether the year asked for is out. */
+export interface FarmRates {
+  year: number;
+  published: boolean;
+  source: string;
+  url: string;
+}
+
+export interface CountCategory {
+  code: string;
+  kind: CountKind;
+  label: string;
+  unit: string;
+  value: string | null;
+  valuation: CountValuation;
+  species: string | null;
+  adult: boolean;
+  nibio: string | null;
+}
+
+/** One row as typed. Quantities and values are decimal strings. */
+export interface CountLineInput {
+  side: 'inngaende' | 'utgaende';
+  category: string;
+  quantity: string;
+  description?: string;
+  kind?: CountKind | null;
+  unit?: string | null;
+  valuation?: CountValuation | null;
+  unit_value?: string | null;
+  account_number?: string | null;
+}
+
+export interface CountLine {
+  side: 'inngaende' | 'utgaende';
+  kind: CountKind;
+  category: string;
+  label: string;
+  description: string;
+  quantity: string;
+  unit: string;
+  valuation: string;
+  unit_value: string;
+  value: string;
+  account_number: string;
+  nibio: string | null;
+}
+
+export interface CountKindTotal {
+  kind: CountKind;
+  naeringsspesifikasjon: string;
+  opening: string;
+  closing: string;
+}
+
+export interface CountAccountChange {
+  account_number: string;
+  account_description: string | null;
+  kind: CountKind;
+  booked: string;
+  counted: string;
+  change: string;
+  opening_booked: string;
+  opening_counted: string;
+}
+
+export interface FarmVoucherLine {
+  account_number: string;
+  description: string;
+  debit: string;
+  credit: string;
+}
+
+export interface CountReview {
+  company_id: number;
+  year: number;
+  counted_on: string | null;
+  opening_source: string;
+  opening: CountLine[];
+  closing: CountLine[];
+  accounts: CountAccountChange[];
+  voucher_lines: FarmVoucherLine[];
+  totals: CountKindTotal[];
+  postable: boolean;
+  findings: YearFinding[];
+}
+
+export interface FarmCount {
+  company_id: number;
+  id: number;
+  year: number;
+  counted_on: string;
+  opening_source: string;
+  withdrawn: boolean;
+  corrects_id: number | null;
+  voucher_id: number | null;
+  voucher_no: string | null;
+  created_at: string;
+  opening: CountLine[];
+  closing: CountLine[];
+  totals: CountKindTotal[];
+}
+
+export interface CountState {
+  company_id: number;
+  year: number;
+  counted_on: string | null;
+  allowed: boolean;
+  refusal: string | null;
+  rates: FarmRates;
+  categories: CountCategory[];
+  /** `forrige_telling`: last year's closing rows, unchanged; `oppgitt`: typed. */
+  opening_source: 'forrige_telling' | 'oppgitt';
+  opening: CountLine[];
+  booked: { account_number: string; account_description: string; kind: CountKind; balance: string }[];
+  standing: FarmCount | null;
+  history: FarmCount[];
+}
+
+const countPath = (companyId: number): string => `/api/v1/companies/${companyId}/landbruk/telling`;
+
+export const getCountState = (companyId: number, year: number): Promise<CountState> =>
+  request<CountState>(`${countPath(companyId)}?aar=${year}`);
+
+export const reviewCount = (companyId: number, year: number, lines: CountLineInput[]): Promise<CountReview> =>
+  json<CountReview>(`${countPath(companyId)}/kontroll`, 'POST', { aar: year, lines });
+
+/** Posts the count; `correct` reverses the standing one and replaces it. */
+export const postCount = (
+  companyId: number,
+  year: number,
+  lines: CountLineInput[],
+  correct: boolean,
+): Promise<FarmCount> => json<FarmCount>(countPath(companyId), 'POST', { aar: year, lines, korriger: correct });
+
+export const withdrawCount = (companyId: number, year: number): Promise<FarmCount> =>
+  json<FarmCount>(`${countPath(companyId)}/reversering`, 'POST', { aar: year });
+
+export interface UttakProduct {
+  code: string;
+  label: string;
+  unit: string;
+  /** The norm per unit, or null for omsetningsverdi (the person states it). */
+  value: string | null;
+  account: string;
+  food: boolean;
+  note: string;
+}
+
+export interface UttakLineInput {
+  product: string;
+  quantity: string;
+  description?: string;
+  unit_value?: string | null;
+  unit?: string | null;
+  account_number?: string | null;
+}
+
+export interface UttakLine {
+  product: string;
+  label: string;
+  description: string;
+  quantity: string;
+  unit: string;
+  unit_value: string;
+  value: string;
+  account_number: string;
+  tax_code: string | null;
+  vat_rate: string | null;
+  vat: string;
+  vat_reason: 'fritatt' | 'avgiftspliktig' | 'uregistrert';
+}
+
+export interface UttakReview {
+  company_id: number;
+  year: number;
+  occurred_on: string | null;
+  lines: UttakLine[];
+  total_value: string;
+  total_vat: string;
+  postable: boolean;
+  findings: YearFinding[];
+}
+
+export interface FarmUttak {
+  company_id: number;
+  id: number;
+  year: number;
+  occurred_on: string;
+  withdrawn: boolean;
+  corrects_id: number | null;
+  voucher_id: number | null;
+  voucher_no: string | null;
+  created_at: string;
+  lines: UttakLine[];
+  total_value: string;
+  total_vat: string;
+}
+
+export interface UttakState {
+  company_id: number;
+  year: number;
+  occurred_on: string | null;
+  allowed: boolean;
+  refusal: string | null;
+  rates: FarmRates;
+  products: UttakProduct[];
+  standing: FarmUttak | null;
+  history: FarmUttak[];
+}
+
+const uttakPath = (companyId: number): string => `/api/v1/companies/${companyId}/landbruk/uttak`;
+
+export const getUttakState = (companyId: number, year: number): Promise<UttakState> =>
+  request<UttakState>(`${uttakPath(companyId)}?aar=${year}`);
+
+export const reviewUttak = (
+  companyId: number,
+  year: number,
+  lines: UttakLineInput[],
+  date: string | null,
+): Promise<UttakReview> =>
+  json<UttakReview>(`${uttakPath(companyId)}/kontroll`, 'POST', { aar: year, dato: date, lines });
+
+export const postUttak = (
+  companyId: number,
+  year: number,
+  lines: UttakLineInput[],
+  date: string | null,
+  correct: boolean,
+): Promise<FarmUttak> =>
+  json<FarmUttak>(uttakPath(companyId), 'POST', { aar: year, dato: date, lines, korriger: correct });
+
+export const withdrawUttak = (companyId: number, year: number): Promise<FarmUttak> =>
+  json<FarmUttak>(`${uttakPath(companyId)}/reversering`, 'POST', { aar: year });
+
+// --- Dimensjoner: avdelinger, prosjekter, driftsgrener ------------------------------
+
+/** One value of a dimension: avdeling 20 «Jordbruk», driftsgren 6110. */
+export interface DimensionValue {
+  /** What an entry sends in `dimension_value_ids`. */
+  id: number;
+  /** The code, never changed: «6110», «20», «P-104». */
+  value: string;
+  description: string;
+  is_active: boolean;
+  /** Posted lines carrying it. Above zero it is switched off, never deleted. */
+  lines: number;
+}
+
+/** A second way to sort the books beside the account (SAF-T's analysis type). */
+export interface Dimension {
+  id: number;
+  code: string;
+  description: string;
+  is_active: boolean;
+  /** `AVDELING`, `PROSJEKT`, `DRIFTSGR` or `PRODUKT` when Myntos knows it as one. */
+  kind: string | null;
+  /** What the report calls lines with no value: «Uten driftsgren». */
+  without_label: string;
+  values: DimensionValue[];
+}
+
+/** NIBIO's lists, offered only when the books have the farming add-on. */
+export interface DimensionSuggestions {
+  landbruk: boolean;
+  source: string | null;
+  sets: {
+    kind: string;
+    description: string;
+    dimension_id: number | null;
+    values: { code: string; name: string; group: string; added: boolean }[];
+  }[];
+}
+
+export interface DimensionFigures {
+  income: string;
+  costs: string;
+  result: string;
+}
+
+export interface DimensionResultRow {
+  /** Null on «Uten …» and on the total. */
+  value_id: number | null;
+  value: string | null;
+  description: string;
+  is_active: boolean;
+  total: DimensionFigures;
+  /** Twelve, January first. */
+  months: (DimensionFigures & { month: number })[];
+}
+
+export interface DimensionResult {
+  year: number;
+  dimension: Dimension;
+  rows: DimensionResultRow[];
+  unallocated: DimensionResultRow;
+  total: DimensionResultRow;
+  partly_allocated: number;
+}
+
+export const listDimensions = (companyId: number): Promise<Dimension[]> =>
+  request<Dimension[]>(`/api/v1/companies/${companyId}/dimensjoner`);
+
+export const getDimensionSuggestions = (companyId: number): Promise<DimensionSuggestions> =>
+  request<DimensionSuggestions>(`/api/v1/companies/${companyId}/dimensjoner/forslag`);
+
+export const addSuggestedDimensions = (
+  companyId: number,
+  kind: string,
+  codes: string[],
+): Promise<Dimension[]> =>
+  json<Dimension[]>(`/api/v1/companies/${companyId}/dimensjoner/forslag`, 'POST', { kind, codes });
+
+export const createDimension = (
+  companyId: number,
+  payload: { code: string; description: string },
+): Promise<Dimension[]> =>
+  json<Dimension[]>(`/api/v1/companies/${companyId}/dimensjoner`, 'POST', payload);
+
+export const updateDimension = (
+  companyId: number,
+  dimensionId: number,
+  payload: { description?: string; is_active?: boolean },
+): Promise<Dimension[]> =>
+  json<Dimension[]>(`/api/v1/companies/${companyId}/dimensjoner/${dimensionId}`, 'PATCH', payload);
+
+export const deleteDimension = (companyId: number, dimensionId: number): Promise<void> =>
+  request<void>(`/api/v1/companies/${companyId}/dimensjoner/${dimensionId}`, { method: 'DELETE' });
+
+export const createDimensionValue = (
+  companyId: number,
+  dimensionId: number,
+  payload: { value: string; description: string },
+): Promise<Dimension[]> =>
+  json<Dimension[]>(
+    `/api/v1/companies/${companyId}/dimensjoner/${dimensionId}/verdier`,
+    'POST',
+    payload,
+  );
+
+export const updateDimensionValue = (
+  companyId: number,
+  valueId: number,
+  payload: { description?: string; is_active?: boolean },
+): Promise<Dimension[]> =>
+  json<Dimension[]>(`/api/v1/companies/${companyId}/dimensjonsverdier/${valueId}`, 'PATCH', payload);
+
+export const deleteDimensionValue = (companyId: number, valueId: number): Promise<void> =>
+  request<void>(`/api/v1/companies/${companyId}/dimensjonsverdier/${valueId}`, {
+    method: 'DELETE',
+  });
+
+export const getDimensionResult = (
+  companyId: number,
+  dimensionId: number,
+  year: number,
+): Promise<DimensionResult> =>
+  request<DimensionResult>(
+    `/api/v1/companies/${companyId}/dimensjoner/${dimensionId}/resultat?aar=${year}`,
+  );
 
 // --- Uttak, tap på krav og justering (mva-meldingens spesifikasjon) --------------
 
@@ -3282,3 +4071,202 @@ export const reverseAdjustment = (companyId: number, adjustmentId: number): Prom
     'POST',
     {},
   );
+
+// --- Anlegg og avskrivning -------------------------------------------------------
+//
+// The anleggsregister and the year's depreciation voucher. The register is data
+// that may be changed while its years are open; the voucher is review-then-post,
+// corrected by reversal from its own routes like the opening balance.
+
+export interface FixedAsset {
+  company_id: number;
+  id: number;
+  description: string;
+  saldogruppe: string;
+  saldogruppe_label: string;
+  rate_variant: string | null;
+  account_number: string;
+  acquired_on: string;
+  cost: string;
+  grant: string;
+  grant_reduces_cost: boolean;
+  voucher_id: number | null;
+  building_id: number | null;
+  opening_year: number | null;
+  opening_value: string | null;
+  useful_life_years: number | null;
+  disposed_on: string | null;
+  disposal_proceeds: string | null;
+  note: string | null;
+  saldo_key: string;
+  created_at: string | null;
+}
+
+/** What the form sends. Amounts are decimal strings; null means "not given". */
+export interface FixedAssetInput {
+  description: string;
+  saldogruppe: string;
+  account_number: string | null;
+  acquired_on: string | null;
+  cost: string | null;
+  grant: string;
+  grant_reduces_cost: boolean;
+  rate_variant: string | null;
+  voucher_id: number | null;
+  building_id: number | null;
+  opening_value: string | null;
+  useful_life_years: number | null;
+  note: string | null;
+}
+
+export interface FixedAssetOpening {
+  id: number;
+  year: number;
+  saldogruppe: string;
+  amount: string;
+  account_number: string | null;
+  building_id: number | null;
+}
+
+export interface FixedAssetRegister {
+  company_id: number;
+  start_year: number | null;
+  assets: FixedAsset[];
+  openings: FixedAssetOpening[];
+  groups: { code: string; label: string; rate: string | null; collective: boolean }[];
+  variants: { code: string; label: string; rate: string }[];
+  capitalisation_limit: string | null;
+}
+
+export interface SaldoYear {
+  key: string;
+  saldogruppe: string;
+  label: string;
+  asset_id: number | null;
+  rate_variant: string | null;
+  rate: string | null;
+  opening: string;
+  additions: string;
+  grants: string;
+  disposals: string;
+  basis: string;
+  max_depreciation: string;
+  min_income: string;
+  depreciation: string;
+  income: string;
+  to_gain_loss_account: string;
+  closing: string;
+  small_rest: boolean;
+}
+
+export interface SaldoSpecification {
+  company_id: number;
+  year: number;
+  start_year: number;
+  rules_from_year: number | null;
+  rates_confirmed: boolean;
+  posted: boolean;
+  saldi: SaldoYear[];
+  gain_loss_account: {
+    opening: string;
+    gains: string;
+    losses: string;
+    basis: string;
+    income: string;
+    deduction: string;
+    closing: string;
+  };
+  unposted_years: number[];
+}
+
+export interface DepreciationVoucher {
+  id: number;
+  voucher_no: string;
+  year: number;
+  transaction_date: string;
+  posted_at: string | null;
+  is_reversal: boolean;
+  reversed: boolean;
+  corrects_id: number | null;
+  total: string;
+}
+
+export interface DepreciationPlan {
+  company_id: number;
+  year: number;
+  specification: SaldoSpecification;
+  lines: (PlannedLine & { saldo_key: string; kind: string })[];
+  total: string;
+  postable: boolean;
+  findings: YearFinding[];
+  standing: DepreciationVoucher | null;
+  history: DepreciationVoucher[];
+}
+
+const anleggPath = (companyId: number): string => `/api/v1/companies/${companyId}/anlegg`;
+
+export const getFixedAssets = (companyId: number): Promise<FixedAssetRegister> =>
+  request<FixedAssetRegister>(anleggPath(companyId));
+
+export const createFixedAsset = (companyId: number, asset: FixedAssetInput): Promise<FixedAsset> =>
+  json<FixedAsset>(anleggPath(companyId), 'POST', asset);
+
+export const updateFixedAsset = (
+  companyId: number,
+  assetId: number,
+  asset: Partial<FixedAssetInput>,
+): Promise<FixedAsset> => json<FixedAsset>(`${anleggPath(companyId)}/${assetId}`, 'PATCH', asset);
+
+export const deleteFixedAsset = (companyId: number, assetId: number): Promise<void> =>
+  request<void>(`${anleggPath(companyId)}/${assetId}`, { method: 'DELETE' });
+
+export const disposeFixedAsset = (
+  companyId: number,
+  assetId: number,
+  disposedOn: string,
+  proceeds: string,
+): Promise<FixedAsset> =>
+  json<FixedAsset>(`${anleggPath(companyId)}/${assetId}/avgang`, 'POST', {
+    disposed_on: disposedOn,
+    proceeds,
+  });
+
+export const undoFixedAssetDisposal = (companyId: number, assetId: number): Promise<FixedAsset> =>
+  request<FixedAsset>(`${anleggPath(companyId)}/${assetId}/avgang`, { method: 'DELETE' });
+
+export const setFixedAssetOpenings = (
+  companyId: number,
+  year: number,
+  rows: { saldogruppe: string; amount: string; account_number: string | null; building_id: number | null }[],
+): Promise<FixedAssetOpening[]> =>
+  json<FixedAssetOpening[]>(`${anleggPath(companyId)}/inngaende-saldo`, 'PUT', { aar: year, rows });
+
+export const getDepreciation = (companyId: number, year: number): Promise<DepreciationPlan> =>
+  request<DepreciationPlan>(`${anleggPath(companyId)}/avskrivning?aar=${year}`);
+
+/** The review with the person's own amounts per saldo key. Stores nothing. */
+export const reviewDepreciation = (
+  companyId: number,
+  year: number,
+  choices: Record<string, string>,
+): Promise<DepreciationPlan> =>
+  json<DepreciationPlan>(`${anleggPath(companyId)}/avskrivning/kontroll`, 'POST', {
+    aar: year,
+    valg: choices,
+  });
+
+/** Posts the year's depreciation; `correct` reverses the standing voucher and replaces it. */
+export const postDepreciation = (
+  companyId: number,
+  year: number,
+  choices: Record<string, string>,
+  correct: boolean,
+): Promise<PostedYearVoucher> =>
+  json<PostedYearVoucher>(`${anleggPath(companyId)}/avskrivning`, 'POST', {
+    aar: year,
+    valg: choices,
+    korriger: correct,
+  });
+
+export const reverseDepreciation = (companyId: number, year: number): Promise<PostedYearVoucher> =>
+  json<PostedYearVoucher>(`${anleggPath(companyId)}/avskrivning/reversering`, 'POST', { aar: year });

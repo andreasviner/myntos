@@ -9,7 +9,7 @@ law Myntos applies can be read in one screen and tested without a company.
   (<https://lovdata.no/dokument/NL/lov/1999-03-26-14/KAPITTEL_14>), as amended
   by LOV-2023-12-20-98, which raised both beløpsgrenser from 15 000 to 30 000
   kroner with effect from inntektsåret 2024.
-- Skatte-ABC 2025/2026, D-2 «Driftsmiddel – avskrivning på/inntektsføring av
+- Skatte-ABC 2025/2026, D-2 «Driftsmiddel: avskrivning på/inntektsføring av
   saldo» (D-2-8.2.1 when an asset enters the saldo, D-2-8.6 realisation,
   D-2-9.1 to D-2-9.3 the rates and the rest under 30 000, D-2-10 negative
   saldo, D-2-11 when depreciation may be taken, D-2-15.1 the specification
@@ -19,9 +19,10 @@ law Myntos applies can be read in one screen and tested without a company.
 
 **Rates are a year's, not constants.** The law changes them (group d had an
 extra 10 % for 2020 only, § 14-43 femte ledd, and both beløpsgrenser doubled
-in 2024), so every rate is looked up by year in :data:`_YEARS`. The table starts in 2024, the first year
-whose limits Myntos has read in force; a year before it is refused rather than
-computed with rates nobody checked, and a year after
+in 2024), so every rate is looked up by year in :data:`_YEARS`. The table
+starts in 2024, the first year whose limits Myntos has read in force; a year
+before it is refused rather than computed with rates nobody checked, and a year
+after
 :data:`CONFIRMED_THROUGH` is computed with the latest rates and says so.
 """
 
@@ -80,9 +81,7 @@ GROUP_LABELS: dict[Saldogruppe, str] = {
 #: (docs/anlegg.md, What is not built).
 COLLECTIVE = frozenset({Saldogruppe.A, Saldogruppe.B, Saldogruppe.C, Saldogruppe.D})
 #: Hvert driftsmiddel på egen saldo (§ 14-41 fjerde ledd).
-PER_ASSET = frozenset(
-    {Saldogruppe.E, Saldogruppe.F, Saldogruppe.G, Saldogruppe.H, Saldogruppe.I}
-)
+PER_ASSET = frozenset({Saldogruppe.E, Saldogruppe.F, Saldogruppe.G, Saldogruppe.H, Saldogruppe.I})
 #: Under ett for hver bygning (§ 14-41 fjerde ledd siste punktum).
 PER_BUILDING = frozenset({Saldogruppe.J})
 #: Sale proceeds reduce the saldo (§ 14-44 annet ledd), so no gain arises.
@@ -219,12 +218,12 @@ def rate_for(
 
 
 def max_share(amount: Decimal, rate: Decimal) -> Decimal:
-    """``amount × rate``, down to whole kroner: the most a maximum allows."""
+    """``amount * rate``, down to whole kroner: the most a maximum allows."""
     return (amount * rate).quantize(_KRONE, rounding=ROUND_FLOOR).quantize(_CENT)
 
 
 def min_share(amount: Decimal, rate: Decimal) -> Decimal:
-    """``amount × rate``, up to whole kroner: the least a minimum allows."""
+    """``amount * rate``, up to whole kroner: the least a minimum allows."""
     return (amount * rate).quantize(_KRONE, rounding=ROUND_CEILING).quantize(_CENT)
 
 

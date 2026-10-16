@@ -180,6 +180,31 @@ export async function signOut(): Promise<void> {
   }
 }
 
+/**
+ * Sign out and straight back in, to come back to this page with a fresh login.
+ *
+ * For a page that wants proof the person is at the keyboard (deleting a
+ * company): a login in the last few minutes is that proof, whichever way the
+ * person signs in, so there is no password field to show to somebody who
+ * signed up with Google or BankID and never made one.
+ *
+ * Unlike `signOut`, the company *id* survives, the way it does when a session
+ * expires (`forgetActiveCompanyName`): the person comes back to the same
+ * company, not the first one on the list. Its name goes, because whoever signs
+ * in next on this browser may not be them.
+ */
+export async function signInAgain(): Promise<void> {
+  const target = window.location.pathname + window.location.search;
+  try {
+    await logout();
+  } finally {
+    rememberAuth('ut');
+    forgetActiveCompanyName();
+    forgetChrome();
+    window.location.href = `/logg-inn/?neste=${encodeURIComponent(target)}`;
+  }
+}
+
 /** Send a visitor to the login page, remembering where they were headed. */
 export function redirectToLogin(): void {
   const target = window.location.pathname + window.location.search;

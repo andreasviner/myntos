@@ -65,6 +65,59 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       <p class="status" id="settings-status" hidden></p>
     </div>
 
+    {/* Den andre meldingen: et gårdsbruk med annen næring over 30 000 kroner
+        leverer både primærnæringsmeldingen og en alminnelig melding. Hvilken
+        melding en linje går i, avgjøres av kontoen. Hvordan inngående mva på
+        kostnader begge næringene bruker skal deles, er ikke avklart, så
+        Myntos deler ingenting selv; det står her, der kontoene velges. */}
+    <section class="card second" id="second" hidden>
+      <h2 class="card-title">Den andre meldingen</h2>
+      <div id="second-current" hidden>
+        <p id="second-summary"></p>
+        <p class="muted" id="second-accounts"></p>
+      </div>
+      <p class="card-hint" id="second-intro">
+        Et gårdsbruk, skogbruk eller fiske med annen næring ved siden av (brøyting, gårdsbutikk,
+        maskinutleie) leverer to mva-meldinger når salget i den andre næringen er over 30 000
+        kroner i året: primærnæringsmeldingen og en alminnelig melding, hver med sine terminer.
+        Sett det bare opp når Skatteetaten har registrert begge.
+      </p>
+      <p class="card-hint shared-costs">
+        Kontoene avgjør hvilken melding mvaen går i. En kostnad begge næringene bruker, deles ikke
+        av Myntos: hele linjen går i meldingen kontoen hører til, og en konto som ikke står i listen,
+        går i hovedmeldingen. Avgjør selv (gjerne med regnskapsføreren) hvilken melding kostnaden
+        hører til, og før den på den kontoen, eller del den på to linjer på to kontoer.
+      </p>
+      <form id="second-form" novalidate hidden>
+        <label class="field">
+          <span>Terminlengde</span>
+          <select name="period_type" id="second-period-type"></select>
+        </label>
+        <label class="field">
+          <span>Fra og med</span>
+          <input type="date" name="valid_from" id="second-valid-from" required />
+        </label>
+        <label class="field">
+          <span>Kontoer</span>
+          <input type="text" name="accounts" id="second-accounts-input" inputmode="numeric" />
+          <span class="field-hint">
+            Kontonumrene salget og kostnadene i den andre næringen føres på, skilt med komma. Legg
+            dem til under <a href="/kontoplan/">Kontoplan</a> først.
+          </span>
+        </label>
+        <div class="form-actions">
+          <button class="btn btn-primary" type="submit" id="second-save">Lagre den andre meldingen</button>
+          <button class="btn btn-ghost" type="button" id="second-remove" hidden
+            >Fjern den andre meldingen</button
+          >
+        </div>
+      </form>
+      <p class="status" id="second-status" hidden></p>
+    </section>
+
+    {/* Faner bare når det finnes to meldinger: ett valg er ikke et spørsmål. */}
+    <div class="naeringer" id="naeringer" role="group" aria-label="Melding" hidden></div>
+
     <div class="card">
       <div class="table-scroll">
         <table class="data">
@@ -92,6 +145,51 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       </div>
 
       <ul class="blockers" id="blockers" hidden></ul>
+      <p class="status" id="overdue" data-tone="error" hidden>
+        Fristen er passert, og ingenting er sendt for terminen.
+      </p>
+      <p class="card-hint" id="period-shared-costs" hidden>
+        Selskapet leverer to mva-meldinger. En kostnad går i sin helhet i meldingen kontoen hører
+        til; Myntos deler ikke kostnader begge næringene bruker.
+      </p>
+
+      {/* Sendt fra et annet program: en opplysning fra personen, ikke en
+          innsending. En ny melding for terminen ville erstattet den andre hos
+          Skatteetaten, så terminen sperres for kontroll og innsending her til
+          merkingen angres. */}
+      <div class="elsewhere" id="elsewhere" hidden>
+        <p id="elsewhere-text"></p>
+        <p id="elsewhere-compare"></p>
+        <button class="btn btn-ghost btn-small" type="button" id="elsewhere-undo" hidden>Angre</button>
+      </div>
+      <div class="elsewhere" id="elsewhere-mark" hidden>
+        <p id="elsewhere-proposal" hidden></p>
+        <details id="elsewhere-details">
+          <summary>Sendt fra et annet program?</summary>
+          <p class="card-hint">
+            Ble terminen sendt fra programmet du brukte før, merk den her. Da regnes den ikke som
+            forsinket, og Myntos sender ikke en ny melding som ville erstattet den.
+          </p>
+          <form id="elsewhere-form" novalidate>
+            <label class="field">
+              <span>Sendt dato</span>
+              <input type="date" name="filed_on" required />
+            </label>
+            <label class="field">
+              <span>Beløp <span class="muted">(valgfritt)</span></span>
+              <input type="text" name="amount" inputmode="decimal" />
+              <span class="field-hint">
+                Det det andre programmet sendte: positivt å betale, negativt til gode.
+              </span>
+            </label>
+            <input type="hidden" name="voucher_id" />
+            <button class="btn btn-primary" type="submit" id="elsewhere-submit"
+              >Merk som sendt fra et annet program</button
+            >
+          </form>
+        </details>
+      </div>
+      <p class="status" id="elsewhere-status" hidden></p>
       <p class="status" id="changed" data-tone="error" hidden>
         Regnskapet for terminen er endret etter at meldingen ble sendt. Tallene under er slik de er
         nå. Send en ny melding for terminen, så erstatter den den forrige.
@@ -226,6 +324,38 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     flex-basis: 100%;
     margin: 0;
   }
+  .second {
+    margin-bottom: 1.5rem;
+  }
+  .second form {
+    display: grid;
+    gap: 0.75rem;
+    max-width: 30rem;
+  }
+  .form-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .naeringer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+  .naeringer :global(button[aria-pressed='true']) {
+    border-color: var(--accent);
+    font-weight: 700;
+  }
+  .elsewhere {
+    margin: 0.5rem 0 1rem;
+    max-width: 40rem;
+  }
+  .elsewhere form {
+    display: grid;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+  }
   .period {
     margin-top: 1.5rem;
   }
@@ -297,7 +427,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     padding-left: 1.2rem;
     margin: 0.5rem 0;
   }
-  .findings li {
+  /* Funnene, terminene og innsendingene lages av skriptet, så reglene for
+     dem henges på listene og tabellen i malen og når radene med :global(). */
+  .findings :global(li) {
     margin-bottom: 0.35rem;
   }
   #history {
@@ -310,36 +442,38 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     display: grid;
     gap: 0.75rem;
   }
-  .filings > li {
+  .filings > :global(li) {
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-small);
     padding: 0.75rem 1rem;
   }
-  .filing-head {
+  .filings :global(.filing-head) {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem 1rem;
     align-items: baseline;
   }
-  .filing-meta {
+  .filings :global(.filing-meta) {
     margin: 0.35rem 0 0;
     font-size: 0.9rem;
   }
-  .filing-links {
+  .filings :global(.filing-links) {
     display: flex;
     flex-wrap: wrap;
     gap: 0.4rem 1rem;
     margin-top: 0.5rem;
   }
-  .badge[data-tone='ok'] {
+  #periods :global(.badge[data-tone='ok']),
+  .filings :global(.badge[data-tone='ok']) {
     background: var(--accent-soft);
     color: var(--positive);
   }
-  .badge[data-tone='error'] {
+  #periods :global(.badge[data-tone='error']),
+  .filings :global(.badge[data-tone='error']) {
     background: var(--danger-bg);
     color: var(--negative);
   }
-  tr[data-open='true'] td {
+  #periods :global(tr[data-open='true'] td) {
     background: var(--surface-2);
   }
 </style>
@@ -353,15 +487,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     getMvaOverview,
     getMvaPeriod,
     governmentLoginStartUrl,
+    markMvaFiledElsewhere,
     mvaDocumentUrl,
     mvaFiledXmlUrl,
     mvaPeriodXmlUrl,
+    removeSecondMvaMelding,
+    setSecondMvaMelding,
     submitMvaFiling,
     updateMvaSettings,
+    withdrawMvaFiledElsewhere,
     type Company,
     type GovernmentLoginStatus,
     type MvaFiling,
     type MvaFilingStatus,
+    type MvaNaering,
     type MvaOverview,
     type MvaPeriod,
     type MvaPeriodRow,
@@ -369,7 +508,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   } from '../lib/api';
   import { currentCompany, loadCompanies } from '../lib/company';
   import { el, setStatus, show } from '../lib/dom';
-  import { isoDate, kroner, orgnummer } from '../lib/format';
+  import { isoDate, kroner, orgnummer, todayIso } from '../lib/format';
   import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
 
   const pageStatus = el<HTMLParagraphElement>('#page-status');
@@ -382,11 +521,19 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   const checkButton = el<HTMLButtonElement>('#check');
   const confirmBox = el<HTMLInputElement>('#confirm');
   const submitButton = el<HTMLButtonElement>('#submit');
+  const secondForm = el<HTMLFormElement>('#second-form');
+  const secondStatus = el<HTMLParagraphElement>('#second-status');
+  const elsewhereForm = el<HTMLFormElement>('#elsewhere-form');
+  const elsewhereStatus = el<HTMLParagraphElement>('#elsewhere-status');
 
   let company: Company;
   let year = new Date().getFullYear();
   let open: { year: number; termin: number } | null = null;
   let period: MvaPeriod | null = null;
+  // Hvilken melding som vises: null er hovedmeldingen, som er den eneste
+  // nesten alle selskaper har. Ellers kategorien til den andre.
+  let naering: string | null = null;
+  let naeringer: MvaNaering[] = [];
   let government: GovernmentLoginStatus = {
     available: false,
     logged_in: false,
@@ -409,10 +556,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     sendt: 'Sendt, venter på kvittering',
     mottatt: 'Sendt og mottatt',
     feilet: 'Stoppet underveis',
+    annet_program: 'Sendt fra et annet program',
+    opphevet: 'Merking angret',
   };
   const STATUS_TONE: Partial<Record<MvaFilingStatus, string>> = {
     mottatt: 'ok',
     sendt: 'ok',
+    annet_program: 'ok',
     avvist: 'error',
     feilet: 'error',
   };
@@ -445,6 +595,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     span.textContent = text;
     if (tone !== undefined) span.dataset.tone = tone;
     return span;
+  }
+
+  /** `#2026-3` for hovedmeldingen, `#alminnelig-2026-3` for den andre. */
+  function hashFor(termin: number, chosenYear: number = year): string {
+    return `#${naering === null ? '' : `${naering}-`}${chosenYear}-${termin}`;
   }
 
   function dateTime(value: string): string {
@@ -499,28 +654,142 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       });
   }
 
+  function renderSecond(settings: MvaSettings): void {
+    const second = settings.second;
+    const manage = mayManage();
+    // Oppsettet tilbys der det hører hjemme: et selskap som leverer
+    // primærnæringsmeldingen, eller et som allerede har to.
+    show(el('#second'), second !== null || (manage && settings.category === 'primaernaering'));
+    show(el('#second-current'), second !== null);
+    show(el('#second-intro'), second === null);
+    show(secondForm, manage);
+    show(el('#second-remove'), manage && second !== null);
+    const periodLabel = (value: string): string =>
+      settings.period_types.find((choice) => choice.value === value)?.label ?? value;
+    fillSelect(
+      el<HTMLSelectElement>('#second-period-type'),
+      settings.period_types,
+      second?.period_type ?? 'toMaaneder',
+    );
+    if (second !== null) {
+      el('#second-summary').textContent =
+        `${second.label}, ${periodLabel(second.period_type).toLowerCase()}, fra og med ${isoDate(second.valid_from)}.`;
+      el('#second-accounts').textContent =
+        second.accounts.length === 0
+          ? 'Ingen kontoer ennå: alt går i hovedmeldingen til kontoene er valgt.'
+          : `Kontoer: ${second.accounts.map((account) => `${account.account_number} ${account.name}`).join(', ')}.`;
+      el<HTMLInputElement>('#second-valid-from').value = second.valid_from;
+      el<HTMLInputElement>('#second-accounts-input').value = second.accounts
+        .map((account) => account.account_number)
+        .join(', ');
+    } else {
+      el<HTMLInputElement>('#second-valid-from').value = `${year}-01-01`;
+    }
+  }
+
+  secondForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(secondForm);
+    const accounts = String(data.get('accounts') ?? '')
+      .split(/[\s,;]+/)
+      .filter((value) => value !== '');
+    const save = el<HTMLButtonElement>('#second-save');
+    save.disabled = true;
+    setStatus(secondStatus, 'Lagrer …', 'ok');
+    void setSecondMvaMelding(company.id, {
+      period_type: String(data.get('period_type') ?? ''),
+      valid_from: String(data.get('valid_from') ?? ''),
+      accounts,
+    })
+      .then(async () => {
+        setStatus(secondStatus, 'Lagret.', 'ok');
+        await refresh();
+      })
+      .catch((error: unknown) => {
+        setStatus(secondStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke lagret.');
+      })
+      .finally(() => {
+        save.disabled = false;
+      });
+  });
+
+  el('#second-remove').addEventListener('click', () => {
+    const remove = el<HTMLButtonElement>('#second-remove');
+    remove.disabled = true;
+    void removeSecondMvaMelding(company.id)
+      .then(async () => {
+        setStatus(secondStatus, 'Fjernet. Alt går i hovedmeldingen igjen.', 'ok');
+        naering = null;
+        open = null;
+        history.replaceState(null, '', '/mva/');
+        await refresh();
+      })
+      .catch((error: unknown) => {
+        setStatus(secondStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke fjernet den.');
+      })
+      .finally(() => {
+        remove.disabled = false;
+      });
+  });
+
+  function renderNaeringer(): void {
+    const tabs = el('#naeringer');
+    tabs.replaceChildren(
+      ...naeringer.map((choice) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-ghost btn-small';
+        button.textContent = choice.label;
+        const value = choice.is_main ? null : choice.category;
+        button.setAttribute('aria-pressed', String(value === naering));
+        button.addEventListener('click', () => {
+          if (value === naering) return;
+          naering = value;
+          open = null;
+          history.replaceState(null, '', '/mva/');
+          void refresh().catch((error: unknown) => {
+            setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet meldingen.');
+          });
+        });
+        return button;
+      }),
+    );
+    show(tabs, naeringer.length > 1);
+  }
+
   periodTypeSelect.addEventListener('change', () => saveSettings({ period_type: periodTypeSelect.value }));
   categorySelect.addEventListener('change', () => saveSettings({ category: categorySelect.value }));
 
   // --- Terminene ---------------------------------------------------------------
 
   function statusOf(row: MvaPeriodRow): HTMLElement {
+    const wrap = document.createElement('span');
     if (row.status !== null) {
-      const node = badge(STATUS_TEXT[row.status], STATUS_TONE[row.status]);
-      if (row.changed_since_filed) {
-        const wrap = document.createElement('span');
-        wrap.append(node, ' ', badge('Endret etter innsending', 'error'));
-        return wrap;
+      wrap.append(badge(STATUS_TEXT[row.status], STATUS_TONE[row.status]));
+      if (row.changed_since_filed) wrap.append(' ', badge('Endret etter innsending', 'error'));
+      if (row.filed_elsewhere && row.elsewhere_difference !== null && !agrees(row.elsewhere_difference)) {
+        wrap.append(' ', badge('Avvik mot Myntos', 'error'));
       }
-      return node;
+    } else {
+      wrap.append(badge(row.is_over ? 'Ikke sendt' : 'Pågår'));
     }
-    return badge(row.is_over ? 'Ikke sendt' : 'Pågår');
+    if (row.is_overdue) wrap.append(' ', badge('Over fristen', 'error'));
+    if (row.elsewhere_proposal !== null) wrap.append(' ', badge('Ser ut til å være sendt fra et annet program'));
+    return wrap;
+  }
+
+  /** Under en krone regnes som likt: noen programmer runder oppgjøret til hele kroner. */
+  function agrees(difference: string): boolean {
+    return Math.abs(Number(difference)) < 1;
   }
 
   function renderOverview(overview: MvaOverview): void {
     el('#year').textContent = String(overview.year);
     show(el('#not-registered'), !overview.vat_registered);
     renderSettings(overview.settings);
+    renderSecond(overview.settings);
+    naeringer = overview.naeringer;
+    renderNaeringer();
 
     const body = el<HTMLTableSectionElement>('#periods');
     body.replaceChildren();
@@ -538,7 +807,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       const action = document.createElement('td');
       const link = document.createElement('a');
       link.className = 'btn-link';
-      link.href = `#${row.year}-${row.termin}`;
+      link.href = hashFor(row.termin, row.year);
       link.textContent = 'Se meldingen';
       action.append(link);
       tr.append(cell(row.label), cell(isoDate(row.deadline)), amount, status, action);
@@ -598,8 +867,103 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     }
   }
 
+  function renderElsewhere(current: MvaPeriod): void {
+    const marked = current.filed_elsewhere;
+    show(el('#elsewhere'), marked !== null);
+    show(el('#overdue'), current.is_overdue);
+    show(el('#period-shared-costs'), naeringer.length > 1);
+    if (marked !== null && marked.elsewhere !== null) {
+      const detail = marked.elsewhere;
+      el('#elsewhere-text').textContent =
+        `Merket som sendt fra et annet program ${isoDate(detail.filed_on)}` +
+        (detail.amount === null ? '.' : `, ${unsigned(detail.amount)} ${owes(detail.amount) ? 'å betale' : 'til gode'}.`) +
+        ' Myntos kontrollerer og sender ikke terminen mens merkingen står.';
+      el('#elsewhere-compare').textContent =
+        detail.difference === null
+          ? 'Uten beløp kan Myntos ikke sammenligne med det det andre programmet sendte.'
+          : detail.agrees
+            ? 'Myntos kommer til det samme for terminen.'
+            : `Myntos kommer til ${unsigned(current.fastsatt_merverdiavgift)} ` +
+              `${owes(current.fastsatt_merverdiavgift) ? 'å betale' : 'til gode'}, ` +
+              `${unsigned(detail.difference)} ${owes(detail.difference) ? 'mer' : 'mindre'} enn det som ble sendt. ` +
+              'Se etter bilag som mangler eller er ført ulikt i de to programmene.';
+      const undo = el<HTMLButtonElement>('#elsewhere-undo');
+      undo.dataset.filing = String(marked.id);
+      show(undo, mayWrite());
+    }
+    const filed = current.filings.some((filing) => filing.status === 'sendt' || filing.status === 'mottatt');
+    const offerMark =
+      marked === null && !filed && mayWrite() && !current.blockers.some((b) => b.code === 'period_not_over');
+    show(el('#elsewhere-mark'), offerMark);
+    if (!offerMark) return;
+    const proposal = current.elsewhere_proposal;
+    const proposalText = el('#elsewhere-proposal');
+    show(proposalText, proposal !== null);
+    const fields = elsewhereForm.elements;
+    const today = todayIso();
+    (fields.namedItem('filed_on') as HTMLInputElement).value = today < current.deadline ? today : current.deadline;
+    (fields.namedItem('amount') as HTMLInputElement).value = proposal?.amount ?? '';
+    (fields.namedItem('voucher_id') as HTMLInputElement).value = proposal === null ? '' : String(proposal.voucher_id);
+    if (proposal !== null) {
+      proposalText.textContent =
+        `Det forrige programmet førte et mva-oppgjør for terminen (bilag ${proposal.voucher_no}, ` +
+        `${isoDate(proposal.date)}): utgående ${kroner(proposal.output_vat)}, inngående ` +
+        `${kroner(proposal.input_vat)}, ${unsigned(proposal.amount)} ${owes(proposal.amount) ? 'å betale' : 'til gode'}. ` +
+        (proposal.matches
+          ? 'Det stemmer med Myntos. Ble terminen sendt derfra, merk den.'
+          : 'Det stemmer ikke helt med Myntos. Ble terminen sendt derfra, merk den, og se på forskjellen.');
+      el<HTMLDetailsElement>('#elsewhere-details').open = true;
+    }
+  }
+
+  elsewhereForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (period === null) return;
+    const current = period;
+    const data = new FormData(elsewhereForm);
+    const amount = String(data.get('amount') ?? '').trim().replace(/\s/g, '').replace(',', '.');
+    const voucher = String(data.get('voucher_id') ?? '');
+    const button = el<HTMLButtonElement>('#elsewhere-submit');
+    button.disabled = true;
+    setStatus(elsewhereStatus, 'Lagrer …', 'ok');
+    void markMvaFiledElsewhere(company.id, {
+      aar: current.year,
+      termin: current.termin,
+      naering,
+      filed_on: String(data.get('filed_on') ?? ''),
+      amount: amount === '' ? null : amount,
+      voucher_id: voucher === '' ? null : Number(voucher),
+    })
+      .then(async () => {
+        setStatus(elsewhereStatus, 'Terminen er merket som sendt fra et annet program.', 'ok');
+        await refresh();
+      })
+      .catch((error: unknown) => {
+        setStatus(elsewhereStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke merket terminen.');
+      })
+      .finally(() => {
+        button.disabled = false;
+      });
+  });
+
+  el('#elsewhere-undo').addEventListener('click', () => {
+    const undo = el<HTMLButtonElement>('#elsewhere-undo');
+    undo.disabled = true;
+    void withdrawMvaFiledElsewhere(company.id, Number(undo.dataset.filing))
+      .then(async () => {
+        setStatus(elsewhereStatus, 'Merkingen er angret. Terminen kan sendes fra Myntos.', 'ok');
+        await refresh();
+      })
+      .catch((error: unknown) => {
+        setStatus(elsewhereStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke angret.');
+      })
+      .finally(() => {
+        undo.disabled = false;
+      });
+  });
+
   function renderActions(current: MvaPeriod): void {
-    const here = `/mva/#${current.year}-${current.termin}`;
+    const here = `/mva/${hashFor(current.termin, current.year)}`;
     const canAct = mayWrite() && current.blockers.length === 0;
     // Begge må være på plass: ID-porten for å vite hvem som sender, og
     // Skatteetatens app for å ha noe å sende til.
@@ -679,7 +1043,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
       const meta = document.createElement('p');
       meta.className = 'filing-meta muted';
-      const parts = [`Kontrollert ${dateTime(filing.validated_at)}`];
+      const marked = filing.elsewhere !== null;
+      const parts = [
+        marked && filing.elsewhere !== null
+          ? `Sendt fra et annet program ${isoDate(filing.elsewhere.filed_on)}, merket ${dateTime(filing.validated_at)}` +
+            (filing.elsewhere.withdrawn_at !== null ? `, angret ${dateTime(filing.elsewhere.withdrawn_at)}` : '')
+          : `Kontrollert ${dateTime(filing.validated_at)}`,
+      ];
       if (filing.submitted_at !== null) {
         parts.push(
           `sendt ${dateTime(filing.submitted_at)}` +
@@ -711,11 +1081,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
       const links = document.createElement('div');
       links.className = 'filing-links';
-      const xml = document.createElement('a');
-      xml.className = 'btn-link';
-      xml.href = mvaFiledXmlUrl(company.id, filing.id);
-      xml.textContent = 'Meldingen (XML)';
-      links.append(xml);
+      // En merket termin har ingen melding fra Myntos å laste ned.
+      if (!marked) {
+        const xml = document.createElement('a');
+        xml.className = 'btn-link';
+        xml.href = mvaFiledXmlUrl(company.id, filing.id);
+        xml.textContent = 'Meldingen (XML)';
+        links.append(xml);
+      }
       for (const document_ of filing.documents) {
         links.append(documentLink(filing, document_.data_type, document_.filename));
       }
@@ -738,7 +1111,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         } else if (government.available) {
           const login = document.createElement('a');
           login.className = 'btn-link';
-          login.href = governmentLoginStartUrl(`/mva/#${filing.year}-${filing.termin}`);
+          login.href = governmentLoginStartUrl(`/mva/${hashFor(filing.termin, filing.year)}`);
           login.textContent = 'Logg inn med ID-porten for å hente kvitteringen';
           links.append(login);
         }
@@ -754,8 +1127,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     el('#period-title').textContent = current.label;
     el('#period-dates').textContent =
       `${isoDate(current.start)} til ${isoDate(current.end)}. Frist for melding og betaling ${isoDate(current.deadline)}.`;
-    el<HTMLAnchorElement>('#period-xml').href = mvaPeriodXmlUrl(company.id, current.year, current.termin);
+    el<HTMLAnchorElement>('#period-xml').href = mvaPeriodXmlUrl(company.id, current.year, current.termin, naering);
     renderBlockers(current);
+    renderElsewhere(current);
     renderLines(current);
     renderActions(current);
     renderReview(current);
@@ -767,11 +1141,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     open = { year: chosenYear, termin };
     setStatus(actionStatus, '');
     setStatus(submitStatus, '');
+    setStatus(elsewhereStatus, '');
     try {
-      renderPeriod(await getMvaPeriod(company.id, chosenYear, termin));
+      renderPeriod(await getMvaPeriod(company.id, chosenYear, termin, naering));
       for (const row of document.querySelectorAll<HTMLTableRowElement>('#periods tr')) {
         const link = row.querySelector<HTMLAnchorElement>('a');
-        row.dataset.open = String(link?.getAttribute('href') === `#${chosenYear}-${termin}`);
+        row.dataset.open = String(link?.getAttribute('href') === hashFor(termin, chosenYear));
       }
     } catch (error: unknown) {
       setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet terminen.');
@@ -787,7 +1162,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     const merknad = String(new FormData(checkForm).get('merknad') ?? '').trim();
     checkButton.disabled = true;
     setStatus(actionStatus, 'Sender meldingen til kontroll …', 'ok');
-    void checkMvaPeriod(company.id, current.year, current.termin, merknad === '' ? null : merknad)
+    void checkMvaPeriod(company.id, current.year, current.termin, merknad === '' ? null : merknad, naering)
       .then(async () => {
         setStatus(actionStatus, '');
         await openPeriod(current.year, current.termin);
@@ -837,13 +1212,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
   // --- År og adresse -----------------------------------------------------------
 
-  function fromHash(): { year: number; termin: number } | null {
-    const match = /^#(\d{4})-(\d{1,2})$/.exec(window.location.hash);
-    return match === null ? null : { year: Number(match[1]), termin: Number(match[2]) };
+  /** `#2026-3` er hovedmeldingen, `#alminnelig-2026-3` den andre meldingen. */
+  function fromHash(): { year: number; termin: number; naering: string | null } | null {
+    const match = /^#(?:([a-z]+)-)?(\d{4})-(\d{1,2})$/.exec(window.location.hash);
+    return match === null
+      ? null
+      : { naering: match[1] ?? null, year: Number(match[2]), termin: Number(match[3]) };
   }
 
   async function refresh(): Promise<void> {
-    renderOverview(await getMvaOverview(company.id, year));
+    renderOverview(await getMvaOverview(company.id, year, naering));
     if (open !== null && open.year === year) await openPeriod(open.year, open.termin);
     else show(el('#period'), false);
   }
@@ -863,9 +1241,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   window.addEventListener('hashchange', () => {
     const wanted = fromHash();
     if (wanted === null) return;
-    if (wanted.year !== year) {
+    if (wanted.year !== year || wanted.naering !== naering) {
       year = wanted.year;
-      open = wanted;
+      naering = wanted.naering;
+      open = { year: wanted.year, termin: wanted.termin };
       void refresh();
       return;
     }
@@ -895,7 +1274,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       const wanted = fromHash();
       if (wanted !== null) {
         year = wanted.year;
-        open = wanted;
+        naering = wanted.naering;
+        open = { year: wanted.year, termin: wanted.termin };
       }
       await refresh();
       el('#loading').hidden = true;

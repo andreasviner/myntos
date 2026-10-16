@@ -441,7 +441,12 @@ def test_a_key_can_ask_its_person_to_file_and_never_file(client: TestClient) -> 
     assert asked.status_code == 200, asked.text
     body = asked.json()
     assert (body["kind"], body["status"]) == ("filing", "pending")
-    assert body["filing"] == {"type": "mva_melding", "aar": THIS_YEAR - 1, "termin": 1}
+    assert body["filing"] == {
+        "type": "mva_melding",
+        "aar": THIS_YEAR - 1,
+        "termin": 1,
+        "naering": None,
+    }
 
     again = client.post(
         f"/api/v1/companies/{books['id']}/godkjenninger/innsending",

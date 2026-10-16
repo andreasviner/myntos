@@ -1,6 +1,6 @@
 ---
 title: Find the pages that are not in the menu
-description: Where a person finds the Myntos pages that are not in the top menu (which has only Oversikt, Betaling, Faktura and KI): the VAT return, SAF-T, bank reconciliation, opening balance, year-end, customers and suppliers, the chart of accounts, company settings and their own account. Use when someone asks where the MVA-melding, SAF-T, bank, kontoplan, parter, årsavslutning or settings are in Myntos.
+description: Where a person finds the Myntos pages that are not in the top menu (which has only Oversikt, Betaling, Faktura and KI): the VAT return, SAF-T, bank reconciliation, the accounts for every year, opening balance, year-end, customers and suppliers, the chart of accounts, company settings and their own account. Use when someone asks where the MVA-melding, SAF-T, bank, kontoplan, parter, årsavslutning or settings are in Myntos.
 pages: /
 skill: myntos-selskap
 ---
@@ -35,9 +35,12 @@ Find the page in the table and follow the path.
 | VAT adjustments | From the VAT return page | `https://myntos.no/mva-justeringer/` |
 | SAF-T, the file Skatteetaten can ask for | «Oversikt» → «SAF-T» in the note at the bottom | `https://myntos.no/saft/` |
 | Bank reconciliation | «Oversikt» → «Bankavstemming» in the note at the bottom | `https://myntos.no/bank/` |
+| The result and balance sheet for every year («Regnskap») | «Oversikt» → «Regnskapet år for år» at the top right, or in the note at the bottom | `https://myntos.no/regnskap/` |
 | Every voucher in the books, and an account's movements («Bilag») | «Oversikt» → «Se alle bilag →» under «Siste bevegelser» | `https://myntos.no/bilag/` |
 | The books from another program's SAF-T files | «Oversikt» → «Hent regnskapet» on the card shown while the books are empty, or «Hent regnskapet fra et annet program» in the note at the bottom | `https://myntos.no/tidligere-program/` |
 | Opening balance typed in or from a saldobalanse | «Oversikt» → «Inngående balanse» in the note at the bottom | `https://myntos.no/inngaende-balanse/` |
+| The result per avdeling, prosjekt or driftsgren («Avdelinger») | «Oversikt» → «Avdelinger» in the note at the bottom, or «Kontoplan» → «Avdelinger» in the text at the top | `https://myntos.no/avdelinger/` |
+| Fixed assets and the year's depreciation («Anlegg og avskrivning») | «Oversikt» → «Anlegg og avskrivning» in the note at the bottom, or «Årsavslutning» → «Anlegg og avskrivning» in the text at the top | `https://myntos.no/anlegg/` |
 | Closing a year | «Oversikt» → «Årsavslutning» in the note at the bottom | `https://myntos.no/arsavslutning/` |
 | Customers and suppliers | «Faktura» → «Kunder og leverandører», or «Betaling» → «Se motpartene dine» under «Motpart» | `https://myntos.no/parter/` |
 | The chart of accounts («kontoplanen») | The company page → «kontoplanen» under the company's details | `https://myntos.no/kontoplan/` |

@@ -1,0 +1,798 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Avdelinger | Myntos"
+  description="Resultatet per avdeling, prosjekt eller driftsgren, og hvordan de settes opp."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Avdelinger</p>
+      {/* Selskapet er overskriften: avdelingene er ett regnskaps, og de finnes
+          ikke i de andre selskapene på kontoen. */}
+      <h1 data-session-company></h1>
+      <p class="muted orgnr" id="orgnr"></p>
+    </div>
+    <div class="head-actions year-nav" role="group" aria-label="Regnskapsår">
+      <button type="button" class="btn btn-ghost btn-small" id="year-prev" aria-label="Året før"
+        >‹</button
+      >
+      <span class="year" id="year"></span>
+      <button type="button" class="btn btn-ghost btn-small" id="year-next" aria-label="Året etter"
+        >›</button
+      >
+    </div>
+  </header>
+
+  <p class="lead">
+    Kontoen sier hva et beløp var. En avdeling, et prosjekt eller en driftsgren sier hvilken del av
+    virksomheten det hører til, så du kan se hva hver del tjente og kostet. Du velger den når du
+    fører en betaling, og den står på bilaget for godt.
+  </p>
+
+  <p class="status" id="page-status" hidden></p>
+  <div class="empty" id="loading">Henter …</div>
+
+  <div id="content" hidden>
+    {/* Rapporten først: den er det man kommer hit for de fleste gangene. */}
+    <section class="card" id="report-card" hidden>
+      <div class="report-head">
+        <h2 class="card-title" id="report-title">Resultat</h2>
+        <label class="field compact" id="report-pick-field" hidden>
+          <span>Dimensjon</span>
+          <select id="report-pick"></select>
+        </label>
+      </div>
+      <p class="status" id="report-status" hidden></p>
+      <div class="table-scroll">
+        <table class="data">
+          <thead>
+            <tr>
+              <th>Verdi</th>
+              <th class="num">Inntekter</th>
+              <th class="num">Kostnader</th>
+              <th class="num">Resultat</th>
+            </tr>
+          </thead>
+          <tbody id="report-rows"></tbody>
+        </table>
+      </div>
+      <p class="card-hint" id="report-partly" hidden></p>
+      <details class="months">
+        <summary>Resultat per måned</summary>
+        <div class="table-scroll">
+          <table class="data">
+            <thead id="months-head"></thead>
+            <tbody id="months-rows"></tbody>
+          </table>
+        </div>
+      </details>
+      <p class="card-hint">
+        Inntekter og kostnader uten mva. Inngående balanse og årsavslutningen er holdt utenfor; alt
+        annet som er ført i året er med, også bilag hentet fra et annet program og tilbakeføringer.
+      </p>
+    </section>
+
+    <section class="card" id="empty-card" hidden>
+      <h2 class="card-title">Ingen avdelinger, prosjekter eller driftsgrener ennå</h2>
+      <p class="card-hint" id="empty-hint"></p>
+    </section>
+
+    {/*
+      NIBIOs lister bare for gårdsbruk: landbruk er et tillegg på det alle har,
+      og et selskap uten tillegget skal ikke se driftsgrener i det hele tatt.
+    */}
+    <section class="card" id="nibio-card" hidden>
+      <h2 class="card-title">Driftsgrener fra NIBIO</h2>
+      <p class="card-hint">
+        Kodene fra Landbrukets kodesystem, som gårdsregnskap og landbruksrådgivere bruker. Kryss av
+        for det gården driver med. Navnene kan endres etterpå.
+      </p>
+      <div id="nibio-sets"></div>
+      <button type="button" class="btn btn-primary" id="nibio-add">Legg til valgte</button>
+      <p class="status" id="nibio-status" hidden></p>
+    </section>
+
+    <section class="card" id="setup-card" hidden>
+      <h2 class="card-title">Sett opp</h2>
+      <p class="card-hint">
+        Koden står i SAF-T-filen og kan ikke endres. En verdi det er ført på kan ikke slettes, bare
+        deaktiveres: da tilbys den ikke i nye føringer, men står på bilagene som har den.
+      </p>
+      <p class="status" id="setup-status" hidden></p>
+      <div id="setup-list"></div>
+
+      <form id="new-form" class="new-form" novalidate>
+        <h3>Ny dimensjon</h3>
+        <div class="field-row">
+          <label class="field">
+            <span>Hva vil du sortere etter?</span>
+            <select name="kind" id="new-kind"></select>
+          </label>
+          <label class="field narrow" id="new-code-field" hidden>
+            <span>Kode</span>
+            <input type="text" name="code" maxlength="9" placeholder="KUNDETYPE" />
+            <span class="field-hint">Inntil ni bokstaver eller tall.</span>
+          </label>
+          <label class="field" id="new-name-field" hidden>
+            <span>Navn</span>
+            <input type="text" name="description" maxlength="255" />
+          </label>
+        </div>
+        <button class="btn btn-primary" type="submit" id="new-submit">Legg til dimensjon</button>
+        <p class="status" id="new-status" hidden></p>
+      </form>
+    </section>
+
+    <p class="card-hint reader-note" id="reader-note" hidden>
+      Bare en administrator eller eier kan sette opp avdelinger, prosjekter og driftsgrener.
+    </p>
+  </div>
+</BaseLayout>
+
+<style>
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .orgnr {
+    margin: 0.2rem 0 0;
+  }
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--muted);
+    margin: 0 0 0.4rem;
+  }
+  .year-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .year {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    min-width: 3.5rem;
+    text-align: center;
+  }
+  .report-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+  }
+  .compact {
+    margin: 0;
+    max-width: 18rem;
+  }
+  .narrow {
+    flex: 0 0 10rem;
+  }
+  #content > .card + .card {
+    margin-top: 1rem;
+  }
+  .months {
+    margin-top: 0.75rem;
+  }
+  .months summary {
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .new-form {
+    margin-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    padding-top: 1rem;
+  }
+  .new-form h3 {
+    margin: 0 0 0.5rem;
+  }
+  .reader-note {
+    margin-top: 1rem;
+  }
+  /* Det skriptet bygger får ikke sidens stempel, så reglene ankres i markupen. */
+  #report-rows :global(tr[data-kind='sum'] td) {
+    font-weight: 700;
+  }
+  #report-rows :global(tr[data-kind='uten'] td),
+  #months-rows :global(tr[data-kind='uten'] td) {
+    color: var(--muted);
+  }
+  #setup-list :global(.dimension) {
+    margin-top: 1.25rem;
+  }
+  #setup-list :global(.dimension-head) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 0.8rem;
+  }
+  #setup-list :global(.dimension-head h3) {
+    margin: 0;
+  }
+  #setup-list :global(tr[data-active='false'] td) {
+    color: var(--muted);
+  }
+  #setup-list :global(.row-edit),
+  #setup-list :global(.add-value) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: center;
+  }
+  #setup-list :global(.add-value) {
+    margin-top: 0.5rem;
+  }
+  #setup-list :global(.add-value input[name='value']) {
+    max-width: 8rem;
+  }
+  #nibio-sets :global(fieldset) {
+    border: 0;
+    padding: 0;
+    margin: 0 0 1rem;
+  }
+  #nibio-sets :global(legend) {
+    font-weight: 700;
+    margin-bottom: 0.4rem;
+  }
+  #nibio-sets :global(.nibio-group) {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin: 0.6rem 0 0.2rem;
+  }
+  #nibio-sets :global(label) {
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+    padding: 0.1rem 0;
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    addSuggestedDimensions,
+    createDimension,
+    createDimensionValue,
+    deleteDimension,
+    deleteDimensionValue,
+    getDimensionResult,
+    getDimensionSuggestions,
+    listDimensions,
+    updateDimension,
+    updateDimensionValue,
+    type Company,
+    type Dimension,
+    type DimensionFigures,
+    type DimensionResultRow,
+    type DimensionSuggestions,
+    type DimensionValue,
+  } from '../lib/api';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import { kroner, orgnummer } from '../lib/format';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+
+  const MONTHS = ['jan', 'feb', 'mar', 'apr', 'mai', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'des'];
+
+  // Det Myntos selv kaller de vanlige dimensjonene. Driftsgren bare for
+  // gårdsbruk; de andre er for alle.
+  const KINDS: { code: string; name: string; farm: boolean }[] = [
+    { code: 'AVDELING', name: 'Avdeling', farm: false },
+    { code: 'PROSJEKT', name: 'Prosjekt', farm: false },
+    { code: 'DRIFTSGR', name: 'Driftsgren', farm: true },
+  ];
+  const OWN = 'EGEN';
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const reportStatus = el<HTMLParagraphElement>('#report-status');
+  const setupStatus = el<HTMLParagraphElement>('#setup-status');
+  const reportPick = el<HTMLSelectElement>('#report-pick');
+  const newForm = el<HTMLFormElement>('#new-form');
+  const newKind = el<HTMLSelectElement>('#new-kind');
+
+  let company: Company;
+  let year = new Date().getFullYear();
+  let dimensions: Dimension[] = [];
+  let suggestions: DimensionSuggestions | null = null;
+  let chosenId: number | null = null;
+  // Den ene raden som er åpen for nytt navn: en dimensjon eller en verdi.
+  let editing: { what: 'dimension' | 'value'; id: number } | null = null;
+
+  // Spurt der svaret brukes, aldri tatt vare på: selskapet på skjermen kan
+  // bytte, og en tillatelse kopiert ut før det er en tillatelse for et annet.
+  const mayChange = (): boolean => canInCompany(company, 'ledger:chart');
+  const isFarm = (): boolean => suggestions?.landbruk === true;
+
+  function button(label: string, onClick: () => void, primary = false): HTMLButtonElement {
+    const node = document.createElement('button');
+    node.type = 'button';
+    node.className = `btn ${primary ? 'btn-primary' : 'btn-ghost'} btn-small`;
+    node.textContent = label;
+    node.addEventListener('click', onClick);
+    return node;
+  }
+
+  function cell(text: string, numeric = false): HTMLTableCellElement {
+    const node = document.createElement('td');
+    node.textContent = text;
+    if (numeric) node.className = 'num';
+    return node;
+  }
+
+  // --- Rapporten -----------------------------------------------------------
+
+  function label(row: DimensionResultRow): string {
+    return row.value === null ? row.description : `${row.value} ${row.description}`;
+  }
+
+  function figureCells(figures: DimensionFigures): HTMLTableCellElement[] {
+    return [cell(kroner(figures.income), true), cell(kroner(figures.costs), true), cell(kroner(figures.result), true)];
+  }
+
+  async function drawReport(): Promise<void> {
+    const dimension = dimensions.find((item) => item.id === chosenId);
+    if (dimension === undefined) return;
+    el('#report-title').textContent = `Resultat per ${dimension.description.toLowerCase()}`;
+    setStatus(reportStatus, '');
+    const body = el<HTMLTableSectionElement>('#report-rows');
+    try {
+      const found = await getDimensionResult(company.id, dimension.id, year);
+      body.replaceChildren();
+      const rows: [DimensionResultRow, string][] = [
+        ...found.rows.map((row): [DimensionResultRow, string] => [row, 'verdi']),
+        [found.unallocated, 'uten'],
+        [found.total, 'sum'],
+      ];
+      for (const [row, kind] of rows) {
+        const line = document.createElement('tr');
+        line.dataset.kind = kind;
+        const name = label(row) + (row.is_active ? '' : ' (deaktivert)');
+        line.append(cell(name), ...figureCells(row.total));
+        body.append(line);
+      }
+      const partly = el('#report-partly');
+      partly.textContent =
+        found.partly_allocated > 0
+          ? `${found.partly_allocated} linjer fra et annet program var bare delvis fordelt. Resten står under «${found.unallocated.description}».`
+          : '';
+      show(partly, found.partly_allocated > 0);
+
+      const head = el<HTMLTableSectionElement>('#months-head');
+      const headRow = document.createElement('tr');
+      const first = document.createElement('th');
+      first.textContent = 'Resultat';
+      headRow.append(first);
+      for (const month of MONTHS) {
+        const th = document.createElement('th');
+        th.className = 'num';
+        th.textContent = month;
+        headRow.append(th);
+      }
+      head.replaceChildren(headRow);
+      const months = el<HTMLTableSectionElement>('#months-rows');
+      months.replaceChildren();
+      for (const [row, kind] of rows) {
+        const line = document.createElement('tr');
+        line.dataset.kind = kind;
+        line.append(cell(label(row)), ...row.months.map((month) => cell(kroner(month.result), true)));
+        months.append(line);
+      }
+    } catch (error: unknown) {
+      body.replaceChildren();
+      setStatus(reportStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet resultatet.');
+    }
+  }
+
+  function drawReportPicker(): void {
+    const usable = dimensions;
+    show(el('#report-card'), usable.length > 0);
+    if (usable.length === 0) return;
+    if (!usable.some((item) => item.id === chosenId)) {
+      chosenId = (usable.find((item) => item.is_active) ?? usable[0])?.id ?? null;
+    }
+    reportPick.replaceChildren(
+      ...usable.map((item) => {
+        const option = document.createElement('option');
+        option.value = String(item.id);
+        option.textContent = item.description + (item.is_active ? '' : ' (deaktivert)');
+        return option;
+      }),
+    );
+    reportPick.value = String(chosenId);
+    // Bare et valg når det er noe å velge mellom.
+    show(el('#report-pick-field'), usable.length > 1);
+  }
+
+  reportPick.addEventListener('change', () => {
+    chosenId = Number(reportPick.value);
+    void drawReport();
+  });
+
+  // --- Oppsettet -----------------------------------------------------------
+
+  async function act(work: () => Promise<Dimension[] | void>, done: string): Promise<void> {
+    setStatus(setupStatus, '');
+    try {
+      const answer = await work();
+      editing = null;
+      dimensions = answer ?? (await listDimensions(company.id));
+      await drawAll();
+      setStatus(setupStatus, done, 'ok');
+    } catch (error: unknown) {
+      setStatus(setupStatus, error instanceof ApiError ? error.message : 'Ble ikke lagret.');
+    }
+  }
+
+  function renameEditor(current: string, save: (name: string) => void): HTMLDivElement {
+    const wrap = document.createElement('div');
+    wrap.className = 'row-edit';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = current;
+    input.maxLength = 255;
+    input.setAttribute('aria-label', 'Navn');
+    wrap.append(
+      input,
+      button('Lagre', () => save(input.value.trim()), true),
+      button('Avbryt', () => {
+        editing = null;
+        drawSetup();
+      }),
+    );
+    return wrap;
+  }
+
+  function valueRow(value: DimensionValue): HTMLTableRowElement {
+    const row = document.createElement('tr');
+    row.dataset.active = String(value.is_active);
+    const name = document.createElement('td');
+    if (editing?.what === 'value' && editing.id === value.id) {
+      name.append(
+        renameEditor(value.description, (description) => {
+          void act(() => updateDimensionValue(company.id, value.id, { description }), 'Lagret.');
+        }),
+      );
+    } else {
+      name.textContent = value.description;
+    }
+    const actions = document.createElement('td');
+    actions.className = 'row-actions';
+    if (editing === null) {
+      actions.append(
+        button('Endre navn', () => {
+          editing = { what: 'value', id: value.id };
+          drawSetup();
+        }),
+        button(value.is_active ? 'Deaktiver' : 'Aktiver', () => {
+          void act(
+            () => updateDimensionValue(company.id, value.id, { is_active: !value.is_active }),
+            value.is_active ? 'Deaktivert. Den tilbys ikke i nye føringer.' : 'Aktivert.',
+          );
+        }),
+      );
+      // Slett bare det som aldri er brukt; resten deaktiveres.
+      if (value.lines === 0) {
+        actions.append(
+          button('Slett', () => {
+            if (!window.confirm(`Slette ${value.value} ${value.description}?`)) return;
+            void act(() => deleteDimensionValue(company.id, value.id), 'Slettet.');
+          }),
+        );
+      }
+    }
+    row.append(
+      cell(value.value),
+      name,
+      cell(value.lines === 0 ? 'Ikke brukt' : `${value.lines} linjer`),
+      cell(value.is_active ? 'Aktiv' : 'Deaktivert'),
+      actions,
+    );
+    return row;
+  }
+
+  function addValueForm(dimension: Dimension): HTMLFormElement {
+    const form = document.createElement('form');
+    form.className = 'add-value';
+    form.noValidate = true;
+    const code = document.createElement('input');
+    code.name = 'value';
+    code.maxLength = 35;
+    code.placeholder = 'Kode';
+    code.setAttribute('aria-label', 'Kode');
+    const name = document.createElement('input');
+    name.name = 'description';
+    name.maxLength = 255;
+    name.placeholder = 'Navn';
+    name.setAttribute('aria-label', 'Navn');
+    const submit = document.createElement('button');
+    submit.type = 'submit';
+    submit.className = 'btn btn-primary btn-small';
+    submit.textContent = 'Legg til';
+    form.append(code, name, submit);
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      submit.disabled = true;
+      void act(
+        () =>
+          createDimensionValue(company.id, dimension.id, {
+            value: code.value.trim(),
+            description: name.value.trim(),
+          }),
+        'Lagt til.',
+      ).finally(() => {
+        submit.disabled = false;
+      });
+    });
+    return form;
+  }
+
+  function drawSetup(): void {
+    const list = el('#setup-list');
+    list.replaceChildren();
+    for (const dimension of dimensions) {
+      const block = document.createElement('div');
+      block.className = 'dimension';
+      const head = document.createElement('div');
+      head.className = 'dimension-head';
+      if (editing?.what === 'dimension' && editing.id === dimension.id) {
+        head.append(
+          renameEditor(dimension.description, (description) => {
+            void act(() => updateDimension(company.id, dimension.id, { description }), 'Lagret.');
+          }),
+        );
+      } else {
+        const title = document.createElement('h3');
+        title.textContent = `${dimension.description} (${dimension.code})`;
+        head.append(title);
+        if (!dimension.is_active) {
+          const off = document.createElement('span');
+          off.className = 'muted';
+          off.textContent = 'Deaktivert';
+          head.append(off);
+        }
+      }
+      if (editing === null) {
+        head.append(
+          button('Endre navn', () => {
+            editing = { what: 'dimension', id: dimension.id };
+            drawSetup();
+          }),
+          button(dimension.is_active ? 'Deaktiver' : 'Aktiver', () => {
+            void act(
+              () => updateDimension(company.id, dimension.id, { is_active: !dimension.is_active }),
+              dimension.is_active ? 'Deaktivert. Ingen av verdiene tilbys i nye føringer.' : 'Aktivert.',
+            );
+          }),
+        );
+        if (dimension.values.every((value) => value.lines === 0)) {
+          head.append(
+            button('Slett', () => {
+              if (!window.confirm(`Slette «${dimension.description}» med alle verdiene?`)) return;
+              void act(() => deleteDimension(company.id, dimension.id), 'Slettet.');
+            }),
+          );
+        }
+      }
+      block.append(head);
+      if (dimension.values.length > 0) {
+        const scroll = document.createElement('div');
+        scroll.className = 'table-scroll';
+        const table = document.createElement('table');
+        table.className = 'data';
+        const thead = document.createElement('thead');
+        const headRow = document.createElement('tr');
+        for (const text of ['Kode', 'Navn', 'Brukt', 'Status', '']) {
+          const th = document.createElement('th');
+          th.textContent = text;
+          headRow.append(th);
+        }
+        thead.append(headRow);
+        const tbody = document.createElement('tbody');
+        tbody.append(...dimension.values.map(valueRow));
+        table.append(thead, tbody);
+        scroll.append(table);
+        block.append(scroll);
+      }
+      block.append(addValueForm(dimension));
+      list.append(block);
+    }
+
+    // Bare det selskapet ikke har fra før, og driftsgren bare for gårdsbruk.
+    const taken = new Set(dimensions.map((item) => item.kind ?? item.code));
+    const options = KINDS.filter((kind) => !taken.has(kind.code) && (!kind.farm || isFarm()));
+    newKind.replaceChildren(
+      ...[...options.map((kind) => [kind.code, kind.name]), [OWN, 'Noe annet']].map(([value, text]) => {
+        const option = document.createElement('option');
+        option.value = value ?? '';
+        option.textContent = text ?? '';
+        return option;
+      }),
+    );
+    drawNewFields();
+  }
+
+  function drawNewFields(): void {
+    const own = newKind.value === OWN;
+    show(el('#new-code-field'), own);
+    show(el('#new-name-field'), own);
+  }
+
+  newKind.addEventListener('change', drawNewFields);
+
+  newForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(newForm);
+    const kind = KINDS.find((item) => item.code === newKind.value);
+    const payload =
+      kind === undefined
+        ? {
+            code: String(data.get('code') ?? '').trim(),
+            description: String(data.get('description') ?? '').trim(),
+          }
+        : { code: kind.code, description: kind.name };
+    const submit = el<HTMLButtonElement>('#new-submit');
+    submit.disabled = true;
+    setStatus(el('#new-status'), '');
+    void createDimension(company.id, payload)
+      .then(async (answer) => {
+        dimensions = answer;
+        newForm.reset();
+        chosenId = answer.find((item) => item.code === payload.code.toUpperCase())?.id ?? chosenId;
+        await drawAll();
+        setStatus(el('#new-status'), 'Lagt til. Legg til verdiene under den.', 'ok');
+      })
+      .catch((error: unknown) => {
+        setStatus(el('#new-status'), error instanceof ApiError ? error.message : 'Ble ikke lagt til.');
+      })
+      .finally(() => {
+        submit.disabled = false;
+      });
+  });
+
+  // --- NIBIO ---------------------------------------------------------------
+
+  function drawNibio(): void {
+    const sets = suggestions?.sets ?? [];
+    show(el('#nibio-card'), mayChange() && sets.length > 0);
+    const holder = el('#nibio-sets');
+    holder.replaceChildren();
+    for (const set of sets) {
+      const fieldset = document.createElement('fieldset');
+      const legend = document.createElement('legend');
+      legend.textContent = set.kind === 'DRIFTSGR' ? 'Driftsgrener' : 'Avdelinger';
+      fieldset.append(legend);
+      let group = '';
+      for (const value of set.values) {
+        if (value.group !== group) {
+          group = value.group;
+          const heading = document.createElement('p');
+          heading.className = 'nibio-group';
+          heading.textContent = group;
+          fieldset.append(heading);
+        }
+        const row = document.createElement('label');
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.dataset.kind = set.kind;
+        box.value = value.code;
+        box.checked = value.added;
+        box.disabled = value.added;
+        const text = document.createElement('span');
+        text.textContent = `${value.code} ${value.name}` + (value.added ? ' (lagt til)' : '');
+        row.append(box, text);
+        fieldset.append(row);
+      }
+      holder.append(fieldset);
+    }
+  }
+
+  el('#nibio-add').addEventListener('click', () => {
+    const chosen = new Map<string, string[]>();
+    for (const box of document.querySelectorAll<HTMLInputElement>('#nibio-sets input:checked:not(:disabled)')) {
+      const kind = box.dataset.kind ?? '';
+      chosen.set(kind, [...(chosen.get(kind) ?? []), box.value]);
+    }
+    const status = el('#nibio-status');
+    if (chosen.size === 0) {
+      setStatus(status, 'Kryss av for minst én.');
+      return;
+    }
+    const add = el<HTMLButtonElement>('#nibio-add');
+    add.disabled = true;
+    setStatus(status, '');
+    void (async () => {
+      try {
+        for (const [kind, codes] of chosen) {
+          dimensions = await addSuggestedDimensions(company.id, kind, codes);
+        }
+        suggestions = await getDimensionSuggestions(company.id);
+        await drawAll();
+        setStatus(status, 'Lagt til.', 'ok');
+      } catch (error: unknown) {
+        setStatus(status, error instanceof ApiError ? error.message : 'Ble ikke lagt til.');
+      } finally {
+        add.disabled = false;
+      }
+    })();
+  });
+
+  // --- Siden ---------------------------------------------------------------
+
+  async function drawAll(): Promise<void> {
+    el('#year').textContent = String(year);
+    const may = mayChange();
+    show(el('#setup-card'), may);
+    show(el('#reader-note'), !may);
+    show(el('#empty-card'), dimensions.length === 0);
+    el('#empty-hint').textContent = may
+      ? isFarm()
+        ? 'Velg driftsgrenene gården har fra NIBIOs liste under, eller sett opp avdelinger og prosjekter selv.'
+        : 'Sett opp en avdeling eller et prosjekt under, og legg til verdiene. Så kan du velge dem når du fører.'
+      : 'En administrator eller eier kan sette dem opp.';
+    drawSetup();
+    drawNibio();
+    drawReportPicker();
+    await drawReport();
+  }
+
+  async function refresh(): Promise<void> {
+    setStatus(pageStatus, '');
+    try {
+      [dimensions, suggestions] = await Promise.all([
+        listDimensions(company.id),
+        getDimensionSuggestions(company.id),
+      ]);
+      editing = null;
+      await drawAll();
+      show(el('#content'), true);
+    } catch (error: unknown) {
+      show(el('#content'), false);
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet avdelingene.');
+    }
+  }
+
+  function changeYear(step: number): void {
+    year += step;
+    el('#year').textContent = String(year);
+    void drawReport();
+  }
+
+  el('#year-prev').addEventListener('click', () => changeYear(-1));
+  el('#year-next').addEventListener('click', () => changeYear(1));
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      const current = currentCompany(companies);
+      if (current === undefined) return;
+      company = current;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      await refresh();
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet selskapet.');
+    } finally {
+      el('#loading').hidden = true;
+    }
+  });
+</script>

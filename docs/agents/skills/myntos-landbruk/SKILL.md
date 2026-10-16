@@ -139,15 +139,29 @@ If a settlement line shows VAT that a category assumes it does not have (a
 quality deduction with VAT on it), send that line's `tax_code` as printed: a
 deduction with VAT gives back output VAT, it does not claim a deduction.
 
+## Driftsgrener: the result per production
+
+A farm usually wants its result per driftsgren: what the milk earned against
+what it cost, apart from the sheep and the forest. That is a dimension,
+which every company may have (myntos-avdelinger); the add-on's part is
+NIBIO's list of codes to start from, 6110 Melkeproduksjon storfe, 6300
+Saueproduksjon, 7000 Skogbruksproduksjon and the rest, and NIBIO's
+avdelinger (10 Finans, 20 Jordbruk, 30 Skogbruk). With them set up, give each
+settlement line its driftsgren in `dimension_value_ids` (myntos-kontantstrom),
+and read the result per driftsgren from
+`GET /api/v1/companies/{company_id}/dimensjoner/{dimension_id}/resultat`.
+
 ## What is not built yet
 
 Say so plainly rather than inventing a way round it:
 
 - Importing settlements automatically from Landbrukets Dataflyt. Each
   settlement is booked from its PDF.
-- Two VAT returns in one company (primærnæring once a year and alminnelig
-  næring every two months). The company's melding type is one setting
-  (myntos-mva).
+- Dividing the input VAT on a cost both the farm and its other business use
+  between the two VAT returns. Two returns are built (myntos-mva, «Two
+  meldinger»), and a line goes in the return of its account, but how a shared
+  cost is split is not settled, so Myntos splits nothing: ask the person which
+  return the cost belongs to, or how they and their accountant divide it.
 - Livestock and feed counts at year end, jordbrukskonto, tømmerkonto, the
   jordbruksfradrag and the skattemelding itself. The year-end accountant does
   these outside Myntos for now.

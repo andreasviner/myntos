@@ -1,10 +1,16 @@
-# The application pages prerender as empty shells and are useless in an index;
-# they are also excluded from the sitemap (see astro.config.mjs).
+# Myntos: regnskapsprogram for norske selskaper.
+#
+# Everything here may be fetched, by search engines and AI crawlers alike: we
+# would rather an assistant answered a question about Myntos from our own pages
+# than from a guess. There is a summary written for them at /llms.txt, with one
+# help article per task under /llms/help/ and the API skills under /llms/skills/.
+#
+# The application pages are kept out of the index by a noindex in their own
+# <head>, and out of the sitemap, both decided by frontend/src/lib/indexing.ts.
+# They are deliberately not refused here as well. A crawler that may not fetch a
+# page never reads its noindex, and Google then indexes the bare URL from any
+# link to it; that is how this file used to work for four of them.
 User-agent: *
 Allow: /
-Disallow: /kontantstrom/
-Disallow: /organisasjon/
-Disallow: /parter/
-Disallow: /invitasjon/
 
 Sitemap: https://myntos.no/sitemap-index.xml

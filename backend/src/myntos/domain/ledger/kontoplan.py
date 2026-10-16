@@ -35,6 +35,12 @@ Four rules carry the weight, each with the failure it prevents:
    Myntos does not record the skattemelding itself, so "closed" is the honest
    proxy for "filed".
 
+**Which accounts are the company's bank** is a fact about the kontoplan too.
+1920 and 1900 always are, by number. Any other account in class 1 or 2 can be
+marked as one (:attr:`~.models.Account.is_bank_account`), and the overview
+then counts its movements and its balance with theirs (:func:`counts_as_bank`).
+Marking moves nothing and can be undone; new payments still go to 1920.
+
 A person's choice is recorded (``chosen_at``, ``chosen_by_user_id``) and carries
 forward into the next year (:func:`grouping_for_new_year`). That is also what
 retires the assumption migration ``b7d40e2c9a15`` made, that every grouping row
@@ -46,7 +52,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from myntos.core.clock import utc_now
@@ -109,6 +115,51 @@ LOCKED_ACCOUNTS: frozenset[str] = frozenset(
         closing.AS_UNCOVERED,
     }
 )
+
+#: The bank and the cash box, by number: where the register posts every
+#: payment (:class:`myntos.domain.ledger.service.PaymentMethod`). They are the
+#: company's money whatever the kontoplan says, so they cannot be unmarked.
+PAYMENT_ACCOUNTS: frozenset[str] = frozenset({BANK_ACCOUNT, CASH_ACCOUNT})
+
+
+def counts_as_bank(account: Account) -> bool:
+    """Whether the overview counts this account as the company's money.
+
+    1920 and 1900 by number, and any account a person or an import marked:
+    Tripletex keeps a farm's driftskreditt on 2390, and that is where the farm's
+    money moves. Not the same question as where Myntos posts a new payment,
+    which stays 1920 or 1900.
+    """
+    return account.account_number in PAYMENT_ACCOUNTS or account.is_bank_account
+
+
+def bank_accounts_clause() -> ColumnElement[bool]:
+    """:func:`counts_as_bank` as SQL, for a query joined to :class:`Account`."""
+    return or_(Account.account_number.in_(PAYMENT_ACCOUNTS), Account.is_bank_account.is_(True))
+
+
+def check_may_be_bank(account: Account) -> None:
+    """Refuse marking an account that cannot be where the company's money is.
+
+    Class 1 holds the bank, and class 2 a credit line such as the
+    driftskreditt; anything in classes 3 to 8 is income or cost, and counted as
+    the bank it would count every sale as money twice. An account Myntos posts
+    to by number for another purpose (the VAT accounts, the customer and
+    supplier balances, equity) already means something else.
+    """
+    if account.account_number in PAYMENT_ACCOUNTS:
+        return
+    if account.account_number in LOCKED_ACCOUNTS:
+        raise AccountInUseError(
+            f"konto {account.account_number} brukes av Myntos til noe annet og kan ikke være "
+            "en bankkonto"
+        )
+    if account.account_number[:1] not in ("1", "2"):
+        raise InvalidAccountNumberError(
+            "bare en konto i klasse 1 (eiendeler) eller 2 (gjeld, som en driftskreditt) kan "
+            "være en bankkonto"
+        )
+
 
 #: Which account types each NS 4102 class may hold. Class 2 holds an asset too,
 #: because input VAT (2710) is one and sits among the VAT accounts by
@@ -329,6 +380,8 @@ class AccountView:
     grouping_category: str | None
     grouping_code: str | None
     grouping_chosen_at: datetime | None
+    # Counted as the company's money on the overview: 1920, 1900, or marked.
+    is_bank_account: bool = False
 
 
 async def get_account(db: AsyncSession, *, company: Company, account_pk: int) -> Account:
@@ -399,6 +452,7 @@ async def list_accounts(db: AsyncSession, *, company: Company, year: int) -> lis
                 grouping_category=grouping.grouping_category if grouping else None,
                 grouping_code=grouping.grouping_code if grouping else None,
                 grouping_chosen_at=grouping.chosen_at if grouping else None,
+                is_bank_account=counts_as_bank(account),
             )
         )
     return views
@@ -530,8 +584,11 @@ async def update_account(
     account_pk: int,
     description: str | None = None,
     is_active: bool | None = None,
+    is_bank_account: bool | None = None,
 ) -> Account:
-    """Rename or (de)activate an account. The number and type do not change.
+    """Rename, (de)activate or (un)mark an account as a bank account.
+
+    The number and type do not change.
 
     A rename is allowed on any account, posted to or not. The description is
     master data, not a posting: a voucher points at the account, and SAF-T
@@ -551,6 +608,15 @@ async def update_account(
                 f"konto {account.account_number} brukes av Myntos selv og kan ikke deaktiveres"
             )
         account.is_active = is_active
+    if is_bank_account is not None and is_bank_account != counts_as_bank(account):
+        if not is_bank_account and account.account_number in PAYMENT_ACCOUNTS:
+            raise AccountInUseError(
+                f"konto {account.account_number} er der Myntos fører betalinger, og regnes "
+                "alltid med i banken"
+            )
+        if is_bank_account:
+            check_may_be_bank(account)
+        account.is_bank_account = is_bank_account
     await db.flush()
     return account
 

@@ -9,8 +9,8 @@ skill: myntos-faktura
 
 An invoice is saved as a draft the moment the person presses «Se over
 fakturaen». A draft has no number and is not in the books, so it can be
-changed as often as needed. It stays in the list on the right, marked
-«Utkast», until it is issued or deleted. Once issued, it can no longer be
+changed as often as needed. It stays in the list «Fakturaer» below the form,
+marked «Utkast», until it is issued or deleted. Once issued, it can no longer be
 changed.
 
 ## They might ask
@@ -27,7 +27,7 @@ changed.
 ## Steps
 
 1. Open «Faktura» in the top menu (`https://myntos.no/faktura/`).
-2. In the list on the right, find the row with «utkast» under «Nr.» and
+2. In the list «Fakturaer» below the form, find the row with «utkast» under «Nr.» and
    «Utkast» under «Status», and press «Endre». The form opens as «Endre
    utkast» with everything filled in. (Straight after the review, «Tilbake og
    endre» does the same.)

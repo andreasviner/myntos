@@ -440,7 +440,11 @@ async def read_saft(
     grouping differs from Myntos's, for the accountant to look at);
     ``reskontro_avviker`` (the file's customer or supplier balances do not add
     up to the account); ``bankkonto_utenfor_1920`` (the company's bank account
-    is on another account in the file, while Myntos books payments on 1920).
+    is on another account in the file, a driftskreditt on 2390, say, and that
+    account is not marked as a bank account, so the overview would not count
+    the money on it: mark it with ``PATCH …/kontoplan/{account_id}`` and
+    ``is_bank_account: true``, or move the line to 1920 if the accountant
+    prefers).
 
     The file is not kept. Keep it yourself: it is the documentation of the
     books before Myntos. Needs ``ledger:write``.
@@ -732,7 +736,10 @@ async def closing_plan(
     ``allerede_disponert`` (the closing accounts already carry postings).
     Notes (``merknad``) to show: ``ingen_skattekostnad``, ``privatkonto_i_as``,
     ``mva_ikke_gjort_opp`` (a VAT period of the year is not settled, and cannot
-    be once the year is closed) and ``ingen_inngaende_balanse``.
+    be once the year is closed), ``ingen_inngaende_balanse``, and
+    ``avskrivning_ikke_fort`` / ``avskrivning_utdatert`` (the anleggsregister's
+    depreciation for the year is not posted, or is posted and out of date;
+    ``/anlegg/avskrivning``).
 
     404 ``financial_year_not_found`` for a year the company does not keep in
     Myntos. Needs read access only.

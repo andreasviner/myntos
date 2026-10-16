@@ -27,6 +27,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     riktig balanse. Et aksjeselskap og et enkeltpersonforetak gjør dette ulikt, og Myntos velger
     ut fra organisasjonsformen i Enhetsregisteret. Du ser alt som blir ført før du bekrefter.
   </p>
+  {/* Årsoppgjørsføringene (varelager, periodiseringer, avskrivninger) må stå
+      før året låses. Avskrivningene kommer fra anleggsregisteret, så de har sin
+      egen side; resten føres som manuelt bilag. */}
+  <p class="card-hint">
+    Årets avskrivninger fører du først, under <a href="/anlegg/">Anlegg og avskrivning</a>.
+    Endring i varelager og periodiseringer fører du som
+    <a href="/manuelt-bilag/">manuelt bilag</a> datert 31. desember.
+  </p>
+  {/* Bare for selskaper med landbrukstillegget: tellingen av dyr og fôr har
+      sin egen side, og andre skal ikke se den. */}
+  <p class="card-hint" id="farm-hint" hidden>
+    Gården teller buskap, fôr og korn under <a href="/buskap/">Buskap og lager</a>, og fører private
+    uttak under <a href="/private-uttak/">Private uttak</a>, før året avsluttes.
+  </p>
 
   <p class="status" id="page-status" hidden></p>
   <div class="empty" id="loading">Henter …</div>
@@ -178,13 +192,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     border-collapse: collapse;
     font-variant-numeric: tabular-nums;
   }
+  /* Radene lages av skriptet, så reglene må nå dem gjennom :global(). */
   .lines th,
-  .lines td {
+  .lines :global(td) {
     text-align: left;
     padding: 0.35rem 0.5rem;
     border-bottom: 1px solid var(--border, #ddd);
   }
-  .lines .num {
+  .lines .num,
+  .lines :global(td.num) {
     text-align: right;
   }
   .findings {
@@ -217,6 +233,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     ApiError,
     closeYear,
     getClosingPlan,
+    getLandbruk,
     listFinancialYears,
     reopenYear,
     type ClosingPlan,
@@ -439,6 +456,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       if (current === undefined) return;
       company = current;
       el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      // Hintet om tellingen er et tillegg til siden; feiler det, står siden uten det.
+      void getLandbruk(company.id)
+        .then((landbruk) => show(el('#farm-hint'), landbruk.enabled))
+        .catch(() => undefined);
       years = await listFinancialYears(company.id);
       // Det første åpne året, som er det som står for tur. Har selskapet
       // bare ett år, er det det.

@@ -1257,8 +1257,10 @@ def test_a_receipt_in_pounds_comes_back_in_kroner(
     assert suggestion["exchange_rate"] == "12.6853"
     assert suggestion["rate_quoted_on"] == date(THIS_YEAR, 8, 21).isoformat()
     assert any("12,6853" in warning for warning in suggestion["warnings"])
-    # Over the threshold once it is kroner, and not before.
-    assert any("driftsmiddel" in warning for warning in suggestion["warnings"])
+    # 27 108 kroner is under the 30 000 a driftsmiddel starts at from 2024
+    # (skatteloven § 14-40), so it may be expensed and nothing is said. The
+    # conversion re-running the check is test_bilag_interpretation's.
+    assert not any("driftsmiddel" in warning for warning in suggestion["warnings"])
 
 
 def test_a_rate_that_does_not_arrive_leaves_the_amount_to_the_user(

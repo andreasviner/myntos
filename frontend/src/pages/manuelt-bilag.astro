@@ -1,0 +1,872 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Manuelt bilag | Myntos"
+  description="Før et bilag som kontoer med debet og kredit: årsoppgjørsføringer, periodiseringer og omposteringer."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Manuelt bilag</p>
+      {/* Selskapet er overskriften: et manuelt bilag kan føres på hvilken
+          som helst konto, og navnet skal stå der man ser det før noe føres. */}
+      <h1 data-session-company></h1>
+      <p class="muted orgnr" id="orgnr"></p>
+    </div>
+    <div class="head-actions year-nav" role="group" aria-label="Regnskapsår">
+      <button type="button" class="btn btn-ghost btn-small" id="year-prev" aria-label="Året før">‹</button>
+      <span class="year" id="year"></span>
+      <button type="button" class="btn btn-ghost btn-small" id="year-next" aria-label="Året etter">›</button>
+    </div>
+  </header>
+
+  <p class="lead">
+    Et manuelt bilag føres som kontoer med beløp i debet og kredit, uten en banklinje. Det er det
+    regnskapsføreren fører ved årsslutt: endring i varelager og buskap, kostnader som hører til et
+    annet år, avskrivninger og flytting av en saldo fra én konto til en annen. Betalinger føres i
+    <a href="/kontantstrom/">kontantstrømmen</a>.
+  </p>
+
+  <p class="status" id="page-status" hidden></p>
+  <div class="empty" id="loading">Henter …</div>
+
+  {/* Skjemaet. «Kontroller» lagrer ingenting; den ber om backendens kontroll. */}
+  <section class="card" id="form-card" hidden>
+    <h2 class="card-title" id="form-title">Nytt manuelt bilag</h2>
+    <form id="voucher-form" novalidate>
+      <div class="field-row">
+        <label class="field">
+          <span>Dato</span>
+          <input type="date" id="occurred-on" required />
+          <span class="field-hint">Årsoppgjørsføringer dateres 31. desember.</span>
+        </label>
+        <label class="field">
+          <span>Bilagstekst</span>
+          <input type="text" id="description" maxlength="255" placeholder="Endring varelager" />
+        </label>
+      </div>
+      {/* Begrunnelsen er dokumentasjonen: en betaling har en kvittering, en
+          årsoppgjørsføring har bare en beslutning, og bokføringsforskriften
+          § 5-12 krever at den viser hvorfor. */}
+      <label class="field">
+        <span>Begrunnelse</span>
+        <textarea id="explanation" rows="3" maxlength="4000"></textarea>
+        <span class="field-hint">
+          Hvorfor bilaget føres, og for et anslag hvordan beløpet er regnet ut. Den lagres sammen med
+          bilaget og kan ikke endres etterpå.
+        </span>
+      </label>
+
+      <div class="table-scroll">
+        <table class="lines">
+          <thead>
+            <tr>
+              <th>Konto</th><th>Tekst</th><th>Kunde/leverandør</th><th>Mva-kode</th><th
+                class="num">Debet</th
+              ><th class="num">Kredit</th><th><span class="visually-hidden">Fjern</span></th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <datalist id="accounts"></datalist>
+      <p class="card-hint">
+        Med mva-kode er beløpet inkludert mva, og Myntos lager mva-linjen på 2700 eller 2710 selv.
+        Kunder og leverandører velges på linjer på 1500 og 2400.
+      </p>
+
+      <label class="field">
+        <span>Dokumenter</span>
+        <input type="file" id="files" multiple accept="application/pdf,image/*" />
+        <span class="field-hint">
+          Valgfritt: telleliste, avskrivningsplan, kontoutskrift eller utregningen bak beløpet. Lastes
+          opp når bilaget er ført.
+        </span>
+      </label>
+
+      <div class="actions">
+        <button type="button" class="btn btn-ghost" id="add-row">Legg til linje</button>
+        <button type="button" class="btn btn-ghost" id="cancel-correction" hidden>Avbryt rettingen</button>
+        <button type="submit" class="btn btn-primary" id="check">Kontroller</button>
+      </div>
+      <p class="status" id="form-status" hidden></p>
+    </form>
+  </section>
+
+  {/* Gjennomgangen: det backend sier blir ført, og hva den har å utsette. */}
+  <section class="card" id="review" hidden aria-live="polite">
+    <h2 class="card-title">Gjennomgå før føring</h2>
+    <p id="review-intro"></p>
+    <div class="table-scroll">
+      <table class="lines">
+        <thead>
+          <tr>
+            <th>Konto</th><th>Tekst</th><th>Kunde/leverandør</th><th>Mva-kode</th><th
+              class="num">Debet</th
+            ><th class="num">Kredit</th>
+          </tr>
+        </thead>
+        <tbody id="review-lines"></tbody>
+        <tfoot>
+          <tr><th colspan="4">Sum</th><th class="num" id="sum-debit"></th><th class="num" id="sum-credit"></th></tr>
+        </tfoot>
+      </table>
+    </div>
+    <p><strong>Begrunnelse:</strong> <span id="review-explanation"></span></p>
+    <p class="card-hint" id="review-files" hidden></p>
+    <ul class="findings" id="errors" hidden></ul>
+    <ul class="findings notes" id="notes" hidden></ul>
+    <div class="actions">
+      <button type="button" class="btn btn-ghost" id="back">Tilbake til skjemaet</button>
+      <button type="button" class="btn btn-primary" id="post" disabled>Før bilaget</button>
+    </div>
+    <p class="status" id="review-status" hidden></p>
+  </section>
+
+  {/* Det som er ført. Ingenting forsvinner herfra: retting og reversering er
+      nye bilag, og begge sider av koblingen vises. */}
+  <section class="card" id="list-card" hidden>
+    <h2 class="card-title" id="list-title">Førte manuelle bilag</h2>
+    <p class="empty" id="list-empty" hidden></p>
+    <div id="entries"></div>
+    <p class="status" id="list-status" hidden></p>
+  </section>
+</BaseLayout>
+
+<style>
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .orgnr {
+    margin: 0.2rem 0 0;
+  }
+  .year-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .year {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    min-width: 3.5rem;
+    text-align: center;
+  }
+  .card + .card {
+    margin-top: 1rem;
+  }
+  .lines {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+  }
+  .lines th,
+  .lines :global(td) {
+    text-align: left;
+    padding: 0.35rem 0.5rem;
+    border-bottom: 1px solid var(--border, #ddd);
+  }
+  .lines .num,
+  .lines :global(td.num) {
+    text-align: right;
+  }
+  /* Radene lages av skriptet, så reglene må nå dem gjennom :global(). */
+  #rows :global(input),
+  #rows :global(select) {
+    width: 100%;
+    min-width: 6rem;
+  }
+  #rows :global(input.debit),
+  #rows :global(input.credit) {
+    text-align: right;
+  }
+  .findings {
+    margin: 0.75rem 0;
+    padding-left: 1.2rem;
+    color: var(--negative);
+  }
+  .findings.notes {
+    color: var(--muted);
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+  }
+  #entries :global(.entry) {
+    padding: 0.9rem 0;
+    border-top: 1px solid var(--border, #ddd);
+  }
+  #entries :global(.entry:first-child) {
+    border-top: none;
+  }
+  #entries :global(.entry h3) {
+    margin: 0;
+    font-size: 1rem;
+  }
+  #entries :global(.entry p) {
+    margin: 0.3rem 0;
+  }
+  #entries :global(.entry table) {
+    width: 100%;
+    margin-top: 0.5rem;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+  }
+  #entries :global(.entry th),
+  #entries :global(.entry td) {
+    text-align: left;
+    padding: 0.3rem 0.5rem;
+    border-bottom: 1px solid var(--border, #ddd);
+  }
+  #entries :global(.entry .num) {
+    text-align: right;
+  }
+  #entries :global(.entry .files) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+    padding: 0;
+    list-style: none;
+  }
+  #entries :global(.entry .reverse-form) {
+    margin-top: 0.75rem;
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    correctManualVoucher,
+    documentUrl,
+    getKontoplan,
+    listManualVouchers,
+    listParties,
+    postManualVoucher,
+    reverseManualVoucher,
+    reviewManualVoucher,
+    uploadDocument,
+    type Company,
+    type ManualLine,
+    type ManualLineInput,
+    type ManualVoucher,
+    type ManualVoucherInput,
+    type ManualVoucherList,
+    type Party,
+  } from '../lib/api';
+  import { normaliseAmount } from '../lib/amount';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import { fileSize, isoDate, kroner, orgnummer, todayIso } from '../lib/format';
+  import { settleLimited } from '../lib/parallel';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+
+  // Fire om gangen, som i kontantstrømmen: under databasens pulje på fem.
+  const UPLOADS_AT_ONCE = 4;
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const formStatus = el<HTMLParagraphElement>('#form-status');
+  const reviewStatus = el<HTMLParagraphElement>('#review-status');
+  const listStatus = el<HTMLParagraphElement>('#list-status');
+  const rows = el<HTMLTableSectionElement>('#rows');
+  const postButton = el<HTMLButtonElement>('#post');
+  const filesInput = el<HTMLInputElement>('#files');
+
+  let company: Company;
+  let year = new Date().getFullYear();
+  let parties: Party[] = [];
+  let state: ManualVoucherList | null = null;
+  // Bilaget skjemaet retter, eller null for et nytt. Settes bare av «Rett».
+  let correcting: ManualVoucher | null = null;
+  // Bilaget slik det ble kontrollert. Det er dette som føres, ikke skjemaet
+  // slik det ser ut etter at noen har trykket «Tilbake».
+  let reviewed: ManualVoucherInput | null = null;
+  let reviewedCorrects: ManualVoucher | null = null;
+
+  function cell(text: string, numeric = false): HTMLTableCellElement {
+    const td = document.createElement('td');
+    td.textContent = text;
+    if (numeric) td.className = 'num';
+    return td;
+  }
+
+  function amount(value: string): string {
+    return Number(value) === 0 ? '' : kroner(value);
+  }
+
+  function accountText(line: ManualLine): string {
+    return `${line.account_number} ${line.account_description ?? '(ukjent konto)'}`;
+  }
+
+  function reviewRow(line: ManualLine): HTMLTableRowElement {
+    const tr = document.createElement('tr');
+    // Mva-linjene lager Myntos selv; de merkes så ingen tror de må skrives inn.
+    const text = line.generated ? `${line.description} (mva, lagt til av Myntos)` : line.description;
+    tr.append(
+      cell(accountText(line)),
+      cell(text),
+      cell(line.party_name ?? ''),
+      cell(line.tax_code ?? ''),
+      cell(amount(line.debit), true),
+      cell(amount(line.credit), true),
+    );
+    return tr;
+  }
+
+  function list(target: HTMLElement, messages: string[]): void {
+    target.replaceChildren(
+      ...messages.map((message) => {
+        const item = document.createElement('li');
+        item.textContent = message;
+        return item;
+      }),
+    );
+    show(target, messages.length > 0);
+  }
+
+  // --- Skjemaet ------------------------------------------------------------------
+
+  function partySelect(selected: number | null): HTMLSelectElement {
+    const select = document.createElement('select');
+    select.className = 'party';
+    select.setAttribute('aria-label', 'Kunde/leverandør');
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = 'Ingen';
+    select.append(none);
+    for (const party of parties) {
+      const option = document.createElement('option');
+      option.value = String(party.id);
+      option.textContent = `${party.name} (${party.party_type === 'kunde' ? 'kunde' : 'leverandør'})`;
+      option.selected = party.id === selected;
+      select.append(option);
+    }
+    return select;
+  }
+
+  function taxSelect(selected: string | null): HTMLSelectElement {
+    const select = document.createElement('select');
+    select.className = 'tax';
+    select.setAttribute('aria-label', 'Mva-kode');
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = 'Ingen';
+    select.append(none);
+    const codes = [...(state?.tax_codes ?? [])];
+    // Et bilag som rettes kan ha en kode som ikke tilbys i dag. Den vises
+    // likevel, så rettingen ikke stille fjerner mva; kontrollen sier fra.
+    if (selected !== null && !codes.some((code) => code.code === selected)) {
+      codes.push({ code: selected, description: '', rate_percent: '' });
+    }
+    for (const code of codes) {
+      const option = document.createElement('option');
+      option.value = code.code;
+      option.textContent = code.description ? `${code.code} ${code.description}` : code.code;
+      option.selected = code.code === selected;
+      select.append(option);
+    }
+    return select;
+  }
+
+  function input(className: string, value: string, label: string): HTMLInputElement {
+    const node = document.createElement('input');
+    node.type = 'text';
+    node.className = className;
+    node.value = value;
+    node.setAttribute('aria-label', label);
+    if (className === 'debit' || className === 'credit') node.inputMode = 'decimal';
+    if (className === 'account') node.setAttribute('list', 'accounts');
+    return node;
+  }
+
+  function typed(value: string | undefined): string {
+    return value !== undefined && Number(value) !== 0 ? value.replace('.', ',') : '';
+  }
+
+  function addRow(line?: Partial<ManualLineInput>): void {
+    const tr = document.createElement('tr');
+    // Dimensjonene skjemaet ikke viser, følger linjen gjennom en retting.
+    tr.dataset.dimensions = JSON.stringify(line?.dimension_value_ids ?? []);
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn btn-ghost btn-small';
+    remove.textContent = 'Fjern';
+    remove.addEventListener('click', () => tr.remove());
+    const parts: HTMLElement[] = [
+      input('account', line?.account_number ?? '', 'Konto'),
+      input('description', line?.description ?? '', 'Tekst'),
+      partySelect(line?.party_id ?? null),
+      taxSelect(line?.tax_code ?? null),
+      input('debit', typed(line?.debit), 'Debet'),
+      input('credit', typed(line?.credit), 'Kredit'),
+      remove,
+    ];
+    for (const part of parts) {
+      const td = document.createElement('td');
+      td.append(part);
+      tr.append(td);
+    }
+    rows.append(tr);
+  }
+
+  function defaultDate(): string {
+    // I året som pågår er det i dag; i et avsluttet kalenderår er det
+    // årsoppgjørsdatoen, som er det et manuelt bilag i et tidligere år nesten
+    // alltid er.
+    const today = todayIso();
+    return today.startsWith(`${year}-`) ? today : `${year}-12-31`;
+  }
+
+  function resetForm(voucher: ManualVoucher | null): void {
+    correcting = voucher;
+    el<HTMLInputElement>('#occurred-on').value = voucher?.occurred_on ?? defaultDate();
+    el<HTMLInputElement>('#description').value = voucher?.description ?? '';
+    // Begrunnelsen for en retting er hva som var feil, ikke den gamle.
+    el<HTMLTextAreaElement>('#explanation').value = '';
+    filesInput.value = '';
+    rows.replaceChildren();
+    const lines = voucher?.input_lines ?? [];
+    for (const line of lines) addRow(line);
+    if (lines.length === 0) {
+      addRow();
+      addRow();
+    }
+    el('#form-title').textContent = voucher === null ? 'Nytt manuelt bilag' : `Rett bilag ${voucher.voucher_no}`;
+    show(el('#cancel-correction'), voucher !== null);
+    setStatus(formStatus, '');
+  }
+
+  /** Skjemaet som bilag, eller en melding om feltet som ikke kunne leses. */
+  function collect(): ManualVoucherInput | string {
+    const lines: ManualLineInput[] = [];
+    for (const [index, tr] of [...rows.querySelectorAll('tr')].entries()) {
+      const value = (selector: string): string => el<HTMLInputElement>(selector, tr).value.trim();
+      const account = value('.account');
+      const debit = normaliseAmount(value('.debit'));
+      const credit = normaliseAmount(value('.credit'));
+      if (account === '' && debit === '0' && credit === '0') continue;
+      if (debit === null || credit === null) return `Beløpet på linje ${index + 1} kan ikke leses.`;
+      const party = el<HTMLSelectElement>('.party', tr).value;
+      const tax = el<HTMLSelectElement>('.tax', tr).value;
+      lines.push({
+        account_number: account,
+        debit,
+        credit,
+        description: value('.description') || null,
+        party_id: party === '' ? null : Number(party),
+        tax_code: tax === '' ? null : tax,
+        dimension_value_ids: JSON.parse(tr.dataset.dimensions ?? '[]') as number[],
+      });
+    }
+    const occurredOn = el<HTMLInputElement>('#occurred-on').value;
+    if (occurredOn === '') return 'Velg en dato.';
+    return {
+      occurred_on: occurredOn,
+      description: el<HTMLInputElement>('#description').value.trim(),
+      explanation: el<HTMLTextAreaElement>('#explanation').value.trim(),
+      lines,
+    };
+  }
+
+  function showReview(visible: boolean): void {
+    show(el('#review'), visible);
+    show(el('#form-card'), !visible);
+  }
+
+  el<HTMLFormElement>('#voucher-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    setStatus(formStatus, '');
+    const voucher = collect();
+    if (typeof voucher === 'string') {
+      setStatus(formStatus, voucher);
+      return;
+    }
+    const button = el<HTMLButtonElement>('#check');
+    button.disabled = true;
+    const target = correcting;
+    reviewManualVoucher(company.id, voucher, target?.id ?? null)
+      .then((review) => {
+        reviewed = voucher;
+        reviewedCorrects = target;
+        el('#review-intro').textContent =
+          target === null
+            ? `Dette føres som ett bilag datert ${isoDate(review.occurred_on)} i journalen for manuelle bilag. Det kan ikke endres etterpå, bare rettes eller reverseres.`
+            : `Dette erstatter bilag ${target.voucher_no}. Det gamle reverseres i sin egen periode, og dette føres datert ${isoDate(review.occurred_on)}. Alle tre blir stående i regnskapet.`;
+        el('#review-lines').replaceChildren(...review.lines.map(reviewRow));
+        el('#sum-debit').textContent = kroner(review.total_debit);
+        el('#sum-credit').textContent = kroner(review.total_credit);
+        el('#review-explanation').textContent = review.explanation || '(ingen)';
+        const files = [...(filesInput.files ?? [])];
+        el('#review-files').textContent = `Lastes opp når bilaget er ført: ${files.map((file) => file.name).join(', ')}.`;
+        show(el('#review-files'), files.length > 0);
+        list(el('#errors'), review.findings.filter((f) => f.severity === 'feil').map((f) => f.message));
+        list(el('#notes'), review.findings.filter((f) => f.severity === 'merknad').map((f) => f.message));
+        postButton.textContent = target === null ? 'Før bilaget' : 'Før rettingen';
+        postButton.disabled = !review.postable;
+        setStatus(reviewStatus, '');
+        showReview(true);
+      })
+      .catch((error: unknown) => {
+        setStatus(formStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke kontrollert bilaget.');
+      })
+      .finally(() => {
+        button.disabled = false;
+      });
+  });
+
+  el('#back').addEventListener('click', () => showReview(false));
+  el('#add-row').addEventListener('click', () => addRow());
+  el('#cancel-correction').addEventListener('click', () => resetForm(null));
+
+  /** Laster opp filene til et ført bilag; svarer med navnene som ikke ble lagret. */
+  async function attach(voucherId: number, files: File[], progress: (text: string) => void): Promise<string[]> {
+    const count = files.length;
+    const step = (done: number): void => {
+      progress(count === 1 ? 'Laster opp dokumentet …' : `Laster opp dokumentene … ${done} av ${count}`);
+    };
+    if (count > 0) step(0);
+    const results = await settleLimited(files, UPLOADS_AT_ONCE, (file) => uploadDocument(company.id, voucherId, file), step);
+    return files.filter((_, index) => results[index]?.status === 'rejected').map((file) => file.name);
+  }
+
+  postButton.addEventListener('click', () => {
+    const voucher = reviewed;
+    if (voucher === null) return;
+    const target = reviewedCorrects;
+    const files = [...(filesInput.files ?? [])];
+    const label = postButton.textContent;
+    postButton.disabled = true;
+    postButton.textContent = target === null ? 'Fører bilaget …' : 'Fører rettingen …';
+    const posting = target === null ? postManualVoucher(company.id, voucher) : correctManualVoucher(company.id, target.id, voucher);
+    posting
+      .then(async (posted) => {
+        const rejected = await attach(posted.id, files, (text) => {
+          postButton.textContent = text;
+        });
+        // Bilaget er ført. Det som skjer herfra er sidens sak, og en feil i
+        // opplastingen eller listen er ikke en feil ved føringen: «Vi fikk ikke
+        // ført» om et ført bilag er en invitasjon til å føre det to ganger.
+        reviewed = null;
+        showReview(false);
+        const done =
+          target === null
+            ? `Bilaget er ført som ${posted.voucher_no}.`
+            : `Bilag ${target.voucher_no} er rettet. Reverseringen og det nye bilaget ${posted.voucher_no} står i listen.`;
+        setStatus(
+          pageStatus,
+          rejected.length === 0
+            ? done
+            : `${done} Disse dokumentene ble ikke lagret: ${rejected.join(', ')}. Legg dem ved på nytt fra listen under.`,
+          rejected.length === 0 ? 'ok' : 'error',
+        );
+        const postedYear = Number(posted.occurred_on.slice(0, 4));
+        if (postedYear !== year) year = postedYear;
+        resetForm(null);
+        await load().catch(() => undefined);
+      })
+      .catch((error: unknown) => {
+        postButton.disabled = false;
+        setStatus(reviewStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke ført bilaget.');
+      })
+      .finally(() => {
+        postButton.textContent = label;
+      });
+  });
+
+  // --- Listen --------------------------------------------------------------------
+
+  function numberOf(id: number | null): string {
+    if (id === null) return '';
+    const found = state?.entries.find((entry) => entry.id === id);
+    return found === undefined ? 'et bilag i et annet år' : `bilag ${found.voucher_no}`;
+  }
+
+  function linkText(entry: ManualVoucher): string {
+    if (entry.is_reversal) return `Reverserer ${numberOf(entry.reverses_id)}.`;
+    const parts: string[] = [];
+    if (entry.corrects_id !== null) parts.push(`Retter ${numberOf(entry.corrects_id)}.`);
+    if (entry.corrected_by_id !== null) parts.push(`Rettet med ${numberOf(entry.corrected_by_id)}.`);
+    else if (entry.reversed_by_id !== null) parts.push(`Reversert med ${numberOf(entry.reversed_by_id)}.`);
+    return parts.join(' ');
+  }
+
+  function entryTable(entry: ManualVoucher): HTMLTableElement {
+    const table = document.createElement('table');
+    const head = document.createElement('tr');
+    for (const [text, numeric] of [
+      ['Konto', false],
+      ['Tekst', false],
+      ['Kunde/leverandør', false],
+      ['Debet', true],
+      ['Kredit', true],
+    ] as const) {
+      const th = document.createElement('th');
+      th.textContent = text;
+      if (numeric) th.className = 'num';
+      head.append(th);
+    }
+    const thead = document.createElement('thead');
+    thead.append(head);
+    const body = document.createElement('tbody');
+    for (const line of entry.lines) {
+      const tr = document.createElement('tr');
+      tr.append(
+        cell(accountText(line)),
+        cell(line.description),
+        cell(line.party_name ?? ''),
+        cell(amount(line.debit), true),
+        cell(amount(line.credit), true),
+      );
+      body.append(tr);
+    }
+    table.append(thead, body);
+    return table;
+  }
+
+  function reverseForm(entry: ManualVoucher, status: HTMLParagraphElement): HTMLElement {
+    // En reversering kan ikke angres, så den får et steg med begrunnelse og
+    // ikke en window.confirm. Begrunnelsen arkiveres med reverseringen.
+    const form = document.createElement('div');
+    form.className = 'reverse-form';
+    form.hidden = true;
+    const label = document.createElement('label');
+    label.className = 'field';
+    const span = document.createElement('span');
+    span.textContent = 'Begrunnelse for reverseringen';
+    const reason = document.createElement('textarea');
+    reason.rows = 2;
+    reason.maxLength = 4000;
+    const hint = document.createElement('span');
+    hint.className = 'field-hint';
+    hint.textContent =
+      'Bilaget blir stående, og et speilvendt bilag føres i samme periode. Er bare beløpet eller kontoen feil, bruk «Rett» i stedet.';
+    label.append(span, reason, hint);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-primary btn-small';
+    button.textContent = 'Reverser bilaget';
+    button.addEventListener('click', () => {
+      button.disabled = true;
+      setStatus(status, '');
+      reverseManualVoucher(company.id, entry.id, reason.value.trim())
+        .then(async (reversal) => {
+          setStatus(pageStatus, `Bilag ${entry.voucher_no} er reversert med bilag ${reversal.voucher_no}.`, 'ok');
+          await load().catch(() => undefined);
+        })
+        .catch((error: unknown) => {
+          button.disabled = false;
+          setStatus(status, error instanceof ApiError ? error.message : 'Vi fikk ikke reversert bilaget.');
+        });
+    });
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    actions.append(button);
+    form.append(label, actions);
+    return form;
+  }
+
+  function attachInput(entry: ManualVoucher, status: HTMLParagraphElement): HTMLLabelElement {
+    const label = document.createElement('label');
+    label.className = 'btn btn-ghost btn-small';
+    label.textContent = 'Legg ved dokumenter';
+    const picker = document.createElement('input');
+    picker.type = 'file';
+    picker.multiple = true;
+    picker.accept = 'application/pdf,image/*';
+    picker.hidden = true;
+    picker.addEventListener('change', () => {
+      const files = [...(picker.files ?? [])];
+      if (files.length === 0) return;
+      attach(entry.id, files, (text) => setStatus(status, text, 'ok'))
+        .then(async (rejected) => {
+          await load().catch(() => undefined);
+          setStatus(
+            listStatus,
+            rejected.length === 0
+              ? `Lagt ved bilag ${entry.voucher_no}.`
+              : `Disse ble ikke lagret: ${rejected.join(', ')}.`,
+            rejected.length === 0 ? 'ok' : 'error',
+          );
+        })
+        .catch((error: unknown) => {
+          setStatus(status, error instanceof ApiError ? error.message : 'Vi fikk ikke lastet opp dokumentene.');
+        });
+    });
+    label.append(picker);
+    return label;
+  }
+
+  function entryNode(entry: ManualVoucher, mayWrite: boolean, closed: boolean): HTMLElement {
+    const node = document.createElement('article');
+    node.className = 'entry';
+    const title = document.createElement('h3');
+    title.textContent = `${entry.voucher_no} · ${isoDate(entry.occurred_on)} · ${entry.description} · ${kroner(entry.total)}`;
+    node.append(title);
+
+    const links = linkText(entry);
+    if (links !== '') {
+      const p = document.createElement('p');
+      p.className = 'muted';
+      p.textContent = links;
+      node.append(p);
+    }
+    const why = document.createElement('p');
+    const strong = document.createElement('strong');
+    strong.textContent = 'Begrunnelse: ';
+    why.append(strong, document.createTextNode(entry.explanation ?? '(ingen)'));
+    node.append(why);
+
+    const scroll = document.createElement('div');
+    scroll.className = 'table-scroll';
+    scroll.append(entryTable(entry));
+    node.append(scroll);
+
+    if (entry.attachments.length > 0) {
+      const files = document.createElement('ul');
+      files.className = 'files';
+      for (const attachment of entry.attachments) {
+        const item = document.createElement('li');
+        const link = document.createElement('a');
+        link.href = documentUrl(company.id, attachment.id);
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = `${attachment.filename} (${fileSize(attachment.byte_size)})`;
+        item.append(link);
+        files.append(item);
+      }
+      node.append(files);
+    }
+
+    if (!mayWrite || closed) return node;
+    const status = document.createElement('p');
+    status.className = 'status';
+    status.hidden = true;
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    // Bare det som fortsatt står kan rettes eller reverseres. En reversering
+    // rettes ikke; det som skal stå, føres som et nytt bilag.
+    const standing = !entry.is_reversal && entry.reversed_by_id === null && entry.corrected_by_id === null;
+    const form = reverseForm(entry, status);
+    if (standing) {
+      const correct = document.createElement('button');
+      correct.type = 'button';
+      correct.className = 'btn btn-ghost btn-small';
+      correct.textContent = 'Rett';
+      correct.addEventListener('click', () => {
+        resetForm(entry);
+        showReview(false);
+        el('#form-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+      const reverse = document.createElement('button');
+      reverse.type = 'button';
+      reverse.className = 'btn btn-ghost btn-small';
+      reverse.textContent = 'Reverser';
+      reverse.addEventListener('click', () => show(form, form.hidden));
+      actions.append(correct, reverse);
+    }
+    actions.append(attachInput(entry, status));
+    node.append(actions, form, status);
+    return node;
+  }
+
+  function render(): void {
+    if (state === null) return;
+    // Spurt her, når siden tegnes, og ikke tatt vare på: selskapet på
+    // skjermen kan ha byttet siden forrige gang.
+    const mayWrite = canInCompany(company, 'ledger:write');
+    el('#year').textContent = String(year);
+    el('#list-title').textContent = `Førte manuelle bilag i ${year}`;
+    show(el('#list-card'), true);
+    const empty = el('#list-empty');
+    empty.textContent = `Ingen manuelle bilag i ${year}.`;
+    show(empty, state.entries.length === 0);
+    const closed = state.closed;
+    el('#entries').replaceChildren(...state.entries.map((entry) => entryNode(entry, mayWrite, closed)));
+
+    if (!mayWrite) {
+      setStatus(pageStatus, 'Du kan se de manuelle bilagene, men rollen din kan ikke føre dem.');
+    } else if (state.closed) {
+      setStatus(pageStatus, `Regnskapsåret ${year} er avsluttet og tar ikke imot nye bilag. Det gjenåpnes under Årsavslutning.`);
+    }
+    const formOpen = mayWrite && !state.closed;
+    if (!formOpen) {
+      show(el('#form-card'), false);
+      show(el('#review'), false);
+    } else if (el('#review').hidden) {
+      show(el('#form-card'), true);
+    }
+  }
+
+  async function load(): Promise<void> {
+    const [list, partyList, chart] = await Promise.all([
+      listManualVouchers(company.id, year),
+      listParties(company.id),
+      // Forslagene i kontofeltet er bare en hjelp: uten dem skrives
+      // kontonummeret inn, og kontrollen sier fra om det ikke finnes.
+      getKontoplan(company.id, year).catch(() => null),
+    ]);
+    state = list;
+    parties = partyList;
+    el('#accounts').replaceChildren(
+      ...(chart?.accounts ?? [])
+        .filter((account) => account.is_active)
+        .map((account) => {
+          const option = document.createElement('option');
+          option.value = account.number;
+          option.textContent = `${account.number} ${account.description}`;
+          return option;
+        }),
+    );
+    render();
+  }
+
+  function changeYear(step: number): void {
+    year += step;
+    setStatus(pageStatus, '');
+    setStatus(listStatus, '');
+    reviewed = null;
+    showReview(false);
+    resetForm(null);
+    load().catch((error: unknown) => {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet bilagene.');
+    });
+  }
+
+  el('#year-prev').addEventListener('click', () => changeYear(-1));
+  el('#year-next').addEventListener('click', () => changeYear(1));
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      const current = currentCompany(companies);
+      if (current === undefined) return;
+      company = current;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      await load();
+      resetForm(null);
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet selskapet.');
+    } finally {
+      el('#loading').hidden = true;
+    }
+  });
+</script>

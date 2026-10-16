@@ -462,3 +462,146 @@ def test_tripletex_codes_and_vat_accounts() -> None:
     assert _settles_vat(rounded, vat)
     payment = [line("2740", debit="35"), line("2390", credit="35")]
     assert not _settles_vat(payment, vat)
+
+
+# --- Avdelinger and driftsgrener ---------------------------------------------------------
+
+#: Tripletex's own three: «Avdeling» comes along, «Bilagsart» repeats the
+#: voucher type and «Ansatte» names people, so those two stay behind.
+ANALYSIS_TABLE = (
+    "<AnalysisTypeTable>"
+    + "".join(
+        f"<AnalysisTypeTableEntry><AnalysisType>{kind}</AnalysisType>"
+        f"<AnalysisTypeDescription>{kind_name}</AnalysisTypeDescription>"
+        f"<AnalysisID>{value}</AnalysisID><AnalysisIDDescription>{name}</AnalysisIDDescription>"
+        "</AnalysisTypeTableEntry>"
+        for kind, kind_name, value, name in (
+            ("A", "Avdeling", "20", "Jordbruk"),
+            ("B", "Bilagsart", "1", "Leverandørfaktura"),
+            ("E", "Ansatte", "7", "Kari Ansatt"),
+        )
+    )
+    + "</AnalysisTypeTable>"
+)
+
+
+def _analysed_file(*, line_department: str | None = "20") -> bytes:
+    """The year's file with the feed's cost line on avdeling 20, and two other dimensions."""
+    marks = (
+        "<Analysis><AnalysisType>B</AnalysisType><AnalysisID>1</AnalysisID></Analysis>"
+        "<Analysis><AnalysisType>E</AnalysisType><AnalysisID>7</AnalysisID></Analysis>"
+    )
+    if line_department is not None:
+        marks = (
+            f"<Analysis><AnalysisType>A</AnalysisType><AnalysisID>{line_department}</AnalysisID>"
+            "<DebitAnalysisAmount><Amount>800.00</Amount></DebitAnalysisAmount></Analysis>" + marks
+        )
+    content = year_file().replace(
+        b"<AccountID>402020</AccountID><ValueDate>",
+        f"<AccountID>402020</AccountID>{marks}<ValueDate>".encode(),
+        1,
+    )
+    return content.replace(b"</MasterFiles>", ANALYSIS_TABLE.encode() + b"</MasterFiles>")
+
+
+def _add_dimensions(client: TestClient, company_id: int, body: dict[str, Any]) -> None:
+    """What the page does with ``dimensions_to_add``: the dimension first, then its values."""
+    made: dict[str, int] = {}
+    for add in body["dimensions_to_add"]:
+        dimension_id = add["dimension_id"] or made.get(add["code"])
+        if dimension_id is None:
+            response = write(
+                client,
+                "POST",
+                f"/api/v1/companies/{company_id}/dimensjoner",
+                json={"code": add["code"], "description": add["dimension_description"]},
+            )
+            assert response.status_code == 201, response.text
+            dimension_id = next(d["id"] for d in response.json() if d["code"] == add["code"])
+            made[add["code"]] = dimension_id
+        response = write(
+            client,
+            "POST",
+            f"/api/v1/companies/{company_id}/dimensjoner/{dimension_id}/verdier",
+            json={"value": add["value"], "description": add["description"]},
+        )
+        assert response.status_code == 201, response.text
+
+
+def _department_result(client: TestClient, company_id: int) -> dict[str, str]:
+    dimension = next(
+        d
+        for d in client.get(f"/api/v1/companies/{company_id}/dimensjoner").json()
+        if d["kind"] == "AVDELING"
+    )
+    result = client.get(
+        f"/api/v1/companies/{company_id}/dimensjoner/{dimension['id']}/resultat?aar={Y}"
+    ).json()
+    return {row["value"]: row["total"]["result"] for row in result["rows"]}
+
+
+def test_a_lines_avdeling_comes_along_and_the_other_dimensions_stay(client: TestClient) -> None:
+    company = _books(client)
+    content = _analysed_file()
+    _opening(client, company["id"], content)
+    _create_missing(client, company["id"], _bilag(client, company["id"], content).json())
+
+    review = _bilag(client, company["id"], content).json()
+    assert review["postable"] is False
+    assert {"dimensjoner_mangler", "dimensjoner_utelatt"} <= _codes(review)
+    assert [
+        (a["code"], a["dimension_description"], a["dimension_id"], a["value"], a["description"])
+        for a in review["dimensions_to_add"]
+    ] == [("AVDELING", "Avdeling", None, "20", "Jordbruk")]
+    left = next(f for f in review["findings"] if f["code"] == "dimensjoner_utelatt")
+    assert "«Ansatte»" in left["message"] and "«Bilagsart»" in left["message"]
+
+    _add_dimensions(client, company["id"], review)
+    ready = _bilag(client, company["id"], content).json()
+    assert ready["postable"] is True, ready["findings"]
+    assert _post(client, company["id"], content).status_code == 201
+    # The feed's 800 is avdeling 20's cost, and nothing of the employee came over.
+    assert _department_result(client, company["id"]) == {"20": "-800.00"}
+    names = {
+        value["description"]
+        for d in client.get(f"/api/v1/companies/{company['id']}/dimensjoner").json()
+        for value in d["values"]
+    }
+    assert names == {"Jordbruk"}
+
+
+def test_on_a_farm_the_account_id_carries_the_avdeling(client: TestClient) -> None:
+    company = _books(client)
+    switched = write(
+        client, "PUT", f"/api/v1/companies/{company['id']}/landbruk", json={"enabled": True}
+    )
+    assert switched.status_code == 200, switched.text
+    # No line names its avdeling: the six-digit accounts say it (402020 and
+    # 307120 are 20 Jordbruk, 239010 is 10 Finans).
+    content = _analysed_file(line_department=None)
+    _opening(client, company["id"], content)
+    _create_missing(client, company["id"], _bilag(client, company["id"], content).json())
+
+    review = _bilag(client, company["id"], content).json()
+    assert {(a["code"], a["value"]) for a in review["dimensions_to_add"]} == {
+        ("AVDELING", "10"),
+        ("AVDELING", "20"),
+    }
+    _add_dimensions(client, company["id"], review)
+    assert _bilag(client, company["id"], content).json()["postable"] is True
+    assert _post(client, company["id"], content).status_code == 201
+    # Milk 1 000 less feed 800 and fencing 100, all of it jordbruk; Finans has
+    # only the bank, which is no income or cost.
+    assert _department_result(client, company["id"]) == {"10": "0.00", "20": "100.00"}
+
+
+def test_outside_the_farming_add_on_six_digits_are_only_a_sub_account(
+    client: TestClient,
+) -> None:
+    company = _books(client)
+    content = _analysed_file(line_department=None)
+    _opening(client, company["id"], content)
+    _create_missing(client, company["id"], _bilag(client, company["id"], content).json())
+    review = _bilag(client, company["id"], content).json()
+    assert review["dimensions_to_add"] == []
+    assert review["postable"] is True, review["findings"]

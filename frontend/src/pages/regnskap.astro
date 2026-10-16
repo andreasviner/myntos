@@ -1,0 +1,316 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Regnskap | Myntos"
+  description="Resultatregnskap og balanse for hvert år i Myntos, side om side."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Regnskap</p>
+      {/* Selskapet er overskriften: tallene er ett regnskaps. */}
+      <h1 data-session-company></h1>
+      <p class="muted orgnr" id="orgnr"></p>
+    </div>
+    <button type="button" class="btn btn-ghost btn-small" id="all-years" hidden></button>
+  </header>
+
+  <p class="lead">
+    Resultatregnskapet og balansen for hvert år i Myntos, side om side, også årene som er hentet fra
+    et annet regnskapsprogram. Trykk på en linje for å se kontoene bak, og på et beløp for å se
+    bilagene.
+  </p>
+
+  <p class="status" id="page-status" hidden></p>
+  <div class="empty" id="loading">Henter …</div>
+
+  <div id="content" hidden>
+    <section class="card">
+      <h2 class="card-title">Resultatregnskap</h2>
+      <div class="table-scroll">
+        <table class="data report" id="result-table">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 class="card-title">Balanse</h2>
+      <p class="card-hint">Slik den står ved utgangen av hvert år, eller i dag for året som pågår.</p>
+      <div class="table-scroll">
+        <table class="data report" id="balance-table">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    {/* Det tallene er og ikke er, der de står: et år som ikke er avsluttet har
+        verken skattekostnad eller disponering, og det må ikke leses som et
+        ferdig årsregnskap. */}
+    <p class="card-hint note">
+      Tallene er lest av det som er ført, uten mva, og er ikke et innsendt årsregnskap eller en
+      skattemelding. Før et år er avsluttet har det ingen skattekostnad, med mindre det gamle
+      programmet førte en, og resultatet står som «Udisponert resultat» under egenkapitalen. Årene
+      avsluttes under <a href="/arsavslutning/">Årsavslutning</a>. Hvert bilag ser du under
+      <a href="/bilag/">Bilag</a>.
+    </p>
+  </div>
+
+  <div class="card" id="empty" hidden>
+    <h2 class="card-title">Ingenting er ført ennå</h2>
+    <p class="card-hint">
+      Når det er ført bilag, står resultatet og balansen for hvert år her. Kommer du fra et annet
+      program, kan du <a href="/tidligere-program/">hente regnskapet derfra</a>, også for tidligere
+      år.
+    </p>
+  </div>
+</BaseLayout>
+
+<style>
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .orgnr {
+    margin: 0.2rem 0 0;
+  }
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--muted);
+    margin: 0 0 0.4rem;
+  }
+  #content > .card + .card {
+    margin-top: 1rem;
+  }
+  .note {
+    margin-top: 1rem;
+  }
+  /* Det skriptet bygger får ikke sidens stempel, så reglene ankres i tabellene. */
+  .report :global(th.year) {
+    text-align: right;
+    white-space: nowrap;
+  }
+  .report :global(.year-note) {
+    display: block;
+    font-weight: 400;
+    font-size: 0.8rem;
+    color: var(--muted);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .report :global(tr[data-kind='sum'] td) {
+    font-weight: 700;
+  }
+  .report :global(tr[data-kind='sum'][data-total='true'] td) {
+    border-top: 2px solid var(--border);
+  }
+  .report :global(tr[data-account] td) {
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
+  .report :global(tr[data-account] td:first-child) {
+    padding-left: 2.2rem;
+  }
+  .report :global(td[data-empty='true']) {
+    color: var(--faint);
+  }
+  .report :global(.toggle) {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .report :global(.toggle::before) {
+    content: '▸';
+    display: inline-block;
+    width: 0.8rem;
+    color: var(--muted);
+    transition: transform 0.15s;
+  }
+  .report :global(.toggle[aria-expanded='true']::before) {
+    transform: rotate(90deg);
+  }
+  .report :global(.no-toggle) {
+    padding-left: 1.2rem;
+  }
+  .report :global(td.num a) {
+    color: inherit;
+    text-decoration: none;
+  }
+  .report :global(td.num a:hover) {
+    color: var(--accent);
+    text-decoration: underline;
+  }
+</style>
+
+<script>
+  import { ApiError, getAccounts, type ReportYear } from '../lib/api';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import { isoDate, kroner, orgnummer } from '../lib/format';
+  import { rowsOf, yearNote, type ReportRow, type Statement } from '../lib/regnskap';
+  import { loadSession, redirectToLogin } from '../lib/session';
+
+  // Fire år får plass på en vanlig skjerm; flere blir en tabell man må rulle
+  // sidelengs i for å se det man kom for, som er de siste årene.
+  const SHOWN_YEARS = 4;
+
+  // Linjene som avslutter et regnskap, med strek over: det er dem man leser først.
+  const TOTALS = new Set(['driftsresultat', 'arsresultat', 'eiendeler', 'egenkapital_og_gjeld']);
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const allYearsButton = el<HTMLButtonElement>('#all-years');
+
+  let years: ReportYear[] = [];
+  let showAll = false;
+
+  function shownYears(): ReportYear[] {
+    return showAll ? years : years.slice(0, SHOWN_YEARS);
+  }
+
+  function amountCell(amount: string | undefined, year: number, account?: string): HTMLTableCellElement {
+    const td = document.createElement('td');
+    td.className = 'num';
+    if (amount === undefined || Number(amount) === 0) {
+      td.dataset.empty = 'true';
+      td.textContent = amount === undefined ? '' : kroner('0');
+      return td;
+    }
+    if (account === undefined) {
+      td.textContent = kroner(amount);
+      return td;
+    }
+    // Beløpet på en konto fører til kontoens bilag det året: der er svaret på
+    // «hva er dette?».
+    const link = document.createElement('a');
+    link.href = `/bilag/?aar=${year}&konto=${encodeURIComponent(account)}`;
+    link.textContent = kroner(amount);
+    td.append(link);
+    return td;
+  }
+
+  function drawHead(table: HTMLTableElement, shown: ReportYear[]): void {
+    const row = document.createElement('tr');
+    const first = document.createElement('th');
+    row.append(first);
+    for (const year of shown) {
+      const th = document.createElement('th');
+      th.className = 'year';
+      th.append(String(year.year));
+      const note = document.createElement('span');
+      note.className = 'year-note';
+      note.textContent = yearNote(year, isoDate);
+      th.append(note);
+      row.append(th);
+    }
+    table.tHead?.replaceChildren(row);
+  }
+
+  function drawRow(body: HTMLTableSectionElement, row: ReportRow, shown: ReportYear[]): void {
+    const tr = document.createElement('tr');
+    tr.dataset.kind = row.kind;
+    tr.dataset.total = String(TOTALS.has(row.key));
+    const label = document.createElement('td');
+    const accountRows: HTMLTableRowElement[] = [];
+    if (row.accounts.length > 0) {
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'toggle';
+      toggle.setAttribute('aria-expanded', 'false');
+      toggle.textContent = row.label;
+      toggle.addEventListener('click', () => {
+        const open = toggle.getAttribute('aria-expanded') !== 'true';
+        toggle.setAttribute('aria-expanded', String(open));
+        for (const accountRow of accountRows) accountRow.hidden = !open;
+      });
+      label.append(toggle);
+    } else {
+      label.textContent = row.label;
+      if (row.kind === 'gruppe') label.className = 'no-toggle';
+    }
+    tr.append(label, ...shown.map((y) => amountCell(row.amounts.get(y.year), y.year)));
+    body.append(tr);
+    for (const account of row.accounts) {
+      const accountRow = document.createElement('tr');
+      accountRow.dataset.account = account.number;
+      accountRow.hidden = true;
+      const name = document.createElement('td');
+      name.textContent = `${account.number} ${account.description}`;
+      accountRow.append(
+        name,
+        ...shown.map((y) => amountCell(account.amounts.get(y.year), y.year, account.number)),
+      );
+      accountRows.push(accountRow);
+      body.append(accountRow);
+    }
+  }
+
+  function drawTable(selector: string, statement: Statement): void {
+    const table = el<HTMLTableElement>(selector);
+    const shown = shownYears();
+    drawHead(table, shown);
+    const body = table.tBodies[0];
+    if (body === undefined) return;
+    body.replaceChildren();
+    for (const row of rowsOf(shown, statement)) drawRow(body, row, shown);
+  }
+
+  function draw(): void {
+    drawTable('#result-table', 'resultat');
+    drawTable('#balance-table', 'balanse');
+    show(allYearsButton, years.length > SHOWN_YEARS);
+    allYearsButton.textContent = showAll ? `Vis de siste ${SHOWN_YEARS} årene` : `Vis alle ${years.length} årene`;
+  }
+
+  allYearsButton.addEventListener('click', () => {
+    showAll = !showAll;
+    draw();
+  });
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      const company = currentCompany(companies);
+      if (company === undefined) return;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      years = (await getAccounts(company.id)).years;
+      const anything = years.some((y) => y.voucher_count > 0);
+      show(el('#empty'), !anything);
+      show(el('#content'), anything);
+      if (anything) draw();
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet regnskapet.');
+    } finally {
+      el('#loading').hidden = true;
+    }
+  });
+</script>

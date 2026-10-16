@@ -358,9 +358,9 @@ _BASE: tuple[CashFlowType, ...] = (
         account_number="1250",
         default_tax_code="1",
         note=(
-            "Kjøp fra 15 000 kroner som skal vare i tre år eller mer: maskiner, utstyr, "
+            "Kjøp fra 30 000 kroner som skal vare i tre år eller mer: maskiner, utstyr, "
             "inventar. Føres ikke som kostnad nå, men aktiveres og avskrives (skatteloven "
-            "§ 14-40). Avskrivningen selv føres ikke her."
+            "§ 14-40). Registrer driftsmidlet under Anlegg; avskrivningen føres derfra."
         ),
     ),
     CashFlowType(
@@ -778,7 +778,9 @@ _FARM: tuple[CashFlowType, ...] = (
         default_tax_code=NO_VAT_CODE,
         note=(
             "Andre offentlige tilskudd til driften. Investeringstilskudd fra Innovasjon Norge "
-            "hører ikke hjemme her: det trekkes fra det du kjøpte for det (skatteloven § 14-42)."
+            "hører ikke hjemme her: det registreres på driftsmidlet under Anlegg, der det "
+            "som regel trekkes fra kostprisen (skatteloven § 14-42). Noen tilskudd i "
+            "distriktene er skattefrie og trekkes ikke fra (§ 5-31 a)."
         ),
         segment=_LANDBRUK,
     ),

@@ -42,7 +42,11 @@ It is for every business, not only farms.
 4. For each line, choose «Hva gjaldt linjen?», fill in «Beløp inkl. mva» and
    check «Mva-kode». The type list has both «Penger inn» and «Penger ut»: in a
    settlement the sale is money in and each deduction money out. When a type
-   can go to another account, a «Konto» list appears on that line.
+   can go to another account, a «Konto» list appears on that line. When the
+   company has avdelinger, prosjekter or driftsgrener, each line also has a
+   list for each of them («Avdeling», «Driftsgren» …), so the milk can go to
+   one driftsgren and the feed deducted to another; «Ingen» leaves the line on
+   none.
 5. Click «Legg til linje» for each further line, and «Fjern» to take one away.
 6. Read the sum under the lines: «Til sammen 6 800,00 kr inn på kontoen. Sjekk
    at det stemmer med det banken viser.» It must match the bank statement.

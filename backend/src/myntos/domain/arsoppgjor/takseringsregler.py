@@ -16,8 +16,8 @@ income year that is ending. Two parts of it reach a farm's books:
 changes. A year with no entry has no rates, and the review refuses a
 ``normalverdi`` line in it (``ingen_satser``) instead of quietly using last
 year's: the values move every year (kyr tilført i året were 8 700 in 2024,
-FOR-2024-11-28-2903, and 9 200 in 2025), and a count valued at the wrong year's rates is a wrong balance
-sheet that looks right.
+FOR-2024-11-28-2903, and 9 200 in 2025), and a count valued at the wrong
+year's rates is a wrong balance sheet that looks right.
 
 **What is deliberately not here.** Rein (formue only, skatteloven § 8-1 (1) a
 says the rates do not touch income), pelsdyr skins, oppdrettsfisk, fish and
@@ -31,9 +31,13 @@ Sources:
 - 2025: FOR-2025-12-01-2404, Skattedirektoratet, kunngjort 03.12.2025,
   ikrafttredelse «Inntektsåret 2025»,
   <https://lovdata.no/dokument/SF/forskrift/2025-12-01-2404>.
+  § 3-1-4 was amended by FOR-2025-12-11-2506; the figures here are the
+  consolidated text as Lovdata showed it on 2026-10-15.
 - The næringsspesifikasjon's own names for the totals (``buskap``,
-  ``selvprodusertVareBenyttetIEgenProduksjon``) are from Skatteetaten's
-  ``naeringsspesifikasjon_v6_ekstern.xsd``, ``SpesifikasjonAvSkattemessigVarelager``.
+  ``selvprodusertVareBenyttetIEgenProduksjon``,
+  ``raavareOgInnkjoeptHalvfabrikata``) are from Skatteetaten's
+  ``naeringsspesifikasjon_v7_ekstern.xsd`` (and v6),
+  ``SpesifikasjonAvSkattemessigVarelager``.
 """
 
 from __future__ import annotations
@@ -240,9 +244,7 @@ _CATEGORIES_2025: tuple[CountCategory, ...] = (
         nibio="534",
     ),
     # --- Småfe. Adults: sauer over one year, geiter over nine months. ---
-    CountCategory(
-        "sau_ib", _B, "Sauer fra inngående balanse", "stk", None, _A, "sau", True, "541"
-    ),
+    CountCategory("sau_ib", _B, "Sauer fra inngående balanse", "stk", None, _A, "sau", True, "541"),
     CountCategory(
         "sau_tilfort",
         _B,
@@ -304,9 +306,7 @@ _CATEGORIES_2025: tuple[CountCategory, ...] = (
     CountCategory("hest_dolahest_1", _B, "Dølahest inntil 1 år", "stk", _N("2800"), _S, "hest"),
     CountCategory("hest_dolahest_2", _B, "Dølahest inntil 2 år", "stk", _N("7000"), _S, "hest"),
     CountCategory("hest_dolahest_3", _B, "Dølahest inntil 3 år", "stk", _N("11000"), _S, "hest"),
-    CountCategory(
-        "hest_dolahest_eldre", _B, "Dølahest over 3 år", "stk", _N("13800"), _S, "hest"
-    ),
+    CountCategory("hest_dolahest_eldre", _B, "Dølahest over 3 år", "stk", _N("13800"), _S, "hest"),
     CountCategory("bifolk", _B, "Bifolk (uten kube)", "stk", _N("460"), _S),
     # Fôringsdyr bought for sale as slaughter or livdyr: what they cost plus the
     # feed until the turn of the year (§ 5-2, the paragraph after the rates).
@@ -320,9 +320,10 @@ _CATEGORIES_2025: tuple[CountCategory, ...] = (
     CountCategory("fabrikkpoteter", _E, "Fabrikkpoteter", "kg", _N("1.30"), _S),
     CountCategory("halm_ammoniakk", _E, "Halm, ammoniakkbehandlet", "kg", _N("1.30"), _S),
     CountCategory("grassurfor", _E, "Grassurfôr", "kg", _N("0.45"), _S),
-    # Hay is here: the regulation gives it no figure of its own for 2025, only
-    # «andre fôrmidler» per fôrenhet.
-    CountCategory("andre_formidler", _E, "Andre fôrmidler, også høy", "FEm", _N("1.60"), _S),
+    # Hay has a figure of its own per kilo (d, «Avlingslager til oppfôring på
+    # egen buskap»); only what d does not name is valued per fôrenhet.
+    CountCategory("hoy", _E, "Høy", "kg", _N("1.50"), _S),
+    CountCategory("andre_formidler", _E, "Andre fôrmidler", "FEm", _N("1.60"), _S),
     # --- Bought stock: innkjøpspris med tillegg av frakt (§ 5-1-2). ---
     CountCategory("innkjopt_kraftfor", Kind.INNKJOPT, "Kraftfôr", "kg", None, _K),
     CountCategory("innkjopt_gjodsel", Kind.INNKJOPT, "Gjødsel og kalk", "kg", None, _K),

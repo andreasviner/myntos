@@ -1,6 +1,6 @@
 ---
 name: myntos-kontoplan
-description: Read and change a Norwegian company's chart of accounts (kontoplan) in Myntos - add an account, rename it, deactivate or delete it - and choose, per year, which post of the tax return's business specification (næringsspesifikasjon) each account is reported under. Use when the person needs an account the books do not have, wants one renamed or hidden, or asks where an account ends up in the skattemelding or SAF-T.
+description: Read and change a Norwegian company's chart of accounts (kontoplan) in Myntos - add an account, rename it, deactivate or delete it, mark it as a bank account - and choose, per year, which post of the tax return's business specification (næringsspesifikasjon) each account is reported under. Use when the person needs an account the books do not have, wants one renamed or hidden, or asks where an account ends up in the skattemelding or SAF-T.
 ---
 
 # Kontoplan: the chart of accounts
@@ -30,6 +30,7 @@ with them.
 - «Endre navnet på konto 6810»
 - «Skjul den kontoen, vi bruker den ikke»
 - «Slett kontoen jeg la til ved en feil»
+- «Oversikten viser null inn og ut, men banken vår står på 2390»
 - «Hvilken post i næringsspesifikasjonen havner konto 6820 i?»
 
 ## Before you start
@@ -80,6 +81,7 @@ And for each account:
 | `has_postings` | Something was posted to it, so it can never be deleted |
 | `grouping_category`, `grouping_code` | Its post for `year`. Both null for an account added after that year was closed |
 | `grouping_chosen_at` | Set when a person chose the post («Valgt for hånd»); null when Myntos's default stands |
+| `is_bank_account` | The company's money sits here: the overview counts its movements as money in and out and its balance as the bank. Always true for 1920 and 1900; true for any other account marked as a bank account. The page says «Aktiv, bankkonto» |
 
 To say what a post is, look its `category` and `code` up in `groupings` and
 use the `description`.
@@ -140,6 +142,31 @@ one, and deactivate the old.
 An account with `is_locked: true` cannot be deactivated (409
 `account_in_use`).
 
+### Mark an account as a bank account
+
+For a bank account the previous program kept on another account than 1920:
+Tripletex keeps a farm's driftskreditt (an operating credit line) on 2390. The
+vouchers brought over stay there, and until the account is marked the
+overview (`GET /api/v1/companies/{company_id}/cashflow/summary`) counts no
+money in or out on it and leaves its balance out of `cash_position`.
+
+1. Find the account whose name carries the company's kontonummer, or that the
+   person says is the bank. Only classes 1 and 2 can be one. A SAF-T import
+   on the server marks such an account itself when the file's header names
+   the kontonummer, so check `is_bank_account` first.
+2. Say what it does: the overview counts the account as the bank. Nothing is
+   moved or posted, new payments still go to 1920, and it can be undone.
+   Moving the balance to 1920 instead is a manual voucher
+   (myntos-manuelt-bilag) and the accountant's call.
+3. `PATCH /api/v1/companies/{company_id}/kontoplan/{account_id}` with
+   `{"is_bank_account": true}`, or `false` to undo it. Needs `write`. May
+   answer 202 `approval_pending` (see myntos-godkjenning).
+
+1920 and 1900 always count and cannot be unmarked (409 `account_in_use`);
+another account Myntos posts to by number cannot be marked (409
+`account_in_use`); an account outside classes 1 and 2 is refused (422
+`invalid_account_number`).
+
 ### Delete an account
 
 Only for an account added by mistake that has no history at all: nothing
@@ -184,9 +211,9 @@ and `code`, which is what to branch on.
 | 202 `approval_pending` | Not a refusal: the request waits for the person, and nothing has happened yet | Do not resend. Tell the person it waits for them under «Godkjenning» in Myntos (myntos-godkjenning) |
 | 403 `permission_denied` | The person is a «Medlem» or «Leser»; the kontoplan needs `ledger:chart` | Tell them an «Administrator» or «Eier» of the company has to do it, in Myntos or with their own key |
 | 409 `duplicate_account` | The number is already in the kontoplan, perhaps deactivated | Use that account, or reactivate it |
-| 422 `invalid_account_number` | Not four digits, class 9, a type the class cannot hold, or an empty name | Fix the request; `detail` says which |
+| 422 `invalid_account_number` | Not four digits, class 9, a type the class cannot hold, an empty name, or marking an account outside classes 1 and 2 as a bank account | Fix the request; `detail` says which |
 | 422 `invalid_grouping` | The pair is not in Skatteetaten's list for that year | Take the pair from `groupings` for the same year |
-| 409 `account_in_use` | Deactivating or deleting an account Myntos posts to, or deleting one with history | Leave a locked account alone; deactivate instead of deleting one with history |
+| 409 `account_in_use` | Deactivating or deleting an account Myntos posts to, deleting one with history, unmarking 1920 or 1900, or marking another locked account as a bank account | Leave a locked account alone; deactivate instead of deleting one with history |
 | 409 `closed_financial_year` | The year is closed, and its næringsspesifikasjon was filed with these groupings | Do not work around it. A wrong filed mapping is corrected by reopening the year first, which is the person's decision («Årsavslutning» in Myntos, myntos-arsavslutning) |
 | 422 `period_outside_books` | The company has no financial year `aar` in Myntos | Use a year the company has |
 | 404 `account_not_found` | No such account id in this company | Read the kontoplan again and use its `id` |
@@ -204,10 +231,13 @@ Nothing in the kontoplan is closed to a key with `write` and a person with
 `ledger:chart`. What a key may never do sits next to it: the company's bank
 account numbers (kontonummer, under `/bankkontoer`) are not accounts in the
 kontoplan, and no key may change them (403 `not_for_agent_keys`). Bank
-account 1920 in the kontoplan is the ledger side of all of them.
+account 1920 in the kontoplan is the ledger side of all of them, and marking
+another account as a bank account (`is_bank_account`) only says where the
+books keep money; it adds no kontonummer and changes where nothing is paid.
 
 If the person would rather do it themselves, the page is «Kontoplan»
 (`https://myntos.no/kontoplan/`):
-[Add an account](https://myntos.no/llms/help/chart-of-accounts/add-an-account.md)
+[Add an account](https://myntos.no/llms/help/chart-of-accounts/add-an-account.md),
+[Mark an account as a bank account](https://myntos.no/llms/help/chart-of-accounts/mark-an-account-as-a-bank-account.md)
 and the other articles in the chart-of-accounts help area explain it step by
 step.

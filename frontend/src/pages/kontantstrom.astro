@@ -324,6 +324,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             </label>
           </div>
 
+          {/* Avdeling, prosjekt eller driftsgren: ett valg per dimensjon, bygget
+              fra selskapets egne under /avdelinger/. Skjult når selskapet ikke
+              har noen, som de fleste ikke har; da er det ikke et spørsmål. */}
+          <div class="field-row" id="dimension-fields" hidden></div>
+
           <button class="btn btn-primary btn-block" type="submit" id="entry-submit">
             Registrer betaling
           </button>
@@ -748,14 +753,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     display: grid;
     gap: 0.5rem;
   }
-  .asks li {
+  /* Spørsmålene og forslagslisten lages av skriptet, så reglene henges på
+     listene i malen og når radene med :global(). */
+  .asks :global(li) {
     position: relative;
     padding: 0.6rem 0.8rem 0.6rem 2.2rem;
     border: 1px solid var(--line);
     border-radius: 0.5rem;
     font-size: 0.92rem;
   }
-  .asks li::before {
+  .asks :global(li)::before {
     content: '?';
     position: absolute;
     left: 0.85rem;
@@ -764,10 +771,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   }
   /* Gjetning, ikke avlesning: et spørsmål modellen fant på skal ikke se like
      sikkert ut som et registeret utledet av sin egen lesning. */
-  .asks li[data-ki] {
+  .asks :global(li[data-ki]) {
     border-style: dashed;
   }
-  .ask-source {
+  .asks :global(.ask-source) {
     display: block;
     margin-top: 0.2rem;
     font-size: 0.78rem;
@@ -873,6 +880,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   .line-list :global(.line-account) {
     grid-column: 1 / -1;
   }
+  .line-list :global(.line-dimensions) {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 0.75rem;
+  }
   .line-list :global(.line-note) {
     grid-column: 1 / -1;
     margin: 0 0 0.35rem;
@@ -965,27 +978,27 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     border-radius: var(--radius-small);
     box-shadow: var(--shadow-lifted);
   }
-  .combo-list [role='option'] {
+  .combo-list :global([role='option']) {
     padding: 0.45rem 0.75rem;
     cursor: pointer;
   }
-  .combo-list [role='option']:hover,
-  .combo-list [role='option'][aria-selected='true'] {
+  .combo-list :global([role='option']:hover),
+  .combo-list :global([role='option'][aria-selected='true']) {
     background: var(--accent-soft);
   }
-  .combo-list .combo-number {
+  .combo-list :global(.combo-number) {
     color: var(--muted);
     font-family: var(--font-numeric);
     font-size: 0.85em;
     margin-right: 0.5rem;
   }
-  .combo-list .combo-group,
-  .combo-list .combo-empty {
+  .combo-list :global(.combo-group),
+  .combo-list :global(.combo-empty) {
     padding: 0.45rem 0.75rem 0.2rem;
     font-size: 0.8rem;
     color: var(--muted);
   }
-  .combo-list .combo-group {
+  .combo-list :global(.combo-group) {
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -1042,6 +1055,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     fetchThumbnail,
     getCompanyCatalogue,
     getSummary,
+    listDimensions,
     interpretDocumentStreaming,
     listCashFlow,
     listParties,
@@ -1059,6 +1073,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     type CashFlowType,
     type CompanyCatalogue,
     type Company,
+    type Dimension,
     type Direction,
     type FieldSource,
     type AttachmentInfo,
@@ -1314,6 +1329,53 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     tax_code: string | null;
     account_number?: string | null;
     description?: string | null;
+    dimension_value_ids?: number[];
+  }
+
+  // Selskapets avdelinger, prosjekter og driftsgrener, hentet én gang. Bare
+  // de som er slått på og har en verdi som er det, tilbys.
+  let dimensionList: Dimension[] = [];
+  const dimensionFields = el<HTMLDivElement>('#dimension-fields');
+  const activeDimensions = (): Dimension[] =>
+    dimensionList.filter((item) => item.is_active && item.values.some((value) => value.is_active));
+
+  /**
+   * Ett valg per dimensjon i `holder`, med `chosen` valgt. En verdi som er
+   * deaktivert vises bare når den alt står på føringen som rettes, så personen
+   * ser den; backend sier fra hvis den sendes igjen.
+   */
+  function dimensionSelects(holder: HTMLElement, chosen: readonly number[], suffix = ''): void {
+    holder.replaceChildren();
+    for (const dimension of activeDimensions()) {
+      const label = document.createElement('label');
+      label.className = 'field';
+      const text = document.createElement('span');
+      text.textContent = dimension.description;
+      const select = document.createElement('select');
+      select.className = 'dimension-select';
+      select.setAttribute('aria-label', `${dimension.description}${suffix}`);
+      select.append(option('', 'Ingen'));
+      for (const value of dimension.values) {
+        if (!value.is_active && !chosen.includes(value.id)) continue;
+        select.append(
+          option(
+            String(value.id),
+            `${value.value} ${value.description}${value.is_active ? '' : ' (deaktivert)'}`,
+          ),
+        );
+      }
+      const picked = dimension.values.find((value) => chosen.includes(value.id));
+      select.value = picked === undefined ? '' : String(picked.id);
+      label.append(text, select);
+      holder.append(label);
+    }
+  }
+
+  /** Verdiene som er valgt i `holder`, som id-er til API-et. */
+  function chosenDimensions(holder: ParentNode): number[] {
+    return [...holder.querySelectorAll<HTMLSelectElement>('select.dimension-select')]
+      .map((select) => Number(select.value))
+      .filter((id) => id > 0);
   }
 
   /** Én linje i et oppdelt bilag: type, beløp inkl. mva, mva-kode, og en vei ut. */
@@ -1404,6 +1466,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     note.className = 'line-note';
     note.hidden = true;
 
+    // Per linje: ett oppgjør kan høre til flere driftsgrener, melka til
+    // melkeproduksjonen og kraftfôret kanskje til sauen.
+    const dims = document.createElement('div');
+    dims.className = 'line-dimensions';
+    dimensionSelects(dims, values?.dimension_value_ids ?? [], `, linje ${index}`);
+    dims.hidden = dims.childElementCount === 0;
+
     type.addEventListener('change', () => {
       const chosen = catalogue.types.find((entry) => entry.code === type.value);
       if (chosen !== undefined) tax.value = chosen.default_tax_code;
@@ -1436,7 +1505,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       if (values.description) item.dataset.description = values.description;
     }
 
-    item.append(typeLabel, amountLabel, taxLabel, remove, accountLabel, note);
+    item.append(typeLabel, amountLabel, taxLabel, remove, accountLabel, dims, note);
     lineList.append(item);
     return item;
   }
@@ -1503,6 +1572,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           type_code: typeSelect.value,
           gross_amount: amount?.value ?? '',
           tax_code: taxSelect.value || null,
+          dimension_value_ids: chosenDimensions(dimensionFields),
         });
       } else {
         addLine();
@@ -1536,6 +1606,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     typeSelect.disabled = !visible;
     taxSelect.disabled = !visible;
     accountSelect.disabled = !visible;
+    show(dimensionFields, visible && activeDimensions().length > 0);
     const amount = form.querySelector<HTMLInputElement>('input[name="gross_amount"]');
     if (amount !== null) amount.disabled = !visible;
     // Kontovalget for én linje vises bare når typen har et alternativ; det
@@ -1570,6 +1641,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         // Bare når personen valgte en annen konto enn typens egen.
         account_number: account !== '' && account !== own ? account : null,
         description: item.dataset.description ?? null,
+        dimension_value_ids: chosenDimensions(item),
       });
     }
     return lines;
@@ -2690,8 +2762,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     net.textContent = kroner(summary.net);
     net.className = Number(summary.net) < 0 ? 'amount-out' : 'amount-in';
 
-    // Positivt betyr å betale. Et anslag fra registeret, ikke en mva-melding,
-    // og oversikten sier ikke noe annet enn det.
+    // Positivt betyr å betale. Det som skyldes nå, over alle år: terminer som
+    // ikke er sendt, og sendte som ikke er betalt (2700, 2710 og 2740). Lest
+    // av bøkene, ikke en mva-melding, og oversikten sier ikke noe annet enn det.
     el('#fig-vat').textContent = kroner(summary.vat_position);
     el('#fig-vat-note').textContent =
       Number(summary.vat_position) >= 0 ? '(anslått å betale)' : '(anslått til gode)';
@@ -2909,6 +2982,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     // 1900 is the cash account and 1920 the bank one; anything else is a
     // company with a kontoplan of its own, and bank is the safer assumption.
     if (method !== null) method.value = entry.payment_account === '1900' ? 'kontant' : 'bank';
+    dimensionSelects(dimensionFields, entry.dimension_value_ids);
 
     // A composite entry comes back as its lines. The account and the text of a
     // line travel with it only when they are not what the category would have
@@ -2926,6 +3000,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 ? part.account_number
                 : null,
             description: part.description !== entry.description ? part.description : null,
+            dimension_value_ids: part.dimension_value_ids,
           };
         }),
       );
@@ -3133,6 +3208,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       party_id: null as number | null,
       // Tom når typen ikke har noe alternativ: da fører backend til typens konto.
       account_number: String(data.get('account_number') ?? '') || null,
+      dimension_value_ids: chosenDimensions(dimensionFields),
     };
     // Et oppdelt bilag sendes som linjer. Det som ikke kan leses, sies før
     // noe sendes, i skjemaets egne ord: «linje 3» er lettere å finne enn et
@@ -3277,9 +3353,18 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       // crossed the country and come back. Nothing between them reads
       // `parties`, so there was nothing ordering them but the way it was
       // written.
-      const [loadedParties] = await Promise.all([listParties(company.id), refresh()]);
+      // Dimensjonene i samme slengen. En liste som ikke kom, stopper ikke
+      // registeret: skjemaet tilbyr da ingen, og føringen går fint uten.
+      const [loadedParties, loadedDimensions] = await Promise.all([
+        listParties(company.id),
+        listDimensions(company.id).catch((): Dimension[] => []),
+        refresh(),
+      ]);
       parties = loadedParties;
       fillParties();
+      dimensionList = loadedDimensions;
+      dimensionSelects(dimensionFields, []);
+      show(dimensionFields, !splitting && activeDimensions().length > 0);
 
       loading.hidden = true;
       content.hidden = false;

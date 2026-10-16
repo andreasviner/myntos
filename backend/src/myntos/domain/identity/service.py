@@ -188,6 +188,7 @@ async def confirm_identity(
     password: str | None,
     session: UserSession,
     action: str,
+    or_recent_login: bool = False,
 ) -> None:
     """Make sure the person doing ``action`` is the account's owner, not their session.
 
@@ -205,13 +206,27 @@ async def confirm_identity(
 
     A wrong password counts towards the same lockout as a wrong login, so this
     cannot become an unthrottled way to test guesses from a hijacked session.
+
+    ``or_recent_login`` lets an account with a password prove itself the way
+    one without does, by having signed in within the window, when it sends no
+    password. For deleting a company, which can be undone for five years (or
+    loses nothing): a person who signs in with Google and once set a password
+    they never use should not be stopped by it. Not for deleting the account
+    or switching to BankID, which cannot be undone.
     """
     now = utc_now()
+    recent = now - as_utc(session.created_at) <= RECENT_LOGIN_WINDOW
+    if user.has_password and or_recent_login and not password and recent:
+        return
     if user.has_password:
         if user.locked_until is not None and as_utc(user.locked_until) > now:
             raise AccountLockedError("kontoen er midlertidig låst etter for mange forsøk")
         if not password:
-            raise ReauthenticationRequiredError(f"skriv inn passordet ditt for å {action}")
+            raise ReauthenticationRequiredError(
+                f"skriv inn passordet ditt, eller logg inn på nytt, for å {action}"
+                if or_recent_login
+                else f"skriv inn passordet ditt for å {action}"
+            )
         if not verify_password(password, user.password_hash):
             _record_failed_login(user)
             # Committed for the reason authenticate_with_password commits: the
@@ -220,7 +235,7 @@ async def confirm_identity(
             await db.commit()
             raise ReauthenticationFailedError("feil passord")
         return
-    if now - as_utc(session.created_at) > RECENT_LOGIN_WINDOW:
+    if not recent:
         minutes = int(RECENT_LOGIN_WINDOW.total_seconds() // 60)
         raise ReauthenticationRequiredError(
             f"logg ut og inn igjen for å {action}. Det må gjøres innen {minutes} minutter "

@@ -124,3 +124,13 @@ class NoUttakError(FarmListConflictError):
 
 class InvalidUttakError(FarmListInvalidError):
     """The list of private uttak cannot be posted; the findings say why."""
+
+
+class FarmYearNotOpenError(FarmListConflictError):
+    """The year is closed, or the company keeps no such year in Myntos.
+
+    A count and an uttak list are vouchers dated in the year, so they go where
+    every other posting goes: into an open year, and only one Myntos keeps. A
+    count for a year before the books came to Myntos would make that year the
+    first one, and move the opening balance with it.
+    """

@@ -8,14 +8,16 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type { SaftImport, SaftMoveReview } from './api';
+import type { MvaPeriodRow, SaftImport, SaftMoveReview } from './api';
 import {
   currentComparison,
   currentImport,
+  defaultFiledOn,
   isWorking,
   postLabel,
   postedSummary,
   summary,
+  termsToConfirm,
   yearsToClose,
 } from './saftimport';
 
@@ -126,5 +128,47 @@ describe('the words about a review', () => {
 
   it('points at the earlier years that are whole, and not the running one', () => {
     expect(yearsToClose(review())).toEqual([2025]);
+  });
+});
+
+describe('the VAT terms the old program filed', () => {
+  function term(termin: number, overrides: Partial<MvaPeriodRow> = {}): MvaPeriodRow {
+    return {
+      year: 2025,
+      termin,
+      label: `${termin}. termin 2025`,
+      name: '',
+      start: '2025-01-01',
+      end: '2025-02-28',
+      deadline: '2025-04-10',
+      is_over: true,
+      fastsatt_merverdiavgift: '100.00',
+      line_count: 1,
+      status: null,
+      filed_fastsatt: null,
+      changed_since_filed: false,
+      is_overdue: true,
+      filed_elsewhere: false,
+      filed_elsewhere_amount: null,
+      elsewhere_difference: null,
+      elsewhere_proposal: null,
+      ...overrides,
+    };
+  }
+
+  it('asks about the terms that are over and not filed or marked', () => {
+    const asked = termsToConfirm([
+      term(1),
+      term(2, { status: 'mottatt' }),
+      term(3, { filed_elsewhere: true, status: 'annet_program' }),
+      term(4, { is_over: false }),
+      term(5, { status: 'validert' }),
+    ]);
+    expect(asked.map((t) => t.termin)).toEqual([1, 5]);
+  });
+
+  it('records the deadline once it has passed, and today before then', () => {
+    expect(defaultFiledOn(term(1), '2026-10-15')).toBe('2025-04-10');
+    expect(defaultFiledOn(term(1), '2025-03-20')).toBe('2025-03-20');
   });
 });

@@ -375,6 +375,26 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   /* Det som legges til: tre fliser, hver en <details> med en kort, rullbar
      liste. Lista var tidligere en punktliste rett på siden, og 62 kunder og
      leverandører gjorde gjennomgangen lengre enn skjermen ganger fire. */
+  #import-card :global(.vat-terms) {
+    margin-top: 1.25rem;
+  }
+  #import-card :global(.term-list) {
+    list-style: none;
+    margin: 0.5rem 0 1rem;
+    padding: 0;
+    display: grid;
+    gap: 0.45rem;
+  }
+  #import-card :global(.term-list label) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.25rem 0.6rem;
+    cursor: pointer;
+  }
+  #import-card :global(.term-list .muted) {
+    font-size: 0.88rem;
+  }
   #import-card :global(.adds) {
     display: grid;
     gap: 0.6rem;
@@ -497,10 +517,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     discardSaftImport,
     getSaftImport,
     getOpeningState,
+    getMvaOverview,
     listSaftImports,
+    markMvaFiledElsewhere,
     postSaftImport,
     uploadSaftFiles,
     type Company,
+    type MvaPeriodRow,
     type SaftComparisonReview,
     type SaftImport,
     type SaftImportFinding,
@@ -508,14 +531,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   } from '../lib/api';
   import { currentCompany, loadCompanies } from '../lib/company';
   import { el, setStatus, show } from '../lib/dom';
-  import { fileSize, isoDate, kroner, orgnummer } from '../lib/format';
+  import { fileSize, isoDate, kroner, orgnummer, todayIso } from '../lib/format';
   import {
     currentComparison,
     currentImport,
+    defaultFiledOn,
     isWorking,
     postLabel,
     postedSummary,
     summary,
+    termsToConfirm,
     yearsToClose,
   } from '../lib/saftimport';
   import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
@@ -791,11 +816,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     post.disabled = !job.may_post;
     actions.append(post, button('Forkast', 'btn btn-ghost', () => void discard(job)));
     confirm.append(actions);
-    if (review.postable && !job.may_post && review.accounts_to_add.length > 0) {
+    if (
+      review.postable &&
+      !job.may_post &&
+      (review.accounts_to_add.length > 0 || review.dimensions_to_add.length > 0)
+    ) {
       confirm.append(
         node(
           'p',
-          'Bare en administrator eller eier kan legge til kontoer i kontoplanen, og dermed føre dette.',
+          'Bare en administrator eller eier kan legge til kontoer i kontoplanen og avdelinger, og ' +
+            'dermed føre dette.',
           'card-hint',
         ),
       );
@@ -833,12 +863,156 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         node(
           'p',
           `${toClose.join(', ')} er ferdig i det gamle programmet, men åpent i Myntos. Avslutt ` +
-            'årene under Årsavslutning, eldste først. Har det gamle programmet sendt ' +
-            'mva-meldinger, merk terminene «Sendt fra et annet program» på Mva-siden.',
+            'årene under Årsavslutning, eldste først.',
           'card-hint',
         ),
       );
     }
+    const terms = node('div', undefined, 'vat-terms');
+    importBody.append(terms);
+    void renderVatTerms(terms, result.years.map((year) => year.year));
+  }
+
+  // --- Mva-terminene det gamle programmet leverte -------------------------------
+
+  /** En termin å spørre om, med meldingen den hører til for et selskap med to. */
+  interface TermQuestion {
+    row: MvaPeriodRow;
+    naering: string | null;
+    naeringLabel: string | null;
+  }
+
+  /**
+   * Spør hvilke terminer i årene som ble hentet det gamle programmet leverte.
+   *
+   * Her og ikke bare på Mva-siden, fordi det er nå personen vet svaret: de har
+   * akkurat hentet regnskapet fra programmet som leverte dem. Uten svaret står
+   * hver termin som forsinket med «Send» på Mva-siden, og en ny melding for en
+   * termin erstatter den forrige hos Skatteetaten. Det samme spørsmålet står
+   * på Mva-siden termin for termin; dette er alle på én gang.
+   *
+   * Terminene der filene har det gamle programmets mva-oppgjør er krysset av
+   * på forhånd, de andre ikke: oppgjøret er et tegn, men utsagnet er personens.
+   */
+  async function renderVatTerms(box: HTMLDivElement, years: number[]): Promise<void> {
+    box.replaceChildren();
+    if (!canInCompany(company, 'ledger:write')) return;
+    const questions: TermQuestion[] = [];
+    try {
+      for (const year of years) {
+        const main = await getMvaOverview(company.id, year);
+        if (!main.vat_registered) return;
+        const meldinger = [main];
+        for (const other of main.naeringer.filter((n) => !n.is_main)) {
+          meldinger.push(await getMvaOverview(company.id, year, other.category));
+        }
+        const two = main.naeringer.length > 1;
+        for (const overview of meldinger) {
+          const label = main.naeringer.find((n) => n.category === overview.naering)?.label ?? null;
+          for (const row of termsToConfirm(overview.periods)) {
+            questions.push({
+              row,
+              naering: two ? overview.naering : null,
+              naeringLabel: two ? label : null,
+            });
+          }
+        }
+      }
+    } catch {
+      // Spørsmålet er en snarvei; Mva-siden spør om det samme termin for termin.
+      return;
+    }
+    if (questions.length === 0) return;
+
+    box.append(node('h3', 'Mva-meldingene det gamle programmet leverte'));
+    box.append(
+      node(
+        'p',
+        'Kryss av terminene som ble levert fra det gamle programmet. Da står de ikke som ' +
+          'forsinket, og Myntos sender ikke en ny melding for dem: en ny melding for en termin ' +
+          'erstatter den forrige hos Skatteetaten. Terminene der filene har det gamle ' +
+          'programmets mva-oppgjør er krysset av.',
+        'card-hint',
+      ),
+    );
+    const list = node('ul', undefined, 'term-list');
+    const boxes: { box: HTMLInputElement; question: TermQuestion }[] = [];
+    for (const question of questions) {
+      const { row } = question;
+      const item = node('li');
+      const label = node('label');
+      const check = node('input');
+      check.type = 'checkbox';
+      check.checked = row.elsewhere_proposal !== null;
+      const amount = row.fastsatt_merverdiavgift;
+      const proposal = row.elsewhere_proposal;
+      const what =
+        `${kroner(amount.replace(/^-/, ''))} ${amount.startsWith('-') ? 'til gode' : 'å betale'} etter Myntos · ` +
+        (proposal === null
+          ? 'ikke noe mva-oppgjør i filene'
+          : `mva-oppgjør i filene, bilag ${proposal.voucher_no}` +
+            (proposal.matches ? '' : `, som sier ${kroner(proposal.amount)}`));
+      label.append(
+        check,
+        node('span', question.naeringLabel === null ? row.label : `${row.label}, ${question.naeringLabel}`),
+        node('span', what, 'muted'),
+      );
+      item.append(label);
+      list.append(item);
+      boxes.push({ box: check, question });
+    }
+    box.append(list);
+    const button = node('button', 'Merk som levert fra det gamle programmet', 'btn btn-primary');
+    button.type = 'button';
+    const status = node('p', undefined, 'status');
+    status.hidden = true;
+    box.append(button, status);
+
+    button.addEventListener('click', () => {
+      const chosen = boxes.filter((b) => b.box.checked).map((b) => b.question);
+      if (chosen.length === 0) {
+        setStatus(status, 'Kryss av minst én termin.');
+        return;
+      }
+      button.disabled = true;
+      void (async () => {
+        const today = todayIso();
+        let marked = 0;
+        try {
+          for (const { row, naering } of chosen) {
+            button.textContent = `Merker ${marked + 1} av ${chosen.length} …`;
+            const proposal = row.elsewhere_proposal;
+            await markMvaFiledElsewhere(company.id, {
+              aar: row.year,
+              termin: row.termin,
+              naering,
+              filed_on: defaultFiledOn(row, today),
+              amount: proposal?.amount ?? null,
+              voucher_id: proposal?.voucher_id ?? null,
+            });
+            marked += 1;
+          }
+        } catch (error: unknown) {
+          button.disabled = false;
+          button.textContent = 'Merk som levert fra det gamle programmet';
+          setStatus(
+            status,
+            (marked > 0 ? `${marked} av ${chosen.length} er merket. ` : '') +
+              (error instanceof ApiError ? error.message : 'Vi fikk ikke merket terminene.'),
+          );
+          return;
+        }
+        await renderVatTerms(box, years);
+        const done = node(
+          'p',
+          `${marked} ${marked === 1 ? 'termin er merket' : 'terminer er merket'} som sendt fra et ` +
+            'annet program. Du ser dem under Mva-melding, der merkingen også kan angres.',
+          'status',
+        );
+        done.dataset.tone = 'ok';
+        box.append(done);
+      })();
+    });
   }
 
   function renderImport(): void {

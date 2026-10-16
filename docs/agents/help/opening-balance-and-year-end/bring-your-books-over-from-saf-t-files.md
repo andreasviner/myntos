@@ -70,8 +70,19 @@ the person must keep.
    shows «Myntos fører regnskapet» and may be closed again.
 7. «Regnskapet er hentet» says what was posted. From there: «Se bilagene»
    (the vouchers on «Bilag»), «Inn og ut av banken», and «Avslutt …» for an
-   earlier year.
-8. Check the running year with a fresh file:
+   earlier year. Every year's result and balance sheet is on «Regnskapet år
+   for år» on the overview.
+8. For a VAT-registered company, «Mva-meldingene det gamle programmet
+   leverte» lists the VAT terms of the imported years that are over and not
+   yet filed or marked. Tick the ones the old program filed and press «Merk
+   som levert fra det gamle programmet». Terms where the files carry the old
+   program's own VAT settlement are ticked already; the others are left for
+   the person to decide. Each ticked term is marked «Sendt fra et annet
+   program» on the MVA page, with the deadline as the day it was sent, so it is
+   no longer overdue and Myntos will not send a melding that would replace it.
+   It can be undone per term on the MVA page:
+   [Mark a VAT period as filed from another program](https://myntos.no/llms/help/vat/mark-a-termin-filed-in-another-program.md).
+9. Check the running year with a fresh file:
    [Compare Myntos with the previous program](https://myntos.no/llms/help/opening-balance-and-year-end/compare-myntos-with-the-previous-program.md).
 
 «Forkast» throws away files read by mistake, before anything is posted.
@@ -80,11 +91,13 @@ the person must keep.
 
 | The note starts | What it means |
 | --- | --- |
+| «Konto … er bankkontoen …, og er merket som bankkonto …» | The old program kept the company's bank on another account than 1920 (Tripletex keeps a farm's driftskreditt on 2390), and the file says so. The account is marked as a bank account, so «Oversikt» counts the money on it. Nothing is moved; it can be undone with «Ikke bankkonto» on «Kontoplan»: [Mark an account as a bank account](https://myntos.no/llms/help/chart-of-accounts/mark-an-account-as-a-bank-account.md) |
+| «Konto … er bankkontoen …. Be en administrator eller eier merke den …» | The same, but the person may not change the kontoplan | An «Administrator» or «Eier» presses «Merk som bankkonto» on «Kontoplan» |
 | «Regnskapet i Myntos starter i …, ikke i …» | The files go further back than the books in Myntos did; those years are added |
 | «Filen for … har ingen saldoer per 1. januar …» | The books began in that year in the old program (the farm's Tripletex books began in June). Nothing to post as opening balance; everything is in the vouchers |
 | «Inngående balanse for … (bilag …) reverseres, og en ny føres per 1. januar …» | An opening balance posted for a later year is replaced by one from the earliest file, so nothing counts twice. Accounts the person had moved in it (the driftskreditt to 1920) are moved in the new one too |
 | «Årene … er ferdige i det gamle programmet, men åpne i Myntos.» | Close them under «Årsavslutning», oldest first: [What closing a year locks](https://myntos.no/llms/help/opening-balance-and-year-end/what-closing-a-year-locks.md) |
-| «Bilagene har mva, og Mva-siden i Myntos regner dem med …» | The old program filed those VAT returns. **Never send them again from Myntos**; mark the terms «Sendt fra et annet program» on the MVA page |
+| «Bilagene har mva, og Mva-siden i Myntos regner dem med …» | The old program filed those VAT returns. **Never send them again from Myntos**; tick them under «Mva-meldingene det gamle programmet leverte» once the books are posted (step 8), or mark them one by one on the MVA page ([how](https://myntos.no/llms/help/vat/mark-a-termin-filed-in-another-program.md)) |
 | «… bilag i filen har linjer på flere datoer …» | Tripletex keeps an invoice and its payment in one voucher. Myntos posts each date as its own voucher, with the date after the number (2026-1-0109) |
 | «Filen fører mva på 2711 …» | Myntos keeps output VAT on 2700 and input VAT on 2710; the line's text keeps the old account |
 | «Saldoene i filen går ikke i null: differansen … er underskudd for …» | The old program had not moved the year before's result to equity; it is put on 2050 |

@@ -260,6 +260,14 @@ async def start_posting(
             "filene fører på kontoer som ikke er i kontoplanen, og bare en administrator "
             "eller eier kan legge dem til. Be en av dem om å føre regnskapet fra filene"
         )
+    # The same for avdelinger: setting them up is ledger:chart too, and the
+    # post would add them (move.apply refuses it again, as the last word).
+    if job.review.get("dimensions_to_add") and not may_chart:
+        raise ImportNotPostableError(
+            "filene fører på avdelinger eller produkter som ikke er satt opp, og bare en "
+            "administrator eller eier kan legge dem til. Be en av dem om å føre regnskapet fra "
+            "filene"
+        )
     if not await files_kept(db, job):
         raise ImportNotPostableError(
             f"filene ble slettet etter {FILE_LIFETIME.days} dager uten at noe ble ført. Last "

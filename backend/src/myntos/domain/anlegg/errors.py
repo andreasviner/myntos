@@ -38,7 +38,7 @@ class RegisterYearClosedError(AnleggError):
 
 
 class InvalidOpeningSaldoError(AnleggError):
-    """The opening saldi cannot be stored: wrong year, unknown group, or an account that is not an asset."""
+    """The opening saldi cannot be stored: wrong year, unknown group, or not an asset account."""
 
 
 class DepreciationNotPostableError(AnleggError):
@@ -51,6 +51,14 @@ class DepreciationNotPostableError(AnleggError):
 
 class DepreciationExistsError(AnleggError):
     """The year's depreciation is posted already, and the request did not ask to correct it."""
+
+
+class LaterYearDepreciatedError(AnleggError):
+    """A later year's depreciation is posted, and its opening saldo comes from this year's.
+
+    Reversing or correcting this year under it would leave the later voucher
+    built on a saldo that no longer exists. The later one is reversed first.
+    """
 
 
 class NoDepreciationError(AnleggError):

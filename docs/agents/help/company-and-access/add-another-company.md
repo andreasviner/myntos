@@ -37,7 +37,9 @@ person who sets it up is the only one with access until they invite others.
    organisation number under «Skriv inn organisasjonsnummeret» and press
    «Neste».
 4. Answer the questions under «Litt om regnskapet» and press «Sett opp
-   regnskapet».
+   regnskapet», or press «Hopp over» to start from this year with no account
+   number. «Setter opp regnskapet for …» shows for a few seconds while the
+   books are made.
 5. When it says «Regnskapet er satt opp», invite colleagues if they need
    access, and press «Åpne regnskapet».
 

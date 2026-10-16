@@ -1,4 +1,4 @@
-"""The kontoplan: list, add, rename, deactivate, delete, and group per year.
+"""The kontoplan: list, add, rename, deactivate, mark as bank, delete, and group per year.
 
 Reading needs ``ledger:read``; every change needs ``ledger:chart``, which only
 whoever administers the books holds (see :mod:`myntos.domain.identity.access`
@@ -38,6 +38,9 @@ class AccountResponse(BaseModel):
     grouping_code: str | None
     # Set when a person chose the post; null when the seed or the default did.
     grouping_chosen_at: datetime | None
+    # Counted as the company's money on the overview: always 1920 and 1900,
+    # and any other account marked as a bank account.
+    is_bank_account: bool
 
 
 class GroupingOption(BaseModel):
@@ -70,6 +73,7 @@ class CreateAccountRequest(BaseModel):
 class UpdateAccountRequest(BaseModel):
     description: str | None = Field(default=None, min_length=1, max_length=255)
     is_active: bool | None = None
+    is_bank_account: bool | None = None
 
 
 class GroupingRequest(BaseModel):
@@ -104,6 +108,7 @@ async def _response(db: DbSession, context: CurrentCompany, year: int) -> Kontop
                 grouping_category=view.grouping_category,
                 grouping_code=view.grouping_code,
                 grouping_chosen_at=view.grouping_chosen_at,
+                is_bank_account=view.is_bank_account,
             )
             for view in views
         ],
@@ -132,8 +137,13 @@ async def get_kontoplan(
     deactivated account is kept for the years that used it and offered for
     nothing new), ``is_locked`` (Myntos itself posts to it by number, such as
     the bank account 1920 and the VAT accounts, so it can be renamed but never
-    deactivated or deleted), and ``has_postings`` (anything was ever posted to
-    it; such an account can never be deleted, only deactivated).
+    deactivated or deleted), ``has_postings`` (anything was ever posted to
+    it; such an account can never be deleted, only deactivated), and
+    ``is_bank_account`` (the company's money sits there: the overview's money
+    in, money out and bank balance count it. Always true for the bank account
+    1920 and the cash account 1900; true for any other account somebody
+    marked, such as a driftskreditt on 2390 that the previous program used as
+    the bank).
 
     ``grouping_category`` and ``grouping_code`` say which post of the
     næringsspesifikasjon the account is reported under in year ``aar``. The
@@ -239,10 +249,24 @@ async def update_account(
     db: DbSession,
     aar: int | None = Query(default=None),
 ) -> KontoplanResponse:
-    """Rename an account, or switch it off or on again. Answers with the whole kontoplan.
+    """Rename an account, switch it off or on, or mark it as a bank account.
+
+    Answers with the whole kontoplan for ``aar``.
 
     Send ``description`` to rename, ``is_active`` to deactivate (``false``) or
-    reactivate (``true``), or both. Anything left out stays as it is.
+    reactivate (``true``), ``is_bank_account`` to mark (``true``) or unmark
+    (``false``) it as one of the company's bank accounts, or several at once.
+    Anything left out stays as it is.
+
+    Marking says the company's money sits on the account, so the overview
+    (``GET …/cashflow/summary``) counts its movements as money in and out and
+    its balance in the bank position, alongside 1920 Bankinnskudd and 1900
+    Kontanter. It is for a bank account the previous program kept somewhere
+    else: Tripletex keeps a farm's driftskreditt (an operating credit line) on
+    2390. Marking moves nothing and posts nothing, and unmarking undoes it;
+    new payments are still posted to 1920. Moving the balance to 1920 instead
+    is a manual voucher, and the accountant's call. A SAF-T import marks such
+    an account itself when the file names the bank account in its text.
 
     A rename is allowed on every account, posted to or not, including the
     ones Myntos uses itself. The name is master data rather than a posting,
@@ -259,8 +283,13 @@ async def update_account(
     Refusals: 409 ``account_in_use`` when deactivating an account Myntos posts
     to by number (``is_locked``: the bank and cash accounts, the VAT accounts,
     the customer and supplier balances, equity and the year-end accounts;
-    switched off, every payment would be refused); 422
-    ``invalid_account_number`` for an empty name; 404 ``account_not_found``
+    switched off, every payment would be refused), when unmarking 1920 or
+    1900 (they are where Myntos posts payments, and always count), or when
+    marking one of the other locked accounts as a bank account (each already
+    means something else); 422 ``invalid_account_number`` for an empty name,
+    or for marking an account outside classes 1 and 2 as a bank account
+    (income or cost counted as the bank would count every sale twice); 404
+    ``account_not_found``
     for an account that is not this company's; 422 ``period_outside_books``
     when ``aar``, the year whose kontoplan is returned, is one the company
     does not have, in which case nothing is changed.
@@ -276,6 +305,7 @@ async def update_account(
         account_pk=account_id,
         description=payload.description,
         is_active=payload.is_active,
+        is_bank_account=payload.is_bank_account,
     )
     return await _response(db, context, aar or utc_now().year)
 

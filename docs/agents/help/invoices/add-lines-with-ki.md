@@ -33,7 +33,8 @@ themselves, as with lines they typed.
    what was sold, how much and at what price, for example «10 timer rådgivning
    i mars til 1 500 kroner timen, og to kursmapper à 450».
 3. Press «Foreslå linjer». The page says «Setter opp linjene …».
-4. The lines appear marked «Foreslått av KI», and a message says how many were
+4. The lines appear tinted and marked «KI» under the line number («Foreslått
+   av KI» on a phone, and when hovered), and a message says how many were
    added. If the form already had lines, the new ones are added below them.
 5. Check every line: «Hva er solgt?», «Antall», the unit, «Pris» and the VAT
    rate. Change or «Fjern» what is wrong. Then carry on:
@@ -52,7 +53,7 @@ themselves, as with lines they typed.
 ## Good to know
 
 - The description goes to Løynd, Myntos's own model, which runs in Norway.
-  «Hva ser modellen?» next to the button explains what it sees.
+  What it sees is explained on the «KI» page (`https://myntos.no/ki/`).
 - Prices on invoice lines are always without VAT. The VAT is added at the
   bottom.
 - A company outside the VAT register only gets lines with «Ikke

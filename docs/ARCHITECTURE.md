@@ -670,7 +670,10 @@ number rather than by the uploader's `Content-Type` or extension; the storage
 key is generated and never derived from the filename; the SHA-256 is stored so the file handed to an auditor can be
 proven to be the one uploaded. The archive is **append-only** — there is no
 delete endpoint, because bokføringsloven § 13 requires primary documentation to
-stay available for five years after the financial year ends.
+stay available for five years after the financial year ends. The one thing
+that deletes a stored file is the daily purge of companies an owner deleted
+from Myntos, and only once those five years are over
+([gdpr.md § Deleting a company](gdpr.md#deleting-a-company)).
 
 The original is kept **byte for byte**, EXIF and all, because it is the
 primary documentation and a stripped copy would no longer be the file that was
@@ -760,8 +763,8 @@ The rules, and why:
   party completely or not at all, since half a reskontro does not reconcile.
 - **Corrections** reverse the standing voucher and post the replacement with
   `corrects_transaction_pk`, in one request. The register's reversal route
-  refuses `IB` and `AVS` vouchers (`cannot_reverse_here`), so neither can be
-  undone around its own rules.
+  refuses `IB`, `AVS` and `MANUELT` vouchers (`cannot_reverse_here`), so none
+  of them can be undone around its own rules.
 - **The old program's years**, from its SAF-T files, one per year, go into an
   `IMPORT` journal under the old program's voucher numbers, never over a period
   Myntos already has entries in. The earliest file's opening balances are the
@@ -773,6 +776,35 @@ The rules, and why:
   replaced by one in the earliest, in one step. The register neither lists nor
   reverses those vouchers; `/bilag/` lists them, and everything else counts
   them ([saf-t.md](integrations/saf-t.md#the-books-brought-over-on-the-server-built-2026-10-13)).
+
+**Manuelt bilag** (`domain/manuelt_bilag`, built 2026-10-15). The year-end
+adjustments (stock and livestock, accruals, depreciation, reclassifications)
+have no payment behind them, and before this the accountant finished the year
+in another program. A manual voucher is typed as accounts with debit and
+credit, reviewed by the backend (`…/manuelt-bilag/kontroll`, findings in the
+year-end's `feil`/`merknad` shape) and posted in its own `MANUELT` journal,
+numbered per year. Three rules carry the weight:
+
+- **A written reason is required**, at least ten characters, and kept in the
+  append-only `voucher_explanation` table beside the voucher. A payment is
+  documented by a receipt; an adjustment is a decision, and
+  bokføringsforskriften § 5-12 wants the documentation to show why it is made.
+  The table has no author column: the voucher's own `created_by` is the
+  author, so account erasure (gdpr.md) needed no change.
+- **VAT is never typed.** A line with a VAT code carries the gross amount and
+  is split like a register line, with the VAT line generated on 2700/2710;
+  a typed line on either account is refused. That is also what makes the
+  read-back (`input_lines`, what a correction starts from) exact: in
+  `MANUELT` every 2700/2710 line is generated. Border VAT and non-deductible
+  reverse charge stay in the register, whose extra cost line could not be
+  told apart on read-back. The closing accounts (8300, 8800, 8960, 8990) are
+  refused, because the close would call them already disposed.
+- **Corrections are their own routes.** `PUT …/manuelt-bilag/{id}` reverses
+  the original in its own period and posts the replacement with
+  `corrects_transaction_pk`; the reversal's reason names the replacement, so
+  each piece of documentation points at the other (§ 5-12). A plain reversal
+  needs a reason too. The register neither lists nor reverses these vouchers;
+  `/bilag/` lists them, and the summary and bank matching count them.
 
 **Årsavslutning.** At most two vouchers in the `AVS` journal on 31 December: the
 **tax cost** an AS states (8300/2500; Myntos does not compute tax or deferred
@@ -884,14 +916,16 @@ everywhere is no easier to find than one present where you are.
 | `/` | Marketing when signed out; overview, totals and recent entries when signed in |
 | `/kontantstrom/` | The register: entry form, listing, reversal, bilag upload (several files at once, PDF or photograph, with a box for what the documents do not say) |
 | `/faktura/` | Salgsdokument: line editor, a review step that shows the § 5-1 findings before anything is issued, kreditnota, PDF and EHF download |
-| `/saft/` | The SAF-T Financial file for one financial year: the backend's cross-reference findings first, the download only when none of them blocks, the version offered only for years that accept two. Reached from the note under the overview's figures. See [integrations/saf-t.md](integrations/saf-t.md#what-myntos-does-built-2026-10-09) |
-| `/kontoplan/` | The kontoplan for one year: every account, its post in the næringsspesifikasjon, adding, renaming, (de)activating and regrouping. Changes need `ledger:chart`. Reached from `/organisasjon/`, `/saft/` and the account field in the register. See [integrations/saf-t.md](integrations/saf-t.md#the-kontoplan-is-editable-built-2026-10-09) |
+| `/saft/` | The SAF-T Financial file for one financial year: the backend's cross-reference findings first, the download only when none of them blocks, the version offered only for years that accept two. Reached from the note under the overview's figures, and per year from `/slett-selskap/` with `?aar=`. See [integrations/saf-t.md](integrations/saf-t.md#what-myntos-does-built-2026-10-09) |
+| `/kontoplan/` | The kontoplan for one year: every account, its post in the næringsspesifikasjon, adding, renaming, (de)activating, marking as a bank account (an account besides 1920 and 1900 that the overview counts as the company's money, such as a driftskreditt on 2390; `account.is_bank_account`) and regrouping. Changes need `ledger:chart`. Reached from `/organisasjon/`, `/saft/` and the account field in the register. See [integrations/saf-t.md](integrations/saf-t.md#the-kontoplan-is-editable-built-2026-10-09) |
 | `/mva-justeringer/` | Uttak, tap på krav, justering and tilbakeføring: the MVA-melding's `spesifikasjon` lines, recorded and reversed. Reached from `/mva/`. See [integrations/mva.md](integrations/mva.md#spesifikasjon-uttak-tap-på-krav-justering-tilbakeføring-built-2026-10-09) |
 | `/mva/` | The MVA-melding per period: every line, the deadline, Skatteetaten's check, a confirmation step before filing, the receipt and payment information afterwards, and the melding as XML for upload by hand. Reached from the VAT figure on the overview, not from the top menu. See [integrations/mva.md](integrations/mva.md#what-myntos-does) |
 | `/bank/` | Bank reconciliation: upload a camt.053 file, see each movement next to the voucher that books it, confirm a suggested voucher or post a new one from the line through the register's own path. Matching is a link and never edits a voucher. Reached from the note under the overview's figures. See [integrations/bank.md](integrations/bank.md) |
 | `/inngaende-balanse/` | The opening balance of books brought from another system: saldobalanse CSV or typed lines, open items per customer and supplier, the backend's review, then one voucher; correction is reversal plus replacement. Reached from the overview's note. See [§ Where the books start](#where-the-books-start-and-where-each-year-ends) |
+| `/manuelt-bilag/` | Manual vouchers for one year: accounts with debit and credit, a written reason, optional documents, the backend's review, then one voucher in the `MANUELT` journal; «Rett» (reversal plus replacement) and «Reverser» with a reason on each. Reached from the overview's note, `/arsavslutning/` and `/bilag/`. See [§ Where the books start](#where-the-books-start-and-where-each-year-ends) |
 | `/tidligere-program/` | «Hent regnskapet fra et annet program»: the old program's SAF-T files, one per year, uploaded once and read and posted on the server (see [§ Work done after the answer](#work-done-after-the-answer)); the review in tiles and folded lists; the parallel run's comparison. Reached from the overview (a card while the books are empty, and the note), `/inngaende-balanse/` and the move guides |
 | `/bilag/` | The bilagsjournal: every posted voucher of a year from every journal, with its lines; narrowed to an account, its movements and balance (1920: the bank's ins and outs). Reached from «Se alle bilag →» on the overview and from a finished import |
+| `/regnskap/` | Resultatregnskap and balanse for every year side by side, newest first, grouped by NS 4102 class, each line opening to its accounts and each amount to `/bilag/` (`domain/ledger/report.py`). Reached from «Regnskapet år for år» on the overview, which also says where the books stop once a VAT deadline has passed with nothing posted since (`positions_as_of` on the summary) |
 | `/arsavslutning/` | One financial year's result, tax (AS) and disposition, shown line by line before a confirmed close; reopening with a reason and the log of both. Reached from the overview's note |
 | `/parter/` | Customers and suppliers (SAF-T `Party`) for the active company: the register a counterparty is picked from. Reached from `/faktura/` and the register's entry form, not from the menu |
 | `/ki/` | Where KI is used in Myntos and who runs the model, public; signed in, also the switch (`Company.ki_enabled`) that turns it off for one set of books, naming the company it applies to. See [§ KI](#ki-anywhere-in-the-product-one-provider-only) |
@@ -901,6 +935,7 @@ everywhere is no easier to find than one present where you are.
 | `/fullfor-registrering/` | The second step of a BankID signup: the name BankID gave, and the address the person types. Token in the fragment. An address that has an account is refused, with the way to link BankID instead |
 | `/invitasjon/` | Accepts an invitation token, sending the recipient to sign in first if needed |
 | `/konto/` | The **person**, not a company: how they sign in (password, linked providers, «Koble til BankID», and removing one while another way in remains), where they are signed in (end one device, or all the others), and deleting the account, with what is deleted and what stays with each company stated before the button. Reached from the company menu as «Din konto». See [gdpr.md](gdpr.md) |
+| `/slett-selskap/` | Deleting the active company, for an owner: a SAF-T link for every year with entries, what will happen (deleted at once when nothing is entered, otherwise locked until the date bokføringsloven § 13 sets and purged the day after), the same proof as deleting the account, and two boxes. Reached from the red «Slett selskapet …» in the last section of `/organisasjon/`, owners only; a deleted company is opened again from «Slettede selskaper» on `/konto/`. See [gdpr.md § Deleting a company](gdpr.md#deleting-a-company) |
 | `/bekreft-epost/`, `/glemt-passord/`, `/nytt-passord/` | Address confirmation and password reset, from links in the fragment. The front page carries a notice (`components/VerifyEmailNotice.astro`) while the address is unconfirmed and the deployment sends mail. See [Credentials and sessions](#credentials-and-sessions) |
 | `/organisasjon/` | Everything about **one company**: its own details (the only place its bank accounts, VAT registration, Foretaksregisteret and the address are edited), its subscription, who may open it and who has been invited to it, the Altinn confirmation of who it belongs to, and everything Enhetsregisteret holds about it including the board and the revisor. The board list marks who can open the books and offers to invite whoever cannot: [register-access.md](register-access.md). No account is shown here: see [company-isolation.md](company-isolation.md#the-account-is-not-a-company) |
 | `/priser/`, `/bankpriser/`, `/funksjoner/`, `/about/`, `/kom-i-gang/` (and one guide per program under it), `/ansvar/`, `/personvern/`, `/vilkar/` | Marketing and legal pages, readable signed out: prices, a comparison of business banks, features, moving from another program, the disclaimer, the privacy policy and the terms. `/personvern/` and `/ki/` carry the public promise about KI ([§ KI](#ki-anywhere-in-the-product-one-provider-only)) |
@@ -1501,6 +1536,15 @@ buyer, not the company, not the ledger. The question does not need them.
   a new company starts with; nothing may assume an account's number is in it,
   and a grouping row a person chose (`chosen_at`) is never rewritten by a
   migration correcting the seed.
+- **A deleted company's books outlive the deletion.** Deleting a company with
+  anything entered locks it (`company.closed_at`) until 31 December five years
+  after its last financial year (`company.retain_until`, bokføringsloven § 13),
+  and only then are the rows and files deleted. Every company lookup that is
+  not about deleted companies filters them out, in
+  `ledger.service.get_company_for_user` and `list_companies`, and so do the
+  two orgnr indexes (`uq_company_open_orgnr`, `uq_company_verified_orgnr`),
+  so deleted books never stop the same orgnr being set up or confirmed. See
+  [gdpr.md § Deleting a company](gdpr.md#deleting-a-company).
 - **Posted entries are immutable** — corrections are reversals
   (bokføringsloven traceability). That includes the opening balance and a
   year's closing: reopening a year reverses its closing vouchers rather than

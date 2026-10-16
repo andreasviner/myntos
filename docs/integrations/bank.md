@@ -179,3 +179,9 @@ the line is not built: there is no voucher type for a customer paying 1500 yet.
 - Comparing the statement's closing balance with the ledger's 1920 balance:
   every bank account posts to 1920 today, so per-account balances are not in
   the books to compare against.
+- Reconciling an account marked as a bank account in the kontoplan
+  (`account.is_bank_account`, such as a driftskreditt on 2390 brought over
+  from Tripletex). The overview counts it, but a suggestion still needs a
+  voucher through 1920, and nothing links a `company_bank_account` to the
+  ledger account its money is booked on. That link is what reconciling it
+  would need first.

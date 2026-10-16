@@ -6,6 +6,20 @@
 
 **If you have no key** and somebody asked you how to do something in Myntos, go to the help half at the end: one article per task, with the exact words on the screen.
 
+**If somebody asked what Myntos is**, what it costs or whether it suits them, the next section has the facts, each with the page that says it at more length.
+
+## About Myntos
+
+Each line repeats what the linked public page says. When the page and this list disagree, the page is newer: quote it.
+
+- **What it is.** A web-based regnskapsprogram (accounting program) for Norwegian companies, for an AS or an ENK and for the regnskapsfører who keeps their books. Double-entry bookkeeping with a bilag archive; payments in and out with the receipt read into the form; sales invoices checked against bokføringsforskriften § 5-1, with the EHF file made at issue; VAT codes with date-dependent rates and the MVA-melding per period; bank statements (camt.053) matched against the books; opening balance, year-end closing and a fixed-asset register; the SAF-T Financial export. [Funksjoner](https://myntos.no/funksjoner/) marks each part «Virker i dag» or «Under arbeid».
+- **Price.** 0 kr. No price list, no paid tier, no trial period, no payment details taken, and filing to the authorities is meant to cost the same. [Priser](https://myntos.no/priser/)
+- **Status.** Beta. Filing to Skatteetaten and Altinn is being built: the MVA-melding is made from the books and checked by Skatteetaten's validation, and the skattemelding with næringsspesifikasjon is under way. Until Myntos has filed for real, somebody moving to it should keep another way to file. Payroll and the a-melding are not built. [Funksjoner](https://myntos.no/funksjoner/), [Priser](https://myntos.no/priser/)
+- **Moving from another program.** From Fiken, Tripletex, PowerOffice Go, Conta or any program that exports SAF-T: upload one SAF-T file per year, and Myntos brings in the accounts, customers and suppliers, the opening balance of the first year and every year's vouchers. The documents behind the vouchers, payroll, hours and projects are not in SAF-T and stay behind, so each guide says what to download before cancelling. [Kom i gang](https://myntos.no/kom-i-gang/), one guide per program.
+- **Data.** The database and the document store are in the EEA. Myntos does not sell or share the books, shows no ads and loads no tracking. Its own KI, which reads receipts, is Løynd, run by the same company on servers in Norway; it stores nothing, trains nothing, and a company can switch it off. [KI](https://myntos.no/ki/), [Personvern](https://myntos.no/personvern/)
+- **Source code.** Public: Myntos is source-available, so anyone can read exactly what it does, and run it themselves without an agreement with us. [Funksjoner](https://myntos.no/funksjoner/#apen-kildekode)
+- **Who.** Operated by Lindeman Technologies, Norway. Contact: kontakt@myntos.no. [About Myntos, in English](https://myntos.no/about/)
+
 ## Connect first
 
 Read the connection skill and follow it before anything else. In short:
@@ -46,6 +60,7 @@ Everything below is one of two kinds, and which you need depends on how you meet
 - [Which company, its register data and financial years](https://myntos.no/llms/skills/myntos-selskap.md)
 - [Payments in and out, receipts read by KI, payments split into lines, the bilag archive, corrections](https://myntos.no/llms/skills/myntos-kontantstrom.md)
 - [Every posted voucher, from every journal, and one account's movements with its balance](https://myntos.no/llms/skills/myntos-bilag.md)
+- [The accounts for every year: resultatregnskap and balanse side by side](https://myntos.no/llms/skills/myntos-regnskap.md)
 - [Sales invoices and credit notes](https://myntos.no/llms/skills/myntos-faktura.md)
 - [Customers and suppliers](https://myntos.no/llms/skills/myntos-parter.md)
 - [Bank statements and reconciliation](https://myntos.no/llms/skills/myntos-bank.md)
@@ -54,9 +69,12 @@ Everything below is one of two kinds, and which you need depends on how you meet
 - [The opening balance](https://myntos.no/llms/skills/myntos-inngaende-balanse.md)
 - [The previous program: its books brought over from its SAF-T files on the server, earlier years too, and the two compared in a parallel run](https://myntos.no/llms/skills/myntos-tidligere-program.md)
 - [Manual vouchers: year-end adjustments, reclassifications and corrections typed as debit and credit](https://myntos.no/llms/skills/myntos-manuelt-bilag.md)
+- [Fixed assets (anleggsregister) and the year's tax depreciation (saldoavskrivning)](https://myntos.no/llms/skills/myntos-anlegg.md)
 - [Closing and reopening a financial year](https://myntos.no/llms/skills/myntos-arsavslutning.md)
 - [The chart of accounts](https://myntos.no/llms/skills/myntos-kontoplan.md)
+- [Avdelinger, prosjekter and driftsgrener, and the result per each](https://myntos.no/llms/skills/myntos-avdelinger.md)
 - [Farming: the landbruk add-on, settlements from Tine and Nortura, subsidies, farm VAT](https://myntos.no/llms/skills/myntos-landbruk.md)
+- [Farming at year end: the count of livestock, feed and grain, and private uttak](https://myntos.no/llms/skills/myntos-landbruk-arsoppgjor.md)
 - [The SAF-T export](https://myntos.no/llms/skills/myntos-saft.md)
 
 ## Help: helping a person use the web app
@@ -95,6 +113,7 @@ You have no access to the books here and must not ask for a password or a key. I
 - [Delete a payment](https://myntos.no/llms/help/payments/delete-a-payment.md)
 - [Describe what a payment was for](https://myntos.no/llms/help/payments/describe-a-payment.md)
 - [Take a photo of a receipt](https://myntos.no/llms/help/payments/photograph-a-receipt.md)
+- [Put a payment on an avdeling or prosjekt](https://myntos.no/llms/help/payments/put-a-payment-on-an-avdeling.md)
 - [Read the payment register](https://myntos.no/llms/help/payments/read-the-payment-register.md)
 - [Record a payment from a receipt](https://myntos.no/llms/help/payments/record-a-payment-from-a-receipt.md)
 - [Record a payment in a foreign currency](https://myntos.no/llms/help/payments/record-a-payment-in-a-foreign-currency.md)
@@ -109,6 +128,11 @@ You have no access to the books here and must not ask for a password or a key. I
 
 - [See every voucher in the books](https://myntos.no/llms/help/vouchers/see-every-voucher.md)
 - [See what went in and out of the bank](https://myntos.no/llms/help/vouchers/see-what-went-in-and-out-of-the-bank.md)
+
+### Regnskap: the result and balance sheet for every year
+
+- [Find what is behind a figure in the accounts](https://myntos.no/llms/help/reports/find-what-is-behind-a-figure.md)
+- [See the accounts for every year](https://myntos.no/llms/help/reports/see-the-accounts-for-every-year.md)
 
 ### Faktura: sales invoices
 
@@ -158,12 +182,14 @@ You have no access to the books here and must not ask for a password or a key. I
 - [Correct a VAT return already sent](https://myntos.no/llms/help/vat/correct-a-vat-return-already-sent.md)
 - [File the VAT return by uploading the XML](https://myntos.no/llms/help/vat/file-the-vat-return-by-uploading-the-xml.md)
 - [Find out why the VAT return cannot be sent](https://myntos.no/llms/help/vat/find-out-why-the-vat-return-cannot-be-sent.md)
+- [File two VAT returns (a farm with other business)](https://myntos.no/llms/help/vat/file-two-vat-returns.md)
 - [Find the VAT deadline](https://myntos.no/llms/help/vat/find-the-vat-deadline.md)
 - [Fix a VAT return Skatteetaten would reject](https://myntos.no/llms/help/vat/fix-a-vat-return-skatteetaten-would-reject.md)
 - [Get the receipt and payment details](https://myntos.no/llms/help/vat/get-the-receipt-and-payment-details.md)
 - [Handle a submission that stopped partway](https://myntos.no/llms/help/vat/handle-a-submission-that-stopped-partway.md)
 - [Let an AI prepare the VAT return](https://myntos.no/llms/help/vat/let-an-ai-prepare-the-vat-return.md)
 - [Log in with ID-porten to file the VAT return](https://myntos.no/llms/help/vat/log-in-with-id-porten-for-the-vat-return.md)
+- [Mark a VAT period as filed from another program](https://myntos.no/llms/help/vat/mark-a-termin-filed-in-another-program.md)
 - [Record private use (uttak)](https://myntos.no/llms/help/vat/record-private-use-uttak.md)
 - [Record the VAT payment or refund](https://myntos.no/llms/help/vat/record-the-vat-payment-or-refund.md)
 - [Repay the VAT deduction on a car or property](https://myntos.no/llms/help/vat/repay-the-deduction-on-a-car-or-property.md)
@@ -179,14 +205,19 @@ You have no access to the books here and must not ask for a password or a key. I
 - [Compare Myntos with the previous program](https://myntos.no/llms/help/opening-balance-and-year-end/compare-myntos-with-the-previous-program.md)
 - [Correct a manual voucher](https://myntos.no/llms/help/opening-balance-and-year-end/correct-a-manual-voucher.md)
 - [Correct an opening balance](https://myntos.no/llms/help/opening-balance-and-year-end/correct-an-opening-balance.md)
+- [Correct or reverse the year's depreciation](https://myntos.no/llms/help/opening-balance-and-year-end/correct-or-reverse-the-depreciation.md)
 - [Decide whether you need an opening balance](https://myntos.no/llms/help/opening-balance-and-year-end/decide-whether-you-need-an-opening-balance.md)
 - [Enter an opening balance](https://myntos.no/llms/help/opening-balance-and-year-end/enter-an-opening-balance.md)
+- [Enter the opening saldi from the previous program](https://myntos.no/llms/help/opening-balance-and-year-end/enter-the-opening-saldi.md)
 - [Enter the tax when closing a year](https://myntos.no/llms/help/opening-balance-and-year-end/enter-the-tax-when-closing-a-year.md)
 - [Fix a year that will not close](https://myntos.no/llms/help/opening-balance-and-year-end/fix-a-year-that-will-not-close.md)
 - [Import a saldobalanse](https://myntos.no/llms/help/opening-balance-and-year-end/import-a-saldobalanse.md)
 - [Import the opening balance from a SAF-T file](https://myntos.no/llms/help/opening-balance-and-year-end/import-a-saf-t-file.md)
 - [Make the year-end adjustments](https://myntos.no/llms/help/opening-balance-and-year-end/make-year-end-adjustments.md)
 - [Post a manual voucher](https://myntos.no/llms/help/opening-balance-and-year-end/post-a-manual-voucher.md)
+- [Post the year's depreciation](https://myntos.no/llms/help/opening-balance-and-year-end/post-the-years-depreciation.md)
+- [Record that a fixed asset was sold or scrapped](https://myntos.no/llms/help/opening-balance-and-year-end/record-the-sale-of-a-fixed-asset.md)
+- [Register a fixed asset](https://myntos.no/llms/help/opening-balance-and-year-end/register-a-fixed-asset.md)
 - [Reopen a financial year](https://myntos.no/llms/help/opening-balance-and-year-end/reopen-a-financial-year.md)
 - [Reverse a manual voucher](https://myntos.no/llms/help/opening-balance-and-year-end/reverse-a-manual-voucher.md)
 - [Reverse an opening balance](https://myntos.no/llms/help/opening-balance-and-year-end/reverse-an-opening-balance.md)
@@ -200,15 +231,26 @@ You have no access to the books here and must not ask for a password or a key. I
 - [Change an account's post in the næringsspesifikasjon](https://myntos.no/llms/help/chart-of-accounts/change-an-accounts-post.md)
 - [Deactivate or reactivate an account](https://myntos.no/llms/help/chart-of-accounts/deactivate-an-account.md)
 - [Delete an account](https://myntos.no/llms/help/chart-of-accounts/delete-an-account.md)
+- [Mark an account as a bank account](https://myntos.no/llms/help/chart-of-accounts/mark-an-account-as-a-bank-account.md)
 - [Rename an account](https://myntos.no/llms/help/chart-of-accounts/rename-an-account.md)
 - [Understand the chart of accounts](https://myntos.no/llms/help/chart-of-accounts/understand-the-chart-of-accounts.md)
 - [Who can change the chart of accounts](https://myntos.no/llms/help/chart-of-accounts/who-can-change-the-chart-of-accounts.md)
+
+### Avdelinger, prosjekter and driftsgrener
+
+- [See the result per avdeling or prosjekt](https://myntos.no/llms/help/departments/see-the-result-per-department.md)
+- [Set up avdelinger and prosjekter](https://myntos.no/llms/help/departments/set-up-departments-and-projects.md)
+- [Switch off or delete an avdeling](https://myntos.no/llms/help/departments/switch-off-or-delete-an-avdeling.md)
 
 ### Landbruk: farms and forestry
 
 - [Book a settlement from the dairy or slaughterhouse](https://myntos.no/llms/help/farming/book-a-settlement.md)
 - [Book production subsidies](https://myntos.no/llms/help/farming/book-production-subsidies.md)
 - [Choose the VAT for farm sales](https://myntos.no/llms/help/farming/choose-the-vat-for-farm-sales.md)
+- [Correct the livestock count](https://myntos.no/llms/help/farming/correct-the-livestock-count.md)
+- [Count livestock and stock at year end](https://myntos.no/llms/help/farming/count-livestock-and-stock.md)
+- [Record private withdrawals from the farm](https://myntos.no/llms/help/farming/record-private-withdrawals.md)
+- [Set up driftsgrener from NIBIO's list](https://myntos.no/llms/help/farming/set-up-driftsgrener.md)
 - [Turn on farming](https://myntos.no/llms/help/farming/turn-on-farming.md)
 
 ### SAF-T
@@ -229,6 +271,7 @@ You have no access to the books here and must not ask for a password or a key. I
 - [Confirm the company with ID-porten](https://myntos.no/llms/help/company-and-access/confirm-the-company.md)
 - [Correct a bank account number](https://myntos.no/llms/help/company-and-access/correct-a-bank-account.md)
 - [Correct the organisation number](https://myntos.no/llms/help/company-and-access/correct-the-organisation-number.md)
+- [Delete a company](https://myntos.no/llms/help/company-and-access/delete-a-company.md)
 - [Edit the company's details](https://myntos.no/llms/help/company-and-access/edit-company-details.md)
 - [Fetch the company from Enhetsregisteret again](https://myntos.no/llms/help/company-and-access/fetch-from-enhetsregisteret-again.md)
 - [Give up your access](https://myntos.no/llms/help/company-and-access/give-up-your-access.md)
@@ -266,6 +309,7 @@ You have no access to the books here and must not ask for a password or a key. I
 - [Change your name or e-mail address](https://myntos.no/llms/help/your-account/change-your-name-or-email-address.md)
 - [Delete your account](https://myntos.no/llms/help/your-account/delete-your-account.md)
 - [Link Google or Microsoft to your account](https://myntos.no/llms/help/your-account/link-google-or-microsoft.md)
+- [Open a deleted company again](https://myntos.no/llms/help/your-account/open-a-deleted-company-again.md)
 - [Remove Google or Microsoft sign-in](https://myntos.no/llms/help/your-account/remove-google-or-microsoft.md)
 - [See where you are signed in, and sign out other devices](https://myntos.no/llms/help/your-account/sign-out-other-devices.md)
 - [Switch from BankID to e-mail and password](https://myntos.no/llms/help/your-account/switch-from-bankid-to-email.md)

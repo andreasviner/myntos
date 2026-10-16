@@ -59,11 +59,15 @@ SAF-T export places an undisposed one (``udisponert_resultat``), with a
 AS with a loss (2050 or 2080) is the accountant's call, and the note says that
 too.
 
-**The bank.** Myntos books every payment on 1920. A file whose own header names
-the company's bank account in an account's text, on an account other than
-1920, gets a ``merknad`` (Tripletex keeps a farm's driftskreditt on 2390). Not
-moved: whether a credit line in the black belongs among the assets is the
-accountant's to say, and the line can be edited before it is checked.
+**The bank.** Myntos books every new payment on 1920. A file whose own header
+names the company's bank account in an account's text, on an account other
+than 1920 and 1900 (:func:`bank_accounts_named`; Tripletex keeps a farm's
+driftskreditt on 2390), gets a ``merknad`` unless that account is already
+marked as a bank account in the kontoplan. Not moved: whether a credit line in
+the black belongs among the assets is the accountant's to say. The merknad
+says to mark the account on the Kontoplan page, which moves nothing and makes
+the overview count the money there; this module stores nothing, so it cannot
+mark it itself. The server-side import does (:mod:`myntos.saft.move`).
 """
 
 from __future__ import annotations
@@ -85,7 +89,6 @@ from myntos.domain.arsoppgjor.findings import Finding, feil, merknad
 from myntos.domain.ledger import kontoplan
 from myntos.domain.ledger.bankkonto import format_bank_account
 from myntos.domain.ledger.chart import (
-    BANK_ACCOUNT,
     INPUT_VAT_ACCOUNT,
     OUTPUT_VAT_ACCOUNT,
     PAYABLES_ACCOUNT,
@@ -190,6 +193,29 @@ def target_account(account_id: str) -> str | None:
     """The Myntos account a file's account id lands on: its first four digits."""
     found = _FOUR_DIGITS.match(account_id)
     return found.group(1) if found is not None else None
+
+
+def bank_accounts_named(found: SaftBalances) -> dict[str, str]:
+    """``{Myntos account: kontonummer}`` for accounts whose text names the file's own bank.
+
+    The header's ``BankAccount`` list is the company's word for which
+    kontonumre are its own, so an account called «<kontonummer> Driftskreditt»
+    (the eleven digits, dotted or not) is where that bank's money is booked.
+    Only the text is read, never the number alone: a 2390 is a bank account in
+    one company's books and a loan in the next. 1920 and 1900 are left out,
+    since they count as the bank already.
+    """
+    named: dict[str, str] = {}
+    banks = [bank for bank in found.bank_accounts if len(bank) == 11]
+    for source in found.accounts:
+        number = target_account(source.account_id)
+        if number is None or number in kontoplan.PAYMENT_ACCOUNTS:
+            continue
+        digits = re.sub(r"\D", "", source.description)
+        bank = next((bank for bank in banks if bank in digits), None)
+        if bank is not None:
+            named.setdefault(number, bank)
+    return named
 
 
 def _source_text(source: SourceAccount) -> str:
@@ -609,8 +635,9 @@ async def from_balances(db: AsyncSession, *, company: Company, found: SaftBalanc
                     for number in merged[:4]
                 )
                 + (" …" if len(merged) > 4 else "")
-                + "). Myntos har fire siffer og ingen avdelinger ennå, så de står som egne "
-                "linjer på samme konto, med koden fra filen i teksten.",
+                + "). Myntos har fire siffer, og inngående balanse føres uten avdeling, så de "
+                "står som egne linjer på samme konto, med koden fra filen i teksten. Bilagene i "
+                "året får avdelingen når de hentes.",
             )
         )
     accounts_to_add, notes = propose_accounts(
@@ -628,22 +655,28 @@ async def from_balances(db: AsyncSession, *, company: Company, found: SaftBalanc
         )
 
     # --- The bank ----------------------------------------------------------------
+    named = bank_accounts_named(found)
     for line in lines:
-        if line.source is None or line.account_number == BANK_ACCOUNT:
+        bank = named.get(line.account_number)
+        if (
+            bank is None
+            or line.source is None
+            or bank not in re.sub(r"\D", "", line.source.description)
+        ):
             continue
-        digits = re.sub(r"\D", "", line.source.description)
-        for bank in found.bank_accounts:
-            if len(bank) == 11 and bank in digits:
-                findings.append(
-                    merknad(
-                        "bankkonto_utenfor_1920",
-                        f"{line.description} er bankkontoen {format_bank_account(bank)}. Myntos "
-                        "fører inn- og utbetalinger på 1920 Bankinnskudd, så for at banken skal "
-                        "stemme bør saldoen stå der: endre kontoen på linja til 1920 hvis "
-                        "regnskapsføreren er enig.",
-                    )
-                )
-                break
+        known = accounts.get(line.account_number)
+        if known is not None and kontoplan.counts_as_bank(known):
+            continue
+        findings.append(
+            merknad(
+                "bankkonto_utenfor_1920",
+                f"{line.description} er bankkontoen {format_bank_account(bank)}. Merk konto "
+                f"{line.account_number} som bankkonto under Kontoplan, så regner oversikten "
+                "pengene der med i banken. Bilagene blir stående på kontoen. Vil "
+                "regnskapsføreren heller ha saldoen på 1920 Bankinnskudd, endre kontoen på "
+                "linja til 1920.",
+            )
+        )
 
     as_input = [
         opening.OpeningLineInput(
@@ -673,6 +706,7 @@ __all__ = [
     "PartyToAdd",
     "SaftOpening",
     "SaftSource",
+    "bank_accounts_named",
     "chart_of",
     "check_company",
     "folds_into_vat_settlement",

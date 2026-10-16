@@ -10,7 +10,9 @@ from the company's chart of accounts (kontoplan) and an amount in debit or
 credit on each, and no bank line. It is what an accountant posts for what no
 payment describes: at the end of the year the change in stock (varelager) and
 livestock (buskap), a cost that belongs to next year (periodisering), a
-provision, depreciation (avskrivning), moving a balance from one account to
+provision, depreciation (avskrivning) of what the anleggsregister does not
+hold (the register posts its own: [myntos-anlegg](https://myntos.no/llms/skills/myntos-anlegg.md)),
+moving a balance from one account to
 another (omklassifisering), and corrections. Myntos posts it in its own
 journal, `MANUELT`, numbered per year (`2026-0001`).
 
@@ -38,7 +40,7 @@ What you must not get wrong:
 
 - «Før endring i varelager: varebeholdningen er 84 000 ved årsslutt, var 70 000»
 - «Periodiser forsikringen: halvparten gjelder neste år»
-- «Før avskrivning på traktoren, 20 % av saldo»
+- «Før avskrivning på en eiendel som ikke står i anleggsregisteret»
 - «Flytt driftskreditten fra 2390 til 1920»
 - «Lag et manuelt bilag / memorialbilag / en postering»
 - «Rett bilag 2026-0003, beløpet skulle vært 4 500»
@@ -158,7 +160,7 @@ these figures.
 | Stock went down | 4090 | 1400 |
 | Prepaid cost, part of it next year's (forskuddsbetalt) | 1700 | the cost account |
 | Cost of this year, invoiced next year (påløpt) | the cost account | 2900 Annen kortsiktig gjeld |
-| Depreciation, until the asset register exists | 6000-6020 Avskrivning | the asset account, 1200 and on |
+| Depreciation of an asset **not** in the anleggsregister | 6000-6020 Avskrivning | the asset account, 1200 and on |
 | Driftskreditt moved onto the bank account | 2390 | 1920 (or the other way, by the balance's sign) |
 
 Not here: the year's result and the tax cost (8300, 8800, 8960, 8990), which

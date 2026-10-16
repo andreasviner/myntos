@@ -15,10 +15,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 ---
 
 <BaseLayout
-  title="About Myntos: Norwegian bookkeeping software"
-  description="Myntos is a Norwegian bookkeeping application for small companies: cash flow with receipts, VAT, SAF-T export and filing to the Norwegian Tax Administration."
+  title="About Myntos: free Norwegian bookkeeping software"
+  description="Myntos is a free, web-based bookkeeping application for Norwegian companies: payments with receipts, invoices, VAT, SAF-T export, built to file with the Norwegian Tax Administration."
+  lang="en"
 >
-  <main lang="en">
+  {/* A wrapper, not a second <main>: the layout's is the page's landmark, and
+      the document's language comes from lang above. */}
+  <div>
     <h1>About Myntos</h1>
 
     <p class="lead">
@@ -65,6 +68,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       accountants who keep their books. It is built around Norwegian rules first: the data model
       follows SAF-T Financial, corrections are made by reversing entries as
       bokføringsloven requires, and entries cannot be edited after posting.
+    </p>
+
+    <h2>What it costs</h2>
+    <p>
+      Nothing. Myntos costs 0 kr: there is no price list, no paid tier and no trial period, and it
+      takes no payment details. Filing to Altinn and Skatteetaten will cost the same when it is
+      finished. We do not sell or share the books or use them to train models. The source code is
+      public, so you can also run Myntos yourself. The full answer, in Norwegian, is on
+      <a href="/priser/" lang="nb">Priser</a>.
     </p>
 
     <h2>Signing in, and what we do with your Google account</h2>
@@ -119,5 +131,5 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     <p class="card-hint">
       <a href="/">← Til den norske forsiden</a>
     </p>
-  </main>
+  </div>
 </BaseLayout>

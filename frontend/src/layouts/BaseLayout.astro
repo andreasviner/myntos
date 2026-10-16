@@ -1,6 +1,7 @@
 ---
 import Logo from '../components/Logo.astro';
 import { guider } from '../data/flytting';
+import { isIndexable } from '../lib/indexing';
 
 interface Props {
   title: string;
@@ -9,16 +10,45 @@ interface Props {
   width?: 'narrow' | 'wide';
   /** `full` removes the page gutter so a marketing page can run edge to edge. */
   bleed?: boolean;
+  /**
+   * The language of what the page says. Only /about/ is English, and it used
+   * to say so with a second <main lang="en"> inside this one, which left the
+   * document declaring itself Norwegian to every crawler and to the share card,
+   * and gave the page two main landmarks. The header and footer stay bokmål
+   * whatever this is, and are marked so.
+   */
+  lang?: 'nb' | 'en';
+  /**
+   * Further schema.org nodes for this page, added to the @graph below: the
+   * questions on /priser/, the steps and breadcrumbs of a moving guide. Build
+   * them from the same data the page renders, never as a second copy of the
+   * text, because Google ignores (and may act against) structured data that
+   * says something the page does not.
+   */
+  schema?: Record<string, unknown>[];
 }
 
 const {
   title,
-  description = 'Myntos: regnskap for Norge med offentlig kildekode og direkte innlevering til Skatteetaten.',
+  description = 'Myntos: gratis norsk regnskapsprogram med offentlig kildekode, bygget for innlevering til Skatteetaten.',
   width = 'narrow',
   bleed = false,
+  lang = 'nb',
+  schema = [],
 } = Astro.props;
 
 const canonical = new URL(Astro.url.pathname, Astro.site).href;
+/** Kept out of the index, and the sitemap, unless lib/indexing.ts names it. */
+const indexable = isIndexable(Astro.url.pathname);
+/** The header, footer and skip link are bokmål on every page. */
+const chromeLang = lang === 'nb' ? undefined : 'nb';
+
+/**
+ * The link-preview picture, 1200×630, drawn by `pnpm og-image`. It was the
+ * 192px favicon until 2026-10-16, which every chat client rendered as a small
+ * coin with no words.
+ */
+const OG_IMAGE = { url: 'https://myntos.no/og-image.png', width: 1200, height: 630 };
 
 /*
   Machine-readable identity.
@@ -48,6 +78,14 @@ const structuredData = {
       legalName: 'Lindeman Technologies',
       url: 'https://myntos.no/',
       logo: 'https://myntos.no/favicon-192.png',
+      address: { '@type': 'PostalAddress', addressCountry: 'NO' },
+      // The address the privacy page and the terms give for every question.
+      contactPoint: {
+        '@type': 'ContactPoint',
+        contactType: 'customer support',
+        email: 'kontakt@myntos.no',
+        availableLanguage: ['nb', 'en'],
+      },
     },
     {
       '@type': 'WebSite',
@@ -59,16 +97,54 @@ const structuredData = {
     },
     {
       '@type': 'SoftwareApplication',
+      '@id': 'https://myntos.no/#software',
       name: APP_NAME,
       applicationCategory: 'FinanceApplication',
+      applicationSubCategory: 'Accounting',
       operatingSystem: 'Web',
       url: 'https://myntos.no/',
+      inLanguage: 'nb-NO',
+      countriesSupported: 'NO',
       // English deliberately: this description exists for reviewers and
       // aggregators, not for the Norwegian customers the page itself serves.
+      // Answer engines quote it too, which is why it says what is not done yet:
+      // an assistant that tells somebody Myntos files their VAT return today is
+      // repeating our words, and they would be wrong.
       description:
-        'Myntos is bookkeeping software for Norwegian companies. It records incoming and outgoing payments with their receipts, calculates value-added tax, and produces SAF-T exports and filings for the Norwegian Tax Administration.',
+        'Myntos is free bookkeeping software for Norwegian companies, with public source code. It records incoming and outgoing payments with their receipts, issues invoices with their EHF e-invoice files, calculates value-added tax, and produces the VAT return and SAF-T Financial export for the Norwegian Tax Administration. It is in beta: filing through Altinn is being built.',
+      featureList: [
+        'Double-entry bookkeeping with a receipt archive',
+        'Sales invoices checked against bokføringsforskriften § 5-1, with the EHF file made at issue',
+        'VAT codes with date-dependent rates and the MVA-melding per period',
+        'SAF-T Financial export (v1.30 and v1.40)',
+        'Bank statement import (camt.053) and reconciliation',
+        'Opening balance, year-end closing and fixed-asset register',
+        'Import of earlier years from Fiken, Tripletex, PowerOffice Go, Conta and other programs via SAF-T',
+        'Several users per company, with roles',
+        'An HTTP API that AI assistants can use with a key the company issues',
+      ],
+      // /priser/ in one line: there is no price list and no paid tier.
+      isAccessibleForFree: true,
+      offers: {
+        '@type': 'Offer',
+        price: '0',
+        priceCurrency: 'NOK',
+        url: 'https://myntos.no/priser/',
+      },
       publisher: { '@id': 'https://myntos.no/#organization' },
     },
+    {
+      // No `name`, for the reason APP_NAME gives: this node is on the home page
+      // too, and its title is not what the product is called.
+      '@type': 'WebPage',
+      '@id': `${canonical}#webpage`,
+      url: canonical,
+      description,
+      inLanguage: lang === 'en' ? 'en' : 'nb-NO',
+      isPartOf: { '@id': 'https://myntos.no/#website' },
+      about: { '@id': 'https://myntos.no/#software' },
+    },
+    ...schema,
   ],
 };
 
@@ -142,27 +218,40 @@ const gettingStarted = [
   lib/session.ts confirms or corrects it against the API a moment later.
 */}
 <!doctype html>
-<html lang="nb" data-auth="ut">
+<html lang={lang} data-auth="ut">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content={description} />
+    {/*
+      "follow" so the links in the header and footer still count. Not also
+      refused in robots.txt: a page Google may not fetch is a page whose noindex
+      it never reads, and it can still be indexed as a bare URL from a link.
+    */}
+    {!indexable && <meta name="robots" content="noindex, follow" />}
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#ffffff" />
 
-    {/* See APP_NAME above for why these exist. */}
-    <link rel="canonical" href={canonical} />
+    {/* See APP_NAME above for why these exist. No canonical on a page kept out
+        of the index: /404.html is served at whatever address missed, and
+        would name the wrong one. */}
+    {indexable && <link rel="canonical" href={canonical} />}
     <meta name="application-name" content={APP_NAME} />
     <meta property="og:site_name" content={APP_NAME} />
     <meta property="og:type" content="website" />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonical} />
-    <meta property="og:locale" content="nb_NO" />
-    <meta property="og:image" content="https://myntos.no/favicon-192.png" />
-    <meta name="twitter:card" content="summary" />
+    <meta property="og:locale" content={lang === 'en' ? 'en_GB' : 'nb_NO'} />
+    <meta property="og:image" content={OG_IMAGE.url} />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content={String(OG_IMAGE.width)} />
+    <meta property="og:image:height" content={String(OG_IMAGE.height)} />
+    <meta property="og:image:alt" content="Myntos: norsk regnskapsprogram med offentlig kildekode" />
+    <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={OG_IMAGE.url} />
     <script type="application/ld+json" is:inline set:html={JSON.stringify(structuredData)} />
     {/*
       The SVG is what modern browsers use, and it carries its own
@@ -228,9 +317,9 @@ const gettingStarted = [
     </script>
   </head>
   <body>
-    <a class="skip-link" href="#innhold">Hopp til innhold</a>
+    <a class="skip-link" href="#innhold" lang={chromeLang}>Hopp til innhold</a>
 
-    <header class="site-header">
+    <header class="site-header" lang={chromeLang}>
       <div class="site-header-inner">
         <a href="/" class="brand">
           <Logo class="brand-logo" />
@@ -544,7 +633,7 @@ const gettingStarted = [
       Skjult til `storage`-hendelsen sier noe annet, og den kommer bare i de
       *andre* fanene, som er akkurat de som trenger beskjeden.
     */}
-    <div class="selskap-byttet" data-company-switched hidden role="status">
+    <div class="selskap-byttet" data-company-switched hidden role="status" lang={chromeLang}>
       <p>
         Du byttet selskap i en annen fane. Denne siden viser fortsatt
         <strong data-session-company></strong>.
@@ -561,7 +650,7 @@ const gettingStarted = [
       <slot />
     </main>
 
-    <footer class="site-footer">
+    <footer class="site-footer" lang={chromeLang}>
       <div class="site-footer-inner">
         <div class="footer-grid">
           <div class="footer-brand">
@@ -687,6 +776,7 @@ const gettingStarted = [
     --danger: #a4201f;
     --danger-bg: #fdeceb;
     --danger-line: #f0c4c2;
+    --danger-fg: #ffffff;
     --positive: #0b7a61;
     --negative: #a4201f;
 
@@ -732,6 +822,7 @@ const gettingStarted = [
     --danger: #ff8f8a;
     --danger-bg: #2c1615;
     --danger-line: #55231f;
+    --danger-fg: #2a0807;
     --positive: #2ed3a5;
     --negative: #ff8f8a;
 
@@ -1613,6 +1704,18 @@ const gettingStarted = [
   .btn-ghost:hover:not(:disabled) {
     background: var(--surface-2);
     border-color: var(--faint);
+  }
+
+  /* Rød, og bare der noe slettes: kontoen på /konto/, selskapet på
+     /organisasjon/ og /slett-selskap/. En farge som står på mange knapper,
+     slutter å bety noe. */
+  .btn-fare {
+    background: var(--danger);
+    color: var(--danger-fg);
+  }
+
+  .btn-fare:hover:not(:disabled) {
+    filter: brightness(0.92);
   }
 
   .btn-link {

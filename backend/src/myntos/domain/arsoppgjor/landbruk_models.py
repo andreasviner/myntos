@@ -6,7 +6,8 @@ the VAT on milk the household drank); the list is *why* it says it: how many
 cows, at which normalverdi, how many litres at which rate. Bokføringsforskriften
 asks for exactly that list (§ 3-1 første ledd nr. 5 for uttak; the count is the
 vareopptelling behind the balance), and the næringsspesifikasjon's ``buskap``
-card is built from the counted heads, which no voucher carries.
+post and a livestock card need the opening and closing value per kind and the
+heads behind them, which no voucher carries.
 
 **Written once, never changed.** A list is stored when it is posted, with the
 voucher it posted, and is never updated or deleted afterwards. A correction is a
@@ -66,6 +67,8 @@ class FarmCount(Base):
     )
     # Where the opening rows came from: ``forrige_telling`` (copied from the
     # previous year's count) or ``oppgitt`` (typed, the first year in Myntos).
+    # ``trukket`` marks a withdrawal: a list with no lines, stored in place of
+    # the one withdrawn, so withdrawing writes a row instead of changing one.
     opening_source: Mapped[str] = mapped_column(String(16))
     # SET NULL, as for a voucher: the list outlives the account of its author.
     created_by_user_id: Mapped[int | None] = mapped_column(
@@ -131,6 +134,8 @@ class FarmWithdrawal(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    # A list with no lines is a withdrawal, stored in place of the one withdrawn
+    # (myntos.domain.arsoppgjor.uttak).
     lines: Mapped[list[FarmWithdrawalLine]] = relationship(
         back_populates="withdrawal",
         cascade="all, delete-orphan",

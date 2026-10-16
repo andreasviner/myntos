@@ -130,7 +130,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     padding-left: 1.2rem;
     color: var(--negative);
   }
-  .findings li + li {
+  /* Funnene lages av skriptet; :global() for å nå dem. */
+  .findings :global(li + li) {
     margin-top: 0.3rem;
   }
   .findings.notes {
@@ -153,7 +154,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   const download = el<HTMLAnchorElement>('#download');
 
   let company: Company;
-  let year = new Date().getFullYear();
+  // ?aar=2025 åpner på det året. /slett-selskap/ lenker hit for hvert år som
+  // må lastes ned før selskapet slettes; uten det står siden på i år.
+  const asked = Number(new URLSearchParams(window.location.search).get('aar'));
+  let year = Number.isInteger(asked) && asked >= 1900 && asked <= 9999 ? asked : new Date().getFullYear();
   // null til personen har valgt selv: da bestemmer backend versjonen ut fra året.
   let chosen: SaftVersion | null = null;
 

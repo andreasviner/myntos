@@ -57,7 +57,7 @@ class SessionInfo(BaseModel):
 class CompanyOutcomeResponse(BaseModel):
     company_id: int
     company_name: str
-    # leaves | deleted | blocks_members | blocks_books
+    # leaves | deleted | closed | blocks_members | blocks_books
     fate: str
 
 

@@ -28,8 +28,8 @@ confirmed and cannot be undone.**
 ## Steps
 
 1. Open «Faktura» in the top menu (`https://myntos.no/faktura/`).
-2. In the list on the right, find the invoice (status «Utstedt») and press
-   «Krediter».
+2. In the list «Fakturaer» below the form, find the invoice (status
+   «Utstedt») and press «Krediter».
 3. Read the question «Kreditere faktura …?», which says a credit note
    reversing the whole invoice will be issued and cannot be undone, and press
    OK.

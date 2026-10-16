@@ -95,8 +95,9 @@ wake a key somebody had forgotten about.
 
 Keys also stop, for good and with the reason recorded, when their person
 leaves the books, when the person's password is reset (whoever had the
-password could have made one), when the account becomes a BankID account, and
-when the account is deleted. A role taken away needs no stop: each route
+password could have made one), when the account becomes a BankID account,
+when the account is deleted, and when the company is deleted (the switch goes
+off with them, so opening the company again brings no key back). A role taken away needs no stop: each route
 checks the person's role as it stands on that request.
 
 *Why:* CLAUDE.md rule 1, unchanged. A key that spans companies is an account

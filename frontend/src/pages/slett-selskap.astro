@@ -1,0 +1,433 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+{/* Slutten på regnskapet i Myntos. Et steg og ikke en dialog, som kontosletting:
+    det som skal tas stilling til (SAF-T-filene, bilagene, datoen) står før
+    knappen, der det kan leses før man har bestemt seg.
+
+    Et selskap med noe ført i slettes ikke med en gang. Bokføringsloven § 13
+    sier at regnskapet skal oppbevares i fem år etter regnskapsårets slutt, og
+    plikten er selskapets selv når virksomheten er avviklet. Regnskapet låses
+    derfor og slettes for godt dagen etter oppbevaringstiden. Se
+    docs/gdpr.md, «Deleting a company». */}
+<BaseLayout
+  title="Slett selskapet | Myntos"
+  description="Last ned SAF-T-filene og slett selskapet fra Myntos. Regnskapet oppbevares låst så lenge bokføringsloven krever, og slettes for godt etterpå."
+>
+  <header class="page-head">
+    <p class="eyebrow">Slett selskapet</p>
+    {/* Selskapet er overskriften: det er disse bøkene som forsvinner. */}
+    <h1 data-session-company></h1>
+    <p class="muted" id="orgnr"></p>
+  </header>
+
+  <p class="status" id="page-status" hidden></p>
+  <p class="empty" id="loading">Henter …</p>
+
+  <section class="card" id="ikke-eier" hidden>
+    <p>
+      Bare en eier av selskapet kan slette det. Snakk med en av eierne; du finner dem under
+      «Medlemmer» på <a href="/organisasjon/#tilgang">selskapets side</a>.
+    </p>
+  </section>
+
+  <div id="steg" hidden>
+    {/* 1. Selskapets egen kopi. Før alt annet, fordi det er det eneste som
+        ikke kan gjøres etterpå uten å åpne regnskapet igjen. */}
+    <section class="card" id="saft" aria-labelledby="saft-tittel" hidden>
+      <h2 class="card-title" id="saft-tittel">1. Last ned SAF-T-filene først</h2>
+      <p>
+        Selskapet må selv kunne legge fram regnskapet i fem år etter hvert regnskapsår, også når
+        virksomheten er avviklet. SAF-T-filen er selskapets egen kopi av alle føringene, i formatet
+        Skatteetaten ber om ved bokettersyn. Last ned én fil for hvert år:
+      </p>
+      <ul class="aar" id="aar-liste"></ul>
+      <p class="card-hint">
+        SAF-T-filen har ikke med selve bilagene, altså kvitteringene og fakturaene som PDF eller
+        bilde. De blir liggende låst i Myntos sammen med resten av regnskapet til det slettes, og du
+        kommer til dem ved å åpne selskapet igjen.
+      </p>
+    </section>
+
+    <section class="card" aria-labelledby="skjer-tittel">
+      <h2 class="card-title" id="skjer-tittel"><span id="skjer-nr">2. </span>Dette skjer</h2>
+
+      <ul class="skjer" id="skjer-beholdes" hidden>
+        <li>
+          Selskapet forsvinner fra Myntos for alle. Ingen kan føre, lese eller sende noe fra det.
+        </li>
+        <li id="skjer-medlemmer" hidden></li>
+        <li id="skjer-nokler" hidden></li>
+        <li>
+          Bilag, føringer, fakturaer og mva-meldinger oppbevares låst til
+          <strong data-retain></strong>, slik bokføringsloven § 13 krever, og slettes for godt dagen
+          etter.
+        </li>
+        <li>
+          Til da kan du åpne selskapet igjen under «Slettede selskaper» på
+          <a href="/konto/#slettede">Konto-siden</a>. Det kommer tilbake akkurat som det var, men
+          uten kollegaene og KI-nøklene.
+        </li>
+        <li>
+          Er eierskapet bekreftet i Altinn, frigjøres det, slik at den som driver selskapet videre
+          kan bekrefte det i sitt eget regnskap.
+        </li>
+      </ul>
+
+      <ul class="skjer" id="skjer-slettes" hidden>
+        <li>
+          Ingenting er ført i regnskapet, så det er ingenting å oppbevare. Selskapet slettes med en
+          gang og kan ikke hentes tilbake.
+        </li>
+      </ul>
+
+      <form id="slett-steg" novalidate>
+        <p class="status" id="slett-status" hidden></p>
+
+        {/* Hvem du er: en innlogging de siste ti minuttene, uansett hvordan
+            kontoen logger inn. Ingen passordfelt, fordi den som registrerte
+            seg med BankID eller Google aldri har laget et passord. Er
+            innloggingen eldre, logger knappen ut og sender til innloggingen,
+            som kommer tilbake hit (signInAgain i lib/session.ts).
+
+            Da skjules også alt annet i skjemaet, knappen med: det man fyller
+            inn nå, er borte når man kommer tilbake fra innloggingen. */}
+        <div class="logg-inn-igjen" id="logg-inn-igjen" hidden>
+          <p>
+            Det er mer enn ti minutter siden du logget inn. Logg inn på nytt for å bekrefte at det er
+            deg.
+          </p>
+          <button type="button" class="btn btn-ghost btn-small" id="logg-inn-knapp">
+            Logg inn på nytt
+          </button>
+        </div>
+
+        <div id="bekreftelse" hidden>
+          <label class="avkrysning" id="lastet-ned-felt" hidden>
+            <input type="checkbox" id="lastet-ned" />
+            <span>Jeg har lastet ned SAF-T-filene selskapet trenger.</span>
+          </label>
+
+          {/* Navnet sier hvilket selskap man mener, og det spør vi alle om.
+              Knappen står på innstillingssiden, og selskapet er lett å blande
+              med neste klients. Backend sjekker det samme navnet. */}
+          <label class="field">
+            <span>Skriv <strong data-company-name></strong> for å bekrefte</span>
+            <input type="text" name="company-name" autocomplete="off" spellcheck="false" />
+            <span class="field-hint" id="navn-hint"></span>
+          </label>
+        </div>
+
+        <div class="handlinger">
+          <button type="submit" class="btn btn-fare" id="slett-bekreft" disabled hidden>
+            Slett selskapet
+          </button>
+          <a class="btn btn-ghost" href="/organisasjon/">Avbryt</a>
+        </div>
+      </form>
+    </section>
+  </div>
+
+  <section class="card" id="ferdig" hidden>
+    <h2 class="card-title">Selskapet er slettet</h2>
+    <p id="ferdig-beholdes" hidden>
+      <span data-company-name></span> er borte fra Myntos. Regnskapet oppbevares låst til
+      <strong data-retain></strong> og slettes for godt dagen etter. Til da kan du åpne det igjen
+      under «Slettede selskaper» på Konto-siden.
+    </p>
+    <p id="ferdig-slettet" hidden>
+      <span data-company-name></span> er slettet. Det var ingenting ført i regnskapet, så ingenting
+      er tatt vare på.
+    </p>
+    <div class="handlinger">
+      <a class="btn btn-primary" href="/">Til forsiden</a>
+      <a class="btn btn-ghost" href="/konto/">Til Konto-siden</a>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .page-head {
+    margin-bottom: 1.25rem;
+  }
+  .page-head h1 {
+    margin: 0.3rem 0 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .page-head p {
+    margin: 0.2rem 0 0;
+  }
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--muted);
+    margin: 0;
+  }
+  .card + .card,
+  #steg .card + .card {
+    margin-top: 1rem;
+  }
+  /* Radene lages av skriptet, så regelen må gå gjennom :global(). Se
+     docs/frontend-conventions.md, «A page's <style> never reaches what its
+     script builds». */
+  .aar {
+    list-style: none;
+    margin: 0.75rem 0;
+    padding: 0;
+  }
+  .aar :global(li) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    padding: 0.6rem 0;
+    border-top: 1px solid var(--border);
+  }
+  .aar :global(li:last-child) {
+    border-bottom: 1px solid var(--border);
+  }
+  .aar :global(.aarstall) {
+    font-weight: 620;
+    font-variant-numeric: tabular-nums;
+  }
+  .skjer {
+    margin: 0.5rem 0 1rem;
+    padding-left: 1.2rem;
+  }
+  .skjer li + li {
+    margin-top: 0.35rem;
+  }
+  .logg-inn-igjen {
+    background: var(--surface-2);
+    border-radius: var(--radius-small);
+    padding: 0.75rem 1rem;
+    margin: 0 0 1rem;
+  }
+  .logg-inn-igjen p {
+    margin: 0 0 0.6rem;
+  }
+  #slett-steg {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
+  .avkrysning {
+    display: flex;
+    gap: 0.6rem;
+    align-items: flex-start;
+    margin: 1rem 0;
+  }
+  .handlinger {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    closeCompany,
+    getClosurePlan,
+    type ClosurePlan,
+    type Company,
+  } from '../lib/api';
+  import { asksForSaft, dayInWords, loginIsRecent, readyToClose } from '../lib/closure';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import { orgnummer } from '../lib/format';
+  import { canInCompany, loadSession, redirectToLogin, signInAgain } from '../lib/session';
+  import { clearActiveCompany } from '../lib/tenant';
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const form = el<HTMLFormElement>('#slett-steg');
+  const formStatus = el<HTMLParagraphElement>('#slett-status');
+  const confirm = el<HTMLButtonElement>('#slett-bekreft');
+  const savedSaft = el<HTMLInputElement>('#lastet-ned');
+  const nameInput = el<HTMLInputElement>('input[name="company-name"]');
+
+  let company: Company;
+  let plan: ClosurePlan | null = null;
+
+  function message(error: unknown, fallback: string): string {
+    return error instanceof ApiError ? error.message : fallback;
+  }
+
+  function paintRetain(): void {
+    const day = plan?.retain_until ? dayInWords(plan.retain_until) : '';
+    for (const node of document.querySelectorAll<HTMLElement>('[data-retain]')) {
+      node.textContent = day;
+    }
+  }
+
+  /** Én rad per år med føringer, med lenke til SAF-T-siden for det året. */
+  function yearRow(year: number): HTMLLIElement {
+    const item = document.createElement('li');
+    const label = document.createElement('span');
+    label.className = 'aarstall';
+    label.textContent = `Regnskapsåret ${year}`;
+    // Til /saft/ og ikke rett til filen: siden kontrollerer året først, og
+    // filen lages ikke før feilene er rettet. En nedlasting som feiler i en
+    // ny fane, sier ingenting om hvorfor.
+    const link = document.createElement('a');
+    link.className = 'btn btn-ghost btn-small';
+    link.href = `/saft/?aar=${year}`;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = `Last ned SAF-T for ${year}`;
+    item.append(label, link);
+    return item;
+  }
+
+  function countSentence(count: number, one: string, many: string): string {
+    return count === 1 ? one : many.replace('{n}', String(count));
+  }
+
+  let expiry: number | undefined;
+
+  /** Enten skjemaet og knappen, eller bare «Logg inn på nytt». Aldri begge. */
+  function showProof(recent: boolean): void {
+    show(el('#logg-inn-igjen'), !recent);
+    show(el('#bekreftelse'), recent);
+    show(confirm, recent);
+  }
+
+  /** Viser «Logg inn på nytt» når innloggingen er for gammel, og bytter selv når den blir det. */
+  function renderProof(current: ClosurePlan): void {
+    const recent = loginIsRecent(current, Date.now());
+    showProof(recent);
+    window.clearTimeout(expiry);
+    if (recent && current.recent_login_until !== null) {
+      const left = new Date(current.recent_login_until).getTime() - Date.now();
+      expiry = window.setTimeout(() => {
+        renderProof(current);
+        updateConfirm();
+      }, left + 1000);
+    }
+  }
+
+  function updateConfirm(): void {
+    confirm.disabled =
+      plan === null ||
+      !readyToClose(plan, {
+        companyName: company.name,
+        typedName: nameInput.value,
+        savedSaft: savedSaft.checked,
+        now: Date.now(),
+      });
+  }
+
+  function render(current: ClosurePlan): void {
+    plan = current;
+    const kept = current.outcome === 'kept';
+    const saft = asksForSaft(current);
+    show(el('#saft'), saft);
+    el('#aar-liste').replaceChildren(...current.years.map(yearRow));
+    // Nummereringen følger med: uten SAF-T-steget er «Dette skjer» ikke steg 2.
+    show(el('#skjer-nr'), saft);
+    show(el('#skjer-beholdes'), kept);
+    show(el('#skjer-slettes'), !kept);
+    paintRetain();
+
+    const members = el('#skjer-medlemmer');
+    members.textContent = countSentence(
+      current.members_leaving,
+      'Én annen person mister tilgangen med en gang. Eiere kan bare åpne selskapet igjen.',
+      '{n} andre mister tilgangen med en gang. Eiere kan bare åpne selskapet igjen.',
+    );
+    show(members, current.members_leaving > 0);
+    const keys = el('#skjer-nokler');
+    keys.textContent = countSentence(
+      current.live_keys,
+      'Én nøkkel for en KI-agent eller et program slutter å virke for godt.',
+      '{n} nøkler for KI-agenter og programmer slutter å virke for godt.',
+    );
+    show(keys, current.live_keys > 0);
+
+    show(el('#lastet-ned-felt'), saft);
+    for (const node of document.querySelectorAll<HTMLElement>('[data-company-name]')) {
+      node.textContent = company.name;
+    }
+    el('#navn-hint').textContent = kept
+      ? 'Ingen kan arbeide i regnskapet etterpå, og det slettes for godt når oppbevaringstiden er ute.'
+      : 'Selskapet kan ikke hentes tilbake.';
+    renderProof(current);
+    updateConfirm();
+  }
+
+  function done(outcome: ClosurePlan['outcome']): void {
+    // Selskapet finnes ikke lenger for noen side. Neste side velger et annet
+    // fra listen, eller sier at det ikke finnes noen (lib/company.ts).
+    clearActiveCompany();
+    for (const node of document.querySelectorAll<HTMLElement>('[data-company-name]')) {
+      node.textContent = company.name;
+    }
+    show(el('#steg'), false);
+    show(el('#ferdig-beholdes'), outcome === 'kept');
+    show(el('#ferdig-slettet'), outcome === 'deleted');
+    show(el('#ferdig'), true);
+  }
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (confirm.disabled || plan === null) return;
+    confirm.disabled = true;
+    setStatus(formStatus, '');
+    void closeCompany(company.id, nameInput.value, null)
+      .then((result) => {
+        if (plan !== null) plan = { ...plan, retain_until: result.retain_until };
+        paintRetain();
+        done(result.outcome);
+      })
+      .catch((error: unknown) => {
+        // Innloggingen kan ha blitt for gammel mens siden sto åpen.
+        if (error instanceof ApiError && error.code === 'reauthentication_required') {
+          showProof(false);
+          return;
+        }
+        setStatus(formStatus, message(error, 'Vi fikk ikke slettet selskapet.'));
+        updateConfirm();
+      });
+  });
+
+  for (const input of [nameInput, savedSaft]) {
+    input.addEventListener('input', updateConfirm);
+    input.addEventListener('change', updateConfirm);
+  }
+
+  el('#logg-inn-knapp').addEventListener('click', () => {
+    void signInAgain();
+  });
+
+  void loadSession().then(async (current) => {
+    if (current === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      const chosen = currentCompany(companies);
+      if (chosen === undefined) {
+        window.location.href = '/';
+        return;
+      }
+      company = chosen;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      // Spurt her, der det tegnes, og ikke husket (frontend-conventions.md).
+      if (!canInCompany(company, 'organization:delete')) {
+        show(el('#ikke-eier'), true);
+        return;
+      }
+      render(await getClosurePlan(company.id));
+      show(el('#steg'), true);
+    } catch (error: unknown) {
+      setStatus(pageStatus, message(error, 'Vi fikk ikke hentet hva som skjer med selskapet.'));
+    } finally {
+      el('#loading').hidden = true;
+    }
+  });
+</script>

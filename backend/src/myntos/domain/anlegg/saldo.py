@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import ROUND_FLOOR, Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -71,6 +71,9 @@ DEPRECIATION = "avskrivning"
 NEGATIVE_SALDO = "negativ_saldo"
 GAIN = "gevinst"
 LOSS = "tap"
+#: The basis a voucher was posted on, per saldo and account; signed, and read
+#: only to tell whether the register has moved since (never a posting).
+BASIS = "grunnlag"
 
 
 # --- What a saldo is ---------------------------------------------------------------------
@@ -248,7 +251,7 @@ async def start_year(db: AsyncSession, company: Company) -> int | None:
     return int(first) if first is not None else None
 
 
-def standing_transaction_filter() -> tuple[object, ...]:
+def standing_transaction_filter() -> tuple[ColumnElement[bool], ...]:
     """A depreciation voucher counts while it is posted and nothing reverses it."""
     reversal = aliased(Transaction, name="depreciation_reversal")
     return (
@@ -454,9 +457,7 @@ def _compute_year(
             | set(grants[key])
             | set(disposals[key])
         )
-        start_by_account = {
-            a: state.by_account[a] + opening[key][a] for a in accounts
-        }
+        start_by_account = {a: state.by_account[a] + opening[key][a] for a in accounts}
         basis_by_account = {
             a: start_by_account[a] + additions[key][a] - grants[key][a] - disposals[key][a]
             for a in accounts
@@ -482,12 +483,8 @@ def _compute_year(
 
         posted = register.posted.get((year, key), {})
         if use_posted:
-            dep_by_account = {
-                a: kinds.get(DEPRECIATION, ZERO) for a, kinds in posted.items()
-            }
-            income_by_account = {
-                a: kinds.get(NEGATIVE_SALDO, ZERO) for a, kinds in posted.items()
-            }
+            dep_by_account = {a: kinds.get(DEPRECIATION, ZERO) for a, kinds in posted.items()}
+            income_by_account = {a: kinds.get(NEGATIVE_SALDO, ZERO) for a, kinds in posted.items()}
         else:
             chosen = None if choices is None else choices.get(key)
             if max_dep > ZERO:
@@ -496,9 +493,7 @@ def _compute_year(
                 income_by_account = {}
             elif min_income > ZERO:
                 income = min_income if chosen is None else min(max(chosen, min_income), -basis)
-                income_by_account = allocate(
-                    income, {a: -v for a, v in basis_by_account.items()}
-                )
+                income_by_account = allocate(income, {a: -v for a, v in basis_by_account.items()})
                 dep_by_account = {}
             else:
                 dep_by_account, income_by_account = {}, {}
@@ -644,7 +639,10 @@ async def roll_forward(
         )
         if not this_year and current not in register.posted_years and _needs_posting(saldi):
             unposted.append(current)
-    assert gain_loss_year is not None and year_rules is not None
+    # The loop runs at least once (``year >= start_year``); this is for the
+    # type checker, and returns rather than asserts so it holds under -O.
+    if gain_loss_year is None or year_rules is None:
+        return None
     return _Rolled(
         register=register,
         saldi=saldi,

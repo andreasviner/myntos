@@ -27,6 +27,16 @@ from fastapi.responses import JSONResponse
 from myntos.auth.approvals import ApprovalHeld
 from myntos.core.clock import as_utc
 from myntos.core.config import get_settings
+from myntos.domain.anlegg.errors import (
+    DepreciationExistsError,
+    DepreciationNotPostableError,
+    FixedAssetNotFoundError,
+    InvalidFixedAssetError,
+    InvalidOpeningSaldoError,
+    LaterYearDepreciatedError,
+    NoDepreciationError,
+    RegisterYearClosedError,
+)
 from myntos.domain.arsoppgjor.errors import (
     FarmListConflictError,
     FarmListInvalidError,
@@ -84,6 +94,8 @@ from myntos.domain.identity.errors import (
     ApprovalTooLargeError,
     AttachmentsNotAcceptedError,
     BankidAccountError,
+    CompanyClosureBlockedError,
+    CompanyNameMismatchError,
     EmailAlreadyRegisteredError,
     EmailAlreadyVerifiedError,
     EmailDeliveryUnavailableError,
@@ -113,6 +125,7 @@ from myntos.domain.identity.errors import (
     PermissionDeniedError,
     ReauthenticationFailedError,
     ReauthenticationRequiredError,
+    ReopenBlockedError,
     SessionNotFoundError,
     UnverifiedProviderEmailError,
     WeakPasswordError,
@@ -230,6 +243,12 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     ReauthenticationFailedError: status.HTTP_403_FORBIDDEN,
     # 409: well-formed, and refused by the state of the books the person owns.
     ErasureBlockedError: status.HTTP_409_CONFLICT,
+    # Deleting a company while an import writes into it, and opening deleted
+    # books again whose orgnr somebody else has confirmed since: both are the
+    # state of the books, not the request.
+    CompanyClosureBlockedError: status.HTTP_409_CONFLICT,
+    CompanyNameMismatchError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    ReopenBlockedError: status.HTTP_409_CONFLICT,
     # 400 for every unusable confirmation or reset link, like an invitation.
     InvalidEmailTokenError: status.HTTP_400_BAD_REQUEST,
     EmailAlreadyVerifiedError: status.HTTP_409_CONFLICT,
@@ -428,6 +447,19 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     # these, so the code says which list (count_exists, no_uttak, …).
     FarmListConflictError: status.HTTP_409_CONFLICT,
     FarmListInvalidError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    # --- Anleggsregister og avskrivning ---
+    # 404 like every sub-resource: another company's asset does not exist.
+    FixedAssetNotFoundError: status.HTTP_404_NOT_FOUND,
+    InvalidFixedAssetError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    InvalidOpeningSaldoError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    # Answered by its route with the findings, like the opening balance's.
+    DepreciationNotPostableError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    # 409 for the state of the books: a closed year behind the change, a
+    # voucher already standing or missing, a later year resting on this one.
+    RegisterYearClosedError: status.HTTP_409_CONFLICT,
+    DepreciationExistsError: status.HTTP_409_CONFLICT,
+    NoDepreciationError: status.HTTP_409_CONFLICT,
+    LaterYearDepreciatedError: status.HTTP_409_CONFLICT,
     # --- Enhetsregisteret ---
     UnitNotFoundError: status.HTTP_404_NOT_FOUND,
     UnitDeletedError: status.HTTP_410_GONE,

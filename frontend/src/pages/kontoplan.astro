@@ -31,6 +31,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     Postene er Skatteetatens egne, for hvert år. Kontonummeret kan aldri endres, og en konto det er
     ført på kan bare deaktiveres: da forsvinner den fra nye føringer, men står fortsatt i årene som
     brukte den.
+    {/* Bankmerket står her fordi det er et faktum om kontoen, ikke om en betaling:
+        Tripletex fører en gårds driftskreditt på 2390, og oversikten fant ingen
+        penger før den visste at 2390 er banken. */}
+    Står selskapets penger på en annen konto enn 1920, som en driftskreditt på 2390 fra et annet
+    program, merker du den som bankkonto. Da regner oversikten den med i banken. Ingenting flyttes,
+    og nye betalinger føres fortsatt på 1920.
+    {/* Dimensjonene er den andre måten regnskapet settes opp på, med samme
+        tillatelse som kontoplanen, så de lenkes herfra. */}
+    Vil du også se resultatet per avdeling, prosjekt eller driftsgren, setter du det opp under
+    <a href="/avdelinger/">Avdelinger</a>.
   </p>
 
   <p class="status" id="page-status" hidden></p>
@@ -102,6 +112,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         riktig mva, og KI-en vet at et oppgjør fra Tine eller Nortura er et salg. Selskaper uten
         landbruk ser ingenting av dette.
       </p>
+      {/* Årsoppgjøret for gården: tellingen og uttakene har egne sider. */}
+      <p class="card-hint" id="landbruk-links" hidden>
+        Ved årsslutt: <a href="/buskap/">Buskap og lager</a> (telling av dyr, fôr og korn) og
+        <a href="/private-uttak/">Private uttak</a> (melk, poteter, kjøtt og ved til husholdningen).
+      </p>
       <p class="status" id="landbruk-status" hidden></p>
       <p class="landbruk-actions" id="landbruk-actions" hidden>
         <button type="button" class="btn btn-primary btn-small" id="landbruk-on">
@@ -164,30 +179,32 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     gap: 0.6rem 1rem;
     margin: 0.75rem 0 0;
   }
-  .grouping-code {
+  /* Kontolinjene lages av skriptet i #accounts, så reglene for dem må nå
+     radene gjennom :global(). */
+  #accounts :global(.grouping-code) {
     font-variant-numeric: tabular-nums;
     font-weight: 600;
   }
-  .row-actions {
+  #accounts :global(.row-actions) {
     display: flex;
     flex-wrap: wrap;
     gap: 0.4rem;
     justify-content: flex-end;
   }
-  .row-edit {
+  #accounts :global(.row-edit) {
     display: flex;
     flex-wrap: wrap;
     gap: 0.4rem;
     align-items: center;
   }
-  .row-edit select,
-  .row-edit input {
+  #accounts :global(.row-edit select),
+  #accounts :global(.row-edit input) {
     max-width: 22rem;
   }
-  tr[data-active='false'] td {
+  #accounts :global(tr[data-active='false'] td) {
     color: var(--muted);
   }
-  .chosen {
+  #accounts :global(.chosen) {
     font-size: 0.78rem;
     color: var(--muted);
   }
@@ -386,9 +403,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       const status = document.createElement('td');
       status.textContent = account.is_locked
         ? 'Brukes av Myntos'
-        : account.is_active
-          ? 'Aktiv'
-          : 'Deaktivert';
+        : !account.is_active
+          ? 'Deaktivert'
+          : account.is_bank_account
+            ? 'Aktiv, bankkonto'
+            : 'Aktiv';
       const actions = document.createElement('td');
       const wrap = document.createElement('div');
       wrap.className = 'row-actions';
@@ -414,6 +433,23 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 () =>
                   updateAccount(company.id, account.id, year, { is_active: !account.is_active }),
                 account.is_active ? 'Deaktivert. Kontoen tilbys ikke i nye føringer.' : 'Aktivert.',
+              );
+            }),
+          );
+        }
+        // Bare klasse 1 og 2 kan være der pengene står; backend nekter resten
+        // også, men en knapp som alltid gir feil er ikke verdt å vise.
+        if (!account.is_locked && /^[12]/.test(account.number)) {
+          wrap.append(
+            button(account.is_bank_account ? 'Ikke bankkonto' : 'Merk som bankkonto', () => {
+              void act(
+                () =>
+                  updateAccount(company.id, account.id, year, {
+                    is_bank_account: !account.is_bank_account,
+                  }),
+                account.is_bank_account
+                  ? 'Ikke lenger bankkonto. Oversikten regner ikke kontoen med i banken.'
+                  : 'Merket som bankkonto. Oversikten regner kontoen med i banken.',
               );
             }),
           );
@@ -513,6 +549,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
   function showLandbruk(state: Landbruk): void {
     el('#landbruk-state').textContent = landbrukState(state);
+    show(el('#landbruk-links'), state.enabled);
     const may = mayChange();
     show(el('#landbruk-actions'), may);
     if (!may) return;

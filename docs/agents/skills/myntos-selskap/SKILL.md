@@ -190,7 +190,15 @@ choosing «Innstillinger for selskapet».
 - **The company's KI switch** (`ki_enabled`), on the KI page.
 - **See the person's other companies, or set up a new one.** A key sees one
   set of books, and nothing above it.
-- **Delete the company.**
+- **Delete the company, or open a deleted one again.** Only an owner can,
+  with their password, at `https://myntos.no/slett-selskap/`. What you can do
+  first is the part that matters most: download the SAF-T file for every year
+  with entries (myntos-saft), because that is the company's own copy of its
+  accounts. A company with anything entered is not deleted at once: its books
+  are kept locked until 31 December five years after its last financial year
+  (bokføringsloven § 13), then deleted for good, and your key stops the moment
+  the company is deleted.
+  [Delete a company](https://myntos.no/llms/help/company-and-access/delete-a-company.md).
 
 The sentence for the person, when one of these comes up: «Det må du gjøre
 selv i Myntos, under Innstillinger for selskapet.»

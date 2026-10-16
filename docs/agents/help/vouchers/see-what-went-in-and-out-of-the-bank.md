@@ -44,7 +44,9 @@ Any role, «Leser» included.
   its balance from year to year.
 - A company whose old program kept the bank on another account (Tripletex
   often keeps a farm's driftskreditt on 2390) sees the money there unless the
-  opening balance moved it to 1920.
+  opening balance moved it to 1920. Choose that account in the list to follow
+  it. Marked as a bank account on «Kontoplan», it is counted on «Oversikt»
+  too: [Mark an account as a bank account](https://myntos.no/llms/help/chart-of-accounts/mark-an-account-as-a-bank-account.md).
 
 ## Related
 

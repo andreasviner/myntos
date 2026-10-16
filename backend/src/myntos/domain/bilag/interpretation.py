@@ -2887,12 +2887,15 @@ def apply_conversion(
     note_capitalisation(suggestion)
 
 
-# skatteloven § 14-40: a driftsmiddel costing 15 000 kroner or more, with an
+# skatteloven § 14-40: a driftsmiddel costing 30 000 kroner or more, with an
 # economic life of three years or more, is capitalised and depreciated rather
-# than expensed in full. The amount half of that test is arithmetic and belongs
+# than expensed in full. 15 000 until LOV-2023-12-20-98 doubled it from the
+# income year 2024; below the limit the law lets the buyer choose, so nothing
+# under it is worth a sentence (myntos.domain.anlegg.rules has the limit per
+# year). The amount half of that test is arithmetic and belongs
 # here; the lifetime half is a judgement the user makes, so the sentence asks
 # rather than decides.
-CAPITALISATION_THRESHOLD = Decimal(15000)
+CAPITALISATION_THRESHOLD = Decimal(30000)
 # Categories where a single large purchase plausibly *is* a driftsmiddel. Goods
 # for resale, rent and salary are all large by nature and none of them is one.
 _CAPITALISABLE = frozenset({"inventar", "datakostnad"})
@@ -2903,8 +2906,10 @@ def note_capitalisation(suggestion: InvoiceSuggestion) -> None:
 
     Re-runnable, and re-run after anything that changes either half of the test:
     the amount (a conversion from a foreign currency) or the category (an answer
-    from the model). A 2 137,00 GBP Mac Studio is under any threshold until it
-    becomes 27 108,49 kroner, which is exactly the case this exists for.
+    from the model). A 2 137,00 GBP Mac Studio is a small number until it is
+    converted; at August 2026's rate it was 27 108,49 kroner, under the 30 000
+    limit, and a dearer machine or a weaker krone crosses it only after the
+    conversion, which is exactly the case this exists for.
     """
     for stale in suggestion.capitalisation_warnings:
         if stale in suggestion.warnings:
@@ -2920,7 +2925,7 @@ def note_capitalisation(suggestion: InvoiceSuggestion) -> None:
     ):
         return
     sentence = (
-        f"Kjøpet er på {_written(amount)} kr. Varer over 15 000 kroner som skal brukes i tre år "
+        f"Kjøpet er på {_written(amount)} kr. Varer fra 30 000 kroner som skal brukes i tre år "
         "eller mer, føres ikke som kostnad med én gang: de aktiveres som driftsmiddel og "
         "avskrives. Skal dette brukes kortere enn tre år, kan du føre det som kostnad."
     )

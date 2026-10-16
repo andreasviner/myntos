@@ -54,6 +54,12 @@ said yes.
   kept, but do not switch back and forth.
 - Myntos files only «Alminnelig næring» and «Primærnæring». Other kinds of
   melding (kompensasjon, omvendt avgiftsplikt, VOEC) are not supported.
+- These settings are the main melding's. A farm with other business above
+  30 000 kroner files a second, alminnelig melding beside it, set up in the
+  card «Den andre meldingen»
+  ([File two VAT returns](https://myntos.no/llms/help/vat/file-two-vat-returns.md)).
+  While both have anything sent, «Meldingstype» cannot be changed: it would
+  swap which melding is which.
 
 ## Related
 

@@ -1,6 +1,6 @@
 ---
 title: See why the overview is empty
-description: What it means when the Myntos front page shows «Ingen regnskap ennå», «Ingen betalinger registrert i Myntos ennå» or «Ingen tall å vise for i år», and what the person does next, including when they are not allowed to add a company. Use when someone asks why their Myntos overview is empty, shows no figures, or asks them to add a company.
+description: What it means when the Myntos front page shows «Ingen regnskap ennå», «Ingen betalinger registrert i Myntos ennå», «Ingen tall å vise for i år» or «Ingenting er ført i … ennå», and what the person does next, including when they are not allowed to add a company. Use when someone asks why their Myntos overview is empty, shows no figures or zeros after importing last year, or asks them to add a company.
 pages: /
 skill: myntos-selskap
 ---
@@ -45,7 +45,15 @@ They need to be signed in.
    regnskapsprogram?» with «Hent regnskapet» leads to the import from the old
    program's SAF-T files; while an import is being read or waits to be checked,
    the same card says so («Myntos leser SAF-T-filene», «SAF-T-filene er lest»).
-5. **«Vi fikk ikke hentet oversikten.»**, or another message at the top:
+5. **«Ingenting er ført i … ennå»** (or **«Regnskapet er ført til …»**) above
+   the cards: nothing has been posted since a VAT deadline passed, typically
+   because only last year was brought over from the old program. It never
+   shows just because a new year began. «Se regnskapet år for år» shows the
+   years that are there; «Hent fra det gamle programmet» (for «Medlem» and up)
+   brings the rest in. Meanwhile the VAT card shows «–», because the payment or
+   refund since is not in the books:
+   [Read the overview](https://myntos.no/llms/help/overview/read-the-overview.md).
+6. **«Vi fikk ikke hentet oversikten.»**, or another message at the top:
    loading failed. Reload the page.
 
 ## Good to know
@@ -54,7 +62,9 @@ They need to be signed in.
   accepted the invitation.
 - The figures are for the current calendar year. A company whose payments are
   all from earlier years shows nothing under «Største poster i år», but its
-  older payments are still under «Betaling».
+  older payments are still under «Betaling», and every year's result and
+  balance sheet is under «Regnskapet år for år»:
+  [See the accounts for every year](https://myntos.no/llms/help/reports/see-the-accounts-for-every-year.md).
 
 ## Related
 

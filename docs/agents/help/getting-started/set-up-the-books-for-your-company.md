@@ -71,7 +71,15 @@ client the same way, and each company's books are separate.
      digits. No invoice can be issued until one is there. Further accounts
      are added later on the company's settings page.
 
-   Press «Sett opp regnskapet». («Tilbake» goes to step 1.)
+   Press «Sett opp regnskapet». «Hopp over» sets the books up without
+   answering: the first financial year becomes this year and no account
+   number is saved, whatever is typed in the fields. («Tilbake» goes to
+   step 1.)
+
+   Either button replaces the form with «Setter opp regnskapet for … …»
+   and a spinner for a few seconds while the chart of accounts and VAT
+   codes are written. If it fails, the form comes back with the reason
+   above it and what was typed still in place.
 
 4. **Step 3, «Ferdig».** «Regnskapet for … er satt opp», and «Kontoplanen,
    mva-kodene og regnskapsåret er på plass. Du kan begynne å føre med én

@@ -1,6 +1,6 @@
 ---
 title: Understand the chart of accounts
-description: What the Kontoplan page in Myntos shows - every account with its NS 4102 number, name, næringsspesifikasjon post and status (Aktiv, Deaktivert, Brukes av Myntos) - how to find the page and how to look at another year. Use when someone asks what the kontoplan is, where to find it, or what a column or status on it means.
+description: What the Kontoplan page in Myntos shows - every account with its NS 4102 number, name, næringsspesifikasjon post and status (Aktiv, Aktiv, bankkonto, Deaktivert, Brukes av Myntos) - how to find the page and how to look at another year. Use when someone asks what the kontoplan is, where to find it, or what a column or status on it means.
 pages: /kontoplan/
 skill: myntos-kontoplan
 ---
@@ -43,13 +43,17 @@ post is written into the SAF-T file.
      shown. «Valgt for hånd» under it means a person chose it rather than
      Myntos. «Ingen post for året» means the account was added after that
      year was closed.
-   - «Status»: «Aktiv»; «Deaktivert» (hidden from new entries, kept for the
-     years that used it); or «Brukes av Myntos» (Myntos posts to it itself,
-     such as the bank account 1920 and the VAT accounts, so it can never be
-     switched off or deleted).
+   - «Status»: «Aktiv»; «Aktiv, bankkonto» (the company's money sits there,
+     and the overview counts it as the bank:
+     [Mark an account as a bank account](https://myntos.no/llms/help/chart-of-accounts/mark-an-account-as-a-bank-account.md));
+     «Deaktivert» (hidden from new entries, kept for the years that used it);
+     or «Brukes av Myntos» (Myntos posts to it itself, such as the bank
+     account 1920 and the VAT accounts, so it can never be switched off or
+     deleted).
 4. An «Administrator» or «Eier» also sees the box «Legg til konto» and, on
    each row, the buttons «Endre navn», «Endre post», «Deaktiver» or «Aktiver»,
-   and «Slett».
+   «Merk som bankkonto» or «Ikke bankkonto» (accounts in class 1 and 2), and
+   «Slett».
 
 ## If something stops them
 

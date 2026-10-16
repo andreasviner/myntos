@@ -226,7 +226,10 @@ async def _response(db: DbSession, context: CurrentCompany, job: SaftImport) -> 
         and bool(review.get("postable"))
         and kept
         and has_permission(role, Permission.LEDGER_WRITE)
-        and (not review.get("accounts_to_add") or has_permission(role, Permission.LEDGER_CHART))
+        and (
+            not (review.get("accounts_to_add") or review.get("dimensions_to_add"))
+            or has_permission(role, Permission.LEDGER_CHART)
+        )
     )
     return ImportResponse.model_validate(
         {

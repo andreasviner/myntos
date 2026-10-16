@@ -58,9 +58,13 @@ from myntos.domain.identity.models import (
     FilingType,
     User,
 )
+from myntos.domain.mva import naering as mva_naering
 from myntos.domain.mva import service as mva_service
-from myntos.domain.mva.errors import NotVatRegisteredError, PeriodNotOverError
-from myntos.domain.mva.models import FilingStatus, MvaFiling
+from myntos.domain.mva.errors import (
+    FiledElsewhereError,
+    NotVatRegisteredError,
+    PeriodNotOverError,
+)
 
 router = APIRouter(tags=["godkjenning"])
 
@@ -88,6 +92,9 @@ class FilingRequest(BaseModel):
     type: FilingType
     aar: int
     termin: int
+    # Which melding, by category, for a company that files two
+    # (docs/integrations/mva.md «Two returns»); the main one when left out.
+    naering: str | None = Field(default=None, max_length=32)
 
 
 class ApprovalResponse(BaseModel):
@@ -149,6 +156,7 @@ def _response(approval: AgentApproval, *, user_id: int | None) -> ApprovalRespon
             type=FilingType(approval.filing_type),
             aar=approval.filing_year or 0,
             termin=approval.filing_period or 0,
+            naering=approval.filing_category,
         )
     return ApprovalResponse(
         id=approval.id,
@@ -453,13 +461,18 @@ async def request_filing(
     ``done`` once that termin has been filed, by anyone.
 
     ``type`` is ``mva_melding``; ``aar`` and ``termin`` name the period as the
-    MVA page does («3. termin 2026»). Send the reason in the ``Myntos-Note``
+    MVA page does («3. termin 2026»), and ``naering`` the melding
+    (``alminnelig`` or ``primaernaering``) for a company that files two; the
+    main one when left out. Send the reason in the ``Myntos-Note``
     header. Asking again for a termin that already waits returns the request
-    that waits. Refused: 409 ``already_filed`` for a termin filed already, 409
-    ``period_not_over`` before the termin has ended, 409
+    that waits. It is also marked ``done`` when the person records the termin
+    as filed from another program. Refused: 409 ``already_filed`` for a termin
+    filed already, 409 ``filed_elsewhere`` for one recorded as filed from
+    another program, 409 ``period_not_over`` before the termin has ended, 409
     ``not_vat_registered`` for a company that files no MVA-melding, 422
-    ``invalid_period`` for a termin that does not exist. Only with a key (403
-    ``agent_key_required``): a person files on the page.
+    ``invalid_period`` for a termin that does not exist, 422
+    ``unknown_naering`` for a melding the company does not file. Only with a
+    key (403 ``agent_key_required``): a person files on the page.
     """
     require_permission(context.membership.role, Permission.LEDGER_READ)
     if caller.key is None:
@@ -470,24 +483,25 @@ async def request_filing(
             "selskapet er ikke registrert i Merverdiavgiftsregisteret, så det sendes ingen "
             "mva-melding"
         )
-    termin = mva_service.termin_of(company, payload.aar, payload.termin)
+    setup = await mva_naering.load(db, company)
+    chosen = setup.get(payload.naering)
+    termin = chosen.termin(payload.aar, payload.termin)
+    # NULL is the main melding, which is all a company with one ever has, so
+    # a request from before two meldinger existed still means what it meant.
+    category = None if chosen.is_main else chosen.category.value
     # Oslo's date, as the MVA page has it: a termin ends at midnight here.
     if not mva_service.is_past(termin, utc_now().astimezone(_OSLO).date()):
         raise PeriodNotOverError(
             f"terminen slutter {termin.end.strftime('%d.%m.%Y')}; meldingen kan sendes fra "
             "dagen etter"
         )
-    filed = await db.scalar(
-        select(MvaFiling.id).where(
-            MvaFiling.company_id == company.id,
-            MvaFiling.year == termin.year,
-            MvaFiling.period_type == termin.period_type.value,
-            MvaFiling.period_index == termin.index,
-            MvaFiling.status.in_([FilingStatus.SENDT.value, FilingStatus.MOTTATT.value]),
-        )
-    )
-    if filed is not None:
+    filings = await mva_service.filings_for(db, company, termin, chosen, setup)
+    if mva_service.latest_filed(filings) is not None:
         raise AlreadyFiledError(f"{termin.index}. termin {termin.year} er allerede sendt")
+    if mva_service.standing_elsewhere(filings) is not None:
+        raise FiledElsewhereError(
+            f"{termin.index}. termin {termin.year} er merket som sendt fra et annet program"
+        )
 
     waiting = await db.scalar(
         select(AgentApproval).where(
@@ -497,6 +511,9 @@ async def request_filing(
             AgentApproval.filing_type == payload.type.value,
             AgentApproval.filing_year == termin.year,
             AgentApproval.filing_period == termin.index,
+            AgentApproval.filing_category.is_(None)
+            if category is None
+            else AgentApproval.filing_category == category,
             AgentApproval.expires_at > utc_now(),
         )
     )
@@ -508,7 +525,10 @@ async def request_filing(
             kind=AgentApprovalKind.FILING,
             status=AgentApprovalStatus.PENDING,
             scope="",
-            label=f"at du sender mva-meldingen for {termin.index}. termin {termin.year}",
+            label=(
+                f"at du sender mva-meldingen for {termin.index}. termin {termin.year}"
+                + ("" if category is None else f" ({chosen.label.lower()})")
+            ),
             note=approvals.read_note(request.headers.get(approvals.NOTE_HEADER)),
             method="",
             path="",
@@ -516,6 +536,7 @@ async def request_filing(
             filing_type=payload.type.value,
             filing_year=termin.year,
             filing_period=termin.index,
+            filing_category=category,
             created_at=now,
             expires_at=now + timedelta(days=get_settings().agent_approval_lifetime_days),
             files=[],

@@ -5,6 +5,8 @@ import cloudflare from '@astrojs/cloudflare';
 import sitemap from '@astrojs/sitemap';
 import { defineConfig } from 'astro/config';
 
+import { isIndexable } from './src/lib/indexing.ts';
+
 /**
  * `site` is what makes the sitemap emit absolute URLs, so it has to match the
  * canonical host exactly — a mismatch there is silently accepted by the build
@@ -13,6 +15,15 @@ import { defineConfig } from 'astro/config';
 export default defineConfig({
   site: 'https://myntos.no',
   output: 'static',
+  /**
+   * Astro 7 made `'jsx'` the default, which applies React's whitespace rules:
+   * a run of whitespace that holds a line break, at the edge of a text node, is
+   * deleted. Every paragraph here wraps its source before a link, a <strong> or
+   * a comment in braces, so the front page read
+   * «under<a>Mva-melding</a>.SAF-T-filen» with no error anywhere. `true` is the lossless mode the site was written
+   * for: it still strips whitespace, but never the space between two words.
+   */
+  compressHTML: true,
   adapter: cloudflare({
     // Cloudflare cannot run sharp at runtime; optimize images at build time.
     imageService: 'compile',
@@ -34,14 +45,13 @@ export default defineConfig({
   },
   integrations: [
     sitemap({
-      // The application pages prerender as empty shells — everything on them
-      // arrives after a session check — and the invitation page is reached
-      // through a single-use token. Listing either invites Google to index a
-      // page that says nothing, so the sitemap covers the public site only.
-      filter: (page) =>
-        !['/kontantstrom/', '/organisasjon/', '/parter/', '/invitasjon/', '/nytt-selskap/'].includes(
-          new URL(page).pathname,
-        ),
+      // The public site only. The application pages send a signed-out visitor
+      // (and Google's renderer) to the login, and the pages a mailed link lands
+      // on say nothing without its token. Which is which is decided in
+      // src/lib/indexing.ts, the same list that writes the robots meta, because
+      // the hand list that used to stand here named five pages and let every
+      // later one into the sitemap.
+      filter: (page) => isIndexable(new URL(page).pathname),
     }),
   ],
 });

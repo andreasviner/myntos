@@ -896,16 +896,18 @@ def test_a_large_purchase_is_flagged_as_a_possible_driftsmiddel() -> None:
     """Under the threshold in pounds, over it in kroner.
 
     Which is exactly why the test is re-run after the conversion rather than
-    once at the end of `suggest`: 2 137 is a small number and 27 108 is not, and
-    only one of them is the number skatteloven § 14-40 is about.
+    once at the end of `suggest`: 2 137 is a small number and 32 055 is not, and
+    only one of them is the number skatteloven § 14-40 is about. (At the real
+    rate of August 2026 the Mac Studio was 27 108,49 kroner, under the 30 000
+    limit that applies from 2024; the rate here is a weaker krone's.)
     """
     proposal = suggest(RECEIPT, today=TODAY, own_orgnr=OWN_ORGNR, own_name=OWN_NAME)
     assert not any("driftsmiddel" in warning for warning in proposal.warnings)
 
     apply_conversion(
         proposal,
-        kroner=Decimal("27108.49"),
-        rate=Decimal("12.6853"),
+        kroner=Decimal("32055.00"),
+        rate=Decimal("15.0000"),
         quoted_on=date(2026, 8, 21),
     )
 
@@ -917,8 +919,8 @@ def test_the_driftsmiddel_note_is_not_repeated_when_the_category_changes() -> No
     proposal = suggest(RECEIPT, today=TODAY, own_orgnr=OWN_ORGNR, own_name=OWN_NAME)
     apply_conversion(
         proposal,
-        kroner=Decimal("27108.49"),
-        rate=Decimal("12.6853"),
+        kroner=Decimal("32055.00"),
+        rate=Decimal("15.0000"),
         quoted_on=date(2026, 8, 21),
     )
     found = read(RECEIPT, today=TODAY)
@@ -934,8 +936,8 @@ def test_a_category_that_is_never_a_driftsmiddel_gets_no_note() -> None:
     proposal = suggest(RECEIPT, today=TODAY, own_orgnr=OWN_ORGNR, own_name=OWN_NAME)
     apply_conversion(
         proposal,
-        kroner=Decimal("27108.49"),
-        rate=Decimal("12.6853"),
+        kroner=Decimal("32055.00"),
+        rate=Decimal("15.0000"),
         quoted_on=date(2026, 8, 21),
     )
     found = read(RECEIPT, today=TODAY)

@@ -52,6 +52,10 @@ BANK_ACCOUNT = "1920"
 CASH_ACCOUNT = "1900"
 OUTPUT_VAT_ACCOUNT = "2700"
 INPUT_VAT_ACCOUNT = "2710"
+# Where a filed term's VAT waits to be paid (myntos.domain.mva.service, which
+# names it SETTLEMENT_ACCOUNT, as do the SAF-T readers). Named here for the
+# overview, which reads what is owed now off the three VAT accounts together.
+VAT_SETTLEMENT_ACCOUNT = "2740"
 
 # SAF-T BalanceAccountStructure: the GL account a party's sub-ledger settles
 # against. Required on every customer and supplier, which is why the two are
@@ -532,6 +536,45 @@ LANDBRUK_ACCOUNTS: tuple[SeedAccount, ...] = (
         "salgsinntekt",
         "3000",
     ),
+    # --- Private uttak of the farm's own produce (domain/arsoppgjor/uttak.py) ---
+    # NIBIO's uttak accounts, one per kind of produce, so the list behind the
+    # voucher and the account read the same. Grouped «0 prosent mva»: a farm
+    # on the yearly primærnæring melding takes them out VAT-free (mval. § 6-20
+    # første ledd, FMVA § 6-20-1 første ledd), and § 6-20 is a fritak, which is
+    # the zero rate. A farm on an alminnelig melding pays VAT on them and moves
+    # the grouping to 3000 on /kontoplan/. (3170-3173 are NIBIO's kår, which
+    # needs the a-melding and is not built.)
+    SeedAccount(
+        "3161",
+        "Uttak av planteprodukter til privat bruk",
+        AccountType.INNTEKT,
+        "salgsinntekt",
+        "3100",
+    ),
+    SeedAccount(
+        "3162", "Uttak av slakt til privat bruk", AccountType.INNTEKT, "salgsinntekt", "3100"
+    ),
+    SeedAccount(
+        "3163",
+        "Uttak av melk, egg og andre husdyrprodukter til privat bruk",
+        AccountType.INNTEKT,
+        "salgsinntekt",
+        "3100",
+    ),
+    SeedAccount(
+        "3164",
+        "Uttak av ved og virke fra egen skog til privat bruk",
+        AccountType.INNTEKT,
+        "salgsinntekt",
+        "3100",
+    ),
+    SeedAccount(
+        "3166",
+        "Uttak av stallplass og grovfôr til privat hest",
+        AccountType.INNTEKT,
+        "salgsinntekt",
+        "3100",
+    ),
     # --- Tilskudd: outside VAT, income in the year they are paid out
     # (Skatte-ABC J-2-8.63.2), counted in the jordbruksfradrag basis ---
     SeedAccount(
@@ -633,6 +676,24 @@ LANDBRUK_ACCOUNTS: tuple[SeedAccount, ...] = (
     SeedAccount(
         "4040", "Annet fôr (mineraler, tilskuddsfôr)", AccountType.KOSTNAD, "varekostnad", "4005"
     ),
+    # The year-end count's two other change accounts (domain/arsoppgjor/buskap.py),
+    # beside 4690 for the livestock: bought stock is a varekostnad like what it
+    # was bought as; the farm's own feed and grain is «endring i beholdningen
+    # av egenproduserte varer», a post of its own.
+    SeedAccount(
+        "4090",
+        "Beholdningsendring innkjøpt fôr, gjødsel og såvarer",
+        AccountType.KOSTNAD,
+        "varekostnad",
+        "4005",
+    ),
+    SeedAccount(
+        "4290",
+        "Beholdningsendring egenproduserte varer (fôr, korn, poteter)",
+        AccountType.KOSTNAD,
+        "varekostnad",
+        "4295",
+    ),
     SeedAccount("4410", "Plantevernmidler", AccountType.KOSTNAD, "varekostnad", "4005"),
     SeedAccount("4420", "Medisin til dyr", AccountType.KOSTNAD, "varekostnad", "4005"),
     SeedAccount(
@@ -687,13 +748,6 @@ LANDBRUK_ACCOUNTS: tuple[SeedAccount, ...] = (
 
 LANDBRUK_ACCOUNTS_BY_NUMBER: dict[str, SeedAccount] = {a.number: a for a in LANDBRUK_ACCOUNTS}
 
-#: Every account Myntos itself knows how to create: the starter chart, and the
-#: add-ons'. What :func:`myntos.domain.ledger.kontoplan.ensure_seeded_account`
-#: and the catalogue check read, so a category can point at an add-on account,
-#: and what the grouping proposal reads for an exact number (a 4020 added by
-#: anyone is varekostnad). The proposal's *neighbour* rule still reads only the
-#: starter chart (``ACCOUNTS_BY_NUMBER``): a hairdresser adding a 4575 should
-#: not be steered by a farm's avløserlag.
 # --- The accounts the depreciation voucher posts to (docs/anlegg.md) ---------------------
 #
 # Created the first time a depreciation voucher needs one, for any business,
@@ -755,6 +809,13 @@ ANLEGG_ACCOUNTS: tuple[SeedAccount, ...] = (
 
 ANLEGG_ACCOUNTS_BY_NUMBER: dict[str, SeedAccount] = {a.number: a for a in ANLEGG_ACCOUNTS}
 
+#: Every account Myntos itself knows how to create: the starter chart, and the
+#: add-ons'. What :func:`myntos.domain.ledger.kontoplan.ensure_seeded_account`
+#: and the catalogue check read, so a category can point at an add-on account,
+#: and what the grouping proposal reads for an exact number (a 4020 added by
+#: anyone is varekostnad). The proposal's *neighbour* rule still reads only the
+#: starter chart (``ACCOUNTS_BY_NUMBER``): a hairdresser adding a 4575 should
+#: not be steered by a farm's avløserlag.
 KNOWN_ACCOUNTS: dict[str, SeedAccount] = (
     ACCOUNTS_BY_NUMBER | LANDBRUK_ACCOUNTS_BY_NUMBER | ANLEGG_ACCOUNTS_BY_NUMBER
 )

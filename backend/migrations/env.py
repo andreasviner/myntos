@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from myntos.core.config import get_settings
 from myntos.db.base import Base
+from myntos.domain.anlegg import models as _anlegg_models  # noqa: F401
+from myntos.domain.arsoppgjor import landbruk_models as _landbruk_models  # noqa: F401
 from myntos.domain.arsoppgjor import models as _arsoppgjor_models  # noqa: F401
 
 # Imported for the side effect of registering tables on Base.metadata, which

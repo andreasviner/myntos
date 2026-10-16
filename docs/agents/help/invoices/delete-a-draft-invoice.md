@@ -26,8 +26,8 @@ credit note instead.
 ## Steps
 
 1. Open «Faktura» in the top menu (`https://myntos.no/faktura/`).
-2. In the list on the right, find the draft (status «Utkast») and press
-   «Slett».
+2. In the list «Fakturaer» below the form, find the draft (status «Utkast»)
+   and press «Slett».
 3. Confirm «Slette utkastet til …?» with OK. The draft is gone; this cannot be
    undone.
 

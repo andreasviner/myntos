@@ -43,9 +43,18 @@ Three ways were weighed:
   another account of the same kind), and it is how farm books are kept anyway:
   NIBIO's kodesystem keeps annen næring in its own department, and the ENK's
   skattemelding wants a næringsspesifikasjon per næring, so the other
-  business's income and costs are on accounts of their own regardless. A
-  shared cost is split as two lines on two accounts, which is how
-  Skatteetaten's own guidance on fellesanskaffelser has it divided.
+  business's income and costs are on accounts of their own regardless.
+
+**A cost shared by both is a known limit, not a rule.** How the input VAT on
+diesel or a telephone used by both businesses is to be divided between the two
+meldinger is not settled (Skatteetaten's guidance found so far covers
+fellesanskaffelser between VAT-liable and exempt use, where a proportional
+split is accepted, not between two meldinger of one company). So Myntos divides
+nothing on its own: a line goes wholly to the melding its account belongs to,
+and a cost on an account in neither list goes wholly to the main melding. The
+person decides by the account they book it on, or by booking it as two lines on
+two accounts. docs/integrations/mva.md «Two returns» says the same to the
+person's accountant.
 
 The rule is read when the melding is built, not stamped on the line, so the
 guard below is what keeps the past fixed: a change that would move a line into
@@ -87,6 +96,7 @@ from myntos.domain.mva.periods import (
     Termin,
     UnknownPeriodError,
     parse_period_type,
+    termin_for,
     terminer,
 )
 
@@ -130,6 +140,29 @@ def main_period_type(company: Company) -> PeriodType:
         # A value written by hand into the database. Two months is the law's
         # default, and the settings card shows the value so it can be fixed.
         return PeriodType.TO_MAANEDER
+
+
+def books_behind(company: Company, books_through: date | None, today: date) -> bool:
+    """Whether a VAT deadline has passed since the last voucher in the books.
+
+    The term the books stop in is filed and paid (or refunded) by its
+    deadline. Once that day has gone by with nothing posted after it, the
+    payment that should be there is not, and the VAT on 2700, 2710 and 2740 is
+    the position on the day the books stop, not today's. A company that
+    brought only last year over from its old program showed its final term
+    «til gode» in October, eight months after the refund was paid out.
+
+    The deadline and not the turn of the year: on 1 January last year's final
+    term is still open and its figure is real, and it stays so until it is due
+    (10 February for two-monthly terms, 10 April for a yearly primærnæring
+    melding). The company's main melding decides; a company not registered
+    for VAT has the law's two-monthly terms, which serves as a measure of how
+    long books may sit untouched before the overview says so.
+    """
+    if books_through is None:
+        return False
+    termin = termin_for(main_period_type(company), books_through)
+    return today > termin.deadline(main_category(company))
 
 
 def other_category(category: Meldingskategori) -> Meldingskategori:

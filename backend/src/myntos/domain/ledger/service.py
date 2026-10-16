@@ -54,6 +54,7 @@ from myntos.domain.ledger.chart import (
     CASH_JOURNAL_TYPE,
     CLOSING_JOURNAL_ID,
     COUNT_JOURNAL_ID,
+    DEPRECIATION_JOURNAL_ID,
     IMPORT_JOURNAL_ID,
     INPUT_VAT_ACCOUNT,
     LANDBRUK_ACCOUNTS_BY_NUMBER,
@@ -65,6 +66,7 @@ from myntos.domain.ledger.chart import (
     STANDARD_ACCOUNTS,
     STANDARD_TAX_CODES,
     TAX_CODES_BY_CODE,
+    VAT_SETTLEMENT_ACCOUNT,
     WITHDRAWAL_JOURNAL_ID,
 )
 from myntos.domain.ledger.errors import (
@@ -109,10 +111,18 @@ from myntos.domain.ledger.models import (
 from myntos.domain.ledger.orgnr import validate_orgnr
 from myntos.integrations.brreg import RegisteredUnit
 
-# The two accounts a payment can move through, and the two VAT accounts it can
-# touch. Used to read a voucher back as a cash-flow entry.
-PAYMENT_ACCOUNTS = frozenset({BANK_ACCOUNT, CASH_ACCOUNT})
+# The two accounts the register pays through, and the two VAT accounts a
+# payment can touch. Used to read a voucher back as a cash-flow entry
+# (:func:`describe`), which only ever meets the register's own vouchers and
+# the bank reconciliation's candidates, all paid through 1920 or 1900. An
+# account marked as a bank account (a driftskreditt on 2390) is the company's
+# money too, and the overview counts it (:func:`summarise`), but no register
+# entry is paid through it.
+PAYMENT_ACCOUNTS = kontoplan.PAYMENT_ACCOUNTS
 VAT_ACCOUNTS = frozenset({OUTPUT_VAT_ACCOUNT, INPUT_VAT_ACCOUNT})
+#: What is owed to or by Skatteetaten now: the open terms on 2700 and 2710, and
+#: the filed ones waiting on 2740 to be paid.
+OWED_VAT_ACCOUNTS = frozenset({OUTPUT_VAT_ACCOUNT, INPUT_VAT_ACCOUNT, VAT_SETTLEMENT_ACCOUNT})
 
 ZERO = Decimal("0.00")
 
@@ -693,6 +703,8 @@ async def claimed_elsewhere(db: AsyncSession, orgnrs: Sequence[str], *, user_id:
         select(Company.orgnr).where(
             Company.orgnr.in_(list(orgnrs)),
             Company.verified_at.is_not(None),
+            # Books deleted from Myntos give the claim up with everything else.
+            Company.closed_at.is_(None),
             Company.id.not_in(mine),
         )
     )
@@ -734,6 +746,7 @@ async def confirm_company_ownership(
         select(Company.id).where(
             Company.orgnr == company.orgnr,
             Company.verified_at.is_not(None),
+            Company.closed_at.is_(None),
             Company.id != company.id,
         )
     )
@@ -772,11 +785,15 @@ async def list_companies(
     frontend decides what to offer from the role it holds over the company on
     screen, and a list of companies with no roles in it would send it back for
     one request per company.
+
+    Books deleted from Myntos are not in it: nobody works in them any more,
+    and their owners find them under the account instead
+    (myntos.domain.identity.closure).
     """
     rows = await db.execute(
         select(Company, CompanyMembership)
         .join(CompanyMembership, CompanyMembership.company_id == Company.id)
-        .where(CompanyMembership.user_id == user_id)
+        .where(CompanyMembership.user_id == user_id, Company.closed_at.is_(None))
         .order_by(Company.name)
     )
     return [(company, membership) for company, membership in rows]
@@ -794,12 +811,22 @@ async def get_company_for_user(
     A company the caller has no membership on raises
     :class:`CompanyNotFoundError`, the same error as one that does not exist:
     the API must not become a way to discover which ids are in use.
+
+    A company deleted from Myntos is the same 404, to its own owners too. Every
+    route that reads or writes books runs through here, so this one condition
+    is what keeps all of them away from books that are only being kept; the
+    few routes that do reach them (seeing and reopening them) resolve them
+    themselves, in myntos.domain.identity.closure.
     """
     row = (
         await db.execute(
             select(Company, CompanyMembership)
             .join(CompanyMembership, CompanyMembership.company_id == Company.id)
-            .where(Company.id == company_id, CompanyMembership.user_id == user_id)
+            .where(
+                Company.id == company_id,
+                CompanyMembership.user_id == user_id,
+                Company.closed_at.is_(None),
+            )
         )
     ).first()
     if row is None:
@@ -1615,6 +1642,14 @@ async def reverse_cash_flow(
         raise CannotReverseHereError(
             "manuelle bilag reverseres og rettes under Manuelt bilag, med en begrunnelse"
         )
+    # The year's depreciation is recorded per saldo beside its voucher
+    # (myntos.domain.anlegg.avskrivning), and next year's saldo is built on it.
+    # Reversed from here, the voucher would be gone while a later year's still
+    # rested on it; its own page refuses that and reverses the later one first.
+    if journal_code == DEPRECIATION_JOURNAL_ID:
+        raise CannotReverseHereError(
+            "avskrivningene rettes og reverseres under Anlegg, ikke fra registeret"
+        )
     already = await db.scalar(
         select(Transaction.id).where(Transaction.reverses_transaction_pk == original.id)
     )
@@ -1923,10 +1958,13 @@ async def list_cash_flows(
     # another program's rules. They count in the year's figures all the same.
     # Nor manual vouchers, for the same reason: a reclassification onto 1920
     # read back as a payment would show a category nobody chose. They are listed
-    # on their own page, and count in the figures too.
+    # on their own page, and count in the figures too. So is the year's
+    # depreciation, which moves no money at all.
     query = _voucher_query().where(
         Journal.company_id == company.id,
-        Journal.journal_id.not_in((OPENING_JOURNAL_ID, IMPORT_JOURNAL_ID, MANUAL_JOURNAL_ID)),
+        Journal.journal_id.not_in(
+            (OPENING_JOURNAL_ID, IMPORT_JOURNAL_ID, MANUAL_JOURNAL_ID, DEPRECIATION_JOURNAL_ID)
+        ),
     )
     if financial_year is not None:
         query = query.where(Transaction.financial_year == financial_year)
@@ -2018,7 +2056,14 @@ class TypeTotal:
 
 @dataclass(frozen=True)
 class CashFlowSummary:
-    """What the overview shows: the year's money in, out and owed."""
+    """What the overview shows: the year's money in and out, and what is owed now.
+
+    ``output_vat`` and ``input_vat`` are the year's VAT, settlements left out;
+    ``vat_position`` and ``cash_position`` are positions today, across every
+    year, and ``vat_settled`` is the part of ``vat_position`` already filed
+    (on 2740). ``books_through`` is the date of the last voucher in the books,
+    any year, any journal.
+    """
 
     financial_year: int
     total_in: Decimal
@@ -2028,7 +2073,9 @@ class CashFlowSummary:
     output_vat: Decimal
     input_vat: Decimal
     vat_position: Decimal
+    vat_settled: Decimal
     cash_position: Decimal
+    books_through: date | None
     by_type: list[TypeTotal]
 
 
@@ -2078,9 +2125,9 @@ def not_a_settlement() -> tuple[ColumnElement[bool], ...]:
 
 
 def _movement_query(
-    company_id: int, account_numbers: frozenset[str]
+    company_id: int, accounts: ColumnElement[bool]
 ) -> Select[tuple[str | None, Decimal, Decimal, int]]:
-    """Debit and credit totals on ``account_numbers``, grouped by voucher type.
+    """Debit and credit totals on the accounts ``accounts`` picks, grouped by voucher type.
 
     SQLAlchemy types ``SUM`` as non-optional here. It is not — an empty group
     cannot occur, but the rows are still read defensively below, because the
@@ -2099,7 +2146,7 @@ def _movement_query(
         .join(Account, Account.id == TransactionLine.account_id)
         .where(
             Journal.company_id == company_id,
-            Account.account_number.in_(account_numbers),
+            accounts,
             # Money in and out *this year*. The opening balance on 1920 is a
             # position carried in, not a movement; the cash position below,
             # which is a position, keeps it.
@@ -2110,18 +2157,46 @@ def _movement_query(
     )
 
 
+async def _balance(
+    db: AsyncSession, company: Company, accounts: ColumnElement[bool]
+) -> tuple[Decimal | None, Decimal | None]:
+    """Debit and credit across every year on the accounts ``accounts`` picks.
+
+    The opening balance included, since a position starts from it; cancelled
+    pairs left out, though they net to nothing here anyway (:func:`_still_stands`).
+    """
+    rows = list(
+        await db.execute(
+            select(func.sum(TransactionLine.debit), func.sum(TransactionLine.credit))
+            .join(Transaction, Transaction.id == TransactionLine.transaction_pk)
+            .join(Journal, Journal.id == Transaction.journal_id)
+            .join(Account, Account.id == TransactionLine.account_id)
+            .where(Journal.company_id == company.id, accounts, _still_stands())
+        )
+    )
+    if not rows:
+        return None, None
+    debit, credit = rows[0]
+    return debit, credit
+
+
 async def summarise(db: AsyncSession, *, company: Company, financial_year: int) -> CashFlowSummary:
     """Aggregate one financial year of the register.
 
-    Summed in SQL over the payment and VAT accounts rather than over the
+    Summed in SQL over the bank and VAT accounts rather than over the
     ``CashFlowView`` projection: the totals must stay right when the register
     holds more entries than a request should ever load.
+
+    "The bank" is every account that counts as the company's money
+    (:func:`myntos.domain.ledger.kontoplan.counts_as_bank`): 1920, 1900, and
+    any account marked as a bank account. A farm brought over from Tripletex
+    keeps its only bank account, a driftskreditt, on 2390, and counted on 1920
+    alone its overview read «Inn i år 0,00» beside a year of bank lines.
     """
+    bank = kontoplan.bank_accounts_clause()
     payments = list(
         await db.execute(
-            _movement_query(company.id, PAYMENT_ACCOUNTS).where(
-                Transaction.financial_year == financial_year
-            )
+            _movement_query(company.id, bank).where(Transaction.financial_year == financial_year)
         )
     )
     total_in = ZERO
@@ -2163,7 +2238,7 @@ async def summarise(db: AsyncSession, *, company: Company, financial_year: int) 
                 Account.account_number.in_(VAT_ACCOUNTS),
                 # A settled period's VAT is still the year's VAT. The settlement
                 # moves it to 2740 to be paid, and counting that move here would
-                # show a company that has filed as one that owes nothing.
+                # show the year's VAT as nothing once every term is filed.
                 *not_a_settlement(),
                 _still_stands(),
             )
@@ -2180,20 +2255,35 @@ async def summarise(db: AsyncSession, *, company: Company, financial_year: int) 
 
     # Across every year, not just this one: the bank balance is a position, not
     # a movement, and resetting it each January would be nonsense.
-    cash_rows = list(
-        await db.execute(
-            select(func.sum(TransactionLine.debit), func.sum(TransactionLine.credit))
-            .join(Transaction, Transaction.id == TransactionLine.transaction_pk)
-            .join(Journal, Journal.id == Transaction.journal_id)
-            .join(Account, Account.id == TransactionLine.account_id)
-            .where(
-                Journal.company_id == company.id,
-                Account.account_number.in_(PAYMENT_ACCOUNTS),
-                _still_stands(),
-            )
-        )
+    cash_debit, cash_credit = await _balance(db, company, bank)
+
+    # What is owed now, which is what «anslått å betale» under the card reads
+    # as. It used to be the year's output less input VAT above, settlements
+    # left out, and that was wrong in the commonest case: a farm whose previous
+    # program had filed and settled most of the year's terms showed a large
+    # amount «til gode» while the term still open was owed. The balance across
+    # every year on 2700, 2710 and 2740, opening balance included, is the open
+    # terms plus the filed ones not yet paid. The old worry, that a company
+    # which has filed would show as owing nothing, is answered by 2740: a
+    # settlement moves the term there, and only the payment clears it.
+    vat_debit, vat_credit = await _balance(
+        db, company, Account.account_number.in_(OWED_VAT_ACCOUNTS)
     )
-    cash_debit, cash_credit = cash_rows[0] if cash_rows else (None, None)
+    # The filed part of it, which the overview has to tell apart: a term filed
+    # and settled stays on 2740 until its payment is posted, and a company that
+    # brought only last year over shows last year's final term there months
+    # after it was paid, because the payment is in a year Myntos has not got.
+    settled_debit, settled_credit = await _balance(
+        db, company, Account.account_number == VAT_SETTLEMENT_ACCOUNT
+    )
+    # Where the books stop. Every voucher counts, the old program's included:
+    # «Inn i år 0,00» beside a 31.12 last year says the year has not been
+    # brought over yet, not that nothing happened.
+    books_through = await db.scalar(
+        select(func.max(Transaction.transaction_date))
+        .join(Journal, Journal.id == Transaction.journal_id)
+        .where(Journal.company_id == company.id, Transaction.posted_at.is_not(None))
+    )
 
     return CashFlowSummary(
         financial_year=financial_year,
@@ -2203,7 +2293,10 @@ async def summarise(db: AsyncSession, *, company: Company, financial_year: int) 
         entry_count=entry_count,
         output_vat=output_vat,
         input_vat=input_vat,
-        vat_position=output_vat - input_vat,
+        # A liability: positive is owed to Skatteetaten.
+        vat_position=(vat_credit or ZERO) - (vat_debit or ZERO),
+        vat_settled=(settled_credit or ZERO) - (settled_debit or ZERO),
         cash_position=(cash_debit or ZERO) - (cash_credit or ZERO),
+        books_through=books_through,
         by_type=sorted(by_type, key=lambda t: t.total, reverse=True),
     )

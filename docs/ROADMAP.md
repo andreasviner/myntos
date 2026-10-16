@@ -335,6 +335,7 @@ and full digital bokføring from 2030-01-01. See docs/integrations/efaktura.md.
 - [x] PDF upload attached to a posted voucher, append-only archive
       (oppbevaringsplikt): magic-number validation, 25 MB cap, generated storage
       keys, SHA-256 stored, and no delete path anywhere in the application
+      but the purge of a deleted company past its five years (docs/gdpr.md)
 - [x] R2 storage backend with `jurisdiction=eu` in the endpoint, SigV4 signed
       over httpx (no boto3), verified against AWS's published test vector;
       blank or missing credentials fail at startup, not at the first upload
@@ -362,6 +363,13 @@ and full digital bokføring from 2030-01-01. See docs/integrations/efaktura.md.
       tax, and archiving the old system's saldobalanse as a bilag
 - [ ] `Owners` in MasterFiles (from Enhetsregisteret's roles or the
       aksjonærregister), once there is a reason to store them
+- [x] Deleting a company (`/slett-selskap/`): SAF-T for every year first,
+      empty books deleted at once, books with entries locked until 31 December
+      five years after their last year (bokføringsloven § 13) and purged the
+      day after, files included; an owner can open them again until then.
+      Migrations `e8b1c5d07a42` and `f4a9d2c63b18`, the second so deleted
+      books never stop the same orgnr being set up again (docs/gdpr.md
+      § Deleting a company)
 - [ ] § 7-5 compliance features: notification-letter generator,
       readable/printable-in-Norway guarantee, full-data repatriation export
 
@@ -492,7 +500,7 @@ its current system, with its accountant checking the books and the year-end.
 - [x] The add-on and its switch (`company.landbruk`, on by næringskode 01/02
       unless a person says otherwise; `GET`/`PUT …/landbruk`, the «Landbruk»
       card on `/kontoplan/`)
-- [x] 62 accounts from NIBIO's Landbrukets kodesystem 1.3.6, each with its
+- [x] 69 accounts from NIBIO's Landbrukets kodesystem 1.3.6, each with its
       næringsspesifikasjon post; farm categories with the farm VAT rates (milk,
       slaughter, live animals and grain at 25 %), the settlement deductions,
       a category per tilskudd, skogfond
@@ -520,11 +528,33 @@ its current system, with its accountant checking the books and the year-end.
       fresh Tripletex file compared after each VAT term. Tripletex files every
       VAT return during the run. Also the accountant's review of booking
       omsetningsavgift with the sale's VAT
-- [ ] Two VAT returns in one company (FEATURES 23b)
-- [ ] Manual journal entries for the year-end adjustments (FEATURES 23a), then
-      the livestock and feed count at the takseringsregler rates
-- [ ] Fixed assets with the farm rules (FEATURES 7), the næringsspesifikasjon
-      with the jordbrukskonto and tømmerkonto cards (FEATURES 2)
+- [x] Two VAT returns in one company (FEATURES 23b, 2026-10-15): the card
+      «Den andre meldingen» on `/mva/`, a line in the melding of its account,
+      each settled on its own; terms the previous program filed marked «Sendt
+      fra et annet program», proposed from its settlement vouchers. Migration
+      `6c1f9e3a7d52`. Open: the split of input VAT on shared costs
+      (integrations/mva.md, known limit)
+- [x] Manual journal entries for the year-end adjustments (FEATURES 23a,
+      `/manuelt-bilag/`, 2026-10-15)
+- [x] Dimensions for everyone (FEATURES 37, 2026-10-15): avdelinger,
+      prosjekter, one value per dimension on a line, the result per value by
+      month (`…/dimensjoner`, page `/avdelinger/`, skill `myntos-avdelinger`);
+      for a farm NIBIO's driftsgrener and avdelinger to pick from, and the
+      avdeling in Tripletex's account ids brought along. Migration
+      `a8d3f61c2b97`. Not yet: quantities per driftsgren
+- [x] The year-end count of livestock, own feed and bought stock at the
+      takseringsregler (`…/landbruk/telling`, page `/buskap/`), and private
+      uttak at the norms with the VAT per melding (`…/landbruk/uttak`, page
+      `/private-uttak/`), each a stored list behind one voucher; skill
+      `myntos-landbruk-arsoppgjor`. Migration `d2f6a8c41e57` (2026-10-15).
+      2025's rates only: 2026's are added as data when Skattedirektoratet
+      publishes them in December. Not yet: kår (a-melding)
+- [x] Fixed assets with the farm rules (FEATURES 7, 2026-10-15): the
+      anleggsregister and the year's saldoavskrivning (`…/anlegg`, page
+      `/anlegg/`, skill `myntos-anlegg`, [anlegg.md](anlegg.md)), husdyrbygg
+      6 %, investeringstilskudd and the tax-free ones. Migration `c7a4e2f91b38`
+- [ ] The næringsspesifikasjon with the jordbrukskonto and tømmerkonto cards
+      (FEATURES 2); it reads the saldi from `anlegg.saldo.specification`
 - [ ] The decision on Landbrukets Dataflyt (about 325 000 kr a year;
       [integrations/landbrukets-dataflyt.md](integrations/landbrukets-dataflyt.md))
 - [ ] Bank import: split a bank line straight into a composite entry, rather

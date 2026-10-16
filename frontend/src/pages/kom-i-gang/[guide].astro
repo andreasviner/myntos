@@ -24,12 +24,49 @@ const sjekketNorsk = new Date(SJEKKET).toLocaleDateString('nb-NO', {
   month: 'long',
   year: 'numeric',
 });
+
+const url = `https://myntos.no/kom-i-gang/${guide.slug}/`;
+
+/*
+  Guiden som strukturerte data: stien øverst, og stegene i den rekkefølgen
+  siden viser dem, først ut av det gamle programmet og så inn i Myntos. «Hvordan
+  flytter jeg fra Fiken?» er et spørsmål folk stiller en KI-assistent like ofte
+  som en søkemotor, og stegene her er det svaret skal bygges av. Alt kommer fra
+  data/flytting.ts, de samme feltene siden tegner, og `dateModified` er datoen
+  menyveiene sist ble kontrollert, ikke datoen siden ble bygget.
+*/
+const schema = [
+  {
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Myntos', item: 'https://myntos.no/' },
+      { '@type': 'ListItem', position: 2, name: 'Kom i gang', item: 'https://myntos.no/kom-i-gang/' },
+      { '@type': 'ListItem', position: 3, name: guide.menyTittel, item: url },
+    ],
+  },
+  {
+    '@type': 'HowTo',
+    '@id': `${url}#guide`,
+    name: `${guide.menyTittel} til Myntos`,
+    description: guide.ingress,
+    inLanguage: 'nb-NO',
+    dateModified: SJEKKET,
+    step: [...guide.steg, ...startISteg].map((steg, index) => ({
+      '@type': 'HowToStep',
+      position: index + 1,
+      name: steg.tittel,
+      text: steg.vei === undefined ? steg.tekst : `${steg.tekst} Menyvei: ${steg.vei}.`,
+    })),
+    citation: guide.kilder.map((kilde) => kilde.href),
+  },
+];
 ---
 
 <BaseLayout
   title={`${guide.menyTittel} til Myntos`}
   description={`Slik henter du regnskapet ut av ${guide.navn}: menyveien til SAF-T-eksporten, hva du bør laste ned i tillegg, og hvordan du begynner i Myntos.`}
   width="wide"
+  schema={schema}
 >
   <nav class="crumbs" aria-label="Brødsmuler">
     <a href="/kom-i-gang/">Kom i gang</a>

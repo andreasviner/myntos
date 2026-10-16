@@ -477,6 +477,27 @@ async def plan_closing(
                 "disponeringen regner med er for lav.",
             )
         )
+    # Imported here: anlegg reaches the ledger service, which reaches kontoplan,
+    # which reaches this module, so a top-level import would close the circle.
+    from myntos.domain.anlegg import avskrivning
+
+    findings.extend(await avskrivning.closing_findings(db, company=company, year=year, today=today))
+    # A farm's herd and feed are on the balance sheet at what they were counted
+    # at, and the count is the year's last voucher before this one. A merknad,
+    # not a feil: a farm that sold its last animal has nothing to count, and
+    # only the person knows that. Imported here for the circle above.
+    from myntos.domain.arsoppgjor import buskap
+    from myntos.domain.ledger import landbruk
+
+    if landbruk.is_enabled(company) and not await buskap.has_count(db, company=company, year=year):
+        findings.append(
+            merknad(
+                "ingen_telling_buskap",
+                f"Det er ikke ført noen telling av buskap og varelager for {year}. Dyr, fôr og "
+                "korn står da i balansen med verdien fra i fjor. Før tellingen under Buskap og "
+                "lager før året avsluttes, hvis gården har noe å telle.",
+            )
+        )
 
     return ClosingPlan(
         year=year,

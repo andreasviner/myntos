@@ -70,8 +70,11 @@ Dataflyt import maps one to one.
 - **Every account has a pair in Skatteetaten's næringsspesifikasjon list**
   (tested). Proposed, not chosen: `chosen_at` stays empty, so a corrected pair
   in a later release reaches books that never chose one.
-- The department becomes a **næring dimension** when the books need two
-  næringer (jordbruk and annen næring); see [Not built yet](#not-built-yet).
+- The department is a **dimension**, not part of the account: NIBIO's
+  avdelinger (10 Finans, 20 Jordbruk, 30 Skogbruk …) are offered as values of
+  «Avdeling» on `/avdelinger/`, beside the driftsgrener (rule 7). Splitting the
+  næringsspesifikasjon by næring from it is not built; see
+  [Not built yet](#not-built-yet).
 
 ### 3. The VAT rates are not the shop's
 
@@ -158,9 +161,27 @@ cooperatives and approved buyers issue it. The name at the top is the
 «Årlige tilskudd til driften skattlegges i utbetalingsåret» (Skatte-ABC
 J-2-8.63.2). Produksjonstilskudd for 2025 paid on 11 February 2026 is 2026
 income; it is booked on the day it arrived, and no accrual is offered. Outside
-VAT. Investeringstilskudd (Innovasjon Norge) is not income: it reduces the
-asset's cost (skatteloven § 14-42 (2) a), and the note on «Annet tilskudd»
-says so.
+VAT.
+
+An investeringstilskudd is not income in the year either, but which of two
+rules applies depends on the grant, and this paragraph used to give only the
+first (corrected 2026-10-15, read in Lovdata):
+
+- **The rule: it reduces the asset's cost** (skatteloven § 14-42 (2) a, a grant
+  from the state, a kommune or a publicly supported company), so the saldo and
+  every later year's depreciation are smaller.
+- **The exception: tax free, and the cost stays whole.** Inside the
+  geographic area for distriktsrettet investeringsstøtte, two grants are not
+  income (§ 5-31 a) and are *not* deducted from the cost (§ 14-42 (2) a, last
+  sentences): distriktsrettet investeringsstøtte, and Innovasjon Norge's
+  tilskudd to faste anlegg og tilhørende produksjonsutstyr under forskrift
+  2014-12-19-1816 (investering og bedriftsutvikling i landbruket). Sold within
+  five years, the grant counts as part of the price (§ 14-44 (1)).
+
+The grant letter and the farm's kommune decide which it is, so Myntos asks:
+the asset in the anleggsregister has a grant and a tick for «Tilskuddet er
+skattefritt og trekkes ikke fra kostprisen» ([anlegg.md](anlegg.md)). The note
+on «Annet tilskudd» says the grant is not booked as income there.
 
 ### 6. The VAT return
 
@@ -168,7 +189,157 @@ Primærnæring files once a year, due 10 April (skatteforvaltningsforskriften
 §§ 8-3-7, 8-3-10). Built before the add-on (`domain/mva/periods.py`, setting
 «Primærnæring (jord, skog, fiske)»). Binæring up to 30 000 kr ex. VAT may go in
 the same return (mval § 15-1 (1)); above that the company files an alminnelig
-return as well, which Myntos cannot do yet (one `vat_category` per company).
+return as well. Myntos files both since 2026-10-15: the card «Den andre
+meldingen» on `/mva/` sets up the second, and a line goes in the melding of its
+**account** (the other business keeps accounts of its own, as NIBIO's
+department 60 annen næring already has it). See
+[integrations/mva.md](integrations/mva.md) «Two returns».
+
+**Known limit: a cost both businesses use.** How the input VAT on diesel, a
+telephone or a machine shared by the farm and the other business is divided
+between the two meldinger is not settled (nothing found from Skatteetaten on
+splitting between two meldinger of one company; only the proportional split
+for fellesanskaffelser between taxable and exempt use). Myntos applies no
+rule: the whole line goes to the melding of the account it is booked on, and an
+account in neither list goes to the primærnæring melding. The person decides,
+with their accountant, by the account or by two lines on two accounts; the page
+says so where the accounts are chosen. Settle this with Skatteetaten before
+Myntos proposes any split.
+
+Terms the previous program filed are marked «Sendt fra et annet program» on
+`/mva/` (proposed from Tripletex's own settlement vouchers in the SAF-T
+import), so the parallel run never sends a term twice
+([integrations/mva.md](integrations/mva.md) «Filed elsewhere»).
+
+### 7. Driftsgrener are a dimension everyone has, with the farm's codes
+
+A farm wants its result per driftsgren: the milk apart from the sheep apart
+from the forest, as Duett, Tripletex and PowerOffice give it. That is not a
+farm feature. Dimensions (avdelinger, prosjekter, a sorting of one's own) are
+for every company (`domain/ledger/dimensions.py`, `/avdelinger/`, the skill
+`myntos-avdelinger`), and the add-on only offers **NIBIO's codes** to start
+from (`domain/ledger/driftsgrener.py`, `GET …/dimensjoner/forslag`, empty
+without the add-on): Landbrukets kodesystem 1.3.6's driftsgreinkoder at the
+level a farm reports on (6110 Melkeproduksjon storfe, 6300 Saueproduksjon,
+7000 Skogbruksproduksjon …; not all 373, which NIBIO itself calls «i overkant
+detaljerte»; no pelsdyr, banned since 2025-02-01) and its avdelinger. The
+module docstring says which codes were taken and why.
+
+A line carries one value per dimension for its whole amount, chosen on the
+register and per line of a settlement, so the milk goes to 6110 and the feed
+deducted from it to whichever driftsgren ate it. The result per driftsgren,
+per month, excludes the opening balance and the year-end closing, and the
+lines nobody marked are a row of their own («Uten driftsgren») so the rows add
+up to the year's result.
+
+From a Tripletex file, the line's own «Avdeling» comes along, and in books with
+the add-on so does the department and product written into a six- or
+nine-digit account id (`145120512`: avdeling 20, Tripletex's product 512 as a
+«Produkt» dimension). Tripletex's «Bilagsart» and «Ansatte» (people's names)
+stay behind. See [integrations/saf-t.md](integrations/saf-t.md).
+
+### 8. The year end: the count and private uttak
+
+Two lists every farm hands its accountant in January, each stored as it was
+posted (`domain/arsoppgjor/landbruk_models.py`, never updated; a correction is
+a new list naming the one it replaces) behind **one voucher** in a journal of
+its own. The register's reversal refuses both journals: reversed from there,
+the voucher would be gone while its list still claimed to stand.
+
+**The count** (`domain/arsoppgjor/buskap.py`, `/buskap/`, journal `TELLING`,
+dated 31 December). Each line is a kind (`buskap` on 1450, the farm's own feed
+and grain `egenprodusert` on 1490, bought feed, fertiliser and seed `innkjopt`
+on 1400), a category from the year's takseringsregler, a quantity and a
+valuation. The voucher brings each account to the counted value against 4690,
+4290 or 4090, compared with the books on 31 December *without* this year's
+count, so a correction's review shows the change from the books. The rules,
+read in FOR-2025-12-01-2404 on Lovdata 2026-10-15:
+
+- **Adults already adult on 1 January and still there: the average of all
+  adult animals of the species in the opening balance**, rounded to 10 kroner
+  (kapittel 5 § 5-2 annet ledd and femte ledd). Computed, never typed. Adult is
+  storfe over 2 years, avlsgriser over ½ year, geiter over 9 months, sauer over
+  a year; last year's «tilført i året» rows count as adults in this year's
+  opening.
+- **New animals of own breeding, and animals bought to renew or expand the
+  herd: the year's enhetspriser** (§ 3-1-4 a, § 5-2 tredje to sjette ledd);
+  the young at the regulation's percentages, which the published figures
+  already are. Verpehøner and kyllinger at slakteverdi (FSFIN § 14-5-3).
+- **Fôringsdyr bought for sale, chicks for fattening, bought stock: kostpris**
+  (innkjøpspris, plus feed to the turn of the year for animals; plus frakt
+  for bought stock, § 5-1-2).
+- **Grain, potatoes, hay, silage, other feed: tilvirkningsverdi per kg or FEm**
+  (§ 3-1-4 b-d), «dersom ikke noe annet kan dokumenteres»; a documented value
+  is `verdsatt`, with the reason.
+- **The opening is last year's count, unchanged** («Den årlige sluttbalansen
+  … blir uten endringer å regne som åpningsbalanse», § 5-2 last paragraph).
+  Copied from Myntos's own count when there is one; typed in the first year.
+- **An account in the ranges (1400-1459, 1490) with a balance and no line is
+  refused.** Otherwise the pilot's Tripletex opening on 1451 would stand beside
+  a count on 1450, and the herd would be on the balance sheet twice. Counting
+  0 writes it down.
+- **A year without published rates refuses `normalverdi`** (`ingen_satser`);
+  the average and kostpris need none. Rates are data, one entry per year in
+  `domain/arsoppgjor/takseringsregler.py` with its Lovdata address: 2026 is
+  added when Skattedirektoratet publishes it in December, and nothing else
+  changes.
+
+`buskap.year_count()` is what the ENK's næringsspesifikasjon reads: the
+standing count with its opening and closing totals per kind, under the
+element names of `SpesifikasjonAvSkattemessigVarelager` in Skatteetaten's
+næringsspesifikasjon XSD v6/v7 (`buskap`,
+`selvprodusertVareBenyttetIEgenProduksjon`, `raavareOgInnkjoeptHalvfabrikata`).
+Årsavslutning gives a merknad (`ingen_telling_buskap`) for a farm year with no
+count; not a feil, because a farm that sold its last animal has nothing to count.
+
+**Private uttak** (`domain/arsoppgjor/uttak.py`, `/private-uttak/`, journal
+`UTTAK`): 2060 debited, NIBIO's uttak accounts 3161-3166 credited, 2700 when
+there is VAT. Bokføringsforskriften § 3-1 første ledd nr. 5 asks for the list.
+Values (FOR-2025-12-01-2404): milk 410 and potatoes 130 kr per household
+member a year, halved for those over 70 and, for potatoes, children under 10
+(§ 3-2-3); firewood 750 kr per løs m³, flis 270 (§ 3-2-6); stall and hay for a
+horse used outside the farm 21 700 / 14 900 / 9 800 (§ 3-2-7); everything else
+at omsetningsverdi (§ 3-2-2). The VAT, per line, by the melding the line falls
+in (`naering.of_line`):
+
+- **Primærnæring filed once a year: fritatt, code 5.** Merverdiavgiftsloven
+  § 6-20 første ledd exempts uttak «fra eget fiske, skogbruk eller jordbruk med
+  binæringer … dersom produktene skal brukes privat», and FMVA § 6-20-1 første
+  ledd limits it to those who «skal levere skattemelding en gang i året etter
+  skatteforvaltningsforskriften § 8-3-7 første ledd». Both read on Lovdata
+  2026-10-15. A primærnæring melding on two-monthly terms (§ 8-3-8) is
+  therefore *not* exempt. The `uttak` spesifikasjon is not written on code 5,
+  because `SPESIFIKASJON_CODES` does not list it yet (mva/codes.py says why);
+  code 5 is itself «omsetning og uttak fritatt».
+- **Otherwise, registered: taxed as a sale** (§ 3-21, basis omsetningsverdi
+  § 4-9), code 31 at 15 % for food and 3 at 25 % for raw milk, firewood and a
+  horse's hay, spesifikasjon `uttak`. A merknad says the norms are the tax
+  rules' values and the VAT basis is what the produce would fetch.
+- **Not registered: no code.**
+
+An AS is refused (its owner's uttak is salary, a loan or a dividend); ANS and
+DA get a merknad. Kår (føderåd) is a benefit in kind through the a-melding and
+is not here; gifts of produce are not private use and go on
+`/mva-justeringer/`.
+
+### Where Myntos's farm accounts differ from NIBIO's
+
+Found reading the pilot's Tripletex chart (NIBIO's numbers) while building the
+count. **None is changed**: companies already have these accounts seeded, and
+renumbering an account with postings would move history. Written down so an
+import or a farm accountant is not surprised.
+
+| Account | NIBIO (jordbruk) | Myntos | Consequence |
+| --- | --- | --- | --- |
+| 1451-1458 | Buskap per species | 1450 Buskap, one account | The count accepts 1451-1458 as livestock accounts; a pilot's opening on 1451 is counted there |
+| 1490 | «Biologiske eiendeler» (post 1490); own feed is 1447 (post 1401), own grain 1406 | Egenproduserte varer til eget bruk (post 1401) | The count treats 1440-1449 and 1490 as own produce. An import carrying NIBIO's 1490 lands on Myntos's own-feed account |
+| 3094 | Høy, egenprodusert | Skogsvirke (timber, ved) | Rule 2: NIBIO's forestry department reuses 3010/3030 |
+| 3910 | Leieverdi kårbolig | Skogfond frigitt | Kår is not built; a NIBIO 3910 from an import needs the accountant |
+| 4690 grouping | Post 4295, endring i beholdning av egenproduserte varer | Post 4005, varekostnad | The total is the same; the split between the two posts in the næringsspesifikasjon differs. A person may move it on /kontoplan/ |
+| 3161-3166 grouping | Tripletex puts uttak on 3100 | 3100 «Salg og uttak med 0 prosent mva» | Right for the yearly primærnæring melding (§ 6-20 is a fritak); a farm on the alminnelig melding moves them to 3000 |
+
+The new accounts (2026-10-15): 4090 and 4290 for the count's other two
+changes, and NIBIO's uttak accounts 3161-3164 and 3166, so the add-on has 69.
 
 ## What a farm needs and where Myntos stands
 
@@ -177,26 +348,26 @@ means the farm cannot do without it; **wish** means it can, with more work.
 
 | Area | Law or wish | Myntos 2026-10-12 | Missing |
 | --- | --- | --- | --- |
-| Farm chart of accounts | Wish (the law asks for bookkeeping, not NIBIO) | **Built**: 62 NIBIO accounts, grouped | Product codes and quantities per line |
-| Correct VAT | Law | **Built**: farm rates as defaults; primærnæring yearly return | Two returns in one company (primærnæring + alminnelig over 30 000 kr) |
+| Farm chart of accounts | Wish (the law asks for bookkeeping, not NIBIO) | **Built**: 69 NIBIO accounts, grouped | Product codes and quantities per line |
+| Correct VAT | Law | **Built**: farm rates as defaults; primærnæring yearly return; two returns in one company, by account (2026-10-15); terms filed from the previous program marked | A rule for input VAT on costs shared by both returns (not settled; the person chooses the account) |
 | Milk, slaughter, grain, timber income | Law (documented sales) | **Built**: settlements as composite entries, read as sales | Import from Landbrukets Dataflyt ([integrations/landbrukets-dataflyt.md](integrations/landbrukets-dataflyt.md)) |
 | Produksjons- and avløsertilskudd | Law (income, payment year) | **Built**: a category per tilskudd, bunnfradrag apart | Tilskudd settlement through Dataflyt |
-| Livestock valuation | Law (skatteloven § 8-1 (4), FSFIN § 14-5-3, takseringsregler) | Accounts 1450/4690 only | Year-end count with Skattedirektoratet's yearly rates; `buskap` in the næringsspesifikasjon |
-| Feed and other inventory | Law (varelager; post 1401 is not formue) | Accounts 1400/1490 only | Year-end count; own-produced feed at takseringsregler values |
-| Machinery and depreciation | Law (saldo, skatteloven § 14-40 ff.) | Capitalising to 1200/1230 only | Asset register and saldoavskrivning (FEATURES #7) |
-| Buildings and investments | Law (saldogruppe h, husdyrbygg 6 %, § 14-43 (3); grants reduce cost, § 14-42) | Account 1100 only | As above, with the 6 % rule and investeringstilskudd |
+| Livestock valuation | Law (skatteloven § 8-1 (4), FSFIN § 14-5-3, takseringsregler) | **Built** (rule 8): the year-end count on `/buskap/`, the average for adults, the year's enhetspriser, one voucher | 2026's rates (December); `buskap` in the næringsspesifikasjon (reads `buskap.year_count`) |
+| Feed and other inventory | Law (varelager; post 1401 is not formue) | **Built** (rule 8): in the same count, own feed and grain at the takseringsregler values on 1490, bought stock at cost on 1400 | |
+| Machinery and depreciation | Law (saldo, skatteloven § 14-40 ff.) | **Built** 2026-10-15: the anleggsregister and the year's saldoavskrivning on `/anlegg/` ([anlegg.md](anlegg.md)) | A saldo per næring and kommune; accounting depreciation that differs from tax |
+| Buildings and investments | Law (saldogruppe h, husdyrbygg 6 %, § 14-43 (3); grants reduce cost unless tax free, §§ 14-42, 5-31 a) | **Built** 2026-10-15: group h with husdyrbygg 6 %, kort levetid 10 %, frukt- and bærfelt; both kinds of investeringstilskudd | Whether a building is a husdyrbygg (half its floor for animals) is the person's answer |
 | Milk quota | Law (capitalised, not depreciated) | **Built**: 1010, 3675, 6475 | Gain on sale (gevinst- og tapskonto) |
 | Jordbruksfradrag | Law (personal skattemelding; Skatteetaten computes it from the basis) | Nothing | The basis per FSFIN § 8-1-11, and an estimate (2025: 95 800 + 38 %, max 200 850; 2026: 99 600, max 208 900) |
 | Jordbrukskonto (§ 14-82, from 2025) and tømmerkonto (§ 14-81) | Law once chosen; a deficit must go on | Nothing | Tax-only balances per kommune: 85 % back in 2025, 80 % from 2026; 20 % for tømmerkonto; ENK only |
 | Næringsspesifikasjon and skattemelding for the ENK | Law (only from a program) | Groupings only | FEATURES #2, with the farm cards (jordbrukskonto, skogOgToemmerkonto, buskap) |
-| Driftsgrenregnskap (melk, storfe, sau) | Wish | Nothing; the schema has SAF-T analysis dimensions | Departments and dimensions (FEATURES #37) |
-| Private uttak and kår | Law (a list of uttak, bokføringsforskriften § 3-1 nr. 5; kår via a-melding, § 6-52) | VAT uttak on /mva-justeringer/ only | Uttak at takseringsregler rates; kår needs payroll (FEATURES #14) |
+| Driftsgrenregnskap (melk, storfe, sau) | Wish | **Built** (2026-10-15): dimensions with NIBIO's driftsgrener and avdelinger, the result per driftsgren by month, carried in and out of SAF-T (rule 7) | Quantities (litres, kg, head) per line |
+| Private uttak and kår | Law (a list of uttak, bokføringsforskriften § 3-1 nr. 5; kår via a-melding, § 6-52) | **Built** for uttak (rule 8): `/private-uttak/` at the norms, VAT free on the yearly primærnæring melding | Kår needs payroll (FEATURES #14) |
 | EHF in through Peppol | Law from 2030, expected now | Nothing | FEATURES #13; access point through invoice.be |
 | SAF-T 1.40 | Law on request | **Built**, and the opening balance and the year's vouchers are read from the old program's SAF-T file (Tripletex's farm accounts included), with a comparison for the parallel run | Earlier years' vouchers and the documents (FEATURES #17) |
 | Bank reconciliation | Wish | **Built** (camt.053) | Live bank feed (FEATURES #9) |
 | Approval and payment | Wish | Nothing | FEATURES #11, #36 |
 | Backup to the farm's own OneDrive or SharePoint | Wish | Nothing | Full export (FEATURES #44). The farm's own Microsoft 365 is its choice of storage; Myntos's own archive stays in R2 `eu` |
-| Production data and analysis per driftsgren | Wish, later | Nothing | After dimensions |
+| Production data and analysis per driftsgren | Wish, later | The result per driftsgren only | Quantities, and key figures per cow or per decare, on the dimensions |
 
 ## What the pilot's first files taught (2026-10-12)
 
@@ -211,7 +382,9 @@ takes the SAF-T file through Myntos end to end. What changed because of them:
   (`POST …/inngaende-balanse/saft`, [integrations/saf-t.md](integrations/saf-t.md)).
   Tripletex's farm module writes NIBIO's department and product code after the
   four digits (`145120512` is 1451, jordbruk, kyr), so the four digits are the
-  account and the rest is kept as the line's text. Read through Myntos and
+  account and the rest is kept as the line's text in the opening balance; the
+  year's vouchers carry it as an avdeling and a product since 2026-10-15
+  (rule 7). Read through Myntos and
   exported again, the farm's own 2026 SAF-T file validates against the 1.40
   XSD and every account's and party's opening balance equals Tripletex's.
 - **Tripletex carries the balance sheet into the new year and leaves the
@@ -225,8 +398,18 @@ takes the SAF-T file through Myntos end to end. What changed because of them:
   first two (class and IFRS) and proposes Myntos's default; the third looks
   right to any rule and is on the accountant's list in `FASIT.md`.
 - **The farm's bank account is a driftskreditt on 2390.** Myntos books every
-  payment on 1920, so the import says so and leaves the move to the
-  accountant. If the opening balance moves it, the year's vouchers follow.
+  new payment on 1920, and the overview counted money only there, so after
+  the server-side import the overview read «Inn i år 0,00». Since 2026-10-15
+  the import marks 2390 as a bank account (its text carries the kontonummer
+  the file's header names), and the overview counts it; nothing is moved. The
+  move to 1920 is still the accountant's call: if the opening balance moves
+  it, the year's vouchers follow. The farm's books already in production are
+  marked by hand on `/kontoplan/` («Merk som bankkonto»).
+- **The VAT card showed the year, not what was owed.** With four terms filed
+  and settled in Tripletex, the year's output less input VAT read as a large
+  amount «til gode» while the open term was to be paid. The card is now the
+  balance on 2700, 2710 and 2740 across every year: open terms plus filed
+  terms not yet paid.
 - **The parallel run starts from 1 January 2026.** The year so far comes from
   the same file (`POST …/saft/bilag`, page `/tidligere-program/`): 467
   Tripletex vouchers became 596, because Tripletex keeps an invoice and its
@@ -278,11 +461,12 @@ account by account with Tripletex, which has it on 3041.
 
 ## Not built yet
 
-In the order the pilot will hit them: two VAT returns in one company; a manual
-journal entry for the accountant's year-end adjustments (livestock, inventory,
-accruals); the year-end livestock and feed count; fixed assets; the
-næringsspesifikasjon with the farm cards; jordbrukskonto; dimensions for
-driftsgrener; Dataflyt. Each is in [FEATURES.md](FEATURES.md) or
+In the order the pilot will hit them: the split of input VAT on costs shared
+by the two VAT returns (rule 6; the returns themselves are built); the 2026
+takseringsregler as data when they are published (rule 8; the count is built);
+fixed assets; the
+næringsspesifikasjon with the farm cards (split by næring from the avdeling);
+jordbrukskonto; quantities per driftsgren; Dataflyt. Each is in [FEATURES.md](FEATURES.md) or
 [ROADMAP.md](ROADMAP.md) Phase L.
 
 ## Sources
@@ -298,6 +482,16 @@ driftsgrener; Dataflyt. Each is in [FEATURES.md](FEATURES.md) or
   LOV-2024-12-20-86 and LOV-2025-12-22-119
 - Skatteforvaltningsforskriften §§ 8-3-7, 8-3-10 (yearly primærnæring return):
   <https://lovdata.no/forskrift/2016-11-23-1360>
+- Takseringsreglene for 2025, FOR-2025-12-01-2404 (§§ 3-1-4, 3-2-2 to 3-2-7,
+  kapittel 5), read 2026-10-15:
+  <https://lovdata.no/dokument/SF/forskrift/2025-12-01-2404>
+- Merverdiavgiftsloven §§ 3-21, 4-9, 5-2, 6-20:
+  <https://lovdata.no/dokument/NL/lov/2009-06-19-58>; FMVA § 6-20-1:
+  <https://lovdata.no/dokument/SF/forskrift/2009-12-15-1540>
+- Bokføringsforskriften § 3-1 første ledd nr. 5 (the list of uttak):
+  <https://lovdata.no/forskrift/2004-12-01-1558/§3-1>
+- Skatteetaten, næringsspesifikasjon XSD v7, `SpesifikasjonAvSkattemessigVarelager`:
+  <https://github.com/Skatteetaten/skattemeldingen/tree/master/src/resources/xsd>
 - NIBIO, Landbrukets kodesystem 1.3.6:
   <https://www.nibio.no/tema/landbruksokonomi/standarder-for-koder-i-landbruket>
 - Tripletex landbruk: <https://hjelp.tripletex.no/hc/no/articles/20568206668433>;

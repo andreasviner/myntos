@@ -9,7 +9,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
  */
 const questions = [
   {
-    q: 'Hva koster det?',
+    q: 'Hva koster Myntos?',
     a: '0 kr. Ikke som kampanje, ikke som prøveperiode og ikke opp til et visst antall bilag. Det finnes ingen betalingsløsning i Myntos, og vi tar ikke imot kortopplysninger.',
   },
   {
@@ -37,12 +37,30 @@ const questions = [
     a: 'At Myntos fortsatt er i beta. En del mangler, og du bør ikke flytte hele regnskapet hit uten å lese hva som faktisk virker. Prisen er ikke haken.',
   },
 ];
+
+/*
+  Spørsmålene over, også som strukturerte data. «Hva koster Myntos?» er det en
+  søkemotor eller en KI-assistent oftest blir spurt om, og da skal svaret være
+  vårt eget ordrett, ikke en gjetning ut fra resten av siden. Bygget fra den
+  samme lista som tegner spørsmålene, så de to kan ikke si forskjellige ting.
+*/
+const faq = {
+  '@type': 'FAQPage',
+  '@id': 'https://myntos.no/priser/#faq',
+  inLanguage: 'nb-NO',
+  mainEntity: questions.map((item) => ({
+    '@type': 'Question',
+    name: item.q,
+    acceptedAnswer: { '@type': 'Answer', text: item.a },
+  })),
+};
 ---
 
 <BaseLayout
-  title="Priser | Myntos"
+  title="Priser: gratis regnskapsprogram, 0 kr | Myntos"
   description="Myntos koster 0 kr. Ingen prisliste, ingen betalingsopplysninger, ingen bindingstid, og vi selger eller deler aldri dataene dine."
   width="wide"
+  schema={[faq]}
 >
   <div class="head">
     <p class="pill">Priser</p>

@@ -252,7 +252,7 @@ def compose(
                 text=(
                     f"{_written(suggestion.gross_amount)} kr er over grensen for "
                     "driftsmiddel. Er dette én gjenstand, eller flere som hver for seg "
-                    "er under 15 000 kr?"
+                    "er under 30 000 kr?"
                 ),
                 field="type_code",
             )

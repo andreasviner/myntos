@@ -1,0 +1,52 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+
+/*
+  Svaret på en adresse som ikke finnes. Fram til 2026-10-16 var svaret en 404
+  uten et eneste tegn, så en gammel lenke eller en skrivefeil endte på en hvit
+  side uten vei videre, for folk og for søkemotorer som følger lenker. Status-
+  koden er fortsatt 404, og siden står utenfor indeksen slik alle sider gjør
+  som lib/indexing.ts ikke nevner.
+*/
+---
+
+<BaseLayout title="Fant ikke siden | Myntos" description="Adressen finnes ikke på myntos.no.">
+  <div class="head">
+    <h1>Fant ikke siden</h1>
+    <p class="lead">
+      Adressen finnes ikke, eller den har flyttet. Har du skrevet den inn selv, er det verdt å se
+      over den en gang til.
+    </p>
+  </div>
+
+  <div class="actions" data-auth-only="inn">
+    <a class="btn btn-primary" href="/">Til oversikten</a>
+  </div>
+
+  <div data-auth-only="ut">
+    <div class="actions">
+      <a class="btn btn-primary" href="/">Til forsiden</a>
+      <a class="btn btn-ghost" href="/logg-inn/">Logg inn</a>
+    </div>
+    <p>Kanskje du lette etter noe av dette:</p>
+    <ul>
+      <li><a href="/funksjoner/">Funksjoner</a>: hva Myntos gjør i dag, og hva som er under arbeid</li>
+      <li><a href="/kom-i-gang/">Flytt regnskapet hit</a> fra Fiken, Tripletex, PowerOffice Go eller Conta</li>
+      <li><a href="/priser/">Priser</a>: 0 kr</li>
+      <li><a href="/bankpriser/">Bankpriser for bedrift</a></li>
+    </ul>
+  </div>
+</BaseLayout>
+
+<style>
+  .head {
+    max-width: 40rem;
+    padding: 2rem 0 1rem;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 2rem;
+  }
+</style>

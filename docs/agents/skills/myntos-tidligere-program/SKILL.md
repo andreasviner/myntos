@@ -31,10 +31,13 @@ What you must not get wrong:
   already posted for a later year is not doubled: it is replaced by the earlier
   year's, and the review says so (`inngaende_balanse_flyttes`).
 - **VAT returns the old program filed are filed.** The imported vouchers carry
-  their VAT, and Myntos's MVA page counts them in each term, but Myntos does not
-  know those terms were filed. **Never** suggest filing a term from Myntos that
-  the old program filed. The person marks them «Sendt fra et annet program» on
-  the MVA page, which proposes them from the old program's own settlements.
+  their VAT, and Myntos's MVA page counts them in each term, but until the
+  person marks a term «Sendt fra et annet program» Myntos shows it as not
+  sent. **Never** suggest filing a term from Myntos that the old program
+  filed: a second melding replaces the first. The MVA page proposes the marks
+  from the old program's own settlement vouchers (`elsewhere_proposal`), and
+  `POST /api/v1/companies/{company_id}/mva/termin/annet-program` records one
+  on the person's word (myntos-mva, «Filed from another program»).
 - **The documentation stays in the old program.** The vouchers keep the old
   program's numbers so each one can be found in its archive; the PDFs are not in
   the SAF-T file and are not brought over. The person keeps the files and the
@@ -217,9 +220,12 @@ the point. Instead, whenever they want to know whether the two agree:
 | --- | --- | --- | --- |
 | `inngaende_balanse_mangler` | feil | No opening balance yet (one-file routes) | Post it from the same file first (myntos-inngaende-balanse), or use the import, which posts it |
 | `kontoplan_krever_administrator` | feil | Accounts to add, and the person may not change the kontoplan | Ask an «Administrator» or «Eier» to post it |
+| `dimensjoner_krever_administrator` | feil | Avdelinger or products to add, and the person may not set up dimensions (`ledger:chart`, as for the kontoplan) | Ask an «Administrator» or «Eier» to post it |
 | `inngaende_balanse_flyttes` | merknad | The opening balance posted for a later year is replaced by the earliest file's; accounts moved in it are moved again | Say it to the person |
 | `ingen_inngaende_saldoer` | merknad | The earliest file opens at zero: the books began in that year in the old program, so no opening balance is posted (and one standing for a later year is reversed) | Nothing |
 | `aar_lagt_til` | merknad | Years before Myntos's first are added | Say it |
+| `bankkonto_merket` | merknad | An account whose name carries the company's kontonummer from the file's header (a driftskreditt on 2390, say) is marked as a bank account, so the overview counts the money on it. Nothing is moved; new payments still go to 1920 | Say it. The person can unmark it on «Kontoplan» (myntos-kontoplan) |
+| `bankkonto_utenfor_1920` | merknad | The same account, but the person may not change the kontoplan, so it is not marked | Ask an «Administrator» or «Eier» to mark it as a bank account (myntos-kontoplan) |
 | `aapning_fra_myntos` | merknad | The files start after Myntos's first year; that year opens with what Myntos has | Nothing |
 | `tidligere_aar_aapne` | merknad | Complete earlier years are open in Myntos | Step 5 |
 | `aaret_er_avsluttet` | feil | The year is closed in Myntos | Nothing can be posted in a closed year; ask the person |
@@ -233,6 +239,7 @@ the point. Instead, whenever they want to know whether the two agree:
 | `mva_underkonto` | merknad | VAT sub-accounts put on 2700 and 2710 | Nothing |
 | `bilag_delt_paa_dato` | merknad | Vouchers split by date | Nothing |
 | `allerede_hentet`, `bilag_etter_perioden`, `bilag_for_aaret` | merknad | Skipped: already here, after `til`, or before the year (in the opening balance) | Nothing |
+| `dimensjoner_utelatt` | merknad | The file's other dimensions (Tripletex's «Bilagsart», «Ansatte») stay behind; only avdeling, prosjekt, driftsgren and produkt come along, and on a farm the avdeling and product in a six- or nine-digit account id (myntos-avdelinger) | Nothing |
 | `mva_kode_utelatt` | merknad | A VAT code with no VAT that never reaches a melding (0, 7, 20-22) left off | Nothing |
 | `gruppering_fra_filen_brukes_ikke` | merknad | A new account's grouping from the file did not fit; Myntos's default proposed | Mention it for the accountant |
 | `mva_meldinger_sendt` | merknad | The vouchers have VAT, and the terms the old program filed are not to be filed again | Say it to the person |

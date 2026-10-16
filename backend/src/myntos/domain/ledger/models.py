@@ -127,17 +127,32 @@ class Company(Base):
     __tablename__ = "company"
     __table_args__ = (
         CheckConstraint("length(orgnr) = 9", name="orgnr_is_nine_digits"),
-        UniqueConstraint("organization_id", "orgnr", name="uq_company_organization_id"),
+        # One set of open books per orgnr in an account. Open only: books an
+        # owner deleted are kept locked for five years, and must not stop the
+        # same orgnr being set up again in the meantime (migration
+        # f4a9d2c63b18; reopening is refused in myntos.domain.identity.closure).
+        Index(
+            "uq_company_open_orgnr",
+            "organization_id",
+            "orgnr",
+            unique=True,
+            sqlite_where=text("closed_at IS NULL"),
+            postgresql_where=text("closed_at IS NULL"),
+        ),
         # Partial, so it binds confirmed claims and leaves the rest alone. The
         # domain checks the same thing first and answers with a message people
         # can act on; this is the backstop for two confirmations racing, where a
         # check-then-write would let both through.
+        #
+        # Open books only. A company deleted from Myntos is kept for up to five
+        # years and must not hold the orgnr all that time, or whoever runs the
+        # business next could not confirm it (myntos.domain.identity.closure).
         Index(
             "uq_company_verified_orgnr",
             "orgnr",
             unique=True,
-            sqlite_where=text("verified_at IS NOT NULL"),
-            postgresql_where=text("verified_at IS NOT NULL"),
+            sqlite_where=text("verified_at IS NOT NULL AND closed_at IS NULL"),
+            postgresql_where=text("verified_at IS NOT NULL AND closed_at IS NULL"),
         ),
     )
 
@@ -310,6 +325,18 @@ class Company(Base):
     # Altinn's own key for the party, as it stood at confirmation. Kept because
     # an instance is later created under it and an orgnr is not the same key.
     altinn_party_id: Mapped[int | None] = mapped_column(Integer)
+
+    # --- Deleted from Myntos ----------------------------------------------------
+    #
+    # Set when an owner deleted the company. The books are not gone: bokføringsloven
+    # § 13 makes the company keep them for five years, and the company cannot
+    # do that with books that no longer exist. So they are locked away instead,
+    # out of every list and every route, until ``retain_until``, and deleted for
+    # good the day after. An owner may open them again until then. See
+    # myntos.domain.identity.closure and docs/gdpr.md.
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The last day the books are kept. Set with ``closed_at`` and cleared with it.
+    retain_until: Mapped[date | None] = mapped_column(Date)
 
     @property
     def is_verified(self) -> bool:
@@ -530,6 +557,26 @@ class Account(Base):
     # See myntos.domain.ledger.kontoplan for which accounts may not be switched
     # off at all.
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # The company's money sits here as well as on 1920 and 1900: the overview
+    # counts its movements as money in and out, and its balance in «Kasse og
+    # bank». Tripletex keeps a farm's only bank account, a driftskreditt, on
+    # 2390, and with that money on no account Myntos counted, the farm's
+    # overview read «Inn i år 0,00» for a year of bank movements. Moving the
+    # vouchers to 1920 was the alternative and is the accountant's call; this
+    # moves nothing.
+    #
+    # A flag here rather than a link from :class:`CompanyBankAccount`, because
+    # that table is where invoices are paid to: rule 5 of
+    # docs/agents-and-api.md keeps it from keys and behind
+    # ``organization:manage``, and a SAF-T import or a kontoplan edit must
+    # never add a kontonummer an invoice could fall back to. Counting is a
+    # kontoplan matter (``ledger:chart``); where money is paid is not.
+    #
+    # 1920 and 1900 count by number whatever this says
+    # (:func:`myntos.domain.ledger.kontoplan.counts_as_bank`), so it is only
+    # ever set on another account, and new payments still go to 1920.
+    # Python-side default only; the migration carries the server default.
+    is_bank_account: Mapped[bool] = mapped_column(Boolean, default=False)
 
     company: Mapped[Company] = relationship(back_populates="accounts")
     groupings: Mapped[list[AccountGrouping]] = relationship(

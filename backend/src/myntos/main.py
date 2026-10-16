@@ -5,8 +5,9 @@ Run locally with:
     uv run uvicorn myntos.main:app --reload
 """
 
+import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -14,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from myntos import __version__
+from myntos.api.deps import get_document_storage
 from myntos.api.errors import (
     approval_held_handler,
     domain_error_handler,
@@ -26,12 +28,17 @@ from myntos.core.config import get_settings
 from myntos.core.security import security_headers_middleware
 from myntos.db.session import get_engine
 from myntos.domain.faktura.errors import FakturaError
+from myntos.domain.identity import closure
 from myntos.domain.identity.errors import IdentityError
 from myntos.domain.ledger.errors import LedgerError
 from myntos.integrations.brreg import BrregError
 from myntos.saft import jobs
+from myntos.storage.base import DocumentStorage
 
 logger = logging.getLogger(__name__)
+
+_PURGE_FIRST_DELAY = 5 * 60
+_PURGE_INTERVAL = 24 * 60 * 60
 
 
 @asynccontextmanager
@@ -57,7 +64,37 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Through the dependency, so a test's database is the one looked in.
     sessions = app.dependency_overrides.get(get_import_sessions, get_import_sessions)
     jobs.resume_in_background(sessions)
+    storage = app.dependency_overrides.get(get_document_storage, get_document_storage)
+    purging = asyncio.get_running_loop().create_task(_purge_daily(sessions, storage))
     yield
+    purging.cancel()
+
+
+async def _purge_daily(
+    sessions: Callable[[], jobs.Sessions], storage: Callable[[], DocumentStorage]
+) -> None:
+    """Delete, once a day, deleted companies whose retention has run out.
+
+    In the process rather than on a systemd timer, so that it is deployed with
+    the code that decides what it deletes and cannot be forgotten on a rebuilt
+    machine. Nothing is due before the first books deleted from Myntos reach
+    the end of their five years, so on most days it asks one question and
+    goes back to sleep. The storage is only built when something is due,
+    because a deployment without R2 credentials refuses to build it, and a
+    process should not fail daily over a deletion with nothing to delete.
+
+    Five minutes after startup rather than at once: a deploy is busy enough,
+    and a day's delay in deleting something kept for five years is nothing.
+    """
+    await asyncio.sleep(_PURGE_FIRST_DELAY)
+    while True:
+        try:
+            async with sessions()() as db:
+                if await closure.due_for_purge(db):
+                    await closure.purge_expired(db, storage())
+        except Exception:  # a failed run is retried tomorrow, and must not end the loop
+            logger.exception("Could not purge companies past their retention")
+        await asyncio.sleep(_PURGE_INTERVAL)
 
 
 def create_app() -> FastAPI:

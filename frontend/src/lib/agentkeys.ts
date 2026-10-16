@@ -147,6 +147,7 @@ const STOPPED_BECAUSE: Record<string, string> = {
   password_reset: 'Stoppet: passordet ble tilbakestilt',
   bankid: 'Stoppet: kontoen bruker BankID',
   account_deleted: 'Stoppet: kontoen er slettet',
+  company_closed: 'Stoppet: selskapet ble slettet',
 };
 
 /** What the list says about a key's state, in a few words. */

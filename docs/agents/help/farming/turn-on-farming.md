@@ -40,7 +40,7 @@ already; any other company can switch it on.
    næringskode 01.410, som er jord- eller skogbruk.»
 3. Click «Slå på landbruk». If the add-on is on already but its accounts are
    not all in the kontoplan yet, the button says «Legg til landbrukskontoene».
-4. The card says what happened: «Landbruk er slått på. 62 kontoer er lagt til
+4. The card says what happened: «Landbruk er slått på. 69 kontoer er lagt til
    i kontoplanen.» The new accounts appear in the list above, each placed in its
    post in the næringsspesifikasjon.
 5. The farm types are now in «Hva gjaldt det?» on «Betaling».
@@ -66,8 +66,10 @@ avgjøre» hands the decision back to the company's næringskode.
   farm types use the right rate:
   [Choose the VAT for farm sales](https://myntos.no/llms/help/farming/choose-the-vat-for-farm-sales.md).
 - What is not in Myntos yet: settlements fetched automatically from
-  Landbrukets Dataflyt, two VAT returns in one company (primærnæring and
-  alminnelig), livestock counts, jordbrukskonto and the tax return. Each
+  Landbrukets Dataflyt, an automatic split of VAT on costs shared by the farm
+  and another business (two VAT returns themselves are built:
+  [File two VAT returns](https://myntos.no/llms/help/vat/file-two-vat-returns.md)),
+  livestock counts, jordbrukskonto and the tax return. Each
   settlement is registered from its PDF.
 
 ## Related

@@ -560,6 +560,32 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
         </div>
       </section>
 
+      {/* --- Slett selskapet ---------------------------------------------
+
+          Nederst på siden og rød, fordi det er det siste noen gjør med et
+          regnskap. Knappen sletter ingenting: den fører til /slett-selskap/,
+          der SAF-T-filene lastes ned først, det står hva som skjer med
+          bilagene, og passordet kreves. Teksten her sier det viktigste før
+          noen trykker, så ingen tror at et klikk tar regnskapet med en gang.
+          Bare for eiere. */}
+      <section id="slett-selskap" hidden>
+        <h2>Slett selskapet</h2>
+        <div class="card">
+          <p>
+            Er selskapet avviklet, eller fører dere regnskapet et annet sted nå, kan du slette det
+            fra Myntos. Last ned SAF-T-filene først: de er selskapets egen kopi av regnskapet.
+          </p>
+          <p class="card-hint">
+            Er noe ført i regnskapet, låses det i stedet for å slettes med en gang. Bokføringsloven
+            krever at det oppbevares i fem år etter regnskapsåret, så ingen kan arbeide i det, men
+            du kan åpne det igjen til det slettes for godt. Alle andre mister tilgangen med en gang.
+          </p>
+          <div class="org-knapperad">
+            <a class="btn btn-fare" href="/slett-selskap/">Slett selskapet …</a>
+          </div>
+        </div>
+      </section>
+
       {/* --- Ingen bøker ennå ---------------------------------------------
 
           Én lenke, ikke et skjema. Å sette opp et regnskap er en egen oppgave
@@ -2257,6 +2283,7 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
 
     tegnFelt(el<HTMLDListElement>('#selskap-felt'), selskapFelter(company), selskapStatus);
     showKontoer(company);
+    show(el('#slett-selskap'), canInCompany(company, 'organization:delete'));
   }
 
   /**

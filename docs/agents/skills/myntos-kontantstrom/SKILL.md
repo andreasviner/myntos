@@ -148,6 +148,7 @@ few screenshots.
    | `party_id` | «Motpart» | A registered customer or supplier, or leave it out |
    | `payment_method` | «Betalt via» | `bank` («Bankkonto», the default) or `kontant` («Kontant») |
    | `account_number` | «Konto» | Only if the person wants another account of the same type, from `accounts` in step 1 |
+   | `dimension_value_ids` | One select per dimension, labelled with its name («Avdeling», «Prosjekt», «Driftsgren») | Only when the company has dimensions: the value `id`s from `GET /api/v1/companies/{company_id}/dimensjoner`, at most one per dimension, active ones only (myntos-avdelinger). Leave it out when the person does not say; an entry on no avdeling is valid |
 
    Needs `post`. Answers 201 with the entry: its `id`, `voucher_no`, and the
    `net_amount` and `vat_amount` Myntos worked out. May answer 202
@@ -206,6 +207,7 @@ one line per trade, one voucher, one bilagsnummer.
    | `tax_code` | Only to override the category's default |
    | `account_number` | Only to move the line to another account of the same type |
    | `description` | The line's own text, if it needs one; the voucher's is used otherwise |
+   | `dimension_value_ids` | Per line, as for one payment: the milk to driftsgren 6110, the feed deducted from it perhaps to the sheep (myntos-avdelinger) |
 
    Needs `post`. Answers 201 with the entry: `type_code` `sammensatt`,
    `gross_amount` the bank movement, `vat_amount` the VAT that moved with the
@@ -249,10 +251,13 @@ read them the `note` when it applies. What is easy to get wrong:
   `laneopptak` («Nytt lån»), a repayment `avdrag_lan` («Avdrag på lån»).
 - **Settling a VAT return** is `mva_oppgjor` (paid to Skatteetaten) or
   `mva_tilgode` (paid out by Skatteetaten), not a cost or an income.
-- **A purchase that lasts** (from 15 000 kr and three years or more, such as
+- **A purchase that lasts** (from 30 000 kr and three years or more, such as
   machines or equipment) is `driftsmiddel` («Større anskaffelse
   (driftsmiddel)»): it is written off over the years rather than taken as a
-  cost now. The proposal warns when an amount crosses the line.
+  cost now. The proposal warns when an amount crosses the line. Then register
+  the asset with the payment's `id` as `voucher_id`
+  ([myntos-anlegg](https://myntos.no/llms/skills/myntos-anlegg.md)), so the
+  year's depreciation is worked out from it.
 - **A company that is not VAT-registered** deducts no VAT. The catalogue then
   proposes code 0 for everything and Myntos refuses codes that would deduct or
   charge VAT. Do not try to "fix" that.
@@ -275,7 +280,9 @@ read them the `note` when it applies. What is easy to get wrong:
   and `type_label`, `gross_amount`, `net_amount`, `vat_amount`, `tax_code`,
   `account_number` and `account_description`, `party_id` and `party_name`,
   `payment_account` (`1920` the bank account, `1900` the cash box),
-  `description`, and `attachments` (each with `id`, `filename`,
+  `description`, `dimension_value_ids` (the avdeling, prosjekt or driftsgren
+  it is on; empty on a composite entry, whose `parts` carry their own), and
+  `attachments` (each with `id`, `filename`,
   `content_type`, `byte_size`, `sha256`). `created_by_name` is who entered it,
   and `created_via` the name of the key it came through, if any: the page
   shows «Ført av Kari Nordmann via «Claude»». Entries you post carry your key's
@@ -298,12 +305,26 @@ read them the `note` when it applies. What is easy to get wrong:
 - `GET /api/v1/companies/{company_id}/cashflow/summary`: the year's totals,
   for `financial_year` (the current year when left out): `total_in`,
   `total_out`, `net`, `entry_count`, and `by_type` per category, largest
-  first. Reversed pairs are left out. `vat_position` is the VAT charged on
-  sales minus the VAT that may be deducted on purchases: positive is owed to
-  Skatteetaten, negative is owed to the company. **It is an estimate, not the
-  MVA-melding**, and you should say so (myntos-mva has the real one).
-  `cash_position` is what the books say the bank account and cash box hold,
-  across every year.
+  first, counted on 1920, 1900 and any account marked as a bank account
+  (`is_bank_account`, myntos-kontoplan). Reversed pairs are left out.
+  `output_vat` and `input_vat` are the year's VAT on sales and purchases.
+  `vat_position` is what is owed **now**, not the year's figure: the terms not
+  yet filed plus the filed ones not yet paid (2700, 2710 and 2740, across
+  every year). Positive is owed to Skatteetaten, negative is owed to the
+  company. **It is read off the books, not the MVA-melding**, and you should
+  say so (myntos-mva has the real one). `vat_settled` is the part of it on
+  2740: terms already filed whose payment is not posted. `cash_position` is
+  what the books say the bank accounts and cash box hold, across every year.
+  `books_through` is the date of the last voucher in the books; before
+  `financial_year`, nothing is posted in the year yet. **`positions_as_of` set
+  (to that same date)** means the VAT deadline of the period the books stop in
+  has passed with nothing posted since: the payment or refund due then is
+  missing, so `vat_position` is that day's, not today's. Do not call the VAT
+  owed or refundable then; tell the person the books stop on that date (often
+  only last year was brought over from the old program). It is null on
+  1 January: last year's final period is open and real until its deadline.
+  Earlier years are in
+  [myntos-regnskap](https://myntos.no/llms/skills/myntos-regnskap.md).
 - `GET /api/v1/companies/{company_id}/dokument/{attachment_id}`: one file from
   the archive, exactly as attached, with its real content type.
 - `GET /api/v1/companies/{company_id}/dokument/{attachment_id}/miniatyr`: a
@@ -323,7 +344,10 @@ means; the page offers them as «Rediger» and «Reverser».
   `PUT /api/v1/companies/{company_id}/cashflow/{voucher_id}` with the
   **whole** entry, the same body as step 6, starting from the entry in the
   register. Not just the changed field: a field left out takes its default,
-  not its old value. Myntos reverses the original and posts the replacement
+  not its old value, and that includes `dimension_value_ids`: send the
+  entry's own again, or the replacement is on no avdeling. Putting a payment
+  on the right avdeling or driftsgren afterwards is a correction like any
+  other. Myntos reverses the original and posts the replacement
   in one step, and answers 201 with the replacement, whose `corrects_id` names
   the original. Show the person before and after, and say the books will keep
   all three vouchers. Needs `post`; may answer 202 `approval_pending` (see
@@ -360,6 +384,9 @@ the law does not allow it, and offer the reversal or the correction.
 | 409 `closed_financial_year` | That year is closed (årsavslutning), so nothing more is posted in it | Tell the person; reopening a year is their decision (myntos-arsavslutning) |
 | 409 `cannot_reverse_here` | The opening balance or a year-end closing | They are corrected on their own pages (myntos-inngaende-balanse, myntos-arsavslutning) |
 | 409 `inactive_account` | The account is switched off in the chart of accounts | Leave `account_number` out, or ask the person to switch it on (myntos-kontoplan) |
+| 404 `dimension_not_found` | A `dimension_value_ids` entry is not one of this company's avdelinger, prosjekter or driftsgrener | Read `GET …/dimensjoner` again and use a value's `id` |
+| 409 `inactive_dimension` | The value, or its whole dimension, is switched off | Choose another, or leave it out; switching it on is the person's (myntos-avdelinger) |
+| 422 `invalid_dimension` | Two values of one dimension on one line, or the same value twice | One value per dimension; a payment that belongs to two avdelinger is a composite entry with a line for each |
 | 413 `document_too_large` | A file over 25 MB | Ask for a smaller copy, or a PDF |
 | 415 `unsupported_document` | Not a PDF, PNG, JPEG, WebP, GIF or HEIC, an empty file, or no file at all | Ask for one of those |
 | 422 `unknown_cash_flow_type` | `type_code` is not in the catalogue | Use a `code` from step 1 |

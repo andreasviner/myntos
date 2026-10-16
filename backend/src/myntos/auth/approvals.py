@@ -57,7 +57,9 @@ from myntos.domain.identity.models import (
     AgentKey,
     AgentKeyScope,
 )
-from myntos.domain.mva.models import MvaFiling
+from myntos.domain.ledger.models import Company
+from myntos.domain.mva import naering as mva_naering
+from myntos.domain.mva.models import FilingStatus, MvaFiling
 
 logger = logging.getLogger(__name__)
 
@@ -368,6 +370,10 @@ async def settle_filings(db: AsyncSession, approvals: list[AgentApproval]) -> No
     Approving a request to file *is* filing it, on the MVA page with the
     person's own ID-porten login, so nothing presses a button here: the
     filing appearing is the answer. Checked when the requests are read.
+
+    A period the person records as filed from another program is done too:
+    there is nothing left to file, and the request would otherwise wait
+    until it expired for something nobody will do.
     """
     for approval in approvals:
         if (
@@ -375,22 +381,37 @@ async def settle_filings(db: AsyncSession, approvals: list[AgentApproval]) -> No
             or approval.status is not AgentApprovalStatus.PENDING
         ):
             continue
-        filed = await db.scalar(
-            select(MvaFiling)
-            .where(
-                MvaFiling.company_id == approval.company_id,
-                MvaFiling.year == approval.filing_year,
-                MvaFiling.period_index == approval.filing_period,
+        query = select(MvaFiling).where(
+            MvaFiling.company_id == approval.company_id,
+            MvaFiling.year == approval.filing_year,
+            MvaFiling.period_index == approval.filing_period,
+            or_(
                 MvaFiling.submitted_at.is_not(None),
-            )
-            .order_by(MvaFiling.submitted_at.desc())
-            .limit(1)
+                MvaFiling.status == FilingStatus.ANNET_PROGRAM.value,
+            ),
         )
-        if filed is None or filed.submitted_at is None:
+        category = approval.filing_category
+        if category is None:
+            # The main melding. With one melding, any category: a company that
+            # changed category still filed the period it was asked about. With
+            # two, the second melding's filing of the same number is not it.
+            company = await db.get(Company, approval.company_id)
+            if company is not None:
+                setup = await mva_naering.load(db, company)
+                if setup.is_split:
+                    category = setup.main.category.value
+        if category is not None:
+            query = query.where(MvaFiling.category == category)
+        filed = await db.scalar(query.order_by(MvaFiling.validated_at.desc()).limit(1))
+        if filed is None:
             continue
         approval.status = AgentApprovalStatus.DONE
-        approval.decided_at = filed.submitted_at
-        approval.decided_by_user_id = filed.submitted_by_user_id
+        if filed.submitted_at is not None:
+            approval.decided_at = filed.submitted_at
+            approval.decided_by_user_id = filed.submitted_by_user_id
+        else:
+            approval.decided_at = filed.validated_at
+            approval.decided_by_user_id = filed.created_by_user_id
         approval.result = json.dumps({"filing_id": filed.id})
 
 

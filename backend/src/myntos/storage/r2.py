@@ -127,5 +127,12 @@ class R2DocumentStorage:
             raise StorageError(f"kunne ikke hente dokumentet fra R2 (HTTP {response.status_code})")
         return response.content
 
+    async def delete(self, key: str) -> None:
+        # Only the retention purge calls this (DocumentStorage.delete). S3, and
+        # R2 with it, answers 204 whether or not the object was there.
+        response = await self._send("DELETE", validate_key(key))
+        if response.status_code not in (200, 204, 404):
+            raise StorageError(f"kunne ikke slette dokumentet i R2 (HTTP {response.status_code})")
+
     async def aclose(self) -> None:
         await self._client.aclose()

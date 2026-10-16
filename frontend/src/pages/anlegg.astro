@@ -1,0 +1,892 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Anlegg og avskrivning | Myntos"
+  description="Anleggsregisteret: driftsmidlene, saldoene per saldogruppe og årets avskrivninger."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Anlegg og avskrivning</p>
+      {/* Selskapet er overskriften: saldoene er ett bestemt regnskaps. */}
+      <h1 data-session-company></h1>
+      <p class="muted orgnr" id="orgnr"></p>
+    </div>
+    <div class="head-actions year-nav" role="group" aria-label="Regnskapsår">
+      <button type="button" class="btn btn-ghost btn-small" id="year-prev" aria-label="Året før">‹</button>
+      <span class="year" id="year"></span>
+      <button type="button" class="btn btn-ghost btn-small" id="year-next" aria-label="Året etter">›</button>
+    </div>
+  </header>
+
+  <p class="lead">
+    Det du kjøper for å bruke i minst tre år, og som koster 30 000 kroner eller mer, er et
+    driftsmiddel. Det føres ikke som kostnad med en gang, men står i anleggsregisteret og avskrives
+    litt hvert år på saldoen for sin saldogruppe. Her registrerer du driftsmidlene, og fører årets
+    avskrivninger når året er over.
+  </p>
+
+  <p class="status" id="page-status" hidden></p>
+  <div class="empty" id="loading">Henter …</div>
+
+  <section class="card" id="assets-card" hidden>
+    <div class="card-head">
+      <h2 class="card-title">Driftsmidler</h2>
+      <button type="button" class="btn btn-primary btn-small" id="new-asset" hidden>Registrer driftsmiddel</button>
+    </div>
+    <p class="card-hint" id="no-assets" hidden>Ingen driftsmidler er registrert ennå.</p>
+    <div class="table-scroll">
+      <table class="lines" id="assets-table" hidden>
+        <thead>
+          <tr>
+            <th>Driftsmiddel</th><th>Saldogruppe</th><th>Konto</th><th>Levert</th>
+            <th class="num">Kostpris</th><th>Avgang</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="assets"></tbody>
+      </table>
+    </div>
+    <p class="status" id="assets-status" hidden></p>
+  </section>
+
+  {/* Skjemaet brukes både til nytt driftsmiddel og til å endre et. */}
+  <section class="card" id="asset-form-card" hidden>
+    <h2 class="card-title" id="asset-form-title">Nytt driftsmiddel</h2>
+    <form id="asset-form" novalidate>
+      <label class="field">
+        <span>Beskrivelse</span>
+        <input type="text" id="a-description" maxlength="255" />
+      </label>
+      <label class="field">
+        <span>Saldogruppe</span>
+        <select id="a-group"></select>
+      </label>
+      <label class="field" id="a-variant-field" hidden>
+        <span>Forhøyet sats</span>
+        <select id="a-variant"></select>
+        <span class="field-hint">Bare for bygg og anlegg (saldogruppe h).</span>
+      </label>
+      <label class="field" id="a-building-field" hidden>
+        <span>Bygning</span>
+        <select id="a-building"></select>
+        <span class="field-hint">Tekniske installasjoner avskrives samlet for hver bygning.</span>
+      </label>
+      <label class="field">
+        <span>Konto</span>
+        <input type="text" id="a-account" inputmode="numeric" maxlength="4" placeholder="1250" />
+        <span class="field-hint">Balansekontoen driftsmidlet står på, mellom 1000 og 1299.</span>
+      </label>
+      <label class="field">
+        <span>Levert</span>
+        <input type="date" id="a-acquired" />
+        <span class="field-hint">Datoen du fikk det, ikke da det ble bestilt eller betalt.</span>
+      </label>
+      <label class="field">
+        <span>Kostpris</span>
+        <input type="text" id="a-cost" inputmode="decimal" placeholder="0,00" />
+        <span class="field-hint">Uten mva du får fradrag for.</span>
+      </label>
+      <label class="field">
+        <span>Offentlig tilskudd</span>
+        <input type="text" id="a-grant" inputmode="decimal" placeholder="0,00" />
+        <span class="field-hint">Investeringstilskudd fra Innovasjon Norge, Enova, kommunen.</span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="a-grant-free" />
+        <span>
+          Tilskuddet er skattefritt og trekkes ikke fra kostprisen (Innovasjon Norges tilskudd til
+          faste anlegg i landbruket, eller distriktsrettet investeringsstøtte, i området for
+          distriktsrettet investeringsstøtte).
+        </span>
+      </label>
+      <label class="field" id="a-life-field" hidden>
+        <span>Levetid i år</span>
+        <input type="number" id="a-life" min="1" max="100" />
+      </label>
+      <label class="field" id="a-opening-field" hidden>
+        <span>Skattemessig verdi ved registerets start</span>
+        <input type="text" id="a-opening" inputmode="decimal" placeholder="0,00" />
+        <span class="field-hint" id="a-opening-hint"></span>
+      </label>
+      <label class="field">
+        <span>Merknad</span>
+        <input type="text" id="a-note" maxlength="1000" />
+      </label>
+      <div class="actions">
+        <button type="submit" class="btn btn-primary" id="a-save">Lagre</button>
+        <button type="button" class="btn btn-ghost" id="a-cancel">Avbryt</button>
+      </div>
+      <p class="status" id="asset-form-status" hidden></p>
+    </form>
+  </section>
+
+  <section class="card" id="disposal-card" hidden>
+    <h2 class="card-title" id="disposal-title">Avgang</h2>
+    <p class="card-hint">
+      Solgt, tatt ut privat eller kassert. Pengene fører du der de kom inn, som «Salg av
+      driftsmiddel»; her sier du fra til saldoen. Ved uttak er beløpet markedsverdien, og ved
+      kassering 0.
+    </p>
+    <form id="disposal-form" novalidate>
+      <label class="field">
+        <span>Dato</span>
+        <input type="date" id="d-date" />
+      </label>
+      <label class="field">
+        <span>Salgssum</span>
+        <input type="text" id="d-proceeds" inputmode="decimal" placeholder="0,00" />
+      </label>
+      <div class="actions">
+        <button type="submit" class="btn btn-primary" id="d-save">Registrer avgang</button>
+        <button type="button" class="btn btn-ghost" id="d-cancel">Avbryt</button>
+      </div>
+      <p class="status" id="disposal-status" hidden></p>
+    </form>
+  </section>
+
+  {/* Saldoene fra det gamle programmet: tall fra fjorårets skattemelding,
+      ikke saldoen på kontoen. */}
+  <section class="card" id="openings-card" hidden>
+    <h2 class="card-title">Inngående saldo</h2>
+    <p class="card-hint">
+      Kom selskapet fra et annet program, tar du med saldoene for saldogruppe a til d og j og
+      gevinst- og tapskontoen. Tallene står i kolonnen «utgående saldo» i saldospesifikasjonen i
+      fjorårets skattemelding. Driftsmidler i gruppe e til i får sin verdi hver for seg.
+    </p>
+    <label class="field">
+      <span>Gjelder fra år</span>
+      <input type="number" id="o-year" min="2024" max="2100" />
+    </label>
+    <div class="table-scroll">
+      <table class="lines">
+        <thead>
+          <tr><th>Saldogruppe</th><th>Konto</th><th class="num">Beløp</th><th></th></tr>
+        </thead>
+        <tbody id="openings"></tbody>
+      </table>
+    </div>
+    <div class="actions" id="openings-actions">
+      <button type="button" class="btn btn-ghost btn-small" id="o-add">Legg til linje</button>
+      <button type="button" class="btn btn-primary btn-small" id="o-save">Lagre inngående saldo</button>
+    </div>
+    <p class="status" id="openings-status" hidden></p>
+  </section>
+
+  <section class="card" id="plan" hidden aria-live="polite">
+    <h2 class="card-title" id="plan-title"></h2>
+    <p class="card-hint">
+      Myntos foreslår det høyeste loven tillater. Du kan avskrive mindre, også ingenting; da blir
+      saldoen neste år større. Skriv beløpet i kolonnen «Årets avskrivning» og trykk «Kontroller».
+    </p>
+    <div class="table-scroll">
+      <table class="lines saldi">
+        <thead>
+          <tr>
+            <th>Saldo</th><th class="num">Sats</th><th class="num">Inngående</th>
+            <th class="num">Tilgang</th><th class="num">Avgang</th><th class="num">Grunnlag</th>
+            <th class="num">Årets avskrivning</th><th class="num">Utgående</th>
+          </tr>
+        </thead>
+        <tbody id="saldi"></tbody>
+      </table>
+    </div>
+    <p class="card-hint" id="no-saldi" hidden>Registeret har ingen saldo for året.</p>
+    <p class="card-hint" id="gtk"></p>
+
+    <ul class="findings" id="errors" hidden></ul>
+    <ul class="findings notes" id="notes" hidden></ul>
+
+    <h3 class="sub" id="lines-title">Dette blir ført per 31. desember</h3>
+    <div class="table-scroll">
+      <table class="lines" id="lines-table">
+        <thead>
+          <tr><th>Konto</th><th>Tekst</th><th class="num">Debet</th><th class="num">Kredit</th></tr>
+        </thead>
+        <tbody id="lines"></tbody>
+      </table>
+    </div>
+
+    <div class="actions" id="post-actions" hidden>
+      <button type="button" class="btn btn-ghost" id="review">Kontroller</button>
+      <button type="button" class="btn btn-primary" id="post" disabled></button>
+      <button type="button" class="btn btn-ghost" id="reverse" hidden>Reverser avskrivningene</button>
+    </div>
+    <p class="card-hint" id="no-permission" hidden>
+      Du kan se registeret, men det er medlemmer med skrivetilgang som fører avskrivningene.
+    </p>
+    <p class="status" id="plan-status" hidden></p>
+    <ul class="history" id="history"></ul>
+  </section>
+</BaseLayout>
+
+<style>
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .orgnr {
+    margin: 0.2rem 0 0;
+  }
+  .year-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .year {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    min-width: 3.5rem;
+    text-align: center;
+  }
+  .card + .card {
+    margin-top: 1rem;
+  }
+  .card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+  }
+  .sub {
+    font-size: 1rem;
+    margin: 1rem 0 0.5rem;
+  }
+  /* Radene bygges av skriptet, så reglene når dem gjennom :global(). */
+  .lines {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+  }
+  .lines :global(th),
+  .lines :global(td) {
+    text-align: left;
+    padding: 0.35rem 0.5rem;
+    border-bottom: 1px solid var(--border, #ddd);
+    vertical-align: top;
+  }
+  .lines :global(.num) {
+    text-align: right;
+  }
+  .lines :global(input) {
+    width: 8rem;
+    text-align: right;
+  }
+  .lines :global(.row-actions) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+  .findings {
+    margin: 0.75rem 0;
+    padding-left: 1.2rem;
+    color: var(--negative);
+  }
+  .findings.notes {
+    color: var(--muted);
+  }
+  .check {
+    display: flex;
+    gap: 0.5rem;
+    align-items: flex-start;
+    margin: 0.75rem 0;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+  }
+  .history {
+    padding-left: 1.2rem;
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    createFixedAsset,
+    deleteFixedAsset,
+    disposeFixedAsset,
+    getDepreciation,
+    getFixedAssets,
+    listFinancialYears,
+    postDepreciation,
+    reverseDepreciation,
+    reviewDepreciation,
+    setFixedAssetOpenings,
+    undoFixedAssetDisposal,
+    updateFixedAsset,
+    type Company,
+    type DepreciationPlan,
+    type FixedAsset,
+    type FixedAssetInput,
+    type FixedAssetRegister,
+  } from '../lib/api';
+  import { normaliseAmount } from '../lib/amount';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import { isoDate, kroner, orgnummer } from '../lib/format';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const planStatus = el<HTMLParagraphElement>('#plan-status');
+  const postButton = el<HTMLButtonElement>('#post');
+
+  // Grupper med én saldo for hele gruppen, og gruppene som har en verdi per
+  // driftsmiddel når det kom fra det gamle programmet.
+  const OPENING_GROUPS = ['a', 'b', 'c', 'd', 'j', 'gtk'];
+  const OWN_VALUE_GROUPS = ['e', 'f', 'g', 'h', 'i', 'lineaer', 'ikke_avskrivbar'];
+
+  let company: Company;
+  let year = new Date().getFullYear() - 1;
+  let register: FixedAssetRegister | null = null;
+  let plan: DepreciationPlan | null = null;
+  let editing: FixedAsset | null = null;
+  let disposing: FixedAsset | null = null;
+
+  /** Spurt når det tegnes, aldri tatt vare på: selskapet kan ha byttet. */
+  const mayWrite = (): boolean => canInCompany(company, 'ledger:write');
+
+  function message(error: unknown, fallback: string): string {
+    return error instanceof ApiError ? error.message : fallback;
+  }
+
+  function cell(text: string, numeric = false): HTMLTableCellElement {
+    const td = document.createElement('td');
+    td.textContent = text;
+    if (numeric) td.className = 'num';
+    return td;
+  }
+
+  function button(label: string, onClick: () => void): HTMLButtonElement {
+    const node = document.createElement('button');
+    node.type = 'button';
+    node.className = 'btn btn-ghost btn-small';
+    node.textContent = label;
+    node.addEventListener('click', onClick);
+    return node;
+  }
+
+  function list(target: HTMLElement, messages: string[]): void {
+    target.replaceChildren(
+      ...messages.map((text) => {
+        const item = document.createElement('li');
+        item.textContent = text;
+        return item;
+      }),
+    );
+    show(target, messages.length > 0);
+  }
+
+  const percent = (rate: string | null): string =>
+    rate === null ? '' : `${(Number(rate) * 100).toLocaleString('nb-NO')} %`;
+
+  // --- Registeret ---------------------------------------------------------------
+
+  function renderAssets(): void {
+    if (register === null) return;
+    const assets = register.assets;
+    show(el('#new-asset'), mayWrite());
+    show(el('#no-assets'), assets.length === 0);
+    show(el('#assets-table'), assets.length > 0);
+    el('#assets').replaceChildren(
+      ...assets.map((asset) => {
+        const tr = document.createElement('tr');
+        const actions = document.createElement('td');
+        const wrap = document.createElement('div');
+        wrap.className = 'row-actions';
+        if (mayWrite()) {
+          wrap.append(button('Endre', () => openAssetForm(asset)));
+          if (asset.disposed_on === null) {
+            wrap.append(button('Registrer avgang', () => openDisposal(asset)));
+          } else {
+            wrap.append(button('Angre avgang', () => undoDisposal(asset)));
+          }
+          wrap.append(button('Slett', () => removeAsset(asset)));
+        }
+        actions.append(wrap);
+        tr.append(
+          cell(asset.description),
+          cell(asset.saldogruppe_label),
+          cell(asset.account_number),
+          cell(isoDate(asset.acquired_on)),
+          cell(kroner(asset.cost), true),
+          cell(
+            asset.disposed_on === null
+              ? ''
+              : `${isoDate(asset.disposed_on)}, ${kroner(asset.disposal_proceeds ?? '0')}`,
+          ),
+          actions,
+        );
+        return tr;
+      }),
+    );
+  }
+
+  function fillSelect(select: HTMLSelectElement, options: [string, string][]): void {
+    select.replaceChildren(
+      ...options.map(([value, label]) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = label;
+        return option;
+      }),
+    );
+  }
+
+  function syncAssetForm(): void {
+    if (register === null) return;
+    const group = el<HTMLSelectElement>('#a-group').value;
+    show(el('#a-variant-field'), group === 'h');
+    show(el('#a-building-field'), group === 'j');
+    show(el('#a-life-field'), group === 'lineaer');
+    const acquired = el<HTMLInputElement>('#a-acquired').value;
+    const start = register.start_year;
+    const brought =
+      start !== null && acquired !== '' && Number(acquired.slice(0, 4)) < start && OWN_VALUE_GROUPS.includes(group);
+    show(el('#a-opening-field'), brought);
+    el('#a-opening-hint').textContent = brought
+      ? `Driftsmidlet ble levert før ${start}, det første året registeret dekker. Oppgi saldoverdien ved inngangen til ${start}.`
+      : '';
+  }
+
+  function openAssetForm(asset: FixedAsset | null): void {
+    if (register === null) return;
+    editing = asset;
+    el('#asset-form-title').textContent = asset === null ? 'Nytt driftsmiddel' : `Endre «${asset.description}»`;
+    el('#a-save').textContent = asset === null ? 'Lagre' : 'Lagre endringer';
+    fillSelect(
+      el<HTMLSelectElement>('#a-group'),
+      register.groups.map((g) => [g.code, g.rate === null ? g.label : `${g.label} (${percent(g.rate)})`]),
+    );
+    fillSelect(el<HTMLSelectElement>('#a-variant'), [
+      ['', 'Vanlig sats'],
+      ...register.variants.map((v): [string, string] => [v.code, `${v.label} (${percent(v.rate)})`]),
+    ]);
+    fillSelect(el<HTMLSelectElement>('#a-building'), [
+      ['', 'Ingen bestemt bygning'],
+      ...register.assets
+        .filter((a) => (a.saldogruppe === 'h' || a.saldogruppe === 'i') && a.id !== asset?.id)
+        .map((a): [string, string] => [String(a.id), a.description]),
+    ]);
+    el<HTMLInputElement>('#a-description').value = asset?.description ?? '';
+    el<HTMLSelectElement>('#a-group').value = asset?.saldogruppe ?? 'd';
+    el<HTMLSelectElement>('#a-variant').value = asset?.rate_variant ?? '';
+    el<HTMLSelectElement>('#a-building').value = asset?.building_id === null || asset === null ? '' : String(asset.building_id);
+    el<HTMLInputElement>('#a-account').value = asset?.account_number ?? '';
+    el<HTMLInputElement>('#a-acquired').value = asset?.acquired_on ?? '';
+    el<HTMLInputElement>('#a-cost').value = asset?.cost ?? '';
+    el<HTMLInputElement>('#a-grant').value = asset !== null && Number(asset.grant) !== 0 ? asset.grant : '';
+    el<HTMLInputElement>('#a-grant-free').checked = asset !== null && !asset.grant_reduces_cost;
+    el<HTMLInputElement>('#a-life').value = asset?.useful_life_years === null || asset === null ? '' : String(asset.useful_life_years);
+    el<HTMLInputElement>('#a-opening').value = asset?.opening_value ?? '';
+    el<HTMLInputElement>('#a-note').value = asset?.note ?? '';
+    setStatus(el('#asset-form-status'), '');
+    syncAssetForm();
+    show(el('#disposal-card'), false);
+    show(el('#asset-form-card'), true);
+    el<HTMLInputElement>('#a-description').focus();
+  }
+
+  /** Skjemaet slik API-et leser det, eller en tekst om feltet som ikke kunne leses. */
+  function assetInput(): FixedAssetInput | string {
+    const group = el<HTMLSelectElement>('#a-group').value;
+    const cost = normaliseAmount(el<HTMLInputElement>('#a-cost').value);
+    const grant = normaliseAmount(el<HTMLInputElement>('#a-grant').value);
+    if (cost === null) return 'Kostprisen kan ikke leses.';
+    if (grant === null) return 'Tilskuddet kan ikke leses.';
+    const openingVisible = !el('#a-opening-field').hidden;
+    const opening = openingVisible ? normaliseAmount(el<HTMLInputElement>('#a-opening').value) : null;
+    if (openingVisible && opening === null) return 'Verdien ved registerets start kan ikke leses.';
+    const life = el<HTMLInputElement>('#a-life').value;
+    const building = el<HTMLSelectElement>('#a-building').value;
+    return {
+      description: el<HTMLInputElement>('#a-description').value.trim(),
+      saldogruppe: group,
+      account_number: el<HTMLInputElement>('#a-account').value.trim() || null,
+      acquired_on: el<HTMLInputElement>('#a-acquired').value || null,
+      cost: el<HTMLInputElement>('#a-cost').value.trim() === '' ? null : cost,
+      grant,
+      grant_reduces_cost: !el<HTMLInputElement>('#a-grant-free').checked,
+      rate_variant: group === 'h' ? el<HTMLSelectElement>('#a-variant').value || null : null,
+      voucher_id: editing?.voucher_id ?? null,
+      building_id: group === 'j' && building !== '' ? Number(building) : null,
+      opening_value: openingVisible ? opening : null,
+      useful_life_years: group === 'lineaer' && life !== '' ? Number(life) : null,
+      note: el<HTMLInputElement>('#a-note').value.trim() || null,
+    };
+  }
+
+  el<HTMLFormElement>('#asset-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const status = el<HTMLParagraphElement>('#asset-form-status');
+    const input = assetInput();
+    if (typeof input === 'string') {
+      setStatus(status, input);
+      return;
+    }
+    const save = el<HTMLButtonElement>('#a-save');
+    save.disabled = true;
+    const done = editing === null ? createFixedAsset(company.id, input) : updateFixedAsset(company.id, editing.id, input);
+    done
+      .then(async (asset) => {
+        show(el('#asset-form-card'), false);
+        setStatus(pageStatus, `«${asset.description}» er lagret i anleggsregisteret.`, 'ok');
+        await reload();
+      })
+      .catch((error: unknown) => setStatus(status, message(error, 'Vi fikk ikke lagret driftsmidlet.')))
+      .finally(() => {
+        save.disabled = false;
+      });
+  });
+  el('#a-group').addEventListener('change', syncAssetForm);
+  el('#a-acquired').addEventListener('change', syncAssetForm);
+  el('#a-cancel').addEventListener('click', () => show(el('#asset-form-card'), false));
+  el('#new-asset').addEventListener('click', () => openAssetForm(null));
+
+  function openDisposal(asset: FixedAsset): void {
+    disposing = asset;
+    el('#disposal-title').textContent = `Avgang for «${asset.description}»`;
+    el<HTMLInputElement>('#d-date').value = '';
+    el<HTMLInputElement>('#d-proceeds').value = '';
+    setStatus(el('#disposal-status'), '');
+    show(el('#asset-form-card'), false);
+    show(el('#disposal-card'), true);
+  }
+
+  el<HTMLFormElement>('#disposal-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const status = el<HTMLParagraphElement>('#disposal-status');
+    const proceeds = normaliseAmount(el<HTMLInputElement>('#d-proceeds').value);
+    const date = el<HTMLInputElement>('#d-date').value;
+    if (disposing === null) return;
+    if (date === '') {
+      setStatus(status, 'Oppgi datoen driftsmidlet gikk ut.');
+      return;
+    }
+    if (proceeds === null) {
+      setStatus(status, 'Salgssummen kan ikke leses.');
+      return;
+    }
+    const save = el<HTMLButtonElement>('#d-save');
+    save.disabled = true;
+    disposeFixedAsset(company.id, disposing.id, date, proceeds)
+      .then(async (asset) => {
+        show(el('#disposal-card'), false);
+        setStatus(pageStatus, `Avgangen for «${asset.description}» er registrert.`, 'ok');
+        await reload();
+      })
+      .catch((error: unknown) => setStatus(status, message(error, 'Vi fikk ikke registrert avgangen.')))
+      .finally(() => {
+        save.disabled = false;
+      });
+  });
+  el('#d-cancel').addEventListener('click', () => show(el('#disposal-card'), false));
+
+  function undoDisposal(asset: FixedAsset): void {
+    undoFixedAssetDisposal(company.id, asset.id)
+      .then(async () => {
+        setStatus(pageStatus, `Avgangen for «${asset.description}» er fjernet.`, 'ok');
+        await reload();
+      })
+      .catch((error: unknown) => setStatus(el('#assets-status'), message(error, 'Vi fikk ikke angret avgangen.')));
+  }
+
+  function removeAsset(asset: FixedAsset): void {
+    // Å slette en registrering kan gjøres om ved å registrere på nytt; ingen
+    // bilag røres. Derfor holder et vanlig spørsmål.
+    if (!window.confirm(`Slette «${asset.description}» fra anleggsregisteret? Bruk «Registrer avgang» hvis det er solgt eller kassert.`)) return;
+    deleteFixedAsset(company.id, asset.id)
+      .then(async () => {
+        setStatus(pageStatus, `«${asset.description}» er slettet fra registeret.`, 'ok');
+        await reload();
+      })
+      .catch((error: unknown) => setStatus(el('#assets-status'), message(error, 'Vi fikk ikke slettet driftsmidlet.')));
+  }
+
+  // --- Inngående saldo ----------------------------------------------------------
+
+  function openingRow(group = 'd', account = '', amount = ''): HTMLTableRowElement {
+    const tr = document.createElement('tr');
+    const groupCell = document.createElement('td');
+    const select = document.createElement('select');
+    select.className = 'o-group';
+    for (const code of OPENING_GROUPS) {
+      const option = document.createElement('option');
+      option.value = code;
+      option.textContent = code === 'gtk' ? 'Gevinst- og tapskonto' : `Saldogruppe ${code}`;
+      select.append(option);
+    }
+    select.value = group;
+    groupCell.append(select);
+    const accountCell = document.createElement('td');
+    const accountInput = document.createElement('input');
+    accountInput.className = 'o-account';
+    accountInput.inputMode = 'numeric';
+    accountInput.maxLength = 4;
+    accountInput.value = account;
+    accountCell.append(accountInput);
+    const amountCell = document.createElement('td');
+    amountCell.className = 'num';
+    const amountInput = document.createElement('input');
+    amountInput.className = 'o-amount';
+    amountInput.inputMode = 'decimal';
+    amountInput.value = amount;
+    amountCell.append(amountInput);
+    const remove = document.createElement('td');
+    remove.append(button('Fjern', () => tr.remove()));
+    tr.append(groupCell, accountCell, amountCell, remove);
+    return tr;
+  }
+
+  function renderOpenings(firstYear: number | null): void {
+    if (register === null) return;
+    el<HTMLInputElement>('#o-year').value = String(register.start_year ?? firstYear ?? year);
+    el('#openings').replaceChildren(
+      ...register.openings.map((o) => openingRow(o.saldogruppe, o.account_number ?? '', o.amount)),
+    );
+    show(el('#openings-actions'), mayWrite());
+  }
+
+  el('#o-add').addEventListener('click', () => el('#openings').append(openingRow()));
+  el('#o-save').addEventListener('click', () => {
+    const status = el<HTMLParagraphElement>('#openings-status');
+    const rows: { saldogruppe: string; amount: string; account_number: string | null; building_id: number | null }[] = [];
+    for (const tr of Array.from(el('#openings').querySelectorAll('tr'))) {
+      const amount = normaliseAmount(el<HTMLInputElement>('.o-amount', tr).value);
+      if (amount === null) {
+        setStatus(status, 'Et av beløpene kan ikke leses.');
+        return;
+      }
+      const group = el<HTMLSelectElement>('.o-group', tr).value;
+      const account = el<HTMLInputElement>('.o-account', tr).value.trim();
+      rows.push({ saldogruppe: group, amount, account_number: group === 'gtk' ? null : account || null, building_id: null });
+    }
+    const save = el<HTMLButtonElement>('#o-save');
+    save.disabled = true;
+    setFixedAssetOpenings(company.id, Number(el<HTMLInputElement>('#o-year').value), rows)
+      .then(async () => {
+        setStatus(status, 'Inngående saldo er lagret.', 'ok');
+        await reload();
+      })
+      .catch((error: unknown) => setStatus(status, message(error, 'Vi fikk ikke lagret inngående saldo.')))
+      .finally(() => {
+        save.disabled = false;
+      });
+  });
+
+  // --- Årets avskrivninger -----------------------------------------------------
+
+  function amountCell(key: string, value: string, editable: boolean): HTMLTableCellElement {
+    const td = document.createElement('td');
+    td.className = 'num';
+    if (!editable) {
+      td.textContent = kroner(value);
+      return td;
+    }
+    const input = document.createElement('input');
+    input.inputMode = 'decimal';
+    input.dataset.key = key;
+    input.value = value;
+    input.setAttribute('aria-label', 'Årets avskrivning');
+    // Et nytt beløp må kontrolleres før det kan føres.
+    input.addEventListener('input', () => {
+      postButton.disabled = true;
+    });
+    td.append(input);
+    return td;
+  }
+
+  function renderPlan(current: DepreciationPlan): void {
+    plan = current;
+    const spec = current.specification;
+    const standing = current.standing;
+    el('#plan-title').textContent = standing === null ? `Avskrivninger ${current.year}` : `Avskrivninger ${current.year}, ført med bilag ${standing.voucher_no}`;
+    const editable = mayWrite();
+    el('#saldi').replaceChildren(
+      ...spec.saldi.map((s) => {
+        const tr = document.createElement('tr');
+        const choosing = editable && (Number(s.max_depreciation) > 0 || Number(s.min_income) > 0);
+        const taken = Number(s.min_income) > 0 ? s.income : s.depreciation;
+        tr.append(
+          cell(s.label),
+          cell(percent(s.rate), true),
+          cell(kroner(s.opening), true),
+          cell(kroner((Number(s.additions) - Number(s.grants)).toFixed(2)), true),
+          cell(kroner(s.disposals), true),
+          cell(kroner(s.basis), true),
+          amountCell(s.key, taken, choosing),
+          cell(kroner(s.closing), true),
+        );
+        return tr;
+      }),
+    );
+    show(el('#no-saldi'), spec.saldi.length === 0);
+    const gtk = spec.gain_loss_account;
+    el('#gtk').textContent =
+      Number(gtk.basis) === 0
+        ? ''
+        : `Gevinst- og tapskontoen: grunnlag ${kroner(gtk.basis)}, inntektsført ${kroner(gtk.income)}, fradragsført ${kroner(gtk.deduction)}, utgående ${kroner(gtk.closing)}. Den føres bare i skattemeldingen.`;
+
+    list(el('#errors'), current.findings.filter((f) => f.severity === 'feil').map((f) => f.message));
+    list(el('#notes'), current.findings.filter((f) => f.severity === 'merknad').map((f) => f.message));
+
+    el('#lines').replaceChildren(
+      ...current.lines.map((line) => {
+        const tr = document.createElement('tr');
+        tr.append(
+          cell(line.account_number),
+          cell(line.description),
+          cell(Number(line.debit) === 0 ? '' : kroner(line.debit), true),
+          cell(Number(line.credit) === 0 ? '' : kroner(line.credit), true),
+        );
+        return tr;
+      }),
+    );
+    show(el('#lines-title'), current.lines.length > 0);
+    show(el('#lines-table'), current.lines.length > 0);
+
+    show(el('#post-actions'), editable && spec.saldi.length > 0);
+    show(el('#no-permission'), !editable && spec.saldi.length > 0);
+    postButton.textContent = standing === null ? `Før avskrivningene for ${current.year}` : 'Rett avskrivningene';
+    postButton.disabled = !current.postable;
+    show(el('#reverse'), standing !== null);
+
+    el('#history').replaceChildren(
+      ...current.history.map((v) => {
+        const item = document.createElement('li');
+        const what = v.is_reversal ? 'reversering' : v.corrects_id !== null ? 'retting' : 'ført';
+        item.textContent = `Bilag ${v.voucher_no}, ${isoDate(v.transaction_date)}: ${what}, ${kroner(v.total)}${v.reversed ? ' (reversert)' : ''}`;
+        return item;
+      }),
+    );
+  }
+
+  /** Beløpene personen har skrevet, per saldo, eller null når ett ikke kan leses. */
+  function choices(): Record<string, string> | null {
+    const chosen: Record<string, string> = {};
+    for (const input of Array.from(el('#saldi').querySelectorAll<HTMLInputElement>('input[data-key]'))) {
+      const amount = normaliseAmount(input.value);
+      if (amount === null) return null;
+      chosen[input.dataset.key ?? ''] = amount;
+    }
+    return chosen;
+  }
+
+  async function refreshPlan(): Promise<void> {
+    el('#year').textContent = String(year);
+    setStatus(planStatus, '');
+    try {
+      renderPlan(await getDepreciation(company.id, year));
+      show(el('#plan'), true);
+    } catch (error: unknown) {
+      show(el('#plan'), false);
+      setStatus(pageStatus, message(error, 'Vi fikk ikke hentet avskrivningene.'));
+    }
+  }
+
+  el('#review').addEventListener('click', () => {
+    const chosen = choices();
+    if (chosen === null) {
+      setStatus(planStatus, 'Et av beløpene kan ikke leses.');
+      return;
+    }
+    reviewDepreciation(company.id, year, chosen)
+      .then(renderPlan)
+      .catch((error: unknown) => setStatus(planStatus, message(error, 'Vi fikk ikke kontrollert avskrivningene.')));
+  });
+
+  postButton.addEventListener('click', () => {
+    const chosen = choices();
+    if (chosen === null || plan === null) return;
+    const correct = plan.standing !== null;
+    postButton.disabled = true;
+    postButton.textContent = 'Fører avskrivningene …';
+    postDepreciation(company.id, year, chosen, correct)
+      .then(async (posted) => {
+        setStatus(pageStatus, `Avskrivningene for ${year} er ført med bilag ${posted.voucher_no}.`, 'ok');
+        await refreshPlan();
+      })
+      .catch((error: unknown) => {
+        setStatus(planStatus, message(error, 'Vi fikk ikke ført avskrivningene.'));
+        if (plan !== null) renderPlan(plan);
+      });
+  });
+
+  el('#reverse').addEventListener('click', () => {
+    // En reversering er et nytt bilag som står i regnskapet; den kan ikke
+    // fjernes, men avskrivningene kan føres på nytt etterpå.
+    if (!window.confirm(`Reversere avskrivningene for ${year}? Bilaget blir stående, med en reversering ved siden av.`)) return;
+    const reverse = el<HTMLButtonElement>('#reverse');
+    reverse.disabled = true;
+    reverseDepreciation(company.id, year)
+      .then(async (posted) => {
+        setStatus(pageStatus, `Avskrivningene for ${year} er reversert med bilag ${posted.voucher_no}.`, 'ok');
+        await refreshPlan();
+      })
+      .catch((error: unknown) => setStatus(planStatus, message(error, 'Vi fikk ikke reversert avskrivningene.')))
+      .finally(() => {
+        reverse.disabled = false;
+      });
+  });
+
+  // --- Lasting -----------------------------------------------------------------
+
+  let firstYear: number | null = null;
+
+  async function reload(): Promise<void> {
+    register = await getFixedAssets(company.id);
+    renderAssets();
+    renderOpenings(firstYear);
+    show(el('#assets-card'), true);
+    show(el('#openings-card'), mayWrite() || register.openings.length > 0);
+    await refreshPlan();
+  }
+
+  function changeYear(step: number): void {
+    year += step;
+    void refreshPlan();
+  }
+
+  el('#year-prev').addEventListener('click', () => changeYear(-1));
+  el('#year-next').addEventListener('click', () => changeYear(1));
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      const current = currentCompany(companies);
+      if (current === undefined) return;
+      company = current;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      const years = await listFinancialYears(company.id);
+      firstYear = years[0]?.year ?? null;
+      // Det første åpne året som er over, er det som står for tur.
+      const thisYear = new Date().getFullYear();
+      const next = years.find((y) => !y.closed && y.year < thisYear);
+      year = next?.year ?? Math.max(firstYear ?? thisYear - 1, thisYear - 1);
+      await reload();
+    } catch (error: unknown) {
+      setStatus(pageStatus, message(error, 'Vi fikk ikke hentet anleggsregisteret.'));
+    } finally {
+      el('#loading').hidden = true;
+    }
+  });
+</script>

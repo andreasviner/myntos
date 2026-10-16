@@ -275,9 +275,7 @@ def _validate_description(description: str, what: str) -> str:
     return cleaned
 
 
-async def get_dimension(
-    db: AsyncSession, *, company: Company, dimension_pk: int
-) -> DimensionType:
+async def get_dimension(db: AsyncSession, *, company: Company, dimension_pk: int) -> DimensionType:
     """One dimension of ``company``, with its values; another company's is not found."""
     dimension = await db.scalar(
         select(DimensionType)
@@ -313,9 +311,7 @@ async def create_dimension(
         raise DuplicateDimensionError(f"selskapet har allerede en dimensjon med koden {cleaned}")
     if any(dimension.description.casefold() == name.casefold() for dimension in existing):
         raise DuplicateDimensionError(f"selskapet har allerede en dimensjon som heter «{name}»")
-    dimension = DimensionType(
-        company_id=company.id, code=cleaned, description=name, is_active=True
-    )
+    dimension = DimensionType(company_id=company.id, code=cleaned, description=name, is_active=True)
     db.add(dimension)
     await db.flush()
     return dimension
@@ -440,9 +436,7 @@ async def suggestions(db: AsyncSession, *, company: Company) -> list[SuggestedSe
     found: list[SuggestedSet] = []
     for kind, codes in driftsgrener.FARM_SETS.items():
         dimension = find_kind(dimensions, kind)
-        have = (
-            {value.value.casefold() for value in dimension.values} if dimension else set[str]()
-        )
+        have = {value.value.casefold() for value in dimension.values} if dimension else set[str]()
         found.append(
             SuggestedSet(
                 kind=kind,
@@ -722,9 +716,7 @@ async def result(
             Transaction.period,
             Account.account_type,
             TransactionLineAnalysis.dimension_value_id,
-            func.sum(
-                case((TransactionLine.debit > 0, TransactionLineAnalysis.amount), else_=ZERO)
-            ),
+            func.sum(case((TransactionLine.debit > 0, TransactionLineAnalysis.amount), else_=ZERO)),
             func.sum(
                 case((TransactionLine.credit > 0, TransactionLineAnalysis.amount), else_=ZERO)
             ),

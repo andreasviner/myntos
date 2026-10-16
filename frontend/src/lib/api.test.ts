@@ -248,6 +248,40 @@ describe('a thumbnail', () => {
   });
 });
 
+describe('an invoice PDF shown in the page', () => {
+  it('of another company is refused before the request is sent', async () => {
+    const { api, fetchMock } = await load(storedCompany(12));
+
+    await expect(api.fetchFakturaPdf(99, 5)).rejects.toBeInstanceOf(api.WrongCompanyError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('is handed over when the answer is a PDF', async () => {
+    const { api, fetchMock } = await load(storedCompany(12));
+    fetchMock.mockResolvedValueOnce(
+      new Response('%PDF-1.7', { status: 200, headers: { 'Content-Type': 'application/pdf' } }),
+    );
+
+    const blob = await api.fetchFakturaPdf(12, 5);
+    expect(blob).not.toBeNull();
+    expect(await blob?.text()).toBe('%PDF-1.7');
+  });
+
+  it('is null when the answer is anything else, so it is never framed on our origin', async () => {
+    // An object URL takes the page's origin. An HTML page framed through one
+    // would run as myntos.no, whatever answered with it.
+    const { api, fetchMock } = await load(storedCompany(12));
+    fetchMock.mockResolvedValueOnce(
+      new Response('<script>alert(1)</script>', {
+        status: 200,
+        headers: { 'Content-Type': 'text/html' },
+      }),
+    );
+
+    await expect(api.fetchFakturaPdf(12, 5)).resolves.toBeNull();
+  });
+});
+
 describe('starting a federated flow', () => {
   it('says what the flow is for only when it is not an ordinary login', async () => {
     // A BankID nobody has linked is refused at login and held at signup, so

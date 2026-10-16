@@ -60,7 +60,7 @@ They need the role «Medlem» or more, and the form open on
 | A farm's settlement, subsidy or feed bill | «Penger inn» or «Penger ut» | The farm types, when the farming add-on is on: [Book a settlement](https://myntos.no/llms/help/farming/book-a-settlement.md) |
 | The VAT return was paid to Skatteetaten | «Penger ut» | «Oppgjør av mva-melding til Skatteetaten» |
 | Skatteetaten paid out VAT | «Penger inn» | «Utbetaling av mva-melding fra Skatteetaten» |
-| A purchase from 15 000 kr that will last three years or more (a machine, a computer) | «Penger ut» | «Større anskaffelse (driftsmiddel)» |
+| A purchase from 30 000 kr that will last three years or more (a machine, a computer) | «Penger ut» | «Større anskaffelse (driftsmiddel)» |
 | Bank or card fees | «Penger ut» | «Bank- og kortgebyr» |
 | Something that fits nowhere else | either | «Annen inntekt» or «Annen driftskostnad», and check «Mva-kode» yourself |
 
@@ -79,7 +79,9 @@ They need the role «Medlem» or more, and the form open on
   company's result.
 - A large purchase booked as a «Større anskaffelse (driftsmiddel)» is not a
   cost this year: it is written off over the years it lasts. When a bilag
-  shows an expense over 15 000 kroner, Myntos says so under the form.
+  shows an expense of 30 000 kroner or more, Myntos says so under the form.
+  Register it afterwards under «Anlegg og avskrivning» so it is depreciated:
+  [Register a fixed asset](https://myntos.no/llms/help/opening-balance-and-year-end/register-a-fixed-asset.md).
 - A company that is not registered for VAT cannot deduct VAT. Myntos then
   proposes «0: Ingen merverdiavgiftsbehandling» for every type, and does not
   offer «Mva betalt ved innførsel (tollpass)» at all.

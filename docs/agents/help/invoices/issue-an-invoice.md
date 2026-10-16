@@ -34,7 +34,8 @@ send the invoice to the customer; the person downloads it and sends it.
 ## Steps
 
 1. Open «Faktura» in the top menu (`https://myntos.no/faktura/`). The form
-   «Ny faktura» is on the left, the list of invoices on the right.
+   «Ny faktura» fills the width of the page, and the list «Fakturaer» is
+   below it.
 2. Under «Kjøper», pick the customer in «Kunde», or leave it at «Skriv inn
    kjøperen selv» and fill in «Organisasjonsnummer», «Navn», «Adresse»,
    «Postnummer» and «Poststed». Untick «Kjøperen er bokføringspliktig
@@ -43,26 +44,35 @@ send the invoice to the customer; the person downloads it and sends it.
    «Forfallsdato» (14 days ahead is filled in) and «Leveringssted» (the
    company's own town is filled in). Fill in «Deres referanse» if the customer
    gave one; public sector customers require it.
-4. Under «Linjer», describe each thing sold: what it is («Hva er solgt?»),
-   «Antall», the unit, «Pris» **without VAT**, the VAT rate and «Rabatt %».
-   «Legg til linje» adds another line, «Fjern» removes one. The sums «Sum eks.
+4. Under «Linjer», describe each thing sold, one row per line under the
+   headings «Beskrivelse», «Antall», «Enhet», «Pris», «Mva» and «Rabatt %»:
+   what it is («Hva er solgt?»), how many, the unit, the price **without
+   VAT**, the VAT rate and any discount. «Beløp» at the end of the row is the
+   line's sum before VAT. On a phone each line is a box with the same labels
+   over its fields. «Legg til linje» adds another line, «Fjern» removes one. The sums «Sum eks.
    mva», «Merverdiavgift» and «Å betale» update as they type.
 5. Press «Se over fakturaen». The draft is saved and the review opens. It
    shows what the customer will receive («Kjøper», «Levert», «Forfall», «Å
    betale», «Betales til», «KID» and the rest) and anything still missing.
-   «Se utkastet som PDF» shows the invoice exactly as it will look, marked as a
-   draft.
+   Beside it (below it on a narrow screen) the draft is shown as a PDF, exactly
+   as it will look, marked as a draft, with no download needed. «Last ned
+   utkastet som PDF» saves the same file. On a phone that cannot show a PDF
+   inside the page, that link is the way to see it.
 6. If it says «… ting må rettes først», press «Tilbake og endre», fix what is
    listed, and press «Se over fakturaen» again:
    [Fix an invoice that cannot be issued](https://myntos.no/llms/help/invoices/fix-an-invoice-that-cannot-be-issued.md).
 7. When nothing blocks it, read it through and press «Utsted fakturaen». This
    is the step that cannot be undone; there is no extra confirmation, because
    the review is the confirmation.
-8. The card «Faktura … er utstedt» shows the amount, due date and KID. Press
+8. The card «Faktura … er utstedt» shows the amount, due date and KID, and the
+   issued invoice as a PDF beside them. Press
    «Last ned PDF» (and «Last ned EHF» for a business customer) and send the
    file to the customer:
    [Send an invoice to the customer](https://myntos.no/llms/help/invoices/send-an-invoice-to-the-customer.md).
-   «Skriv en ny faktura» starts the next one.
+   The invoice is already in the books: issuing posted it, so there is
+   nothing more to do to «legge den inn i regnskapet». «Se bilaget i
+   regnskapet» opens «Bilag» on the voucher it made. «Skriv en ny faktura»
+   starts the next one.
 
 ## If something stops them
 

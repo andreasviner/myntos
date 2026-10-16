@@ -169,17 +169,19 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     border-collapse: collapse;
     font-variant-numeric: tabular-nums;
   }
+  /* Radene lages av skriptet, så reglene må nå dem gjennom :global(). */
   .lines th,
-  .lines td {
+  .lines :global(td) {
     text-align: left;
     padding: 0.35rem 0.5rem;
     border-bottom: 1px solid var(--border, #ddd);
   }
-  .lines .num {
+  .lines .num,
+  .lines :global(td.num) {
     text-align: right;
   }
-  .lines input,
-  .lines select {
+  .lines :global(input),
+  .lines :global(select) {
     width: 100%;
     min-width: 6rem;
   }

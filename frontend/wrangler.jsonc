@@ -16,7 +16,13 @@
   "main": "@astrojs/cloudflare/entrypoints/server",
   "assets": {
     "directory": "./dist",
-    "binding": "ASSETS"
+    "binding": "ASSETS",
+    // Serves dist/404.html, with status 404, for an address that matches no
+    // file. The default answers an empty 404, which left a mistyped or stale
+    // link on a blank white page. Every page is prerendered, so the build has
+    // no Worker and this is the whole of the routing. If an SSR route
+    // (`prerender = false`) is ever added, check that it is still reached.
+    "not_found_handling": "404-page"
   },
   "observability": {
     "enabled": true

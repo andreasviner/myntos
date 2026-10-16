@@ -52,189 +52,219 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
   <div class="empty" id="loading">Henter …</div>
 
+  {/* Ett steg under det andre, hvert i hele bredden. Skjemaet sto i en smal
+      kolonne ved siden av listen, så hver linje ble fire rader med felt, og en
+      faktura med seks linjer var lengre enn skjermen. En linje i et
+      salgsdokument er én rad, og slik står den her også. */}
   <div id="content" hidden>
     <div class="card readonly-note" id="readonly" hidden>
       <h2 class="card-title">Du har lesetilgang</h2>
       <p class="card-hint">Rollen din lar deg se fakturaene, men ikke skrive eller utstede.</p>
     </div>
 
-    <div class="split">
-      <div>
-        <div class="card form-card" id="form-card">
-          <h2 class="card-title" id="form-title">Ny faktura</h2>
-          <p class="status" id="form-status" hidden></p>
+    <div class="card form-card" id="form-card">
+      <h2 class="card-title" id="form-title">Ny faktura</h2>
+      <p class="status" id="form-status" hidden></p>
 
-          {/* novalidate: hver mangel skal navngis av kontrollen i «se over», med
-              paragrafen den kommer fra. Nettleserens egen boble ville stoppet
-              lagringen før den kontrollen i det hele tatt kjørte. */}
-          <form id="faktura-form" novalidate>
-            <fieldset class="group">
-              <legend>Kjøper</legend>
+      {/* novalidate: hver mangel skal navngis av kontrollen i «se over», med
+          paragrafen den kommer fra. Nettleserens egen boble ville stoppet
+          lagringen før den kontrollen i det hele tatt kjørte. */}
+      <form id="faktura-form" novalidate>
+        <div class="form-top">
+          <fieldset class="group">
+            <legend>Kjøper</legend>
+            <label class="field">
+              <span>Kunde</span>
+              <select name="party_id" id="party-select">
+                <option value="">Skriv inn kjøperen selv</option>
+              </select>
+            </label>
+            <p class="field-hint buyer-note" id="party-note" hidden></p>
+            <div id="manual-buyer">
+              <!--
+                The organisasjonsnummer comes first because it fills in the
+                four fields below it. § 5-1-2 wants the buyer identified by
+                address *or* number, and the register supplies both from one.
+              -->
               <label class="field">
-                <span>Kunde</span>
-                <select name="party_id" id="party-select">
-                  <option value="">Skriv inn kjøperen selv</option>
-                </select>
+                <span>Organisasjonsnummer</span>
+                <input
+                  type="text"
+                  name="buyer_orgnr"
+                  inputmode="numeric"
+                  maxlength="11"
+                  autocomplete="off"
+                />
+                <span class="field-hint" id="orgnr-hint"></span>
               </label>
-              <p class="field-hint buyer-note" id="party-note" hidden></p>
-              <div id="manual-buyer">
-                <!--
-                  The organisasjonsnummer comes first because it fills in the
-                  four fields below it. § 5-1-2 wants the buyer identified by
-                  address *or* number, and the register supplies both from one.
-                -->
+              <label class="field">
+                <span>Navn</span>
+                <input type="text" name="buyer_name" maxlength="255" />
+              </label>
+              <label class="field">
+                <span>Adresse</span>
+                <input type="text" name="buyer_address_line" maxlength="255" />
+              </label>
+              <div class="field-row postal">
                 <label class="field">
-                  <span>Organisasjonsnummer</span>
-                  <input
-                    type="text"
-                    name="buyer_orgnr"
-                    inputmode="numeric"
-                    maxlength="11"
-                    autocomplete="off"
-                  />
-                  <span class="field-hint" id="orgnr-hint"></span>
+                  <span>Postnummer</span>
+                  <input type="text" name="buyer_postal_code" maxlength="16" />
                 </label>
                 <label class="field">
-                  <span>Navn</span>
-                  <input type="text" name="buyer_name" maxlength="255" />
+                  <span>Poststed</span>
+                  <input type="text" name="buyer_city" maxlength="128" />
                 </label>
-                <label class="field">
-                  <span>Adresse</span>
-                  <input type="text" name="buyer_address_line" maxlength="255" />
-                </label>
+              </div>
+              <label class="check">
+                <input type="checkbox" name="save_party" />
+                <span>Lagre som kunde, så står den i listen neste gang</span>
+              </label>
+            </div>
+            <label class="check">
+              <input type="checkbox" name="buyer_is_business" checked />
+              <span>Kjøperen er bokføringspliktig (næringsdrivende)</span>
+            </label>
+          </fieldset>
+
+          <fieldset class="group">
+            <legend>Levering og betaling</legend>
+            <div class="terms">
+              <div>
                 <div class="field-row">
                   <label class="field">
-                    <span>Postnummer</span>
-                    <input type="text" name="buyer_postal_code" maxlength="16" />
+                    <span>Leveringsdato</span>
+                    <input type="date" name="delivery_date" />
+                    <span class="field-hint">§ 5-1-1 nr. 4</span>
                   </label>
                   <label class="field">
-                    <span>Poststed</span>
-                    <input type="text" name="buyer_city" maxlength="128" />
+                    <span>Forfallsdato</span>
+                    <input type="date" name="due_date" />
                   </label>
                 </div>
+                <label class="field">
+                  <span>Leveringssted</span>
+                  <input type="text" name="delivery_place" maxlength="255" placeholder="Oslo" />
+                  <span class="field-hint">Stedet ytelsen ble levert. Også § 5-1-1 nr. 4.</span>
+                </label>
+                <label class="field">
+                  <span>Deres referanse</span>
+                  <input type="text" name="buyer_reference" maxlength="128" />
+                  <span class="field-hint">Kreves av offentlige kjøpere.</span>
+                </label>
+              </div>
+
+              <div>
+                <!--
+                  Bare når det er noe å velge mellom. Et selskap med én konto får
+                  ingen nedtrekksliste med ett valg i: det ville lest som et
+                  spørsmål man forventes å ha en mening om. Har selskapet flere,
+                  er dette spørsmålet som gjør flere kontoer til noe annet enn en
+                  liste: driftskontoen eller skattetrekkskontoen.
+                -->
+                <label class="field" id="konto-box" hidden>
+                  <span>Betales til</span>
+                  <select name="bank_account_id"></select>
+                  <span class="field-hint">
+                    Kontoen kunden får beskjed om å betale til. Endres under
+                    Organisasjon → Selskapet.
+                  </span>
+                </label>
+
+                <!--
+                  The KID carries the invoice number, and a draft has none, so
+                  what stands here before issue is a preview, and the field is
+                  read-only until someone says otherwise. See
+                  backend/src/myntos/domain/faktura/kid.py.
+                -->
                 <label class="check">
-                  <input type="checkbox" name="save_party" />
-                  <span>Lagre som kunde, så står den i listen neste gang</span>
+                  <input type="checkbox" name="payment_reference_auto" checked />
+                  <span>Bruk KID på fakturaen</span>
                 </label>
-              </div>
-              <label class="check">
-                <input type="checkbox" name="buyer_is_business" checked />
-                <span>Kjøperen er bokføringspliktig (næringsdrivende)</span>
-              </label>
-            </fieldset>
-
-            <fieldset class="group">
-              <legend>Levering og betaling</legend>
-              <div class="field-row">
-                <label class="field">
-                  <span>Leveringsdato</span>
-                  <input type="date" name="delivery_date" />
-                  <span class="field-hint">§ 5-1-1 nr. 4</span>
-                </label>
-                <label class="field">
-                  <span>Forfallsdato</span>
-                  <input type="date" name="due_date" />
-                </label>
-              </div>
-              <label class="field">
-                <span>Leveringssted</span>
-                <input type="text" name="delivery_place" maxlength="255" placeholder="Oslo" />
-                <span class="field-hint">Stedet ytelsen ble levert. Også § 5-1-1 nr. 4.</span>
-              </label>
-              <label class="field">
-                <span>Deres referanse</span>
-                <input type="text" name="buyer_reference" maxlength="128" />
-                <span class="field-hint">Kreves av offentlige kjøpere.</span>
-              </label>
-
-              <!--
-                Bare når det er noe å velge mellom. Et selskap med én konto får
-                ingen nedtrekksliste med ett valg i: det ville lest som et
-                spørsmål man forventes å ha en mening om. Har selskapet flere,
-                er dette spørsmålet som gjør flere kontoer til noe annet enn en
-                liste: driftskontoen eller skattetrekkskontoen.
-              -->
-              <label class="field" id="konto-box" hidden>
-                <span>Betales til</span>
-                <select name="bank_account_id"></select>
-                <span class="field-hint">
-                  Kontoen kunden får beskjed om å betale til. Endres under
-                  Organisasjon → Selskapet.
-                </span>
-              </label>
-
-              <!--
-                The KID carries the invoice number, and a draft has none, so
-                what stands here before issue is a preview, and the field is
-                read-only until someone says otherwise. See
-                backend/src/myntos/domain/faktura/kid.py.
-              -->
-              <label class="check">
-                <input type="checkbox" name="payment_reference_auto" checked />
-                <span>Bruk KID på fakturaen</span>
-              </label>
-              <div class="field kid" id="kid-box">
-                <span>KID</span>
-                <div class="kid-row">
-                  <input
-                    type="text"
-                    name="payment_reference"
-                    inputmode="numeric"
-                    maxlength="32"
-                    readonly
-                  />
-                  <button type="button" class="btn-link" id="kid-edit">Endre selv</button>
+                <div class="field kid" id="kid-box">
+                  <span>KID</span>
+                  <div class="kid-row">
+                    <input
+                      type="text"
+                      name="payment_reference"
+                      inputmode="numeric"
+                      maxlength="32"
+                      readonly
+                    />
+                    <button type="button" class="btn-link" id="kid-edit">Endre selv</button>
+                  </div>
+                  <span class="field-hint" id="kid-hint"></span>
                 </div>
-                <span class="field-hint" id="kid-hint"></span>
-              </div>
-              <label class="check">
-                <input type="checkbox" name="reverse_charge" />
-                <span>Omvendt avgiftsplikt (kjøper beregner mva)</span>
-              </label>
-              <label class="field">
-                <span>Fritekst på fakturaen</span>
-                <input type="text" name="note" maxlength="1000" />
-              </label>
-            </fieldset>
-
-            <fieldset class="group">
-              <legend>Linjer</legend>
-              <p class="card-hint">
-                Hver linje må beskrive ytelsens art og omfang, jf. § 5-1-1 nr. 3.
-              </p>
-
-              <!--
-                Only rendered when the deployment has a model configured. A
-                button that always fails is worse than no button.
-              -->
-              <div class="assist" id="ki-card" hidden>
-                <label class="field">
-                  <span>Beskriv salget, så setter vi opp linjene</span>
-                  <textarea
-                    id="ki-text"
-                    rows="3"
-                    placeholder="10 timer rådgivning i mars til 1 500 kroner timen, og to kursmapper à 450"
-                  ></textarea>
+                <label class="check">
+                  <input type="checkbox" name="reverse_charge" />
+                  <span>Omvendt avgiftsplikt (kjøper beregner mva)</span>
                 </label>
-                <div class="assist-actions">
-                  <button type="button" class="btn btn-ghost btn-small" id="ki-draft">
-                    Foreslå linjer
-                  </button>
-                  <a class="btn-link" href="/ki/">Hva ser modellen?</a>
-                </div>
-                <p class="status" id="ki-status" hidden></p>
+                <label class="field">
+                  <span>Fritekst på fakturaen</span>
+                  <input type="text" name="note" maxlength="1000" />
+                </label>
               </div>
+            </div>
+          </fieldset>
+        </div>
 
-              <div id="lines"></div>
-              <div class="line-actions">
-                <button type="button" class="btn btn-ghost btn-small" id="add-line">
-                  Legg til linje
-                </button>
-                <button type="button" class="btn btn-ghost btn-small" id="copy-previous" hidden
-                ></button>
-              </div>
-            </fieldset>
+        <fieldset class="group lines-group">
+          <legend>Linjer</legend>
+          <p class="card-hint">
+            Hver linje må beskrive ytelsens art og omfang, jf. § 5-1-1 nr. 3. Pris og beløp er
+            uten merverdiavgift.
+          </p>
 
+          <!--
+            Only rendered when the deployment has a model configured. A
+            button that always fails is worse than no button.
+          -->
+          <div class="assist" id="ki-card" hidden>
+            <label class="field">
+              <span>Beskriv salget, så setter vi opp linjene</span>
+              <textarea
+                id="ki-text"
+                rows="3"
+                placeholder="10 timer rådgivning i mars til 1 500 kroner timen, og to kursmapper à 450"
+              ></textarea>
+            </label>
+            <div class="assist-actions">
+              <button type="button" class="btn btn-ghost btn-small" id="ki-draft">
+                Foreslå linjer
+              </button>
+            </div>
+            <p class="status" id="ki-status" hidden></p>
+          </div>
+
+          {/* Overskriftene står én gang over kolonnene, ikke i hver linje. De
+              er skjult for skjermlesere, fordi hvert felt har sin egen
+              ledetekst, og på en smal skjerm, der linjen blir en boks med
+              ledeteksten synlig over hvert felt. */}
+          <div class="line-table">
+            <div class="lines-head" aria-hidden="true">
+              <span></span>
+              <span>Beskrivelse</span>
+              <span class="num">Antall</span>
+              <span>Enhet</span>
+              <span class="num">Pris</span>
+              <span>Mva</span>
+              <span class="num">Rabatt %</span>
+              <span class="num">Beløp</span>
+              <span></span>
+            </div>
+            <div id="lines"></div>
+          </div>
+          <div class="line-actions">
+            <button type="button" class="btn btn-ghost btn-small" id="add-line">
+              Legg til linje
+            </button>
+            <button type="button" class="btn btn-ghost btn-small" id="copy-previous" hidden
+            ></button>
+          </div>
+        </fieldset>
+
+        <div class="form-foot">
+          <p class="card-hint" id="issue-hint"></p>
+          <div class="form-foot-end">
             <div class="totals" id="form-totals" hidden>
               <div><span>Sum eks. mva</span><strong id="total-net">-</strong></div>
               <div><span>Merverdiavgift</span><strong id="total-vat">-</strong></div>
@@ -247,14 +277,17 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             <div class="form-actions">
               <button class="btn btn-primary" type="submit" id="review">Se over fakturaen</button>
             </div>
-            <p class="card-hint" id="issue-hint"></p>
-          </form>
+          </div>
         </div>
+      </form>
+    </div>
 
-        {/* Steget mellom skjemaet og et nummer i en ubrutt serie. Alt som
-            tidligere sto i en window.confirm() står her, sammen med det § 5-1
-            fant og oppsummeringen av hva kunden faktisk får. */}
-        <div class="card" id="review-card" hidden>
+    {/* Steget mellom skjemaet og et nummer i en ubrutt serie. Alt som
+        tidligere sto i en window.confirm() står her, sammen med det § 5-1
+        fant og oppsummeringen av hva kunden faktisk får. */}
+    <div class="card" id="review-card" hidden>
+      <div class="preview-layout">
+        <div>
           <h2 class="card-title">Se over fakturaen</h2>
           <p class="card-hint" id="review-lead"></p>
           <p class="status" id="review-status" hidden></p>
@@ -270,19 +303,31 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             <button class="btn btn-primary" type="button" id="issue">Utsted fakturaen</button>
             <button class="btn btn-ghost" type="button" id="back-to-form">Tilbake og endre</button>
           </div>
-          {/* PDF-en finnes også for et utkast, og den er merket som utkast og har
-              ikke noe nummer. Å se den er den beste måten å se over på, og den
-              skal ikke ligge nede i tabellen når det er dette steget man er på. */}
           <p class="card-hint">
-            <a class="btn-link" id="review-pdf" href="#">Se utkastet som PDF</a>
+            <a class="btn-link" id="review-pdf" href="#">Last ned utkastet som PDF</a>
           </p>
           <p class="card-hint" id="review-note"></p>
         </div>
 
-        {/* Etter utstedelse: dokumentet ligger her, ikke nede i tabellen. Den
-            som nettopp utstedte en faktura skal sende den, og skal ikke måtte
-            bla opp for å finne den igjen. */}
-        <div class="card" id="done-card" hidden>
+        {/* PDF-en finnes også for et utkast, merket som utkast og uten nummer,
+            og den er fakturaen nøyaktig slik kunden får den. Derfor står den
+            her, ved siden av knappen. Som nedlasting var den én fil til å finne
+            og åpne, og en faktura man må laste ned for å se, blir utstedt uten
+            å bli sett. */}
+        <div class="pdf-pane" id="review-preview" hidden>
+          <p class="pdf-text" id="review-preview-text"></p>
+          <iframe class="pdf-frame" id="review-preview-frame" title="Utkastet som PDF" hidden
+          ></iframe>
+        </div>
+      </div>
+    </div>
+
+    {/* Etter utstedelse: dokumentet ligger her, ikke nede i tabellen. Den
+        som nettopp utstedte en faktura skal sende den, og skal ikke måtte
+        bla ned for å finne den igjen. */}
+    <div class="card" id="done-card" hidden>
+      <div class="preview-layout">
+        <div>
           <h2 class="card-title" id="done-title"></h2>
           <p class="card-hint" id="done-hint"></p>
           <div class="done-actions">
@@ -291,38 +336,49 @@ import BaseLayout from '../layouts/BaseLayout.astro';
                 Content-Disposition: attachment, som API-et sender. */}
             <a class="btn btn-primary" id="done-pdf" href="#">Last ned PDF</a>
             <a class="btn btn-ghost" id="done-ehf" href="#" hidden>Last ned EHF</a>
+            {/* En lenke og ikke en «bokfør»-knapp: utstedelsen har alt ført
+                fakturaen, i samme transaksjon som nummeret, så en faktura kan
+                ikke være utstedt uten å stå i regnskapet. En knapp som tilbød
+                å føre den, ville spurt om noe som er gjort, og ført den to
+                ganger for den som trykket. Det som manglet var å se at den
+                står der. */}
+            <a class="btn btn-ghost" id="done-bilag" href="/bilag/" hidden>Se bilaget i regnskapet</a>
             <button class="btn btn-ghost" type="button" id="done-new">Skriv en ny faktura</button>
           </div>
         </div>
-      </div>
-
-      <div>
-        <div class="card">
-          <div class="table-scroll">
-            <table class="data">
-              <thead>
-                <tr>
-                  <th>Nr.</th>
-                  <th>Dato</th>
-                  <th>Kjøper</th>
-                  <th class="num">Beløp</th>
-                  <th>Status</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="faktura-list"></tbody>
-            </table>
-          </div>
-          <p class="empty" id="list-empty" hidden>
-            Ingen fakturaer ennå. Den første skrives i skjemaet.
-          </p>
-        </div>
-
-        <div class="card note-card">
-          <h2 class="card-title">Om e-faktura</h2>
-          <p class="card-hint" id="efaktura-note"></p>
+        <div class="pdf-pane" id="done-preview" hidden>
+          <p class="pdf-text" id="done-preview-text"></p>
+          <iframe class="pdf-frame" id="done-preview-frame" title="Fakturaen som PDF" hidden
+          ></iframe>
         </div>
       </div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">Fakturaer</h2>
+      <div class="table-scroll">
+        <table class="data">
+          <thead>
+            <tr>
+              <th>Nr.</th>
+              <th>Dato</th>
+              <th>Kjøper</th>
+              <th class="num">Beløp</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="faktura-list"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="list-empty" hidden>
+        Ingen fakturaer ennå. Den første skrives i skjemaet.
+      </p>
+    </div>
+
+    <div class="card note-card">
+      <h2 class="card-title">Om e-faktura</h2>
+      <p class="card-hint" id="efaktura-note"></p>
     </div>
   </div>
 </BaseLayout>
@@ -357,25 +413,52 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     color: var(--muted);
     margin: 0 0 0.4rem;
   }
-  .split {
+  /* A gap rather than `.card + .card`, because the steps hide one another and
+     a hidden card would still count as the neighbour that adds the margin. */
+  #content {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 1.5rem;
-    align-items: start;
-    grid-template-columns: minmax(20rem, 26rem) minmax(0, 1fr);
     margin-top: 1.5rem;
   }
-  @media (max-width: 64rem) {
-    .split {
-      grid-template-columns: minmax(0, 1fr);
+  #content > .card {
+    margin-top: 0;
+  }
+  /* The buyer and the terms side by side once there is room, and the terms in
+     two columns of their own, delivery and payment. The terms are twice as long
+     as the buyer, so two equal halves left a hole under the buyer and pushed the
+     lines, the part that changes on every invoice, a screen down. */
+  #faktura-form {
+    container: skjema / inline-size;
+  }
+  .form-top {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0 2.5rem;
+  }
+  @container skjema (width >= 52rem) {
+    .form-top {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
     }
   }
+  .terms {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+    gap: 0 2.5rem;
+  }
+  .field-row.postal {
+    grid-template-columns: minmax(0, 6.5rem) minmax(0, 1fr);
+  }
   .group {
+    /* A fieldset is as wide as its widest content by default, which is the
+       whole row of line fields here, and would push the card off a phone. */
+    min-width: 0;
     border: 0;
     border-top: 1px solid var(--border);
     padding: 0.75rem 0 0;
     margin: 0 0 1rem;
   }
-  .group:first-of-type {
+  .form-top .group {
     border-top: 0;
     padding-top: 0;
   }
@@ -383,6 +466,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     font-weight: 700;
     font-size: 0.9rem;
     padding: 0 0.4rem 0 0;
+  }
+  .lines-group > .card-hint {
+    margin-bottom: 0.8rem;
   }
   .check {
     display: flex;
@@ -445,6 +531,48 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     gap: 0.5rem;
   }
   /*
+    The line editor. One row per line on a wide screen, under one row of
+    column headings, and a box per line with its labels showing once the row
+    no longer fits.
+
+    The columns are written once, here, and the headings and every line read
+    them, because the two are separate grids and nothing else would keep them
+    lined up. Only the description stretches; a price column that grows with
+    the screen just puts more air between the number and its heading.
+
+    A container query rather than a media query: what decides is the width the
+    lines actually get, not the window's.
+  */
+  .line-table {
+    --line-cols: 2rem minmax(0, 1fr) 4rem 6rem 6.5rem 10rem 4rem 7rem 3rem;
+    --line-gap: 0.5rem;
+    container: linjer / inline-size;
+    margin-bottom: 0.8rem;
+  }
+  .lines-head {
+    display: grid;
+    grid-template-columns: var(--line-cols);
+    gap: var(--line-gap);
+    align-items: end;
+    padding: 0 0.5rem 0.4rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 700;
+    color: var(--faint);
+    /* «Rabatt %» is a hair wider than its column at the tighter widths, and
+       broken in two it read as a heading and a stray sign. Unbroken, it runs
+       into the gap beside it, which is empty. */
+    white-space: nowrap;
+  }
+  .lines-head .num {
+    text-align: right;
+  }
+  .line-table:has(#lines:empty) .lines-head {
+    display: none;
+  }
+  /*
     Everything below is built by the page's own script, and Astro scopes a
     <style> block by stamping `data-astro-cid-*` onto the elements *in the
     template*, which a node from `document.createElement` never gets. A plain
@@ -454,45 +582,166 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     generated children with `:global()`. Same pattern as ProviderButtons.astro.
   */
   #lines :global(.line) {
-    border: 1px solid var(--border);
-    border-radius: var(--radius-small);
-    padding: 0.7rem;
-    margin-bottom: 0.7rem;
+    display: grid;
+    grid-template-columns: var(--line-cols);
+    gap: var(--line-gap);
+    align-items: center;
+    padding: 0.4rem 0.5rem;
+    border-bottom: 1px solid var(--border);
   }
   #lines :global(.line[data-source='ki']) {
-    border-left: 3px solid var(--accent-line);
-  }
-  #lines :global(.line-source) {
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-weight: 700;
-    color: var(--muted);
-    margin-left: auto;
-    margin-right: 0.6rem;
+    background: var(--accent-soft);
   }
   #lines :global(.line-head) {
     display: flex;
-    justify-content: space-between;
+    flex-direction: column;
     align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.4rem;
+    gap: 0.15rem;
   }
   #lines :global(.line-no) {
     font-weight: 700;
     font-size: 0.85rem;
     color: var(--muted);
+    font-variant-numeric: tabular-nums;
   }
-  #lines :global(.line-grid) {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 0.5rem;
+  #lines :global(.line-source) {
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 700;
+    line-height: 1.4;
+    color: var(--accent);
+    border: 1px solid var(--accent-line);
+    border-radius: 999px;
+    padding: 0 0.3rem;
+    white-space: nowrap;
   }
-  #lines :global(.line-amount) {
+  #lines :global(.cell) {
+    display: block;
+    min-width: 0;
+  }
+  /* On a wide screen the heading over the column names the field, so the label
+     in each cell is there for a screen reader and not for the eye. The same
+     for «Linje» before the number and «Foreslått av» before «KI». */
+  #lines :global(.cell-label),
+  #lines :global(.line-word),
+  #lines :global(.source-long) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+  #lines :global(input),
+  #lines :global(select) {
+    padding: 0.5rem 0.6rem;
+  }
+  #lines :global(input[inputmode='decimal']) {
     text-align: right;
-    font-size: 0.85rem;
-    color: var(--muted);
-    margin-top: 0.4rem;
+    font-variant-numeric: tabular-nums;
+  }
+  #lines :global(.cell-amount) {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.92rem;
+    white-space: nowrap;
+  }
+  #lines :global(.line-remove) {
+    justify-self: end;
+    font-size: 0.88rem;
+  }
+  /* A laptop that is not quite wide enough gets the same row with tighter
+     columns, rather than four rows per line a few pixels early. */
+  @container linjer (width < 58rem) {
+    .lines-head,
+    #lines :global(.line) {
+      --line-cols: 1.6rem minmax(0, 1fr) 3.5rem 5.5rem 6rem 8.5rem 3.5rem 6.5rem 2.8rem;
+      --line-gap: 0.4rem;
+    }
+    #lines :global(input),
+    #lines :global(select) {
+      padding-inline: 0.45rem;
+    }
+  }
+  @container linjer (width < 52rem) {
+    .lines-head {
+      display: none;
+    }
+    #lines :global(.line) {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.6rem;
+      align-items: end;
+      padding: 0.7rem;
+      margin-bottom: 0.7rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-small);
+    }
+    #lines :global(.line[data-source='ki']) {
+      border-left: 3px solid var(--accent-line);
+    }
+    #lines :global(.line-head) {
+      grid-column: span 2;
+      flex-direction: row;
+      align-self: center;
+      gap: 0.6rem;
+    }
+    #lines :global(.line-remove) {
+      grid-row: 1;
+      grid-column: 3;
+      align-self: center;
+    }
+    #lines :global(.cell-desc),
+    #lines :global(.cell-amount) {
+      grid-column: 1 / -1;
+    }
+    #lines :global(.cell-tax) {
+      grid-column: span 2;
+    }
+    #lines :global(.cell-label),
+    #lines :global(.line-word),
+    #lines :global(.source-long) {
+      position: static;
+      width: auto;
+      height: auto;
+      margin: 0;
+      overflow: visible;
+      clip: auto;
+      white-space: normal;
+    }
+    #lines :global(.cell-label) {
+      display: block;
+      font-weight: 600;
+      font-size: 0.82rem;
+      margin-bottom: 0.25rem;
+    }
+    #lines :global(.cell-amount) {
+      display: flex;
+      justify-content: space-between;
+      color: var(--muted);
+    }
+    #lines :global(.cell-amount .cell-label) {
+      margin: 0;
+    }
+  }
+  /* The sum and the button under the lines, at the right, where a reader of an
+     invoice looks for what is owed. The hint takes what is left. */
+  .form-foot {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 22rem);
+    gap: 0.8rem 2rem;
+    align-items: end;
+  }
+  @media (max-width: 40rem) {
+    .form-foot {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .form-foot-end {
+      order: -1;
+    }
   }
   .totals {
     border-top: 1px solid var(--border);
@@ -513,6 +762,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   }
   .form-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.6rem;
   }
   .form-actions .btn {
@@ -527,6 +777,46 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     padding: 0.65rem 0.9rem;
     font-size: 0.92rem;
     margin-bottom: 1rem;
+  }
+  /* The review and the issued invoice: what to read and press on the left, the
+     PDF on the right. Stacked on a narrow screen with the buttons first, since a
+     PDF at the top of a phone screen puts them out of reach. A browser that
+     cannot show a PDF in the page gets the left side alone, not a blank column. */
+  .preview-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.5rem 2rem;
+    align-items: start;
+  }
+  @media (min-width: 62rem) {
+    .preview-layout {
+      grid-template-columns: minmax(0, 24rem) minmax(0, 1fr);
+    }
+    .preview-layout:has(> .pdf-pane[hidden]) {
+      grid-template-columns: minmax(0, 40rem);
+    }
+  }
+  .pdf-pane {
+    display: grid;
+    place-items: center;
+    min-height: 24rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    background: var(--surface-2);
+    overflow: hidden;
+  }
+  .pdf-frame {
+    display: block;
+    width: 100%;
+    height: min(80vh, 60rem);
+    border: 0;
+  }
+  .pdf-text {
+    margin: 0;
+    padding: 1rem;
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.92rem;
   }
   /* The review step. A definition list because that is what it is: the fields
      of the document about to be issued, each with its value. */
@@ -604,9 +894,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   #faktura-list :global(tr[data-credited='true'] td) {
     opacity: 0.55;
   }
-  .note-card {
-    margin-top: 1.5rem;
-  }
   .btn-small {
     padding: 0.35rem 0.7rem;
     font-size: 0.85rem;
@@ -624,6 +911,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     draftFakturaLines,
     fakturaEhfUrl,
     fakturaPdfUrl,
+    fetchFakturaPdf,
     getFakturaCatalogue,
     getNextFakturaNumber,
     issueFaktura,
@@ -703,30 +991,44 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     row.dataset.line = String(index);
     if (source !== undefined) row.dataset.source = source;
 
+    // The number is what the review's findings name («linje 2 mangler …»), so
+    // it stays on screen. «Linje» is spelled out on a phone, where each line is
+    // a box of its own; on a wide screen the number heads its row.
     const head = document.createElement('div');
     head.className = 'line-head';
     const label = document.createElement('span');
     label.className = 'line-no';
-    label.textContent = `Linje ${index}`;
+    const word = document.createElement('span');
+    word.className = 'line-word';
+    word.textContent = 'Linje ';
+    const number = document.createElement('span');
+    number.className = 'line-number';
+    label.append(word, number);
+    head.append(label);
+    if (source === 'ki') {
+      // Said out loud, as /ki promises: a proposed line and a typed one must not
+      // look the same to the person about to issue the document. On a wide
+      // screen the row has room for «KI» only; the rest is still there for a
+      // screen reader, and on hover.
+      const badge = document.createElement('span');
+      badge.className = 'line-source';
+      badge.title = 'Foreslått av KI';
+      const long = document.createElement('span');
+      long.className = 'source-long';
+      long.textContent = 'Foreslått av ';
+      badge.append(long, 'KI');
+      head.append(badge);
+    }
+
     const remove = document.createElement('button');
     remove.type = 'button';
-    remove.className = 'btn-link';
+    remove.className = 'btn-link line-remove';
     remove.textContent = 'Fjern';
     remove.addEventListener('click', () => {
       row.remove();
       renumber();
       recalculate();
     });
-    head.append(label);
-    if (source === 'ki') {
-      // Said out loud, as /ki promises: a proposed line and a typed one must not
-      // look the same to the person about to issue the document.
-      const badge = document.createElement('span');
-      badge.className = 'line-source';
-      badge.textContent = 'Foreslått av KI';
-      head.append(badge);
-    }
-    head.append(remove);
 
     const description = document.createElement('input');
     description.type = 'text';
@@ -735,9 +1037,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     description.placeholder = 'Hva er solgt?';
     description.required = true;
     description.value = preset?.description ?? '';
-
-    const grid = document.createElement('div');
-    grid.className = 'line-grid';
 
     const quantity = numberInput('quantity', preset?.quantity ?? '1', 'Antall');
     const unit = document.createElement('select');
@@ -771,19 +1070,51 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
     const discount = numberInput('discount_percent', preset?.discount_percent ?? '0', 'Rabatt %');
 
-    grid.append(quantity, unit, price, tax, discount);
-
-    const amount = document.createElement('p');
-    amount.className = 'line-amount';
+    const amount = document.createElement('span');
     amount.dataset.lineAmount = '';
+    const amountCell = document.createElement('div');
+    amountCell.className = 'cell cell-amount';
+    amountCell.append(caption('Beløp'), amount);
 
-    row.append(head, description, grid, amount);
+    // In the order of the column headings: on a wide screen the grid places
+    // the cells by order alone, so this list *is* the column order.
+    row.append(
+      head,
+      lineCell('Beskrivelse', description, 'cell-desc'),
+      lineCell('Antall', quantity),
+      lineCell('Enhet', unit),
+      lineCell('Pris', price),
+      lineCell('Mva', tax, 'cell-tax'),
+      lineCell('Rabatt %', discount),
+      amountCell,
+      remove,
+    );
     for (const input of [quantity, price, discount]) {
       input.addEventListener('input', recalculate);
     }
     tax.addEventListener('change', recalculate);
     linesBox.append(row);
+    renumber();
     recalculate();
+  }
+
+  /** One field of a line, wrapped in its own label so it is named on every screen. */
+  function lineCell(
+    text: string,
+    control: HTMLInputElement | HTMLSelectElement,
+    className?: string,
+  ): HTMLLabelElement {
+    const label = document.createElement('label');
+    label.className = className === undefined ? 'cell' : `cell ${className}`;
+    label.append(caption(text), control);
+    return label;
+  }
+
+  function caption(text: string): HTMLSpanElement {
+    const span = document.createElement('span');
+    span.className = 'cell-label';
+    span.textContent = text;
+    return span;
   }
 
   /** The code a new line starts on. */
@@ -816,14 +1147,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     input.name = name;
     input.value = value;
     input.placeholder = placeholder;
-    input.setAttribute('aria-label', placeholder);
     return input;
   }
 
   function renumber(): void {
     [...linesBox.children].forEach((row, index) => {
-      const label = row.querySelector('.line-no');
-      if (label !== null) label.textContent = `Linje ${index + 1}`;
+      const number = row.querySelector('.line-number');
+      if (number !== null) number.textContent = String(index + 1);
+      // «Fjern» five times over is five buttons with one name to a screen reader.
+      row.querySelector('.line-remove')?.setAttribute('aria-label', `Fjern linje ${index + 1}`);
     });
   }
 
@@ -862,7 +1194,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       const lineNet = quantity * price * (1 - discount / 100);
       net += lineNet;
       vat += lineNet * rate;
-      const amount = row.querySelector<HTMLParagraphElement>('[data-line-amount]');
+      const amount = row.querySelector<HTMLElement>('[data-line-amount]');
       if (amount !== null) amount.textContent = kroner(lineNet.toFixed(2));
     }
     el('#total-net').textContent = kroner(net.toFixed(2));
@@ -1389,6 +1721,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   function renderReview(saved: Faktura, violations: Violation[]): void {
     renderSummary(saved);
     el<HTMLAnchorElement>('#review-pdf').href = fakturaPdfUrl(company.id, saved.id);
+    previewReview(saved.id, 'Utkastet som PDF');
 
     const list = el<HTMLUListElement>('#violations');
     list.replaceChildren();
@@ -1432,6 +1765,75 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     showStep('review');
     el('#review-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
+
+  // --- The PDF in the page -------------------------------------------------------
+  //
+  // The review is where the invoice is read before it becomes final, and the
+  // PDF is the invoice exactly as the customer gets it. As a download it was one
+  // more file to find and open, so it went unread beside the button that makes
+  // it final. Framed here, it is the thing being looked over.
+
+  /**
+   * Whether this browser draws a PDF inside a page at all.
+   *
+   * Most phones do not: Chrome on Android leaves the frame blank. They get the
+   * download link alone rather than a box that never fills.
+   */
+  const pdfInline = navigator.pdfViewerEnabled !== false;
+
+  /**
+   * Show a document's PDF in one of the two panes, the review's or the issued
+   * invoice's.
+   *
+   * Each pane keeps a ticket, because pressing «Se over fakturaen» twice leaves
+   * two renders in flight and the slower one must not paint over the newer. The
+   * old object URL is released when a new one replaces it, or the tab would hold
+   * every draft rendered on this visit.
+   */
+  function pdfPreview(name: 'review' | 'done'): (documentId: number, title: string) => void {
+    const pane = el<HTMLDivElement>(`#${name}-preview`);
+    const frame = el<HTMLIFrameElement>(`#${name}-preview-frame`);
+    const text = el<HTMLParagraphElement>(`#${name}-preview-text`);
+    let ticket = 0;
+    let url: string | null = null;
+
+    return (documentId, title) => {
+      show(pane, pdfInline);
+      if (!pdfInline) return;
+      const mine = ++ticket;
+      show(frame, false);
+      text.textContent = 'Lager forhåndsvisningen …';
+      show(text, true);
+      const fail = (message: string): void => {
+        if (mine !== ticket) return;
+        text.textContent = message;
+      };
+      void fetchFakturaPdf(company.id, documentId)
+        .then((blob) => {
+          if (mine !== ticket) return;
+          if (blob === null) {
+            fail('Vi fikk ikke vist PDF-en her. Last den ned i stedet.');
+            return;
+          }
+          if (url !== null) URL.revokeObjectURL(url);
+          url = URL.createObjectURL(blob);
+          frame.title = title;
+          // Chrome opens a PDF with its page sidebar showing and the page at
+          // well under half size, which in a frame this wide leaves the invoice
+          // too small to read. The standard open parameters ask for the page
+          // at full width and no sidebar; a viewer that ignores them is no worse off.
+          frame.src = `${url}#navpanes=0&view=FitH`;
+          show(text, false);
+          show(frame, true);
+        })
+        .catch((error: unknown) => {
+          fail(error instanceof ApiError ? error.message : 'Vi fikk ikke vist PDF-en her.');
+        });
+    };
+  }
+
+  const previewReview = pdfPreview('review');
+  const previewDone = pdfPreview('done');
 
   /** What the buyer is about to receive, as the fields it will carry. */
   function renderSummary(saved: Faktura): void {
@@ -1502,6 +1904,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       `${kroner(issued.gross_total)} til ${issued.buyer_name}, forfall ` +
       `${issued.due_date === null ? '-' : isoDate(issued.due_date)}` +
       `${issued.payment_reference === null ? '' : `, KID ${issued.payment_reference}`}. ` +
+      // Said only when the answer carries the voucher, so the page never claims
+      // a posting it was not told about.
+      (issued.voucher_id === null ? '' : 'Den er bokført i regnskapet. ') +
       (issued.has_ehf
         ? 'EHF-filen er laget og lagret sammen med PDF-en. Forsendelsen krever et ' +
           'Peppol-aksesspunkt, som ennå ikke er koblet på, så filene sendes for hånd.'
@@ -1510,6 +1915,22 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     const ehf = el<HTMLAnchorElement>('#done-ehf');
     ehf.href = fakturaEhfUrl(company.id, issued.id);
     show(ehf, issued.has_ehf);
+    // /bilag/ has no address for one voucher, but its search reads the line
+    // text, and every line of an invoice's voucher starts «Faktura <nummer>,».
+    // A reversal keeps its lines' text, so a credit note in the same year turns
+    // up in the same search, which is the other thing worth seeing there.
+    const bilag = el<HTMLAnchorElement>('#done-bilag');
+    const posted =
+      issued.voucher_id !== null && issued.issue_date !== null && issued.document_number !== null;
+    if (posted) {
+      const query = new URLSearchParams({
+        aar: issued.issue_date?.slice(0, 4) ?? '',
+        sok: `Faktura ${issued.document_number}`,
+      });
+      bilag.href = `/bilag/?${query.toString()}`;
+    }
+    show(bilag, posted);
+    previewDone(issued.id, `Faktura ${issued.document_number ?? ''} som PDF`);
     showStep('done');
     el('#done-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }

@@ -154,6 +154,8 @@ Each finding has a `severity` (`feil` blocks, `merknad` informs), a stable
 | `privatkonto_i_as` (merknad) | An AS with a balance on 2060 Privatkonto | An AS has no private account: money taken out by a shareholder is a loan or a dividend. Tell the person to ask their accountant; the balance stays untouched |
 | `mva_ikke_gjort_opp` (merknad) | VAT for a period of the year is not settled onto 2740 | Once closed, the settlement cannot be posted in the year. Suggest settling the VAT first ([myntos-mva](https://myntos.no/llms/skills/myntos-mva.md)) |
 | `ingen_inngaende_balanse` (merknad) | The company's first year in Myntos has no opening balance | If the company existed before Myntos, enter it first ([myntos-inngaende-balanse](https://myntos.no/llms/skills/myntos-inngaende-balanse.md)), or the equity the disposition uses is too low |
+| `avskrivning_ikke_fort` (merknad) | The anleggsregister has depreciation for the year that is not posted | Post it first ([myntos-anlegg](https://myntos.no/llms/skills/myntos-anlegg.md)); a closed year takes no voucher |
+| `avskrivning_utdatert` (merknad) | The year's depreciation is posted, and the register has changed since | Correct it first ([myntos-anlegg](https://myntos.no/llms/skills/myntos-anlegg.md)) |
 
 ## Refusals, and what to do about each
 

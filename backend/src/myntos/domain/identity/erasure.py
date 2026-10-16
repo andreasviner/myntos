@@ -24,12 +24,15 @@ longer answer an auditor asking who booked an entry, and the books are the
 company's record, not ours to make less true.
 
 Erasure is refused, rather than half-done, while the person is the last owner
-of books that somebody still needs: books other people work in (they would be
+of open books that somebody still needs: books other people work in (they would be
 left with no owner, which nothing else in Myntos allows either), or books with
 anything entered in them (they must stay readable for five years, and only an
 owner can hand them on). Books with nothing in them and nobody else on them are
 deleted with the account, because there is nothing to keep and an orphaned
-confirmed claim on an orgnr would stop its real owner setting up books.
+confirmed claim on an orgnr would stop its real owner setting up books. Books
+an owner already deleted from Myntos (myntos.domain.identity.closure) block
+nothing: they are kept until their retention ends whoever owns them, and the
+owner decided what happens to them when they deleted the company.
 
 Like the rest of the identity domain this module does not commit. Proving that
 the owner is at the keyboard comes first, and lives in
@@ -86,7 +89,7 @@ from myntos.domain.ledger.models import (
     PartyOpeningBalance,
     Transaction,
 )
-from myntos.domain.mva.models import MvaFiling
+from myntos.domain.mva.models import MvaFiling, MvaFilingElsewhere
 
 # The address a tombstone is left with. ``.invalid`` is reserved (RFC 2606), so
 # it can never be delivered to, and pydantic's EmailStr refuses it, so nobody
@@ -102,6 +105,9 @@ class CompanyFate(StrEnum):
     LEAVES = "leaves"
     # Nothing entered and nobody else on them: deleted with the account.
     DELETED = "deleted"
+    # Already deleted from Myntos and kept until its retention ends. The
+    # membership goes, and with it the last way to open the books again.
+    CLOSED = "closed"
     # They are the last owner, and somebody still needs the books.
     BLOCKS_MEMBERS = "blocks_members"
     BLOCKS_BOOKS = "blocks_books"
@@ -136,7 +142,7 @@ class ErasurePlan:
         return any(outcome.blocks for outcome in self.companies)
 
 
-async def _has_books(db: AsyncSession, company_id: int) -> bool:
+async def has_books(db: AsyncSession, company_id: int) -> bool:
     """Whether anything has been entered in these books that must be kept.
 
     Broad on purpose. A voucher and a bilag are the obvious ones; an issued or
@@ -146,6 +152,9 @@ async def _has_books(db: AsyncSession, company_id: int) -> bool:
     ones mattered. A company with none of
     them holds only what setup seeded (the chart, the VAT codes, the register
     snapshot, bank accounts), which nobody is obliged to keep.
+
+    Deleting a company asks the same question (myntos.domain.identity.closure),
+    because it is the same question: whether there is anything to keep.
     """
     checks = (
         exists().where(Journal.company_id == company_id, Transaction.journal_id == Journal.id),
@@ -181,6 +190,9 @@ async def _is_named_by_records(db: AsyncSession, user_id: int) -> bool:
         exists().where(
             or_(MvaFiling.created_by_user_id == user_id, MvaFiling.submitted_by_user_id == user_id)
         ),
+        # Who took back a «sendt fra et annet program» statement: the term's
+        # history is who said it was filed elsewhere and who changed their mind.
+        exists().where(MvaFilingElsewhere.withdrawn_by_user_id == user_id),
         # The confirmation of who a company belongs to is what its filings rest
         # on, so whoever made it is part of that record too.
         exists().where(Company.verified_by_user_id == user_id),
@@ -215,14 +227,16 @@ async def plan_erasure(db: AsyncSession, user: User) -> ErasurePlan:
             CompanyOutcome(
                 company_id=company.id,
                 company_name=company.name,
-                fate=await _fate(db, membership),
+                fate=await _fate(db, membership, company),
             )
         )
     keeps_name = await _is_named_by_records(db, user.id)
     return ErasurePlan(companies=outcomes, keeps_name=keeps_name)
 
 
-async def _fate(db: AsyncSession, membership: CompanyMembership) -> CompanyFate:
+async def _fate(db: AsyncSession, membership: CompanyMembership, company: Company) -> CompanyFate:
+    if company.closed_at is not None:
+        return CompanyFate.CLOSED
     if membership.role != OrganizationRole.OWNER:
         return CompanyFate.LEAVES
     owners, members = (
@@ -237,7 +251,7 @@ async def _fate(db: AsyncSession, membership: CompanyMembership) -> CompanyFate:
         return CompanyFate.LEAVES
     if members > 1:
         return CompanyFate.BLOCKS_MEMBERS
-    if await _has_books(db, membership.company_id):
+    if await has_books(db, membership.company_id):
         return CompanyFate.BLOCKS_BOOKS
     return CompanyFate.DELETED
 

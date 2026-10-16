@@ -54,10 +54,15 @@ file; they stay in Myntos's archive.
   in its archive, and a bulk export of them is not available yet.
 - The files contain personal data about customers and suppliers. Hand them
   only to the new program or accountant.
+- When the books are in the new program, an owner can delete the company from
+  Myntos. Its accounts are then kept locked for the five years the law
+  requires, bilag included, and can be opened again until then:
+  [Delete a company](https://myntos.no/llms/help/company-and-access/delete-a-company.md).
 
 ## Related
 
 - [Export a SAF-T file](https://myntos.no/llms/help/saf-t/export-a-saf-t-file.md)
 - [What SAF-T is for](https://myntos.no/llms/help/saf-t/what-saf-t-is-for.md)
+- [Delete a company](https://myntos.no/llms/help/company-and-access/delete-a-company.md)
 - An agent with a key can download the files through the API:
   [myntos-saft](https://myntos.no/llms/skills/myntos-saft.md)

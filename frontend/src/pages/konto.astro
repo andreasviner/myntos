@@ -116,6 +116,21 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     </button>
   </section>
 
+  {/* Selskaper du har slettet, så lenge regnskapet oppbevares. Her og ikke på
+      selskapets side, fordi et slettet selskap ikke har noen side: det er i
+      ingen liste og kan ikke velges. Bare eiere ser dem, og bare til
+      oppbevaringstiden er ute. */}
+  <section class="card" id="slettede" aria-labelledby="slettede-tittel" hidden>
+    <h2 class="card-title" id="slettede-tittel">Slettede selskaper</h2>
+    <p class="card-hint">
+      Regnskapet til et slettet selskap oppbevares låst så lenge bokføringsloven krever, og slettes
+      for godt dagen etter datoen som står ved det. Til da kan du åpne det igjen, for eksempel for å
+      hente et bilag eller laste ned SAF-T på nytt.
+    </p>
+    <p class="status" id="slettede-status" hidden></p>
+    <ul class="selskaper" id="slettede-liste"></ul>
+  </section>
+
   <section class="card" id="slett" aria-labelledby="slett-tittel">
     <h2 class="card-title" id="slett-tittel">Slett kontoen</h2>
 
@@ -160,7 +175,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       <p>
         <strong>Kontoen kan ikke slettes ennå.</strong> Du er eneste eier av regnskap som noen
         fortsatt trenger. Gjør en annen til eier først, under «Medlemmer» på selskapets side. Har
-        ingen andre tilgang, inviter den som skal ta over regnskapet som eier.
+        ingen andre tilgang, inviter den som skal ta over regnskapet som eier, eller slett selskapet
+        hvis det ikke skal føres videre.
       </p>
     </div>
 
@@ -225,8 +241,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     margin: 1rem 0;
     padding: 0;
   }
-  .sesjoner li,
-  .selskaper li {
+  /* Radene lages av skriptet og får aldri Astros data-astro-cid-stempel, så
+     reglene henges på listen, som står i markeringen, og når radene med
+     :global(). Uten det sto «Chrome på WindowsDenne enhetenLogget inn …» i
+     ett strekk, med knappen under (docs/frontend-conventions.md). */
+  .sesjoner :global(li),
+  .selskaper :global(li) {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -235,20 +255,21 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     padding: 0.7rem 0;
     border-top: 1px solid var(--border);
   }
-  .sesjoner li:last-child,
-  .selskaper li:last-child {
+  .sesjoner :global(li:last-child),
+  .selskaper :global(li:last-child) {
     border-bottom: 1px solid var(--border);
   }
-  .enhet {
+  .sesjoner :global(.enhet) {
     font-weight: 620;
   }
-  .her {
+  .sesjoner :global(.her) {
     color: var(--accent);
     font-size: 0.85rem;
     font-weight: 700;
     margin-left: 0.4rem;
   }
-  .tider {
+  .sesjoner :global(.tider),
+  .selskaper :global(.tider) {
     display: block;
     color: var(--muted);
     font-size: 0.88rem;
@@ -266,11 +287,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     margin: 0 0 0.75rem;
     padding-left: 1.2rem;
   }
-  .utfall {
+  .selskaper :global(.utfall) {
     color: var(--muted);
     font-size: 0.9rem;
   }
-  .utfall[data-tone='error'] {
+  .selskaper :global(.utfall[data-tone='error']) {
     color: var(--danger);
     font-weight: 620;
   }
@@ -323,15 +344,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   .leverandorer {
     margin: 0.75rem 0;
   }
-  /* Rød, og bare her: det er den eneste knappen i programmet som ikke kan
-     angres på noen måte, heller ikke med en kreditnota. */
-  .btn-fare {
-    background: var(--danger);
-    color: #ffffff;
-  }
-  .btn-fare:hover:not(:disabled) {
-    filter: brightness(0.92);
-  }
 </style>
 
 <script>
@@ -344,18 +356,23 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     getProviders,
     listAccountIdentities,
     listAccountSessions,
+    listClosedCompanies,
     providerStartUrl,
+    reopenCompany,
     requestSwitchToEmail,
     startBankidLink,
     unlinkAccountIdentity,
     type AccountIdentity,
     type AccountSession,
+    type ClosedCompany,
     type ErasurePlan,
     type ProviderSummary,
     type Session,
   } from '../lib/api';
+  import { dayInWords } from '../lib/closure';
   import { loadCompanies } from '../lib/company';
   import { el, setStatus, show } from '../lib/dom';
+  import { orgnummer } from '../lib/format';
   import { CALLBACK_ERRORS } from '../lib/providers';
   import {
     forgetChrome,
@@ -727,18 +744,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   const FATE_TEXT: Record<string, string> = {
     leaves: 'Tilgangen din fjernes. Regnskapet blir hos de andre eierne.',
     deleted: 'Ingenting er ført, og ingen andre er med. Slettes sammen med kontoen.',
+    closed:
+      'Slettet og låst til oppbevaringstiden er ute. Etter at kontoen er slettet, kan ingen åpne det igjen.',
     blocks_members: 'Du er eneste eier, og andre har tilgang. Gjør en av dem til eier først.',
     blocks_books:
-      'Du er eneste eier, og regnskapet skal oppbevares i fem år. Inviter den som skal ta over som eier først.',
+      'Du er eneste eier, og regnskapet skal oppbevares i fem år. Inviter den som skal ta over som eier, eller slett selskapet.',
   };
 
-  /** Bytter til selskapet og går til medlemslisten, der eierskapet gis videre. */
-  async function openCompany(companyId: number): Promise<void> {
+  /** Bytter til selskapet og går dit eierskapet gis videre, eller dit det slettes. */
+  async function openCompany(companyId: number, where = '/organisasjon/#tilgang'): Promise<void> {
     const companies = await loadCompanies();
     const company = companies.find((candidate) => candidate.id === companyId);
     if (company === undefined) return;
     setActiveCompany(company);
-    window.location.href = '/organisasjon/#tilgang';
+    window.location.href = where;
   }
 
   function companyRow(outcome: ErasurePlan['companies'][number]): HTMLLIElement {
@@ -765,7 +784,68 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       });
       item.append(button);
     }
+    if (outcome.fate === 'blocks_books') {
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'btn btn-ghost btn-small';
+      remove.textContent = 'Slett selskapet …';
+      remove.addEventListener('click', () => {
+        void openCompany(outcome.company_id, '/slett-selskap/').catch((error: unknown) => {
+          setStatus(pageStatus, message(error, 'Vi fikk ikke åpnet selskapet.'));
+        });
+      });
+      item.append(remove);
+    }
     return item;
+  }
+
+  // --- Slettede selskaper ---------------------------------------------------------
+
+  const closedStatus = el<HTMLParagraphElement>('#slettede-status');
+
+  function closedRow(closed: ClosedCompany): HTMLLIElement {
+    const item = document.createElement('li');
+    const text = document.createElement('div');
+    const name = document.createElement('strong');
+    name.textContent = closed.name;
+    const when = document.createElement('span');
+    when.className = 'tider';
+    when.textContent =
+      `Org.nr. ${orgnummer(closed.orgnr)}. Slettet ${DATE.format(new Date(closed.closed_at))}, ` +
+      `oppbevares til ${dayInWords(closed.retain_until)}.`;
+    text.append(name, when);
+    const reopen = document.createElement('button');
+    reopen.type = 'button';
+    reopen.className = 'btn btn-ghost btn-small';
+    reopen.textContent = 'Åpne igjen';
+    reopen.addEventListener('click', () => {
+      reopen.disabled = true;
+      reopen.textContent = 'Åpner …';
+      void reopenCompany(closed.id)
+        .then((company) => {
+          // Selskapet er tilbake og blir det som vises, så forsiden er om det.
+          setActiveCompany(company);
+          window.location.href = '/';
+        })
+        .catch((error: unknown) => {
+          setStatus(closedStatus, message(error, 'Vi fikk ikke åpnet selskapet igjen.'));
+          reopen.disabled = false;
+          reopen.textContent = 'Åpne igjen';
+        });
+    });
+    item.append(text, reopen);
+    return item;
+  }
+
+  async function refreshClosed(): Promise<void> {
+    try {
+      const closed = await listClosedCompanies();
+      el('#slettede-liste').replaceChildren(...closed.map(closedRow));
+      show(el('#slettede'), closed.length > 0);
+    } catch (error: unknown) {
+      show(el('#slettede'), true);
+      setStatus(closedStatus, message(error, 'Vi fikk ikke hentet de slettede selskapene.'));
+    }
   }
 
   function recentEnough(current: ErasurePlan): boolean {
@@ -848,7 +928,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     setAuthState('ut');
     clearActiveCompany();
     forgetChrome();
-    for (const id of ['#innlogginger', '#slett', '#page-status']) show(el(id), false);
+    for (const id of ['#innlogginger', '#slettede', '#slett', '#page-status']) show(el(id), false);
     show(el('#slettet'), true);
   }
 
@@ -886,5 +966,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     void refreshWays();
     void refreshSessions();
     void refreshPlan();
+    void refreshClosed();
   });
 </script>

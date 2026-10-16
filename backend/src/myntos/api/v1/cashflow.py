@@ -33,6 +33,7 @@ from datetime import date
 from decimal import Decimal
 from functools import partial
 from typing import Annotated
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, File, Form, Query, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
@@ -97,9 +98,18 @@ from myntos.domain.ledger.service import (
     CompositePart,
     PaymentMethod,
 )
+from myntos.domain.mva import naering as mva_naering
 from myntos.integrations import loynd, norgesbank
 
 logger = logging.getLogger(__name__)
+
+_OSLO = ZoneInfo("Europe/Oslo")
+
+
+def _oslo_today() -> date:
+    """Today in Norway, which is the day a VAT deadline is reckoned in."""
+    return utc_now().astimezone(_OSLO).date()
+
 
 router = APIRouter(tags=["kontantstrøm"])
 
@@ -257,10 +267,19 @@ class SummaryResponse(BaseModel):
     entry_count: int
     output_vat: Decimal
     input_vat: Decimal
-    # Positive means owed to Skatteetaten, negative means owed to you. An
-    # estimate from the register alone — it is not an MVA-melding.
+    # What is owed now: the balance on 2700, 2710 and 2740 across every year.
+    # Positive means owed to Skatteetaten, negative means owed to you. Read off
+    # the books, not an MVA-melding.
     vat_position: Decimal
+    # The part of vat_position already filed and settled onto 2740, waiting
+    # for its payment to be posted.
+    vat_settled: Decimal
     cash_position: Decimal
+    # The date of the last voucher in the books, any year; null when empty.
+    books_through: date | None
+    # Set to books_through when a VAT deadline has passed since it: the
+    # positions are as of that day, not today. Null when the books are current.
+    positions_as_of: date | None
     by_type: list[TypeTotalResponse]
 
 
@@ -1892,29 +1911,61 @@ async def edit_composite(
 async def summary(
     context: CurrentCompany, db: DbSession, financial_year: int | None = None
 ) -> SummaryResponse:
-    """Totals for one financial year: the figures on the overview (oversikten).
+    """The figures on the overview (oversikten): one year's totals, and two positions today.
 
     For one ``financial_year`` (a calendar year; the current one when left
-    out), ``total_in`` and ``total_out`` are what moved through the bank
-    account and the cash box, ``net`` is the difference, ``entry_count`` the
-    number of vouchers behind them, and ``by_type`` the same money per
-    category, largest first. A payment that was reversed, and its reversal,
-    are left out of all of these, so a corrected payment counts once.
+    out), ``total_in`` and ``total_out`` are what moved through the company's
+    bank accounts and the cash box, ``net`` is the difference, ``entry_count``
+    the number of vouchers behind them, and ``by_type`` the same money
+    per category, largest first. A payment that was reversed, and its
+    reversal, are left out of all of these, so a corrected payment counts once.
 
-    ``output_vat`` is the VAT charged on sales (utgående mva, account 2700),
-    ``input_vat`` the VAT on purchases that may be deducted (inngående mva,
-    2710), and ``vat_position`` the first minus the second: positive is owed
-    to Skatteetaten, negative is owed to the company. It is an estimate read
-    off the register, not the MVA-melding (the VAT return), which is worked
-    out per period (termin) on its own page.
+    The bank accounts are 1920 (Bankinnskudd) and 1900 (Kontanter), plus any
+    account marked as a bank account in the kontoplan (``is_bank_account`` in
+    ``GET …/kontoplan``): a previous program may have kept the company's bank
+    elsewhere, Tripletex a farm's driftskreditt on 2390, and the vouchers
+    brought over stay there.
 
-    ``cash_position`` is what the bank account and the cash box hold according
-    to the books, across every year and including the opening balance: a
-    balance, not this year's movement. Amounts are decimal strings. Every role
-    may read this, and every key.
+    ``output_vat`` is the year's VAT charged on sales (utgående mva, account
+    2700) and ``input_vat`` the year's VAT on purchases that may be deducted
+    (inngående mva, 2710), each with the settlements of filed terms left out,
+    so they say what the year's VAT was however much of it has been filed.
+
+    ``vat_position`` is what is owed now, not the year's figure: the balance
+    across every year, opening balance included, on 2700, 2710 and 2740
+    (oppgjørskonto merverdiavgift, where a filed term waits until it is paid).
+    That is the terms not yet filed plus the filed ones not yet paid. Positive
+    is owed to Skatteetaten («anslått å betale»), negative is owed to the
+    company («anslått til gode»). It is read off the books, not the
+    MVA-melding (the VAT return), which is worked out per period (termin) on
+    its own page; a payment to Skatteetaten not yet recorded still counts as
+    owed. ``vat_settled`` is the part of it on 2740: periods already filed
+    (from Myntos, or settled by the previous program before its books were
+    brought over) whose payment is not in the books.
+
+    ``books_through`` is the date of the last voucher in the books, from any
+    journal and any year, or null when nothing is posted. When it lies before
+    ``financial_year``, the year's totals are zero because nothing is posted
+    in the year yet.
+
+    ``positions_as_of`` is null while the books are current, and otherwise
+    equals ``books_through``: the deadline of the VAT period (termin) the books
+    stop in has passed with nothing posted since, so the payment or refund due
+    then is missing and ``vat_position`` and ``cash_position`` are what they
+    were on that date, not today. Typical after bringing only last year over
+    from a previous program. Do not call the VAT owed or refundable then; tell
+    the person the books stop on that date. The turn of the year alone does
+    not set it: on 1 January last year's final period is still open, and its
+    figure is real until its deadline.
+
+    ``cash_position`` is what the bank accounts and the cash box hold
+    according to the books, across every year and including the opening
+    balance: a balance, not this year's movement. Amounts are decimal strings.
+    Every role may read this, and every key.
     """
     require_permission(context.membership.role, Permission.LEDGER_READ)
-    year = financial_year if financial_year is not None else utc_now().year
+    # The year in Norway: in UTC, the first hour of 1 January is still December.
+    year = financial_year if financial_year is not None else _oslo_today().year
     totals = await ledger_service.summarise(db, company=context.company, financial_year=year)
     return SummaryResponse(
         financial_year=totals.financial_year,
@@ -1925,7 +1976,14 @@ async def summary(
         output_vat=totals.output_vat,
         input_vat=totals.input_vat,
         vat_position=totals.vat_position,
+        vat_settled=totals.vat_settled,
         cash_position=totals.cash_position,
+        books_through=totals.books_through,
+        positions_as_of=(
+            totals.books_through
+            if mva_naering.books_behind(context.company, totals.books_through, _oslo_today())
+            else None
+        ),
         by_type=[
             TypeTotalResponse(
                 type_code=item.type_code,

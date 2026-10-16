@@ -41,6 +41,7 @@ function entry(author: Partial<CashFlowEntry>): CashFlowEntry {
     created_via: null,
     attachments: [],
     parts: [],
+    dimension_value_ids: [],
     ...author,
   };
 }

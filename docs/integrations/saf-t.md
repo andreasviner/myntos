@@ -171,6 +171,14 @@ still placed on 2050 so the opening balance sums to zero, with the
 disposition vouchers *are* transactions of the closed year and appear in its
 `GeneralLedgerEntries`, which is what an auditor expects to find there.
 
+**Manual vouchers** (`/manuelt-bilag/`, built 2026-10-15) are their own
+journal, `JournalID` `MANUELT` and `Type` `manuelt` (the standard caps them at
+18 and 9 characters), exported like every other journal with the bilagstekst
+as the transaction's `Description`. The written reason each one carries is
+not in the file, which has no field for it: it stays in Myntos beside the
+voucher, as the documentation bokføringsforskriften § 5-12 asks for, and is
+produced from there on request.
+
 **What the check blocks:** an account with no grouping for the year or a pair
 not in the year's list; a line on an account, customer, supplier, tax code or
 dimension the master files do not hold; an unbalanced voucher or ledger; an
@@ -259,7 +267,10 @@ the result). Both readings of the farm's files give the same voucher.
 - **VAT accounts** (2700, 2710, anything the file groups as «Skyldig
   merverdiavgift») go on 2740, as the review already requires.
 - **The company's own bank account** found in an account's text on another
-  account than 1920 is a `merknad`, not a move.
+  account than 1920 is a `merknad`, not a move. The merknad asks the person to
+  mark that account as a bank account on `/kontoplan/` (this route stores
+  nothing, so it cannot mark it itself), or to move the line to 1920 if the
+  accountant prefers. It goes away once the account is marked.
 
 **Checked against the real file.** `regnaskaps_tests/saft_pilot.py`
 (gitignored, beside the file) reads the farm's 2026 and 2025 files through the
@@ -336,11 +347,10 @@ own 2026 file valid against the 1.40 XSD, and every closing balance per account
 and party equal to the opening plus Tripletex's movement.
 `tests/test_saft_voucher_import.py` is the same on a synthetic file.
 
-**Not done:** the PDFs (not in SAF-T), dimensions (Tripletex's department and
-product are kept in the line's text; FEATURES 37), and a "filed elsewhere"
-mark on the MVA page: Myntos shows a term the old program filed as not sent,
-and only the import's `mva_meldinger_sendt` note and the help say not to send
-it again.
+**Not done:** the PDFs (not in SAF-T). The terms the old program filed are
+marked «Sendt fra et annet program» on the MVA page since 2026-10-15, proposed
+from the imported `mva_avregning` vouchers and then refused a check and a
+submission ([mva.md](mva.md) «Filed elsewhere»).
 
 ## The books brought over, on the server (built 2026-10-13)
 
@@ -403,6 +413,22 @@ is left (`avsluttet_i_tidligere_program`). They used to be refused as
 `allerede_disponert`, which would have kept such a year, and every later one,
 open for good.
 
+**The bank where the files say it is** (2026-10-15). An account whose text
+carries one of the files' own bank account numbers (the header's
+`BankAccount`), other than 1920 and 1900, is marked as a bank account
+(`account.is_bank_account`, migration `f3a9c6e2b814`) with the `merknad`
+`bankkonto_merket`; without `ledger:chart` it is the `merknad`
+`bankkonto_utenfor_1920` asking an administrator to do it. The farm's only bank
+account is a driftskreditt Tripletex keeps on 2390, and the overview, which
+counted money only on 1920 and 1900, read «Inn i år 0,00» for a year of bank
+lines. Marking moves nothing (the vouchers stay where Tripletex put them, and
+new payments still go to 1920) and is undone on `/kontoplan/`. A flag on the
+ledger account rather than a link from `company_bank_account`, because that
+table is where invoices are paid to and no import or key may add to it
+(agents-and-api.md rule 5). Not yet changed: the bank reconciliation matches a
+statement against vouchers on 1920 only, so a camt.053 for the driftskreditt
+finds no candidates among the vouchers on 2390.
+
 **The single-file routes stay** (`…/inngaende-balanse/saft`, `…/saft/bilag`,
 `…/saft/sammenligning`): an agent may want an answer in the same call, and
 `/api/v1` is additive. They still bring only the first year.
@@ -412,6 +438,55 @@ sale and Tripletex's year-end and the running year cut at February, brought
 over in one go, closed, compared, and listed. Not yet run on the farm's real
 files: `regnaskaps_tests/saft_pilot.py` drives the single-file routes and needs
 a variant for the import.
+
+## Dimensions: the file's analysis, both ways (built 2026-10-15)
+
+A line's `Analysis` is a dimension in Myntos (`domain/ledger/dimensions.py`,
+`TransactionLineAnalysis`): an avdeling, a prosjekt, a farm's driftsgren. The
+`AnalysisType` is the dimension's code (Myntos's own are `AVDELING`,
+`PROSJEKT`, `DRIFTSGR`, `PRODUKT`, nine characters at most, which is what
+`SAFcodeType` allows) and the `AnalysisID` the value's.
+
+**Out.** `saft.service` writes every dimension's values in the
+`AnalysisTypeTable`, with `Status` `Active` or `Closed` (switched off, the
+value or its whole dimension; after `AnalysisIDDescription`, where the
+schema's sequence puts it, since Myntos keeps no `StartDate`), and each line's
+allocation as `Analysis` with `DebitAnalysisAmount` or `CreditAnalysisAmount`
+on the line's side, for the line's whole amount. Only the category's income or
+cost line carries it, never the bank or VAT lines. Validated against both XSDs
+in `tests/test_dimensions_api.py`.
+
+**In.** `saft.reader` reads the `AnalysisTypeTable` and each line's
+`Analysis`. `saft.voucher_import` keeps a line's analysis when the file's name
+for the type is one Myntos knows (`driftsgrener.kind_of`: «Avdeling»,
+«Prosjekt», «Driftsgren», «Produkt», English too), and leaves the rest with a
+note (`dimensjoner_utelatt`): Tripletex's `B` «Bilagsart» repeats the voucher
+type, and its `E` «Ansatte» names employees, which a second program has no
+business copying. A value the company lacks blocks the one-file route
+(`dimensjoner_mangler`, listed in `dimensions_to_add`), because a posted line
+cannot be given a dimension afterwards; the server import adds them itself in
+the same transaction, if the person may set up dimensions (`ledger:chart`,
+else `dimensjoner_krever_administrator`). Each line gets the value for its
+whole amount: Tripletex writes `DebitAnalysisAmount` on credit lines too, so
+the file's own amount says nothing the line does not.
+
+**A farm's account id.** In books with the farming add-on, a six- or nine-digit
+Tripletex id (`402020`, `145120512`) whose fifth and sixth digits are a NIBIO
+department gives the line that avdeling, and the last three a «Produkt» named
+from the account's parenthesis («Kyr tilført i året»). The line's own
+`Analysis` wins where the two disagree: in the pilot's file they do on about a
+hundred balance lines and on two result lines in 2025, and the line is what
+Tripletex reported on. Outside the add-on six digits stay only a sub-account.
+The opening balance carries no dimension: it touches no income or cost
+account, which is all the result per value reads.
+
+**Checked against:** `tests/test_dimensions_api.py` and the dimension tests in
+`tests/test_saft_voucher_import.py` (a line's «Avdeling» kept, «Bilagsart» and
+«Ansatte» dropped; a farm's account id; six digits outside the add-on), and
+the farm's real 2026 file through `regnaskaps_tests/saft_pilot.py`
+(2026-10-15): eight values added (three avdelinger, five products), the
+comparison and every VAT term still equal to Tripletex's, the result per
+avdeling adding up to the year's, and Myntos's file valid against the XSD.
 
 ## The kontoplan is editable (built 2026-10-09)
 

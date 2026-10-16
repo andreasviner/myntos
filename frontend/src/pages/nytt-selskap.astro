@@ -146,11 +146,30 @@ import BaseLayout from '../layouts/BaseLayout.astro';
               </span>
             </label>
           </div>
+          {/* «Hopp over» setter opp regnskapet med det som står forhåndsvalgt:
+              dette året og ingen kontonummer. Begge spørsmålene har et svar
+              man kan leve med, og den som bare vil i gang skal ikke måtte
+              lure på om et tomt felt stopper dem. */}
           <div class="oppsett-knapper">
             <button class="btn btn-primary" type="submit" id="opprett">Sett opp regnskapet</button>
+            <button type="button" class="btn btn-ghost" id="hopp-over">Hopp over</button>
             <button type="button" class="btn btn-ghost" id="tilbake">Tilbake</button>
           </div>
         </form>
+
+        {/* Det som står der mens regnskapet settes opp. Kontoplanen og
+            mva-kodene skrives i samme forespørsel, og det tar noen sekunder:
+            før dette sto skjemaet urørt imens, og en side som ikke svarer på
+            et trykk ser ut som en side som har hengt seg. */}
+        <div class="oppsett-arbeider" id="oppretter" role="status" aria-live="polite" hidden>
+          <span class="oppsett-snurr" aria-hidden="true"></span>
+          <div>
+            <p class="oppsett-arbeider-tittel" id="oppretter-tittel">Setter opp regnskapet …</p>
+            <p class="card-hint">
+              Kontoplanen, mva-kodene og regnskapsåret legges inn. Det tar noen sekunder.
+            </p>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -405,6 +424,49 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   }
   .oppsett-valgt .card-hint {
     margin: 0.35rem 0 0;
+  }
+
+  /* --- Mens regnskapet settes opp ----------------------------------------- */
+
+  .oppsett-arbeider {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 0.9rem;
+    padding: 1.4rem 0 0.4rem;
+  }
+  .oppsett-arbeider p {
+    margin: 0;
+  }
+  .oppsett-arbeider-tittel {
+    font-weight: 600;
+    color: var(--fg-strong);
+  }
+  .oppsett-snurr {
+    flex: none;
+    width: 2.4rem;
+    height: 2.4rem;
+    border-radius: 999px;
+    border: 3px solid color-mix(in srgb, var(--accent) 18%, transparent);
+    border-top-color: var(--accent);
+    animation: oppsett-snurr 0.8s linear infinite;
+  }
+  @keyframes oppsett-snurr {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  /* Uten bevegelse står ringen stille og pulserer i stedet, så det fortsatt
+     synes at noe pågår. */
+  @media (prefers-reduced-motion: reduce) {
+    .oppsett-snurr {
+      animation: oppsett-puls 1.6s ease-in-out infinite;
+    }
+  }
+  @keyframes oppsett-puls {
+    50% {
+      opacity: 0.4;
+    }
   }
 
   /* --- Kvitteringen ------------------------------------------------------- */
@@ -881,18 +943,45 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
   const regnskapForm = el<HTMLFormElement>('#regnskap-form');
   const regnskapStatus = el<HTMLParagraphElement>('#regnskap-status');
-  const opprett = el<HTMLButtonElement>('#opprett');
-  el<HTMLInputElement>('input[name="first_financial_year"]', regnskapForm).value = String(
-    new Date().getFullYear(),
-  );
+  const oppretter = el<HTMLDivElement>('#oppretter');
+  const byttSelskap = el<HTMLButtonElement>('#bytt-selskap');
+  const thisYear = new Date().getFullYear();
+  el<HTMLInputElement>('input[name="first_financial_year"]', regnskapForm).value = String(thisYear);
 
-  regnskapForm.addEventListener('submit', (event) => {
-    event.preventDefault();
+  /**
+   * The loading panel in place of the form, or the form back again.
+   *
+   * The form is hidden rather than disabled: the person has answered, and the
+   * thing to look at now is that the books are being made. «Bytt selskap» is
+   * disabled with it, because switching company halfway through a create
+   * would leave the confirmation card naming a company other than the one
+   * that comes back.
+   */
+  function arbeider(busy: boolean, name = ''): void {
+    if (busy) el('#oppretter-tittel').textContent = `Setter opp regnskapet for ${name} …`;
+    show(regnskapForm, !busy);
+    show(oppretter, busy);
+    byttSelskap.disabled = busy;
+  }
+
+  // A fast answer would otherwise flash the panel for a frame, which reads as
+  // a glitch rather than as work done. Long enough to be read, short enough
+  // that nobody is waiting on it.
+  const MINSTE_VISNING_MS = 700;
+
+  /**
+   * Create the books, from the form or from «Hopp over».
+   *
+   * One path for both, so skipping the questions cannot quietly create books
+   * any differently from answering them with the defaults.
+   */
+  function settOpp(firstYear: number, bankAccount: string | null): void {
     const selskap = new FormData(selskapForm);
-    const regnskap = new FormData(regnskapForm);
     const orgnr = digitsOf(String(selskap.get('orgnr') ?? ''));
-    opprett.disabled = true;
+    const name = String(selskap.get('name') ?? '').trim();
     setStatus(regnskapStatus, '');
+    arbeider(true, name);
+    const pause = new Promise((resolve) => setTimeout(resolve, MINSTE_VISNING_MS));
 
     // What the register said rides along only when it belongs to the number
     // actually being submitted, since the orgnr may have been edited after the
@@ -907,20 +996,23 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     // decide what every future salgsdokument may claim: whether it may show
     // merverdiavgift at all (§ 15-14), and whether it must carry the word
     // "Foretaksregisteret" (§ 5-1-2), so a guess is not good enough.
-    void createCompany({
-      organization_id: membership.organization_id,
-      orgnr,
-      name: String(selskap.get('name') ?? '').trim(),
-      first_financial_year: Number(regnskap.get('first_financial_year')),
-      address_line: fromRegister?.address_line ?? null,
-      postal_code: fromRegister?.postal_code ?? null,
-      city: fromRegister?.city ?? null,
-      vat_registered: fromRegister?.registered_in_vat_register ?? false,
-      in_foretaksregisteret: fromRegister?.registered_in_foretaksregisteret ?? false,
-      organisation_form: fromRegister?.organisation_form ?? null,
-      bank_account: String(regnskap.get('bank_account') ?? '').trim() || null,
-    })
-      .then(async (company) => {
+    void Promise.all([
+      createCompany({
+        organization_id: membership.organization_id,
+        orgnr,
+        name,
+        first_financial_year: firstYear,
+        address_line: fromRegister?.address_line ?? null,
+        postal_code: fromRegister?.postal_code ?? null,
+        city: fromRegister?.city ?? null,
+        vat_registered: fromRegister?.registered_in_vat_register ?? false,
+        in_foretaksregisteret: fromRegister?.registered_in_foretaksregisteret ?? false,
+        organisation_form: fromRegister?.organisation_form ?? null,
+        bank_account: bankAccount,
+      }),
+      pause,
+    ])
+      .then(async ([company]) => {
         companies = [...companies, company];
         // The new books are what the rest of the site should open on, and what
         // the header should say from here on. One call for both: this is where
@@ -969,14 +1061,30 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         }
       })
       .catch((error: unknown) => {
+        // The form comes back as it was left, with the reason above it: what
+        // was typed is still there to be corrected.
+        arbeider(false);
         setStatus(
           regnskapStatus,
           error instanceof ApiError ? error.message : 'Vi fikk ikke satt opp regnskapet.',
         );
-      })
-      .finally(() => {
-        opprett.disabled = false;
       });
+  }
+
+  regnskapForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const regnskap = new FormData(regnskapForm);
+    settOpp(
+      Number(regnskap.get('first_financial_year')),
+      String(regnskap.get('bank_account') ?? '').trim() || null,
+    );
+  });
+
+  // The defaults, not whatever is in the fields: «Hopp over» means the
+  // questions were not answered, so a half-typed kontonummer must not ride
+  // along and fail the create on its check digit.
+  el<HTMLButtonElement>('#hopp-over').addEventListener('click', () => {
+    settOpp(thisYear, null);
   });
 
   // --- Step 3: who else is coming in ----------------------------------------------

@@ -12,7 +12,8 @@
     "check": "astro check",
     "test": "vitest run",
     "deploy": "astro build && wrangler deploy --config dist/client/wrangler.json",
-    "favicons": "node scripts/generate-favicons.mjs"
+    "favicons": "node scripts/generate-favicons.mjs",
+    "og-image": "node scripts/generate-og-image.mjs"
   },
   "dependencies": {
     "astro": "^7.0.0"

@@ -53,7 +53,15 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from myntos import __version__
-from myntos.api.deps import KEY_READ, CurrentCompany, CurrentUser, DbSession, Storage, key_write
+from myntos.api.deps import (
+    KEY_READ,
+    CurrentCaller,
+    CurrentCompany,
+    CurrentUser,
+    DbSession,
+    Storage,
+    key_write,
+)
 from myntos.api.v1.skatt import government_login_for
 from myntos.core.clock import utc_now
 from myntos.domain.identity import service as identity_service
@@ -70,6 +78,7 @@ from myntos.domain.mva.errors import (
     ConfirmationRequiredError,
     FiledElsewhereError,
     FilingNotSubmittableError,
+    InvalidFilingDateError,
     MeldingChangedError,
     MeldingNotBuildableError,
     NotVatRegisteredError,
@@ -378,6 +387,11 @@ def _findings(result: Valideringsresultat) -> list[FindingResponse]:
 def _elsewhere_response(
     filing: MvaFiling, current_fastsatt: Decimal | None
 ) -> ElsewhereResponse | None:
+    # Only these rows have a detail, and a row this request has just made (a
+    # check) never loaded the relationship: touching it would lazy-load
+    # outside the async context.
+    if filing.status not in (FilingStatus.ANNET_PROGRAM.value, FilingStatus.OPPHEVET.value):
+        return None
     detail = filing.elsewhere
     if detail is None:
         return None
@@ -830,9 +844,17 @@ async def set_second_melding(
     on one of ``accounts`` dated on or after ``valid_from`` belongs to the
     second melding, every other line to the main one. So the other business
     needs accounts of its own (add them with ``POST
-    /companies/{company_id}/kontoplan``), and a cost shared by both is booked
-    as two lines on two accounts. The VAT accounts 2700, 2710 and 2740 cannot
-    be chosen. Calling this again replaces the list.
+    /companies/{company_id}/kontoplan``). The VAT accounts 2700, 2710 and 2740
+    cannot be chosen. Calling this again replaces the list.
+
+    **Costs shared by both businesses are not divided by Myntos.** How the
+    input VAT on such a cost (diesel, a telephone, a machine used by both) is
+    to be split between the two meldinger is not settled, so Myntos applies no
+    rule: the whole line goes to the melding its account belongs to, and a
+    cost on an account in neither list goes to the main melding. The person
+    chooses, by the account they book it on, or by booking it as two lines on
+    two accounts in the split they and their accountant settle on. Do not
+    invent a split on their behalf.
 
     Refusals: 422 ``invalid_naering_setup`` (an account the chart does not
     have, a VAT account, an impossible date); 422 ``invalid_period``; 409
@@ -1410,6 +1432,137 @@ async def fetch_feedback(
     return _filing_response(filing)
 
 
+# --- Filed from another program --------------------------------------------------
+
+
+class ElsewherePayload(BaseModel):
+    aar: int = Field(ge=2000, le=2100)
+    termin: int = Field(ge=1, le=12)
+    # Which melding, for a company that files two; the main one when left out.
+    naering: str | None = Field(default=None, max_length=32)
+    # The day the other program filed it.
+    filed_on: date
+    # What the other program filed: positive owed, negative a refund. Optional,
+    # since a person moving books over does not always have the receipt at hand.
+    amount: Decimal | None = Field(default=None, max_digits=17, decimal_places=2)
+    # The imported settlement voucher it was proposed from, when it was.
+    voucher_id: int | None = None
+
+
+@router.post(
+    "/companies/{company_id}/mva/termin/annet-program",
+    openapi_extra=key_write("merke en mva-termin som sendt fra et annet program"),
+)
+async def mark_filed_elsewhere(
+    payload: ElsewherePayload,
+    context: CurrentCompany,
+    caller: CurrentCaller,
+    user: CurrentUser,
+    db: DbSession,
+) -> FilingResponse:
+    """Record that a VAT period was filed from another program («Sendt fra et annet program»).
+
+    A company that moves to Myntos during a year, or runs Myntos beside its old
+    program for a while, has periods (terminer) the old program already filed.
+    Myntos computes them from the imported vouchers and, without this, offers
+    them as not sent and overdue. Filing one from Myntos would not be a
+    harmless duplicate: a second melding for a period **replaces** the first at
+    Skatteetaten. This records the person's statement instead, so the period
+    reads «Sendt fra et annet program», is no longer overdue, and is refused a
+    check and a submission from Myntos (409 ``filed_elsewhere``) while the
+    statement stands. Nothing is sent to Skatteetaten.
+
+    ``aar`` and ``termin`` name the period as ``GET /companies/{company_id}/mva``
+    lists it, and ``naering`` the melding for a company that files two.
+    ``filed_on`` is the day it was filed. ``amount`` (optional, a decimal
+    string; positive owed, negative a refund) is what the other program filed;
+    given, the answer's ``elsewhere.difference`` is Myntos's figure minus it,
+    which during a parallel run is the thing to look at. ``voucher_id`` is the
+    imported settlement voucher of ``elsewhere_proposal``, when the statement
+    is made from one.
+
+    The answer is a filing with status ``annet_program`` and ``elsewhere`` set.
+    It is a statement, not a filing: ``POST
+    /companies/{company_id}/mva/innsendinger/{filing_id}/angre`` takes it back.
+
+    A key may ask for this, and it waits for the person's approval: it says
+    something about what was sent to the state, which only the person knows.
+
+    Refusals: 409 ``not_vat_registered``; 409 ``period_not_over``; 409
+    ``already_filed`` when Myntos filed the period itself; 409
+    ``filed_elsewhere`` when it is recorded already; 422
+    ``invalid_filing_date`` for a day in the future or before the period
+    ended; 422 ``invalid_period`` or ``unknown_naering``; 404
+    ``voucher_not_found`` when ``voucher_id`` is not an imported VAT
+    settlement of this company. Needs ``ledger:write``, as filing does; a key
+    needs ``write``.
+    """
+    require_permission(context.membership.role, Permission.LEDGER_WRITE)
+    company = context.company
+    setup = await naering_module.load(db, company)
+    chosen = setup.get(payload.naering)
+    period_ = chosen.termin(payload.aar, payload.termin)
+    _require_fileable(company, period_)
+    # A melding can only be filed once its period is over, and a statement
+    # about tomorrow is not a statement about something that happened.
+    if payload.filed_on > _today() or payload.filed_on <= period_.end:
+        raise InvalidFilingDateError(
+            f"{period_.label} kan bare være sendt mellom "
+            f"{period_.end.strftime('%d.%m.%Y')} og i dag"
+        )
+    filing = await elsewhere.record(
+        db,
+        company=company,
+        naering=chosen,
+        setup=setup,
+        termin=period_,
+        filed_on=payload.filed_on,
+        amount=payload.amount,
+        voucher_id=payload.voucher_id,
+        user_id=user.id,
+        key_id=caller.key.key.id if caller.key is not None else None,
+    )
+    return _filing_response(filing)
+
+
+@router.post(
+    "/companies/{company_id}/mva/innsendinger/{filing_id}/angre",
+    openapi_extra=key_write("angre at en mva-termin er merket som sendt fra et annet program"),
+)
+async def withdraw_filed_elsewhere(
+    filing_id: int,
+    context: CurrentCompany,
+    caller: CurrentCaller,
+    user: CurrentUser,
+    db: DbSession,
+) -> FilingResponse:
+    """Take back a «Sendt fra et annet program» statement («Angre»).
+
+    For a statement made by mistake, and for the day a correction of such a
+    period is to be filed from Myntos: take it back, check, send. The record
+    stays, with status ``opphevet`` and ``elsewhere.withdrawn_at``, so the
+    period's history still says who said what. A filing Myntos sent itself is
+    never withdrawn this way; a filed melding is only ever replaced by a newer
+    one.
+
+    Refusals: 404 ``filing_not_found``, also for another company's filing; 409
+    ``not_filed_elsewhere`` for anything but a standing statement. Needs
+    ``ledger:write``; a key needs ``write``, and the request waits for the
+    person's approval.
+    """
+    require_permission(context.membership.role, Permission.LEDGER_WRITE)
+    filing = await service.get_filing(db, context.company, filing_id, lock=True)
+    await elsewhere.withdraw(
+        db,
+        filing,
+        # The key's person approved the request, so it is theirs either way;
+        # the key id says it went through an agent.
+        user_id=user.id,
+        key_id=caller.key.key.id if caller.key is not None else None,
+    )
+    return _filing_response(filing)
+
+
 # --- Reading what was filed -------------------------------------------------------
 
 
@@ -1424,11 +1577,20 @@ async def filed_xml(filing_id: int, context: CurrentCompany, db: DbSession) -> R
     download named ``mva-melding-<orgnr>-<year>-<termin>.xml``. For the melding
     as the books have it now, use ``GET /companies/{company_id}/mva/termin/xml``.
 
-    Refusals: 404 ``filing_not_found``, also for another company's filing.
-    Needs ``ledger:read``; a key needs ``read``.
+    Refusals: 404 ``filing_not_found``, also for another company's filing;
+    409 ``filing_not_submittable`` for a period recorded as filed from another
+    program, which has no melding here. Needs ``ledger:read``; a key needs
+    ``read``.
     """
     require_permission(context.membership.role, Permission.LEDGER_READ)
     filing = await service.get_filing(db, context.company, filing_id)
+    if not filing.melding_xml:
+        # A period recorded as filed from another program: nothing was sent
+        # from here, and an empty file would read as an empty melding.
+        raise FilingNotSubmittableError(
+            "terminen er merket som sendt fra et annet program, så Myntos har ingen melding "
+            "lagret for den"
+        )
     return _xml_download(
         filing.melding_xml.encode("utf-8"),
         f"mva-melding-{context.company.orgnr}-{filing.year}-{filing.period_index}.xml",

@@ -26,12 +26,12 @@ without a number, which is a good way to see the invoice before issuing it.
 ## Steps
 
 1. Open «Faktura» in the top menu (`https://myntos.no/faktura/`).
-2. In the list on the right, find the invoice and press «PDF» on its row, or
-   «EHF» for the e-invoice file. The file downloads.
-3. Right after issuing, the card «Faktura … er utstedt» has the same files as
-   «Last ned PDF» and «Last ned EHF».
-4. For a draft, «Se utkastet som PDF» in the review shows it before it is
-   issued.
+2. In the list «Fakturaer» below the form, find the invoice and press «PDF»
+   on its row, or «EHF» for the e-invoice file. The file downloads.
+3. Right after issuing, the card «Faktura … er utstedt» shows the PDF on the
+   page and has the same files as «Last ned PDF» and «Last ned EHF».
+4. For a draft, the review («Se over fakturaen») shows the PDF on the page
+   before it is issued, and «Last ned utkastet som PDF» downloads it.
 
 ## If something stops them
 

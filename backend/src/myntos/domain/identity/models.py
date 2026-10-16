@@ -715,6 +715,7 @@ class AgentKeyStop(enum.StrEnum):
     PASSWORD_RESET = "password_reset"  # noqa: S105 - a reason name, not a password
     BANKID = "bankid"
     ACCOUNT_DELETED = "account_deleted"
+    COMPANY_CLOSED = "company_closed"
 
 
 class AgentTokenKind(enum.StrEnum):

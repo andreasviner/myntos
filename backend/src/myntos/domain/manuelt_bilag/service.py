@@ -76,6 +76,11 @@ MAX_EXPLANATION = 4000
 MAX_LINES = 200
 
 _VAT_ACCOUNTS = frozenset({OUTPUT_VAT_ACCOUNT, INPUT_VAT_ACCOUNT})
+# The accounts the register pays through, for the ``betalingskonto`` merknad,
+# which sends the person to the register. Not every account marked as a bank
+# account (kontoplan.counts_as_bank): the register never posts to a
+# driftskreditt on 2390, so for that one a manual voucher is the way, and the
+# merknad would point somewhere that cannot help.
 _PAYMENT_ACCOUNTS = frozenset({BANK_ACCOUNT, CASH_ACCOUNT})
 
 

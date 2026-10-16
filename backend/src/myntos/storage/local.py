@@ -59,6 +59,10 @@ class LocalDocumentStorage:
         partial.write_bytes(content)
         partial.replace(path)
 
+    async def delete(self, key: str) -> None:
+        # Only the retention purge calls this (DocumentStorage.delete).
+        await asyncio.to_thread(self._path(key).unlink, missing_ok=True)
+
     async def load(self, key: str) -> bytes:
         path = self._path(key)
         try:

@@ -47,6 +47,10 @@ describe('pageFor', () => {
     expect(pageFor('/api/v1/companies/7/faktura/12/utsted')?.href).toBe('/faktura/');
     expect(pageFor('/api/v1/companies/7/mva/spesifikasjoner')?.href).toBe('/mva-justeringer/');
     expect(pageFor('/api/v1/companies/7/mva/innstillinger')?.href).toBe('/mva/');
+    expect(pageFor('/api/v1/companies/7/manuelt-bilag/12/reversering')?.href).toBe('/manuelt-bilag/');
+    expect(pageFor('/api/v1/companies/7/anlegg/avskrivning')?.href).toBe('/anlegg/');
+    expect(pageFor('/api/v1/companies/7/dimensjoner/3/verdier')?.href).toBe('/avdelinger/');
+    expect(pageFor('/api/v1/companies/7/dimensjonsverdier/9')?.href).toBe('/avdelinger/');
   });
 
   it('does not guess at a path it does not know', () => {

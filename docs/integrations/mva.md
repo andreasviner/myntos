@@ -263,6 +263,120 @@ no melding to put them in. Skatteetaten's example puts
 Myntos sends no merknad yet, and if validation ever asks for one the `avvik`
 will name it.
 
+## Two returns (built 2026-10-15)
+
+A farm, forest or fishery files the **primærnæring** melding, and may put other
+business in it only while that business's taxable sales and uttak stay at or
+under 30 000 kroner a year (merverdiavgiftsloven § 15-1 (1)). Above that it
+files an **alminnelig** melding as well (Merverdiavgiftshåndboken 15-1.3), each
+with its own terms: primærnæring yearly, due 10 April
+(skatteforvaltningsforskriften § 8-3-7, § 8-3-10 (3)), or two-monthly when
+Skatteetaten agreed (§ 8-3-8 (3)-(4)); alminnelig two-monthly (§ 8-3-1), or
+yearly under a million kroner (§ 8-3-3, where (2) waives the twelve months'
+qualification for a § 8-3-7 filer's other business). Each melding carries its
+`meldingskategori`, and Skatteetaten holds the duty per category.
+
+`domain/mva/naering.py`. The **main melding** is the company's own two columns,
+untouched, so a company with one melding is exactly what it was. The **second**
+is one `mva_second_naering` row (period length, `valid_from`), whose category
+is always the other of the two Myntos files, with its accounts in
+`mva_second_naering_account`.
+
+- **A line goes in the melding of its account.** A line on one of the second
+  melding's accounts dated on or after `valid_from` is the second melding's;
+  every other line is the main one's. Read when the melding is built, not
+  stamped on the line, so it reaches invoices, imports and manual vouchers
+  without any of them knowing. Why by account and not by category or per line:
+  the module docstring.
+- **The past is held by a guard, not by stamps.** `naering.guard` refuses any
+  change (an account moved, `valid_from` moved, the second melding removed, the
+  categories swapped) that would move a taxed line into or out of a term filed
+  or recorded as filed elsewhere: 409 `filed_lines_would_move`.
+- **Routes:** `naering` (a category) on the overview, the termin, its XML, the
+  check and an agent's request to file; `PUT`/`DELETE …/mva/andre-melding`
+  (`organization:manage`).
+- **Settlement:** each melding in its own voucher onto 2740, its text naming the
+  melding; split mode settles the melding's own output and input less earlier
+  settlements of the same category and term, not the account balances, which
+  hold both. The reconciliation on the term page compares 2700/2710 with both
+  meldinger's lines for the term's dates.
+
+**Known limit: input VAT on costs shared by both businesses.** How the
+deduction on a cost both businesses use (diesel, a telephone, a machine) is to
+be divided between the two meldinger is **not settled**. The only guidance
+found (2026-10-13) is on fellesanskaffelser between taxable and exempt use,
+where a proportional split is accepted; nothing found says how Skatteetaten
+wants it between two meldinger of one company, nor whether the two meldinger's
+payments and refunds are netted. So Myntos applies **no rule**: the whole line
+goes to the melding of its account, and an account in neither list to the main
+melding. The person chooses, by the account they book the cost on, or by
+booking it as two lines on two accounts in the split they and their accountant
+settle on. The MVA page says so beside the account list and on every term of a
+company with two meldinger; the skill tells agents not to invent a split. To
+close: get Skatteetaten's answer (SBS support), then decide whether Myntos
+should propose a split.
+
+Also not built: a second melding cannot end (no `valid_to`); invoice lines post
+to fixed income accounts (3000/3010/3020), so the second business's invoice
+sales need those accounts assigned or a separate account chosen; only
+alminnelig and primærnæring can be paired.
+
+## Filed elsewhere (built 2026-10-15)
+
+A company that moves to Myntos during a year, or runs it beside the old program
+(the farm pilot's parallel run, saf-t.md), has terms the old program filed.
+Myntos computes them from the imported vouchers and, knowing nothing else,
+offered them as not sent. Sending one would not be a harmless duplicate: **a
+second melding for a term replaces the first** at Skatteetaten.
+
+`domain/mva/elsewhere.py`. The person records it: an `mva_filing` row with
+status `annet_program` (no XML, no answer; Myntos's own figures at the time as
+the snapshot) and its detail in `mva_filing_elsewhere` (the day, optionally the
+amount, the imported settlement voucher it came from).
+
+- `POST …/mva/termin/annet-program` records it (`ledger:write`, like filing; a
+  key `key_write`: undoable and files nothing). Refused for a term Myntos filed
+  (`already_filed`), already marked (`filed_elsewhere`), not over, or with a
+  `filed_on` before the term ended or in the future (`invalid_filing_date`).
+- While it stands the term is closed (`FilingStatus.closes_term`): not overdue,
+  check and send refused with 409 `filed_elsewhere`, as is an agent's request
+  to file, and a waiting request is marked done.
+- `POST …/innsendinger/{id}/angre` takes it back: status `opphevet`, kept with
+  who and when, because the term's history is who said it was filed elsewhere
+  and who changed their mind. That is also how a correction for such a term is
+  filed from Myntos.
+- **Proposed from the import:** the old program's settlement voucher
+  (`IMPORT` journal, voucher type `mva_avregning`) whose output and input are
+  exactly a term's melding, within 115 days after the term ends, is shown as
+  `elsewhere_proposal`. With one melding a voucher dated on a term's last day
+  is proposed even when the amounts differ; with two, only an exact match. A
+  proposal is never recorded on its own.
+- The comparison: Myntos's figure minus the recorded amount; under a krone is
+  agreement, since Tripletex rounds the settlement to kroner (øre on 7740).
+- **Asked on the import too** (2026-10-15): the finished import on
+  `/tidligere-program/` lists every term of the imported years that is over
+  and neither filed nor marked, the proposed ones ticked, and marks the ticked
+  ones through the same route, one request each, `filed_on` the deadline (the
+  default `/mva/` fills in) and the proposal's amount and voucher when there is
+  one. That is the moment the person knows the answer; left to `/mva/`, every
+  such term read as overdue with «Send» beside it.
+
+**The overview's VAT card is not the term list.** It is the balance on 2700,
+2710 and 2740, and marking a term filed elsewhere does not move it: filed is
+not paid. A company that brought only last year over shows last year's final
+term there (on 2740 once the old program's settlement came across) until the
+payment, a voucher in a year Myntos does not have yet, is posted. The summary
+therefore carries `books_through`, `vat_settled` and `positions_as_of`
+(`domain/mva/naering.books_behind`): once the deadline of the term the books
+stop in has passed with nothing posted since, the balance is that day's, and
+the card shows «–» and «ikke kjent: regnskapet slutter <dato>» instead of an
+amount. The first version kept the amount with the date under it, and
+«−303 471,00 kr» was still read as a refund owed in October for one paid out
+in February. The deadline and not New Year decides, because on 1 January last
+year's final term is open and its figure is real. Zeroing the card on the
+person's say-so was considered and refused: it would be a payment the books do
+not hold, and the bank balance beside it would still be last year's.
+
 ## Registration status (built 2026-10-09)
 
 `company.vat_registered` says whether the company is in Merverdiavgiftsregisteret

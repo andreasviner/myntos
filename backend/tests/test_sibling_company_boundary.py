@@ -508,6 +508,35 @@ def _an_import(client: TestClient, company_id: int) -> tuple[int, Callable[[], N
     return import_id, readable
 
 
+def _an_asset(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """A machine in the sibling's anleggsregister.
+
+    Changing it, disposing of it or deleting it through this company's URL
+    would change the other client's saldo, and so its skattemelding.
+    """
+    made = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company_id}/anlegg",
+        json={
+            "description": "Hemmelig maskin",
+            "saldogruppe": "d",
+            "account_number": "1250",
+            "acquired_on": f"{THIS_YEAR}-03-01",
+            "cost": "50000.00",
+        },
+    )
+    assert made.status_code == 201, made.text
+    asset_id = int(made.json()["id"])
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/anlegg")
+        assert owner.status_code == 200, owner.text
+        assert asset_id in {item["id"] for item in owner.json()["assets"]}
+
+    return asset_id, readable
+
+
 FACTORIES: dict[str, Callable[[TestClient, int], tuple[int, Callable[[], None]]]] = {
     "document_id": _a_document,
     "voucher_id": _a_voucher,
@@ -541,6 +570,8 @@ FACTORIES: dict[str, Callable[[TestClient, int], tuple[int, Callable[[], None]]]
     # The previous program's files, read on the server: the other client's
     # books as they were before Myntos.
     "import_id": _an_import,
+    # A driftsmiddel: the other client's saldo, and what it deducts.
+    "asset_id": _an_asset,
 }
 
 
@@ -666,6 +697,7 @@ REQUESTS: dict[tuple[str, str], dict[str, Any]] = {
         "json": {"fastsatt_merverdiavgift": "1250.00", "bekreftet": True}
     },
     ("POST", f"{_COMPANIES}/mva/innsendinger/{{filing_id}}/tilbakemelding"): {},
+    ("POST", f"{_COMPANIES}/mva/innsendinger/{{filing_id}}/angre"): {},
     ("GET", f"{_COMPANIES}/bank/kontoutskrifter/{{statement_id}}/fil"): {},
     # Any voucher id in the body: the line is looked up first, through the
     # company, and that lookup is the thing being refused.
@@ -700,6 +732,12 @@ REQUESTS: dict[tuple[str, str], dict[str, Any]] = {
     ("GET", f"{_COMPANIES}/saft/innlesing/{{import_id}}"): {},
     ("DELETE", f"{_COMPANIES}/saft/innlesing/{{import_id}}"): {},
     ("POST", f"{_COMPANIES}/saft/innlesing/{{import_id}}/foring"): {},
+    ("PATCH", f"{_COMPANIES}/anlegg/{{asset_id}}"): {"json": {"description": "Rettet"}},
+    ("DELETE", f"{_COMPANIES}/anlegg/{{asset_id}}"): {},
+    ("POST", f"{_COMPANIES}/anlegg/{{asset_id}}/avgang"): {
+        "json": {"disposed_on": f"{THIS_YEAR}-06-01", "proceeds": "10000.00"}
+    },
+    ("DELETE", f"{_COMPANIES}/anlegg/{{asset_id}}/avgang"): {},
 }
 
 

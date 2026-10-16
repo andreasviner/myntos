@@ -28,6 +28,8 @@ from myntos.db.base import Base
 # Base.metadata. The migration/model comparison below covers whatever is
 # registered, so a new model module that is not imported here would silently
 # drop out of the check.
+from myntos.domain.anlegg import models as anlegg_models  # noqa: F401
+from myntos.domain.arsoppgjor import landbruk_models  # noqa: F401
 from myntos.domain.bank import models as bank_models  # noqa: F401
 from myntos.domain.bilag import models as bilag_models  # noqa: F401
 from myntos.domain.identity import models as identity_models  # noqa: F401

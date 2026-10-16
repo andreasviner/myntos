@@ -1,0 +1,684 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Buskap og lager | Myntos"
+  description="Telling av dyr, fôr og korn ved årsslutt, verdsatt etter takseringsreglene."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Buskap og lager</p>
+      {/* Selskapet er overskriften: tellingen gjelder ett regnskap. */}
+      <h1 data-session-company></h1>
+      <p class="muted orgnr" id="orgnr"></p>
+    </div>
+    <label class="year-pick" id="year-pick" hidden>
+      <span>Regnskapsår</span>
+      <select id="year"></select>
+    </label>
+  </header>
+
+  <p class="lead">
+    Dyrene, fôret og kornet gården har ved årsslutt skal stå i balansen med verdien etter
+    Skattedirektoratets takseringsregler. Tell det som står i fjøset og på lageret 31. desember, så
+    regner Myntos verdien og fører endringen fra i fjor som ett bilag.
+  </p>
+
+  <p class="status" id="page-status" hidden></p>
+  <div class="empty" id="loading">Henter …</div>
+
+  {/* Siden hører til landbrukstillegget. Uten det sier den hvor det slås på. */}
+  <section class="card" id="not-farm" hidden>
+    <h2 class="card-title">Landbruk er ikke slått på</h2>
+    <p>
+      Buskap og lager hører til landbrukstillegget. Slå det på under
+      <a href="/kontoplan/">Kontoplan</a>, i kortet «Landbruk».
+    </p>
+  </section>
+
+  <p class="card-hint" id="rates" hidden></p>
+
+  {/* Tellingen som står. Retting er reversering pluss ny telling, aldri endring. */}
+  <section class="card" id="standing" hidden>
+    <h2 class="card-title">Ført telling <span id="standing-no" class="muted"></span></h2>
+    <div class="table-scroll">
+      <table class="lines" id="standing-table">
+        <thead>
+          <tr>
+            <th>Hva</th><th class="num">Antall</th><th>Verdsetting</th><th class="num">Per enhet</th><th
+              class="num">Verdi</th
+            ><th>Konto</th>
+          </tr>
+        </thead>
+        <tbody id="standing-lines"></tbody>
+      </table>
+    </div>
+    <ul class="totals" id="standing-totals"></ul>
+    <div class="actions" id="standing-actions">
+      <button type="button" class="btn btn-ghost" id="correct">Rett tellingen</button>
+      <button type="button" class="btn btn-ghost" id="withdraw">Trekk den tilbake</button>
+    </div>
+    <p class="card-hint">
+      En ført telling endres ikke. Retting reverserer bilaget og fører den nye tellingen i samme
+      operasjon, så begge står i regnskapet med lenke mellom seg.
+    </p>
+  </section>
+
+  {/* Skjemaet. «Kontroller» lagrer ingenting; den ber om backendens kontroll. */}
+  <section class="card" id="form-card" hidden>
+    <h2 class="card-title" id="form-title">Telling 31. desember</h2>
+    <form id="count-form" novalidate>
+      <h3>Inngående 1. januar</h3>
+      <p class="card-hint" id="opening-hint"></p>
+      <div class="table-scroll">
+        <table class="lines" id="opening-table">
+          <thead>
+            <tr>
+              <th>Hva</th><th class="num">Antall</th><th class="num">Verdi per enhet</th><th
+                >Konto</th
+              ><th>Beskrivelse</th><th><span class="visually-hidden">Fjern</span></th>
+            </tr>
+          </thead>
+          <tbody id="opening-rows"></tbody>
+        </table>
+      </div>
+      <div class="actions" id="opening-actions">
+        <button type="button" class="btn btn-ghost" id="add-opening">Legg til inngående linje</button>
+      </div>
+
+      <h3>Telt 31. desember</h3>
+      <ul class="booked" id="booked" hidden></ul>
+      <div class="table-scroll">
+        <table class="lines" id="closing-table">
+          <thead>
+            <tr>
+              <th>Hva</th><th class="num">Antall</th><th>Verdsetting</th><th class="num"
+                >Verdi per enhet</th
+              ><th>Konto</th><th>Beskrivelse</th><th><span class="visually-hidden">Fjern</span></th>
+            </tr>
+          </thead>
+          <tbody id="closing-rows"></tbody>
+        </table>
+      </div>
+      <p class="card-hint">
+        Verdi per enhet fylles bare inn for kostpris og oppgitt verdi. Normalverdien er årets sats, og
+        kyr, avlsgriser, sauer og geiter fra inngående balanse får gjennomsnittet av de voksne dyrene
+        der. Konto kan stå tom: buskap føres på 1450, innkjøpte varer på 1400 og egenproduserte på
+        1490. Tell også det som er borte, med 0.
+      </p>
+      <div class="actions">
+        <button type="button" class="btn btn-ghost" id="add-closing">Legg til linje</button>
+        <button type="submit" class="btn btn-primary" id="check">Kontroller</button>
+      </div>
+      <p class="status" id="form-status" hidden></p>
+    </form>
+  </section>
+
+  {/* Gjennomgangen: det backend sier blir ført, og hva den har å utsette. */}
+  <section class="card" id="review" hidden aria-live="polite">
+    <h2 class="card-title">Gjennomgå før føring</h2>
+    <p id="review-intro"></p>
+    <div class="table-scroll">
+      <table class="lines" id="review-table">
+        <thead>
+          <tr>
+            <th>Hva</th><th class="num">Antall</th><th>Verdsetting</th><th class="num">Per enhet</th><th
+              class="num">Verdi</th
+            ><th>Konto</th>
+          </tr>
+        </thead>
+        <tbody id="review-lines"></tbody>
+      </table>
+    </div>
+    <h3>Per konto</h3>
+    <div class="table-scroll">
+      <table class="lines" id="accounts-table">
+        <thead>
+          <tr><th>Konto</th><th class="num">I regnskapet</th><th class="num">Telt</th><th class="num">Endring</th></tr>
+        </thead>
+        <tbody id="review-accounts"></tbody>
+      </table>
+    </div>
+    <h3>Bilaget</h3>
+    <div class="table-scroll">
+      <table class="lines" id="voucher-table">
+        <thead>
+          <tr><th>Konto</th><th>Tekst</th><th class="num">Debet</th><th class="num">Kredit</th></tr>
+        </thead>
+        <tbody id="review-voucher"></tbody>
+      </table>
+    </div>
+    <p class="card-hint" id="no-voucher" hidden>
+      Tellingen endrer ingen verdier, så den lagres uten bilag.
+    </p>
+    <ul class="findings" id="errors" hidden></ul>
+    <ul class="findings notes" id="notes" hidden></ul>
+    <div class="actions">
+      <button type="button" class="btn btn-ghost" id="back">Tilbake til skjemaet</button>
+      <button type="button" class="btn btn-primary" id="post" disabled>Før tellingen</button>
+    </div>
+    <p class="status" id="review-status" hidden></p>
+  </section>
+
+  <section class="card" id="history-card" hidden>
+    <h2 class="card-title">Historikk</h2>
+    <ul class="history" id="history"></ul>
+  </section>
+</BaseLayout>
+
+<style>
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .orgnr {
+    margin: 0.2rem 0 0;
+  }
+  .year-pick {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .card + .card {
+    margin-top: 1rem;
+  }
+  h3 {
+    margin: 1.25rem 0 0.5rem;
+    font-size: 1rem;
+  }
+  /* Radene lages av skriptet, så reglene for dem går gjennom :global(). */
+  .lines {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+  }
+  .lines :global(th),
+  .lines :global(td) {
+    text-align: left;
+    padding: 0.35rem 0.5rem;
+    border-bottom: 1px solid var(--border, #ddd);
+  }
+  .lines :global(.num) {
+    text-align: right;
+  }
+  .lines :global(input),
+  .lines :global(select) {
+    width: 100%;
+    min-width: 5rem;
+  }
+  .findings {
+    margin: 0.75rem 0;
+    padding-left: 1.2rem;
+    color: var(--negative);
+  }
+  .findings.notes {
+    color: var(--muted);
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+  }
+  .history,
+  .booked,
+  .totals {
+    padding-left: 1.2rem;
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    getCountState,
+    getLandbruk,
+    listFinancialYears,
+    postCount,
+    reviewCount,
+    withdrawCount,
+    type Company,
+    type CountCategory,
+    type CountKind,
+    type CountKindTotal,
+    type CountLine,
+    type CountLineInput,
+    type CountState,
+    type CountValuation,
+  } from '../lib/api';
+  import { normaliseAmount } from '../lib/amount';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import {
+    KIND_LABELS,
+    VALUATION_LABELS,
+    decimal,
+    decodeCategory,
+    encodeCategory,
+    yearToOpen,
+  } from '../lib/farm';
+  import { isoDate, kroner, orgnummer, todayIso } from '../lib/format';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const formStatus = el<HTMLParagraphElement>('#form-status');
+  const reviewStatus = el<HTMLParagraphElement>('#review-status');
+  const openingRows = el<HTMLTableSectionElement>('#opening-rows');
+  const closingRows = el<HTMLTableSectionElement>('#closing-rows');
+  const postButton = el<HTMLButtonElement>('#post');
+  const yearSelect = el<HTMLSelectElement>('#year');
+
+  let company: Company;
+  let year = 0;
+  let state: CountState;
+  // Om skjemaet erstatter en ført telling. Settes bare av «Rett tellingen».
+  let correcting = false;
+  // Linjene slik de ble kontrollert; det er disse som føres.
+  let reviewed: CountLineInput[] = [];
+
+  const KINDS: CountKind[] = ['buskap', 'egenprodusert', 'innkjopt'];
+
+  function cell(text: string, numeric = false): HTMLTableCellElement {
+    const td = document.createElement('td');
+    td.textContent = text;
+    if (numeric) td.className = 'num';
+    return td;
+  }
+
+  function lineRow(line: CountLine): HTMLTableRowElement {
+    const tr = document.createElement('tr');
+    const what = line.description && line.description !== line.label ? `${line.label} (${line.description})` : line.label;
+    tr.append(
+      cell(what),
+      cell(`${decimal(line.quantity)} ${line.unit}`, true),
+      cell(VALUATION_LABELS[line.valuation as CountValuation] ?? line.valuation),
+      cell(kroner(line.unit_value), true),
+      cell(kroner(line.value), true),
+      cell(line.account_number),
+    );
+    return tr;
+  }
+
+  function totalsList(totals: CountKindTotal[]): HTMLLIElement[] {
+    return totals
+      .filter((t) => Number(t.opening) !== 0 || Number(t.closing) !== 0)
+      .map((t) => {
+        const item = document.createElement('li');
+        item.textContent = `${KIND_LABELS[t.kind]}: ${kroner(t.opening)} 1. januar, ${kroner(t.closing)} 31. desember`;
+        return item;
+      });
+  }
+
+  function categorySelect(selected: string): HTMLSelectElement {
+    const select = document.createElement('select');
+    select.className = 'category';
+    select.setAttribute('aria-label', 'Hva');
+    for (const kind of KINDS) {
+      const group = document.createElement('optgroup');
+      group.label = KIND_LABELS[kind];
+      const categories = state.categories.filter((c: CountCategory) => c.kind === kind);
+      for (const c of categories) {
+        const option = document.createElement('option');
+        option.value = c.code;
+        option.textContent = c.value === null ? `${c.label} (${c.unit})` : `${c.label} (${kroner(c.value)} per ${c.unit})`;
+        group.append(option);
+      }
+      const other = document.createElement('option');
+      other.value = encodeCategory('annet', kind);
+      other.textContent = 'Annet';
+      group.append(other);
+      select.append(group);
+    }
+    select.value = selected;
+    return select;
+  }
+
+  function valuationSelect(selected: string | null | undefined): HTMLSelectElement {
+    const select = document.createElement('select');
+    select.className = 'valuation';
+    select.setAttribute('aria-label', 'Verdsetting');
+    const standard = document.createElement('option');
+    standard.value = '';
+    standard.textContent = 'Etter reglene';
+    select.append(standard);
+    for (const [value, label] of Object.entries(VALUATION_LABELS)) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      select.append(option);
+    }
+    select.value = selected ?? '';
+    return select;
+  }
+
+  function input(className: string, value: string, label: string, numeric = false): HTMLInputElement {
+    const node = document.createElement('input');
+    node.className = className;
+    node.value = value;
+    node.setAttribute('aria-label', label);
+    if (numeric) node.inputMode = 'decimal';
+    return node;
+  }
+
+  function addRow(target: HTMLTableSectionElement, side: 'inngaende' | 'utgaende', line?: Partial<CountLineInput>): void {
+    const tr = document.createElement('tr');
+    tr.dataset.side = side;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn btn-ghost btn-small';
+    remove.textContent = 'Fjern';
+    remove.addEventListener('click', () => tr.remove());
+    const first = state.categories[0]?.code ?? 'annet:buskap';
+    const parts: HTMLElement[] = [
+      categorySelect(line?.category ? encodeCategory(line.category, line.kind ?? null) : first),
+      input('quantity', line?.quantity ? decimal(line.quantity) : '', 'Antall', true),
+    ];
+    if (side === 'utgaende') parts.push(valuationSelect(line?.valuation));
+    parts.push(
+      input('unit-value', line?.unit_value ? decimal(line.unit_value) : '', 'Verdi per enhet', true),
+      input('account', line?.account_number ?? '', 'Konto'),
+      input('description', line?.description ?? '', 'Beskrivelse'),
+      remove,
+    );
+    for (const part of parts) {
+      const td = document.createElement('td');
+      td.append(part);
+      tr.append(td);
+    }
+    target.append(tr);
+  }
+
+  function fromLine(line: CountLine): CountLineInput {
+    return {
+      side: line.side,
+      category: line.category,
+      kind: line.category === 'annet' ? line.kind : null,
+      quantity: line.quantity,
+      // Normalverdi og gjennomsnitt regnes av backend; bare de andre har en verdi å sende.
+      unit_value: line.valuation === 'kostpris' || line.valuation === 'verdsatt' || line.side === 'inngaende' ? line.unit_value : null,
+      valuation: line.side === 'utgaende' ? (line.valuation as CountValuation) : null,
+      account_number: line.account_number,
+      description: line.description,
+    };
+  }
+
+  /** Skjemaet som linjer, eller en melding om feltet som ikke kunne leses. */
+  function collect(): CountLineInput[] | string {
+    const lines: CountLineInput[] = [];
+    const rows = [...openingRows.querySelectorAll('tr'), ...closingRows.querySelectorAll('tr')];
+    for (const [index, tr] of rows.entries()) {
+      // Fjorårets inngående linjer står uten felt og sendes ikke: backend kopierer dem selv.
+      if (tr.dataset.side === undefined) continue;
+      const value = (selector: string): string => el<HTMLInputElement>(selector, tr).value.trim();
+      const side = tr.dataset.side === 'inngaende' ? 'inngaende' : 'utgaende';
+      const rawQuantity = value('.quantity');
+      if (rawQuantity === '') continue;
+      const quantity = normaliseAmount(rawQuantity, 3);
+      const rawUnit = value('.unit-value');
+      const unitValue = rawUnit === '' ? null : normaliseAmount(rawUnit, 4);
+      if (quantity === null) return `Antallet på linje ${index + 1} kan ikke leses.`;
+      if (rawUnit !== '' && unitValue === null) return `Verdien på linje ${index + 1} kan ikke leses.`;
+      const { category, kind } = decodeCategory(el<HTMLSelectElement>('.category', tr).value);
+      const valuation = side === 'utgaende' ? el<HTMLSelectElement>('.valuation', tr).value : '';
+      lines.push({
+        side,
+        category,
+        kind,
+        quantity,
+        unit_value: unitValue,
+        valuation: valuation === '' ? null : (valuation as CountValuation),
+        account_number: value('.account') || null,
+        description: value('.description'),
+      });
+    }
+    return lines;
+  }
+
+  function list(target: HTMLElement, messages: string[]): void {
+    target.replaceChildren(
+      ...messages.map((message) => {
+        const item = document.createElement('li');
+        item.textContent = message;
+        return item;
+      }),
+    );
+    show(target, messages.length > 0);
+  }
+
+  function fillForm(lines: CountLine[]): void {
+    openingRows.replaceChildren();
+    closingRows.replaceChildren();
+    const copied = state.opening_source === 'forrige_telling';
+    if (!copied) {
+      const opening = lines.filter((li) => li.side === 'inngaende');
+      for (const line of opening) addRow(openingRows, 'inngaende', fromLine(line));
+      if (opening.length === 0) addRow(openingRows, 'inngaende');
+    }
+    const closing = lines.filter((li) => li.side === 'utgaende');
+    for (const line of closing) addRow(closingRows, 'utgaende', fromLine(line));
+    if (closing.length === 0) {
+      // Ett forslag per kategori som sto i fjor, så ingenting glemmes.
+      for (const line of state.opening) addRow(closingRows, 'utgaende', { category: line.category, kind: line.kind, account_number: line.account_number });
+      if (state.opening.length === 0) addRow(closingRows, 'utgaende');
+    }
+  }
+
+  function renderState(): void {
+    const mayWrite = canInCompany(company, 'ledger:write');
+    if (state.refusal !== null) setStatus(pageStatus, state.refusal[0]!.toUpperCase() + state.refusal.slice(1) + '.');
+    else setStatus(pageStatus, '');
+
+    const rates = el<HTMLParagraphElement>('#rates');
+    rates.textContent = state.rates.published
+      ? `Satsene er fra ${state.rates.source}.`
+      : `Skattedirektoratet har ikke publisert takseringsreglene for ${year} ennå (de kommer i desember). ` +
+        `Kategoriene er fra ${state.rates.year}. Linjer med gjennomsnitt og kostpris kan kontrolleres nå; normalverdiene kommer med reglene.`;
+    show(rates, true);
+
+    const standing = state.standing;
+    show(el('#standing'), standing !== null);
+    if (standing !== null) {
+      el('#standing-no').textContent = standing.voucher_no ? `bilag ${standing.voucher_no}, ${isoDate(standing.counted_on)}` : `uten bilag, ${isoDate(standing.counted_on)}`;
+      el('#standing-lines').replaceChildren(...standing.closing.map(lineRow));
+      el('#standing-totals').replaceChildren(...totalsList(standing.totals));
+    }
+    show(el('#standing-actions'), standing !== null && state.allowed && mayWrite);
+
+    show(el('#form-card'), state.allowed && mayWrite && (standing === null || correcting));
+    el('#form-title').textContent = correcting ? `Rettet telling 31. desember ${year}` : `Telling 31. desember ${year}`;
+    const copied = state.opening_source === 'forrige_telling';
+    el('#opening-hint').textContent = copied
+      ? `Inngående er tellingen for ${year - 1}, uendret. Er den feil, retter du tellingen for ${year - 1}.`
+      : 'Første år i Myntos: før inn dyrene og lageret slik de sto i fjorårets liste, med verdien de hadde der. Gjennomsnittet for voksne dyr regnes av disse linjene.';
+    show(el('#opening-actions'), !copied);
+    show(el('#opening-table'), true);
+    if (copied) {
+      // Fjorårets linjer vises, men kan ikke skrives over.
+      openingRows.replaceChildren(
+        ...state.opening.map((line) => {
+          const tr = document.createElement('tr');
+          tr.append(cell(line.label), cell(`${decimal(line.quantity)} ${line.unit}`, true), cell(kroner(line.unit_value), true), cell(line.account_number), cell(line.description), cell(''));
+          return tr;
+        }),
+      );
+    }
+    list(
+      el('#booked'),
+      state.booked.map((b) => `Konto ${b.account_number} ${b.account_description} står i ${kroner(b.balance)} før tellingen, og må telles.`),
+    );
+
+    const history = state.history;
+    show(el('#history-card'), history.length > 1);
+    el('#history').replaceChildren(
+      ...history.map((count) => {
+        const item = document.createElement('li');
+        const what = count.withdrawn ? 'Trukket tilbake' : count.corrects_id !== null ? 'Rettet telling' : 'Telling';
+        item.textContent = `${isoDate(count.created_at.slice(0, 10))}: ${what}${count.voucher_no ? `, bilag ${count.voucher_no}` : ''}`;
+        return item;
+      }),
+    );
+  }
+
+  async function load(): Promise<void> {
+    state = await getCountState(company.id, year);
+    renderState();
+  }
+
+  function showReview(visible: boolean): void {
+    show(el('#review'), visible);
+    show(el('#form-card'), !visible);
+  }
+
+  el<HTMLFormElement>('#count-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    setStatus(formStatus, '');
+    const lines = collect();
+    if (typeof lines === 'string') {
+      setStatus(formStatus, lines);
+      return;
+    }
+    const button = el<HTMLButtonElement>('#check');
+    button.disabled = true;
+    reviewCount(company.id, year, lines)
+      .then((review) => {
+        reviewed = lines;
+        el('#review-intro').textContent = correcting
+          ? `Dette erstatter den førte tellingen. Bilaget reverseres, og dette føres per ${review.counted_on ? isoDate(review.counted_on) : `31.12.${year}`}.`
+          : `Dette føres som ett bilag per ${review.counted_on ? isoDate(review.counted_on) : `31.12.${year}`} i journalen for telling.`;
+        el('#review-lines').replaceChildren(...review.closing.map(lineRow));
+        el('#review-accounts').replaceChildren(
+          ...review.accounts.map((a) => {
+            const tr = document.createElement('tr');
+            tr.append(cell(`${a.account_number} ${a.account_description ?? ''}`), cell(kroner(a.booked), true), cell(kroner(a.counted), true), cell(kroner(a.change), true));
+            return tr;
+          }),
+        );
+        el('#review-voucher').replaceChildren(
+          ...review.voucher_lines.map((v) => {
+            const tr = document.createElement('tr');
+            tr.append(cell(v.account_number), cell(v.description), cell(Number(v.debit) === 0 ? '' : kroner(v.debit), true), cell(Number(v.credit) === 0 ? '' : kroner(v.credit), true));
+            return tr;
+          }),
+        );
+        show(el('#no-voucher'), review.voucher_lines.length === 0);
+        list(el('#errors'), review.findings.filter((f) => f.severity === 'feil').map((f) => f.message));
+        list(el('#notes'), review.findings.filter((f) => f.severity === 'merknad').map((f) => f.message));
+        postButton.disabled = !review.postable;
+        setStatus(reviewStatus, '');
+        showReview(true);
+      })
+      .catch((error: unknown) => {
+        setStatus(formStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke kontrollert tellingen.');
+      })
+      .finally(() => {
+        button.disabled = false;
+      });
+  });
+
+  el('#back').addEventListener('click', () => showReview(false));
+
+  postButton.addEventListener('click', () => {
+    postButton.disabled = true;
+    postCount(company.id, year, reviewed, correcting)
+      .then(async (posted) => {
+        correcting = false;
+        show(el('#review'), false);
+        setStatus(pageStatus, posted.voucher_no ? `Tellingen er ført som bilag ${posted.voucher_no}.` : 'Tellingen er lagret. Den endret ingen verdier, så det ble ikke noe bilag.', 'ok');
+        await load().catch(() => undefined);
+      })
+      .catch((error: unknown) => {
+        postButton.disabled = false;
+        setStatus(reviewStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke ført tellingen.');
+      });
+  });
+
+  el('#add-opening').addEventListener('click', () => addRow(openingRows, 'inngaende'));
+  el('#add-closing').addEventListener('click', () => addRow(closingRows, 'utgaende'));
+
+  el('#correct').addEventListener('click', () => {
+    correcting = true;
+    const standing = state.standing;
+    fillForm(standing === null ? [] : [...standing.opening, ...standing.closing]);
+    renderState();
+  });
+
+  el('#withdraw').addEventListener('click', () => {
+    // En bekreftelse holder: tilbaketrekkingen er en reversering, og en ny telling kan føres etterpå.
+    if (!window.confirm('Trekke tilbake tellingen? Bilaget reverseres og blir stående i regnskapet.')) return;
+    withdrawCount(company.id, year)
+      .then(async () => {
+        correcting = false;
+        setStatus(pageStatus, 'Tellingen er trukket tilbake, og bilaget er reversert.', 'ok');
+        await load();
+        fillForm([]);
+      })
+      .catch((error: unknown) => {
+        setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke trukket tilbake tellingen.');
+      });
+  });
+
+  yearSelect.addEventListener('change', () => {
+    year = Number(yearSelect.value);
+    correcting = false;
+    showReview(false);
+    load()
+      .then(() => fillForm([]))
+      .catch((error: unknown) => {
+        setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet året.');
+      });
+  });
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      const current = currentCompany(companies);
+      if (current === undefined) return;
+      company = current;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      const [landbruk, years] = await Promise.all([getLandbruk(company.id), listFinancialYears(company.id)]);
+      if (!landbruk.enabled) {
+        show(el('#not-farm'), true);
+        return;
+      }
+      const opened = yearToOpen(years, todayIso());
+      if (opened === null) {
+        setStatus(pageStatus, 'Selskapet har ikke noe regnskapsår i Myntos ennå.');
+        return;
+      }
+      year = opened;
+      yearSelect.replaceChildren(
+        ...years.map((y) => {
+          const option = document.createElement('option');
+          option.value = String(y.year);
+          option.textContent = y.closed ? `${y.year} (avsluttet)` : String(y.year);
+          return option;
+        }),
+      );
+      yearSelect.value = String(year);
+      show(el('#year-pick'), true);
+      await load();
+      fillForm([]);
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet tellingen.');
+    } finally {
+      el('#loading').hidden = true;
+    }
+  });
+</script>

@@ -80,6 +80,22 @@ and both are for a `User`: the session's user (`api/deps.py`) and the owner of
 a mailed token (`domain/identity/email_tokens.py`). Neither is company-scoped.
 Adding one for a company-scoped row is how this wall gets a hole in it.
 
+### Deleted companies are behind the wall, and one lookup reaches them
+
+A company an owner deleted (`company.closed_at`, docs/gdpr.md § Deleting a
+company) is kept for years and must be reachable by nobody working in books.
+`get_company_for_user` and `list_companies` both filter it out, so every route
+under `/companies/{company_id}/` answers the same 404 for it as for an id
+nobody holds, its own owners included.
+
+The two routes that do reach it, the «Slettede selskaper» list and reopening,
+resolve it through `closure.get_closed`, which keeps the same rule in its own
+query: an id that does not exist, one the caller does not **own**, and one
+that is not deleted all get one 404. They live under `/companies/slettede/`,
+outside `{company_id}`, so no route that takes `CurrentCompany` can be made to
+reach a deleted company by accident, and the frontend's wall in `lib/api.ts`
+never treats one as the active company.
+
 ### The one query that reads a row by id on purpose
 
 `ledger.service._author_names` resolves `{user id: full name}` for the people

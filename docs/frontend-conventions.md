@@ -45,7 +45,14 @@ node from `document.createElement` never gets the stamp, so a rule like
 is dead without a warning. Each time it shipped, it was found from a screenshot:
 the register's thumbnails rendered at full size, because their 3rem rule was on
 `/kontantstrom/`, so ten screenshots made one entry taller than the screen; and
-the upload list ran its text together as «(184 kB)Fjernikke lest».
+the upload list ran its text together as «(184 kB)Fjernikke lest». The third
+time, on 2026-10-15, it was eight pages at once: `/konto/`'s session list read
+«Chrome på WindowsDenne enhetenLogget inn …» on one line, and `/mva/`,
+`/kontoplan/`, `/saft/`, `/arsavslutning/`, `/inngaende-balanse/` and the
+question and party lists on `/kontantstrom/` had rules that matched nothing.
+A rule whose last part is a bare tag or attribute (`.filings > li`,
+`tr[data-open] td`, `[role='option']`) is the easy one to miss, because there
+is no class name to grep for.
 
 Two ways out, both in use. Anchor the rule on an element that *is* in the
 markup and reach the generated children with `:global()` (`/faktura/`'s line
@@ -62,6 +69,19 @@ behind it, and on a dead token switched off the whole of `<main>` together with
 the error it was trying to show. Both paths drew a blank page, with nothing in
 the console and nothing in the markup to suggest why. An id has to be unique
 against the layout, not only against the page.
+
+## A line break in the markup is a space
+
+`astro.config.mjs` sets `compressHTML: true`. Astro 7 changed the default to
+`'jsx'`, React's whitespace rules: a run of whitespace that holds a line break,
+at the edge of a text node, is deleted. Prose here wraps wherever the line gets
+long, which is often right before a link, a `<strong>` or a `{/* … */}`, so
+under the default the front page read «ser du underMva-melding.SAF-T-filen
+Skatteetaten …» with every space beside a link gone, and the same on every
+page with a link in a sentence. Nothing fails and `astro check` is clean; it
+shows only on screen. `true` is Astro's lossless mode: whitespace is still
+compressed, but a break between two words stays a space. Do not drop the line
+to "use the default".
 
 ## Session and chrome
 
@@ -159,6 +179,19 @@ against the layout, not only against the page.
   answer carrying a different `company_id`. It subclasses `ApiError`, so the
   handling rule above already shows it. If you hit one, the bug is upstream: a
   stale `Company` held across a switch, not the guard.
+- **A file shown inside a page is fetched, never framed from the API.** Every
+  API answer carries `X-Frame-Options: DENY`, and the file routes send
+  `Content-Disposition: attachment`, so an `<iframe src>` pointing at the API
+  shows nothing, and a link to it downloads. `/faktura/` showed the draft's
+  PDF only as a download, and a review step whose document has to be
+  downloaded to be read gets passed without anyone reading it. Fetch the file
+  through a `lib/api.ts` function that runs the company check first
+  (`fetchFakturaPdf`, `fetchThumbnail`) and frame the object URL. That function
+  returns null unless the answer has the type it expects: an object URL takes
+  the page's origin, so an HTML page framed through one would run as
+  myntos.no. Ask `navigator.pdfViewerEnabled` before offering a PDF frame,
+  because Chrome on Android leaves it blank, and keep the download link beside
+  it either way.
 
 ## Forms
 
@@ -414,3 +447,48 @@ first paint; `chrome.ts` only handles the toggle afterwards. The choice is store
 only when the visitor actively makes one — writing on every load would turn the
 default into a decision they never made, and make a later change of default
 invisible to everyone who had ever loaded the site.
+
+## What search engines and AI assistants see
+
+A page is indexed only when `lib/indexing.ts` names it. Everything else gets
+`<meta name="robots" content="noindex, follow">` from `BaseLayout` and is left
+out of the sitemap, because both read that one list. Until 2026-10-16 the
+sitemap kept pages out with a hand list in `astro.config.mjs` instead, written
+when there were five application pages. Every later one went in by default, and
+the sitemap offered Google eighteen pages that send a signed-out visitor (and
+Google's renderer, which runs the script) straight to `/logg-inn/`. The list now
+runs the other way, so a new page is private until somebody decides it is
+public, and `indexing.test.ts` fails if a page that calls `redirectToLogin` is
+ever listed.
+
+Nothing is refused in `robots.txt`. Google never reads the noindex of a page it
+may not fetch, and indexes the bare URL from any link to it instead; that is
+what the old `Disallow` lines did for `/kontantstrom/` and three others.
+
+The rest of what a crawler reads lives in `BaseLayout`'s head:
+
+- **Structured data** is one schema.org `@graph`: the organisation, the site,
+  the application (with `offers` at 0 NOK and what is not built yet in its
+  description, because answer engines quote it) and a `WebPage` node per page.
+  A page adds its own nodes with the `schema` prop, built from the same data it
+  renders: the questions on `/priser/` as `FAQPage`, each moving guide as
+  `BreadcrumbList` and `HowTo` from `data/flytting.ts`. Never write the text a
+  second time for the markup; Google ignores structured data that says
+  something the page does not, and an assistant repeats it anyway.
+- **Every `name` on the home page is «Myntos»**, for the Google OAuth brand
+  review described at `APP_NAME`. That is why the `WebPage` node has none.
+- **`lang`** is `nb` except on `/about/`, which passes `lang="en"`. The header,
+  footer and skip link are marked `lang="nb"` on such a page, since they stay
+  bokmål.
+- **The share image** is `public/og-image.png`, 1200×630, drawn from the logo
+  by `pnpm og-image`. Regenerate it when the mark or the tagline changes.
+
+`/404.html` is served for any address that matches no file, with status 404,
+through `not_found_handling` in `wrangler.jsonc`. A page kept out of the index
+carries no canonical link, since the 404 page is served at whatever address
+missed and would name the wrong one.
+
+For assistants that read rather than crawl, `docs/agents/llms.txt` opens with
+«About Myntos»: what it is, the price, what is not built yet, and where the data
+is, each line linked to the public page that says it. Change it with the page:
+see [agents/README.md](agents/README.md).

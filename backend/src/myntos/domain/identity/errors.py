@@ -198,6 +198,39 @@ class ErasureBlockedError(IdentityError):
     """
 
 
+class CompanyClosureBlockedError(IdentityError):
+    """The company cannot be deleted from Myntos just now.
+
+    Only while the server is reading or posting a SAF-T import into it: the
+    job would go on writing into books that are being locked, or be cut off
+    halfway through posting a year. It finishes in minutes.
+    """
+
+
+class CompanyNameMismatchError(IdentityError):
+    """The name typed to confirm deleting a company is not the company's.
+
+    Not proof of who is asking: that is
+    :func:`~myntos.domain.identity.service.confirm_identity`. This is proof of
+    *which* company they meant, because the button sits on a settings page
+    and a company is easily confused with the next client's.
+    """
+
+
+class ReopenBlockedError(IdentityError):
+    """Deleted books cannot be opened again, because other open books hold the orgnr.
+
+    Either new books for the same orgnr set up in the same account since
+    (``uq_company_open_orgnr``), or, as below, a confirmed claim elsewhere.
+
+    Deleting gave up the confirmed claim on the orgnr (myntos.domain.identity.
+    closure), and somebody has since confirmed it in another set of books. Two
+    open confirmed claims on one orgnr is exactly what
+    ``uq_company_verified_orgnr`` forbids, and which of them is right is not
+    something Myntos can decide.
+    """
+
+
 class EmailTokenError(IdentityError):
     """Base class for links mailed to an account's own address."""
 

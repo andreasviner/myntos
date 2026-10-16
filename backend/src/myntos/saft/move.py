@@ -40,6 +40,14 @@ used to do that one request at a time from the browser, 120 of them for the
 farm, and read the file again after; that, more than the parsing, was what made
 it slow.
 
+**The bank where the files say it is.** An account whose text names one of the
+files' own bank account numbers, other than 1920 and 1900, is marked as a bank
+account in the kontoplan (:func:`_mark_bank_accounts`), with a ``merknad``.
+Tripletex keeps a farm's only bank account, a driftskreditt, on 2390, and
+until it was marked the overview counted no money in or out at all. Marking
+moves nothing, the vouchers stay where the old program put them, and the
+person can unmark it on the Kontoplan page.
+
 **All of it, or none of it.** :func:`apply` does everything in the session it
 is given and says what it did; the caller commits, or rolls back to show the
 same report as a preview (:mod:`myntos.saft.jobs`). A preview made that way
@@ -53,14 +61,12 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 from typing import Literal
-
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from myntos.core.clock import utc_now
-
 from myntos.domain.arsoppgjor import opening
 from myntos.domain.arsoppgjor.errors import (
     InvalidOpeningBalanceError,
@@ -69,9 +75,15 @@ from myntos.domain.arsoppgjor.errors import (
 from myntos.domain.arsoppgjor.findings import Finding, Severity, blocking, feil, merknad
 from myntos.domain.ledger import dimensions, kontoplan, parties
 from myntos.domain.ledger import service as ledger_service
+from myntos.domain.ledger.bankkonto import format_bank_account
 from myntos.domain.ledger.chart import IMPORT_JOURNAL_ID, OPENING_JOURNAL_ID
-from myntos.domain.ledger.errors import DuplicatePartyError
+from myntos.domain.ledger.errors import (
+    AccountInUseError,
+    DuplicatePartyError,
+    InvalidAccountNumberError,
+)
 from myntos.domain.ledger.models import (
+    Account,
     Company,
     DimensionType,
     FinancialYear,
@@ -84,11 +96,12 @@ from myntos.saft.errors import SaftWrongYearError
 from myntos.saft.opening_import import (
     AccountToAdd,
     PartyToAdd,
+    bank_accounts_named,
     check_company,
     from_balances,
     target_account,
 )
-from myntos.saft.reader import SaftEntries
+from myntos.saft.reader import SaftBalances, SaftEntries
 from myntos.saft.voucher_import import (
     DimensionToAdd,
     MonthCount,
@@ -406,6 +419,67 @@ async def _add_dimensions(
         )
 
 
+async def _mark_bank_accounts(
+    db: AsyncSession, company: Company, files: Sequence[SaftBalances], *, may_chart: bool
+) -> list[Finding]:
+    """Mark the accounts the files name as the company's bank, and say so.
+
+    The evidence is the file's own header, which lists the company's bank
+    account numbers, and an account whose text carries one of them
+    (:func:`myntos.saft.opening_import.bank_accounts_named`). An account already
+    counted, one that cannot hold money (:func:`kontoplan.check_may_be_bank`)
+    and one that is not in the kontoplan are left alone: the last is the
+    ``kontoer_mangler`` the person is already told about.
+
+    Marking is a kontoplan change, so it needs ``ledger:chart`` like adding an
+    account; without it the person is told who can do it instead.
+    """
+    named: dict[str, str] = {}
+    for balances in files:
+        for number, bank in bank_accounts_named(balances).items():
+            named.setdefault(number, bank)
+    if not named:
+        return []
+    accounts = {
+        account.account_number: account
+        for account in await db.scalars(
+            select(Account).where(
+                Account.company_id == company.id, Account.account_number.in_(named)
+            )
+        )
+    }
+    found: list[Finding] = []
+    for number, bank in sorted(named.items()):
+        account = accounts.get(number)
+        if account is None or kontoplan.counts_as_bank(account):
+            continue
+        try:
+            kontoplan.check_may_be_bank(account)
+        except (AccountInUseError, InvalidAccountNumberError):
+            continue
+        what = f"Konto {number} {account.description} er bankkontoen {format_bank_account(bank)}"
+        if may_chart:
+            account.is_bank_account = True
+            found.append(
+                merknad(
+                    "bankkonto_merket",
+                    f"{what}, og er merket som bankkonto: oversikten regner pengene der med i "
+                    "banken, sammen med 1920. Bilagene står der det gamle programmet førte dem, "
+                    "og nye betalinger føres på 1920. Merkingen kan tas av under Kontoplan.",
+                )
+            )
+        else:
+            found.append(
+                merknad(
+                    "bankkonto_utenfor_1920",
+                    f"{what}. Be en administrator eller eier merke den som bankkonto under "
+                    "Kontoplan, så regner oversikten pengene der med i banken.",
+                )
+            )
+    await db.flush()
+    return found
+
+
 # --- The move ------------------------------------------------------------------------
 
 
@@ -478,8 +552,10 @@ async def apply(
 
     Nothing is committed: the caller commits when :attr:`MoveReport.postable`,
     and rolls back otherwise or to preview. ``til`` stops the last year early.
-    ``may_chart`` is whether the person may add accounts to the kontoplan; when
-    they may not and the files need some, that is a ``feil``.
+    ``may_chart`` is whether the person may add accounts to the kontoplan, or
+    avdelinger to the dimensions (both are how the books are set up, and both
+    need ``ledger:chart``); when they may not and the files need some, that is a
+    ``feil``.
     """
     by_year = order_files(company, files)
     years = list(by_year)
@@ -611,7 +687,26 @@ async def apply(
             db, company, accounts_to_add, created=created, user_id=created_by_user_id
         )
     await _add_parties(db, company, parties_to_add)
-    await _add_dimensions(db, company, dimensions_to_add)
+    if dimensions_to_add and not may_chart:
+        note(
+            feil(
+                "dimensjoner_krever_administrator",
+                f"Filene fører på {len(dimensions_to_add)} avdelinger eller produkter som ikke er "
+                "satt opp i Myntos, og bare en administrator eller eier kan sette dem opp. Be en "
+                "av dem om å føre regnskapet fra filene.",
+            )
+        )
+    else:
+        await _add_dimensions(db, company, dimensions_to_add)
+    # Before the opening balance is read again below, so its own merknad about
+    # the bank sees the account marked and stays quiet.
+    for finding in await _mark_bank_accounts(
+        db,
+        company,
+        [by_year[year].entries.balances for year in years],
+        may_chart=may_chart,
+    ):
+        note(finding)
 
     # --- Posting the opening balance -----------------------------------------------------
     opening_report: OpeningReport | None = None

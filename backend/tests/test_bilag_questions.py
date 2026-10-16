@@ -106,15 +106,15 @@ def test_two_vat_rates_are_asked_about_rather_than_resolved() -> None:
 
 
 def test_the_driftsmiddel_threshold_is_per_asset_and_only_the_buyer_knows() -> None:
-    """The `utlegg/` fixture: 25 278 kr, and two cards at 12 639 each.
+    """Two machines at 25 278 kr each, 50 556 kr on one payment.
 
-    Over the threshold as one payment, under it as two assets. The register
-    cannot tell those apart from a bank line, and the person who bought them
-    can answer in a word.
+    Over the 30 000 threshold as one payment, under it as two assets. The
+    register cannot tell those apart from a bank line, and the person who
+    bought them can answer in a word.
     """
     asked = compose(
         suggestion(
-            gross_amount=Decimal("25278.00"),
+            gross_amount=Decimal("50556.00"),
             direction=CashFlowDirection.UT,
             type_code="driftsmiddel",
             tax_code="0",
@@ -233,7 +233,7 @@ def test_the_doubt_outranks_the_driftsmiddel_question() -> None:
     """
     asked = compose(
         suggestion(
-            gross_amount=Decimal("25278.00"),
+            gross_amount=Decimal("50556.00"),
             type_code="varekjop",
             tax_code="1",
             direction=CashFlowDirection.UT,
@@ -281,10 +281,10 @@ def test_feed_over_the_threshold_is_not_asked_about_as_an_asset() -> None:
         InvoiceReading(vat_rate=Decimal("0.25")),
     )
     assert feed == []
-    # A purchase that may be a thing kept for years still is: two graphics
-    # cards at 12 639 each, the utlegg/ fixture.
+    # A purchase that may be a thing kept for years still is: two machines
+    # at 25 278 each, over the 30 000 limit together and under it apart.
     goods = compose(
-        suggestion(gross_amount=Decimal("25278.00"), type_code="varekjop", tax_code="0"),
+        suggestion(gross_amount=Decimal("50556.00"), type_code="varekjop", tax_code="0"),
         InvoiceReading(),
     )
     assert [question.field for question in goods] == ["type_code"]

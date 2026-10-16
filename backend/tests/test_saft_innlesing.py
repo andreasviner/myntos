@@ -438,3 +438,26 @@ def test_books_that_started_in_the_earliest_file_open_at_zero(client: TestClient
         f"/api/v1/companies/{company['id']}/bilag", params={"aar": EARLIER, "konto": "1920"}
     ).json()
     assert Decimal(bank["closing_balance"]) == Decimal("1250.00")
+
+
+def test_a_member_cannot_add_avdelinger_so_cannot_post_them(client: TestClient) -> None:
+    """Dimensions are how the books are set up, like the kontoplan: ``ledger:chart``."""
+    from tests.test_saft_import import _create_missing, upload
+    from tests.test_saft_voucher_import import _analysed_file, _bilag
+
+    company = _books(client)
+    content = _analysed_file()
+    # An administrator has added every account the file needs, and nothing else.
+    _create_missing(client, company["id"], upload(client, company["id"], content).json())
+    _create_missing(client, company["id"], _bilag(client, company["id"], content).json())
+    join_company(client, company["id"], email="medlem@example.no", role="member")
+
+    uploaded = _upload(client, company["id"], ("i-aar.xml", content))
+    read = _get(client, company["id"], uploaded["id"])
+    assert read["review"]["accounts_to_add"] == []
+    assert [add["value"] for add in read["review"]["dimensions_to_add"]] == ["20"]
+    assert read["may_post"] is False
+    refused = _post(client, company["id"], uploaded["id"])
+    assert refused.status_code == 422
+    assert "administrator" in refused.json()["detail"]
+    assert client.get(f"/api/v1/companies/{company['id']}/dimensjoner").json() == []
