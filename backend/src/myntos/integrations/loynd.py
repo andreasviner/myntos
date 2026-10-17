@@ -23,7 +23,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -73,7 +73,47 @@ def is_configured() -> bool:
     return _key() is not None
 
 
-async def complete(*, system: str, prompt: str, max_tokens: int = 16) -> str:
+# Said on every chat request, because Løynd can look things up on the web before
+# it answers, and for a caller with a key of its own it does so by default: a
+# routing pass reads the conversation, the first 2 000 characters of each
+# message, and decides whether to send queries to the search instance beside
+# it, which forwards them to the search engines it fronts. For Myntos the
+# conversation is a bilag. A seller's name or an order number turned into a
+# search query has left the EEA (CLAUDE.md rule 5), and no question asked here
+# is one the web can answer. Nothing said either way until 2026-10-17. The
+# routing pass is also a generation of its own ahead of every answer, so it cost
+# time on every read as well.
+_NEVER_SEARCH = {"search": False}
+
+
+def _messages(
+    *, system: str, prompt: str, history: Sequence[tuple[str, str]] = ()
+) -> list[dict[str, str]]:
+    """The conversation as the chat route takes it.
+
+    ``history`` is the earlier questions and their answers, oldest first, for a
+    question that continues a conversation instead of starting one (see
+    :mod:`myntos.domain.bilag.followup`). Repeated exactly as they were asked,
+    because that is what lets the model server reuse the work it already did on
+    them: the bilag at the top of the first question is most of the prompt, and
+    a follow-up whose beginning is byte for byte the same pays only for the new
+    turn at the end.
+    """
+    messages = [{"role": "system", "content": system}]
+    for asked, answered in history:
+        messages.append({"role": "user", "content": asked})
+        messages.append({"role": "assistant", "content": answered})
+    messages.append({"role": "user", "content": prompt})
+    return messages
+
+
+async def complete(
+    *,
+    system: str,
+    prompt: str,
+    max_tokens: int = 16,
+    history: Sequence[tuple[str, str]] = (),
+) -> str:
     """One completion, as plain text.
 
     ``temperature=0`` because the caller is asking a question with a right
@@ -88,13 +128,11 @@ async def complete(*, system: str, prompt: str, max_tokens: int = 16) -> str:
 
     payload: dict[str, Any] = {
         "model": settings.loynd_model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ],
+        "messages": _messages(system=system, prompt=prompt, history=history),
         "max_tokens": max_tokens,
         "temperature": 0,
         "stream": False,
+        **_NEVER_SEARCH,
     }
     try:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
@@ -178,6 +216,7 @@ async def ask_about_image(
         "max_tokens": max_tokens,
         "temperature": 0,
         "stream": False,
+        **_NEVER_SEARCH,
     }
     try:
         async with httpx.AsyncClient(timeout=_LOOK_TIMEOUT) as client:
@@ -235,13 +274,11 @@ async def stream(*, system: str, prompt: str, max_tokens: int = 16) -> AsyncIter
 
     payload: dict[str, Any] = {
         "model": settings.loynd_model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ],
+        "messages": _messages(system=system, prompt=prompt),
         "max_tokens": max_tokens,
         "temperature": 0,
         "stream": True,
+        **_NEVER_SEARCH,
     }
     try:
         async with (

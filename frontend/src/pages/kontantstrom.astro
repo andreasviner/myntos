@@ -50,56 +50,68 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           og står deretter.
         */}
         {/*
-          Spørsmålene står rett over beskrivelsen, ikke under, fordi de er
-          grunnen til å skrive i den. Et felt med en overskrift blir stående som
-          det er; et felt med et spørsmål rett over seg blir besvart.
+          Spørsmålene og beskrivelsen står i samme ramme, fordi beskrivelsen er
+          der et spørsmål uten knapper besvares. De sto over feltet hver for
+          seg, med «Beskrivelse (valgfritt)» mellom, og et spørsmål i én boks
+          og et felt med en annen overskrift i den neste leses som to ting som
+          ikke har med hverandre å gjøre. Den som rapporterte det, spurte rett
+          ut hvordan man svarer KI-en (2026-10-17).
+
+          Et spørsmål som nevner sine egne svar («innskudd fra eier, et lån
+          eller et salg?»), får dem som knapper. Svaret går tilbake til
+          modellen som en oppfølging av samtalen den allerede hadde, så bilaget
+          leses ikke på nytt, og et besvart spørsmål stilles ikke igjen.
         */}
-        <ul class="asks" id="doc-questions" hidden></ul>
+        <div class="ask-box" id="ask-box">
+          <ul class="asks" id="doc-questions" hidden></ul>
 
-        {/*
-          Ett beskrivelsesfelt, ikke to. Det var to: ett for det brukeren kunne
-          fortelle modellen, og ett nede i skjemaet for teksten som havner i
-          hovedboken. Men det er samme setning. «Kjøpt strømforsyning, la ut
-          3000 privat» er både det modellen mangler for å forstå bilaget og en
-          helt riktig bilagstekst, og to felter for samme sak er to steder å
-          skrive den. Ett av dem blir stående tomt.
-
-          Så dette feltet er begge: modellen skriver i det, brukeren retter det,
-          og retter brukeren det, leses bilaget om igjen med setningen som
-          kontekst. Det er derfor det ikke lenger finnes en «les på nytt»-knapp.
-
-          Det står over opplastingen, ikke under, fordi rekkefølgen er et
-          spørsmål: «hva gjaldt det?» er det brukeren vet uten å slå opp, og
-          skriver de det først, er det den setningen modellen leser bilaget med.
-          Skriver de ingenting, fyller modellen det ut selv. Begge veier
-          fungerer, og feltet sier hvilken det er på vei ned.
-        */}
-        <label class="field explain" data-field="description" for="description-input">
-          <span class="explain-label">
-            Beskrivelse <span class="muted">(valgfritt)</span>
-            <span class="tag" data-tag hidden></span>
-          </span>
           {/*
-            Feltet er låst mens modellen er på vei til å skrive i det, og bare
-            da. Å taste i en boks som er i ferd med å bli overskrevet er å miste
-            det man skrev, og en boks som ser tom og redigerbar ut mens den
-            venter, ser ut som en boks som ikke kommer til å bli fylt ut.
-            Skrev brukeren noe selv, står feltet åpent: da er det ingen som skal
-            overskrive det.
+            Ett beskrivelsesfelt, ikke to. Det var to: ett for det brukeren kunne
+            fortelle modellen, og ett nede i skjemaet for teksten som havner i
+            hovedboken. Men det er samme setning. «Kjøpt strømforsyning, la ut
+            3000 privat» er både det modellen mangler for å forstå bilaget og en
+            helt riktig bilagstekst, og to felter for samme sak er to steder å
+            skrive den. Ett av dem blir stående tomt.
+
+            Så dette feltet er begge: modellen skriver i det, brukeren retter det,
+            og retter brukeren det, går setningen til modellen som et svar, og
+            forslaget kommer tilbake med den som kontekst. Det er derfor det ikke
+            lenger finnes en «les på nytt»-knapp.
+
+            Det står over opplastingen, ikke under, fordi rekkefølgen er et
+            spørsmål: «hva gjaldt det?» er det brukeren vet uten å slå opp, og
+            skriver de det først, er det den setningen modellen leser bilaget med.
+            Skriver de ingenting, fyller modellen det ut selv. Begge veier
+            fungerer, og feltet sier hvilken det er på vei ned.
           */}
-          <span class="description-wrap">
-            <textarea
-              id="description-input"
-              name="description"
-              rows="2"
-              maxlength="255"
-              placeholder="Hva gjaldt betalingen?"
-            ></textarea>
-            <span class="description-busy" id="description-busy" hidden aria-hidden="true">
-              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          <label class="field explain" data-field="description" for="description-input">
+            <span class="explain-label">
+              Beskrivelse <span class="muted">(valgfritt)</span>
+              <span class="tag" data-tag hidden></span>
             </span>
-          </span>
-        </label>
+            {/*
+              Feltet er låst mens modellen er på vei til å skrive i det, og bare
+              da. Å taste i en boks som er i ferd med å bli overskrevet er å miste
+              det man skrev, og en boks som ser tom og redigerbar ut mens den
+              venter, ser ut som en boks som ikke kommer til å bli fylt ut.
+              Skrev brukeren noe selv, står feltet åpent: da er det ingen som skal
+              overskrive det.
+            */}
+            <span class="description-wrap">
+              <textarea
+                id="description-input"
+                name="description"
+                rows="2"
+                maxlength="255"
+                placeholder="Hva gjaldt betalingen?"
+              ></textarea>
+              <span class="description-busy" id="description-busy" hidden aria-hidden="true">
+                <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+              </span>
+            </span>
+          </label>
+          <p class="ask-status" id="ask-status" role="status" hidden></p>
+        </div>
 
         {/*
           Flere filer, fordi et bilag ofte ikke er én fil. Et kjøp fra en privat
@@ -743,6 +755,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     opacity: 1;
     cursor: progress;
   }
+  /* Rammen rundt spørsmålene og beskrivelsen, bare mens det er noe å svare på.
+     Uten spørsmål er beskrivelsen et vanlig felt og skal se ut som ett. */
+  .ask-box[data-asking] {
+    margin: 0 0 1rem;
+    padding: 0.85rem 0.9rem 0.15rem;
+    border: 1px solid var(--accent-line);
+    border-radius: var(--radius-small);
+    background: var(--accent-soft);
+  }
   /* Spørsmål, ikke advarsler. De står i normal tekstfarge og med et
      spørsmålstegn-merke, så de leses som noe å svare på og ikke som noe som
      har gått galt. */
@@ -751,33 +772,81 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     margin: 0 0 0.8rem;
     padding: 0;
     display: grid;
-    gap: 0.5rem;
+    gap: 0.75rem;
   }
   /* Spørsmålene og forslagslisten lages av skriptet, så reglene henges på
-     listene i malen og når radene med :global(). */
+     listene i malen og når radene med :global().
+
+     Hvert spørsmål hadde sin egen ramme i `var(--line)`, en farge som ikke
+     finnes. Da faller hele kantlinjen tilbake til nettleserens egen, tre
+     piksler og svart, og det var den tykke stiplede rammen rundt KI-ens
+     spørsmål på skjermbildet 2026-10-17. Rammen er nå boksen rundt alt, og
+     spørsmålene skilles med en strek. */
   .asks :global(li) {
     position: relative;
-    padding: 0.6rem 0.8rem 0.6rem 2.2rem;
-    border: 1px solid var(--line);
-    border-radius: 0.5rem;
-    font-size: 0.92rem;
+    padding: 0 0 0 1.4rem;
+    font-size: 0.95rem;
+  }
+  .asks :global(li + li) {
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--accent-line);
   }
   .asks :global(li)::before {
     content: '?';
     position: absolute;
-    left: 0.85rem;
+    left: 0.1rem;
     font-weight: 700;
     color: var(--accent, currentColor);
   }
   /* Gjetning, ikke avlesning: et spørsmål modellen fant på skal ikke se like
-     sikkert ut som et registeret utledet av sin egen lesning. */
-  .asks :global(li[data-ki]) {
-    border-style: dashed;
+     sikkert ut som et registeret utledet av sin egen lesning. Samme gullfarge
+     som merket «Foreslått av KI» på feltene. */
+  .asks :global(li[data-ki])::before {
+    color: var(--gold);
+  }
+  .asks :global(.ask-text) {
+    margin: 0;
   }
   .asks :global(.ask-source) {
     display: block;
-    margin-top: 0.2rem;
+    margin-top: 0.3rem;
     font-size: 0.78rem;
+    color: var(--muted);
+  }
+  /* Svarene som knapper. De brytes over flere linjer på en smal skjerm i
+     stedet for å presse siden bredere. */
+  .asks :global(.ask-options) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    margin-top: 0.55rem;
+  }
+  .asks :global(.ask-option) {
+    padding: 0.4rem 0.85rem;
+    border: 1px solid var(--accent-line);
+    border-radius: var(--radius-pill);
+    background: var(--surface);
+    color: var(--fg);
+    font: inherit;
+    font-size: 0.9rem;
+    line-height: 1.25;
+    text-align: left;
+    cursor: pointer;
+  }
+  .asks :global(.ask-option:hover) {
+    border-color: var(--accent);
+  }
+  .asks :global(.ask-option:focus-visible) {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .asks :global(.ask-action) {
+    margin-top: 0.35rem;
+    font-size: 0.88rem;
+  }
+  .ask-status {
+    margin: -0.4rem 0 0.8rem;
+    font-size: 0.86rem;
     color: var(--muted);
   }
   .reading {
@@ -1051,6 +1120,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 <script>
   import {
     ApiError,
+    answerSuggestion,
     documentUrl,
     fetchThumbnail,
     getCompanyCatalogue,
@@ -1080,6 +1150,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     type DocumentRead,
     type InvoiceSuggestion,
     type Party,
+    type SuggestionAnswer,
+    type SuggestionOption,
+    type SuggestionQuestion,
     type Summary,
   } from '../lib/api';
   import { authorOf, namesAuthors } from '../lib/authors';
@@ -1095,6 +1168,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   import { normaliseAmount } from '../lib/amount';
   import { el, setStatus, show } from '../lib/dom';
   import { netOf } from '../lib/lines';
+  import {
+    AMOUNT_KEY,
+    afterDirectionChange,
+    answeredByText,
+    howToAnswer,
+    remember,
+    unanswered,
+  } from '../lib/questions';
   import { fileSize, isoDate, kroner, todayIso } from '../lib/format';
   import { settleLimited } from '../lib/parallel';
   import { can, loadSession, redirectToLogin } from '../lib/session';
@@ -1132,6 +1213,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   const descriptionBox = el<HTMLTextAreaElement>('#description-input');
   const descriptionBusy = el<HTMLSpanElement>('#description-busy');
   const askList = el<HTMLUListElement>('#doc-questions');
+  const askBox = el<HTMLDivElement>('#ask-box');
+  const askStatus = el<HTMLParagraphElement>('#ask-status');
   const reading = el<HTMLParagraphElement>('#doc-reading');
   const readingText = reading;
   const warningList = el<HTMLUListElement>('#doc-warnings');
@@ -1157,6 +1240,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   // nytt, og da skrev svaret motparten brukeren nettopp hadde rettet tilbake
   // til den gale. Tømmes når bilaget tømmes.
   const touched = new Set<string>();
+  // The touched fields that an answer button filled in, so they keep saying
+  // «Ditt svar» when the next proposal arrives. Emptied with `touched`.
+  const byAnswer = new Set<string>();
   let mayWrite = false;
   // Om registeret skal si hvem som førte hva. Avgjort én gang per lasting, over
   // hele listen og ikke per rad: merket betyr «det er flere hender i denne
@@ -1931,12 +2017,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       typeSelect.value = keptType;
       applyType();
     }
-    if (!proposes('tax_code')) taxSelect.value = keptTax;
 
     if (proposes('type_code') && suggestion.type_code !== null) {
       typeSelect.value = suggestion.type_code;
       applyType();
       mark('type_code');
+    }
+    // After the category, not before it: applyType sets the category's own VAT
+    // code, and put back first, the user's code was overwritten by the
+    // category the same read proposed. Pressing «Alt på 15 %» and watching it
+    // turn back into 25 % when the answer came back is how that was found.
+    if (!proposes('tax_code')) taxSelect.value = keptTax;
+    // Felt et svar fylte ut, sier fortsatt at det var svaret ditt.
+    for (const name of byAnswer) {
+      if (touched.has(name)) markField(name, 'Ditt svar');
     }
     // After applyType, which sets the type's own default. And not under a
     // category the user chose: the proposed code belongs to the proposed
@@ -1967,6 +2061,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       descriptionBox.value = suggestion.description;
       written = suggestion.description;
       readWith = suggestion.description;
+      ownDescription = false;
       mark('description');
     } else if (keepDescription) {
       markField('description', 'Din tekst');
@@ -2069,6 +2164,26 @@ import BaseLayout from '../layouts/BaseLayout.astro';
    * and trigger a read of the bilag with it.
    */
   let readWith = '';
+  /**
+   * Whether the description is the person's own sentence rather than the
+   * model's. Set by typing in the box and cleared when the model writes there.
+   * It decides whether the sentence goes to the model as context or is the
+   * model's to write again, and it used to be worked out by comparing the box
+   * with what the last read wrote, which a read made with the person's own
+   * sentence then reported as the model's.
+   */
+  let ownDescription = false;
+  /**
+   * The answers given on this bilag, in the order given, and the reading they
+   * are sent to. The page holds the answers rather than the server, which
+   * keeps a reading for ten minutes and no longer: every follow-up carries all
+   * of them, so a reading that is gone is read again and answered the same
+   * way. See lib/questions.ts.
+   */
+  let answers: SuggestionAnswer[] = [];
+  let readingId: string | null = null;
+  /** The questions as the last proposal asked them, before answered ones are hidden. */
+  let asked: SuggestionQuestion[] = [];
 
   function showFiles(): void {
     el<HTMLLabelElement>('.dropzone-cta').hidden = chosen.length > 0;
@@ -2101,33 +2216,171 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   }
 
   /**
-   * Show what the register still needs to know.
+   * Show what the register still needs to know, and how to answer each.
    *
-   * The answer goes in the box below and the bilag is read again, so these are
-   * not decoration: they are the prompt that turns an optional free-text field
-   * into a question with an answer. Cleared on every read, because a question
-   * that has been answered must not still be on screen.
+   * Not decoration: these are the prompt that turns an optional box into a
+   * question with an answer. A question that names its answers gets them as
+   * buttons; one whose answer is a sentence points at the description box,
+   * which sits in the same frame; the amount points at the amount field.
+   * Answered questions are left out, so nothing answered is on screen.
    */
-  function showQuestions(suggestion: InvoiceSuggestion): void {
-    const asks = suggestion.questions;
-    askList.hidden = asks.length === 0;
-    askList.replaceChildren(
-      ...asks.map((ask) => {
-        const row = document.createElement('li');
-        if (ask.asked_by_model) row.dataset.ki = 'true';
-        row.append(ask.text);
-        if (ask.asked_by_model) {
-          const source = document.createElement('span');
-          source.className = 'ask-source';
-          source.textContent = 'Spurt av KI';
-          row.append(source);
-        }
-        return row;
-      }),
-    );
+  function showQuestions(questions: SuggestionQuestion[]): void {
+    asked = questions;
+    const open = unanswered(questions, answers);
+    askList.hidden = open.length === 0;
+    if (open.length > 0) askBox.dataset.asking = 'true';
+    else delete askBox.dataset.asking;
+    askList.replaceChildren(...open.map(questionRow));
     // Sende folk til boksen de skal svare i, uten å stjele fokus fra det de
-    // holder på med: bare når det faktisk er noe å svare på.
-    if (asks.length > 0) descriptionBox.setAttribute('aria-describedby', 'doc-questions');
+    // holder på med: bare når det faktisk er noe å svare på i den.
+    if (open.some((question) => howToAnswer(question) === 'description')) {
+      descriptionBox.setAttribute('aria-describedby', 'doc-questions');
+    } else {
+      descriptionBox.removeAttribute('aria-describedby');
+    }
+  }
+
+  function questionRow(question: SuggestionQuestion): HTMLLIElement {
+    const row = document.createElement('li');
+    if (question.asked_by_model) row.dataset.ki = 'true';
+    const text = document.createElement('p');
+    text.className = 'ask-text';
+    text.textContent = question.text;
+    row.append(text);
+
+    const way = howToAnswer(question);
+    if (way === 'options') {
+      const choices = document.createElement('div');
+      choices.className = 'ask-options';
+      choices.setAttribute('role', 'group');
+      choices.setAttribute('aria-label', question.text);
+      for (const choice of question.options) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'ask-option';
+        button.textContent = choice.label;
+        button.addEventListener('click', () => choose(question, choice));
+        choices.append(button);
+      }
+      row.append(choices);
+    } else {
+      // Et spørsmål uten knapper sier hvor svaret skal, og tar deg dit.
+      const go = document.createElement('button');
+      go.type = 'button';
+      go.className = 'btn-link ask-action';
+      go.textContent = way === 'amount' ? 'Fyll inn beløpet' : 'Svar i beskrivelsen under';
+      go.addEventListener('click', () => {
+        const target =
+          way === 'amount'
+            ? form.querySelector<HTMLInputElement>('input[name="gross_amount"]')
+            : descriptionBox;
+        if (target === null) return;
+        revealFields();
+        target.focus();
+        const end = target.value.length;
+        target.setSelectionRange(end, end);
+      });
+      row.append(go);
+    }
+    if (question.asked_by_model) {
+      const source = document.createElement('span');
+      source.className = 'ask-source';
+      source.textContent = 'Spurt av KI';
+      row.append(source);
+    }
+    return row;
+  }
+
+  /**
+   * One press on an answer.
+   *
+   * An answer that means a value sets the field at once, as the person's own
+   * choice: the follow-up then has nothing to overrule it with (`touched`).
+   * Either way the answer goes to the model, which writes the description
+   * again with it and may settle what the press could not.
+   */
+  function choose(question: SuggestionQuestion, choice: SuggestionOption): void {
+    answers = remember(answers, {
+      key: question.key,
+      question: question.text,
+      answer: choice.label,
+    });
+    if (!splitting && choice.type_code !== null) {
+      const offered = [...typeSelect.options].some((option) => option.value === choice.type_code);
+      if (offered) {
+        typeSelect.value = choice.type_code;
+        applyType();
+        touched.add('type_code');
+        byAnswer.add('type_code');
+        markField('type_code', 'Ditt svar');
+        markField('tax_code', null);
+      }
+    }
+    if (!splitting && choice.tax_code !== null) {
+      taxSelect.value = choice.tax_code;
+      touched.add('tax_code');
+      byAnswer.add('tax_code');
+      markField('tax_code', 'Ditt svar');
+    }
+    if (!splitting && choice.split) openSplit();
+    showQuestions(asked);
+    void continueReading();
+  }
+
+  /**
+   * Send the answers, and put the proposal that comes back into the form.
+   *
+   * A follow-up to the reading, not a new one: nothing is uploaded and the
+   * model is asked about what it already read, so this is seconds where a read
+   * of screenshots is a minute. With no reading to continue (KI is off, or the
+   * reading is gone) the bilag is read again instead, and `readDocuments`
+   * sends the answers on to the new reading when it has them.
+   */
+  async function continueReading(): Promise<void> {
+    if (readingId === null) {
+      if (chosen.length > 0) await readDocuments();
+      return;
+    }
+    reads += 1;
+    const read = reads;
+    const keepDescription = ownDescription && descriptionBox.value.trim() !== '';
+    if (!keepDescription) describing(true);
+    askStatus.textContent = 'Oppdaterer forslaget med svaret ditt …';
+    askStatus.hidden = false;
+    submit.disabled = true;
+    try {
+      const suggestion = await answerSuggestion(
+        company.id,
+        readingId,
+        answers,
+        keepDescription ? descriptionBox.value : undefined,
+      );
+      if (read !== reads) return;
+      applySuggestion(suggestion, { keepDescription });
+      showQuestions(suggestion.questions);
+    } catch (error: unknown) {
+      if (read !== reads) return;
+      if (error instanceof ApiError && error.code === 'reading_not_found') {
+        // Borte etter ti minutter, eller fordi KI ble slått av. Bilaget leses
+        // på nytt, og svarene følger med til den nye lesingen.
+        readingId = null;
+        askStatus.hidden = true;
+        if (chosen.length > 0) void readDocuments({ keepDescription });
+        return;
+      }
+      setStatus(
+        formStatus,
+        error instanceof ApiError
+          ? `Vi fikk ikke oppdatert forslaget: ${error.message}`
+          : 'Vi fikk ikke oppdatert forslaget. Sjekk feltene selv.',
+      );
+    } finally {
+      if (read === reads) {
+        askStatus.hidden = true;
+        submit.disabled = false;
+        describing(false);
+      }
+    }
   }
 
   /** Mark the files that produced no text, so the user can see which. */
@@ -2182,16 +2435,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
    * defaults to the same thing whenever the box holds anything the model did
    * not write itself — text typed before a file was even chosen, or an answer
    * to a question, both of which would otherwise be overwritten by the reply
-   * they were meant to inform. `readWith` is what the model last put there, so
-   * "the model's own sentence" is a comparison and not a guess.
+   * they were meant to inform. `ownDescription` says which it is.
+   *
+   * A read starts a new reading on the server, which the proposal names. Any
+   * answers already given on this bilag are sent on to it straight away, so a
+   * reading read again (a file added, the direction turned, the old reading
+   * gone) is answered as the one before it was.
    */
   async function readDocuments({
-    keepDescription = descriptionBox.value.trim() !== '' &&
-      descriptionBox.value !== readWith,
+    keepDescription = ownDescription && descriptionBox.value.trim() !== '',
   } = {}): Promise<void> {
     if (chosen.length === 0) return;
     reads += 1;
     const read = reads;
+    readingId = null;
     if (!keepDescription) {
       written = '';
       describing(true);
@@ -2242,6 +2499,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             describing(false);
             written += piece;
             descriptionBox.value = written;
+            ownDescription = false;
             markField('description', 'Skriver …', 'ki');
           },
         },
@@ -2249,8 +2507,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       if (read !== reads) return;
       applySuggestion(suggestion, { keepDescription });
       markUnread(suggestion);
-      showQuestions(suggestion);
+      readingId = suggestion.reading_id;
+      showQuestions(suggestion.questions);
       revealFields();
+      // Svar som alt er gitt på dette bilaget, går videre til den nye lesingen.
+      // Etter `finally` under, som ellers ville sluppet knappen og feltet løs
+      // midt i oppfølgingen.
+      if (answers.length > 0 && readingId !== null) {
+        queueMicrotask(() => void continueReading());
+      }
     } catch (error: unknown) {
       if (read !== reads) return;
       // The fields open even so. A reading that failed is precisely the case
@@ -2292,11 +2557,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     // go and register. And nothing the user changed is theirs any more: the
     // next bilag starts from what it says.
     touched.clear();
+    byAnswer.clear();
     setPartyText('', null);
-    askList.hidden = true;
-    askList.replaceChildren();
+    // Svarene gjaldt dette bilaget, og lesingen de ble sendt til, likeså.
+    answers = [];
+    readingId = null;
+    showQuestions([]);
     written = '';
     readWith = '';
+    ownDescription = false;
   }
 
   /** Add files to the bilag, skipping any already on it. */
@@ -2328,31 +2597,45 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   el<HTMLButtonElement>('#file-clear').addEventListener('click', clearFile);
 
   /*
-    Editing the description reads the bilag again. There used to be a button
-    for this, and a button is a worse design for the same thing: it asks the
-    user to know that answering the question was only half of it, and the half
-    that fills the form in is the one behind a control they have to notice.
+    Editing the description answers the open questions on screen and sends the
+    sentence to the model. There used to be a button for this, and a button is
+    a worse design for the same thing: it asks the user to know that answering
+    the question was only half of it, and the half that fills the form in is
+    the one behind a control they have to notice.
 
-    Two things keep it from being expensive. The wait is debounced past the end
-    of a sentence rather than fired per keystroke, and the server remembers what
-    each file said — so the second read costs a prompt and not another ninety
-    seconds of transcribing screenshots.
+    It is not a new read. The answer continues the reading the server kept
+    (`continueReading`), so nothing is uploaded and the model is asked a
+    follow-up rather than shown the whole bilag again. Before that it was a
+    whole new read with the sentence at the top, which on a bilag of
+    screenshots was most of a minute, and the model, never told which question
+    it had asked, could ask the same one again. The wait is still debounced
+    past the end of a sentence rather than fired per keystroke.
   */
   const REREAD_AFTER_MS = 1200;
   let rereadTimer: number | undefined;
+
+  /** What was written is an answer to the open questions, and goes to the model. */
+  function descriptionChanged(): void {
+    readWith = descriptionBox.value;
+    for (const answer of answeredByText(unanswered(asked, answers), descriptionBox.value)) {
+      answers = remember(answers, answer);
+    }
+    showQuestions(asked);
+    void continueReading();
+  }
 
   function scheduleReread(): void {
     window.clearTimeout(rereadTimer);
     const typed = descriptionBox.value.trim();
     // Nothing to read with, nothing to read, or nothing changed since last time.
     if (chosen.length === 0 || typed === '' || typed === readWith.trim()) return;
-    rereadTimer = window.setTimeout(() => {
-      readWith = descriptionBox.value;
-      void readDocuments({ keepDescription: true });
-    }, REREAD_AFTER_MS);
+    rereadTimer = window.setTimeout(descriptionChanged, REREAD_AFTER_MS);
   }
 
-  descriptionBox.addEventListener('input', scheduleReread);
+  descriptionBox.addEventListener('input', () => {
+    ownDescription = true;
+    scheduleReread();
+  });
   // And immediately on the way out of the field, because somebody who has
   // finished typing and clicked elsewhere has finished; waiting out the timer
   // then is a pause with nothing happening in it.
@@ -2360,8 +2643,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     window.clearTimeout(rereadTimer);
     const typed = descriptionBox.value.trim();
     if (chosen.length === 0 || typed === '' || typed === readWith.trim()) return;
-    readWith = descriptionBox.value;
-    void readDocuments({ keepDescription: true });
+    descriptionChanged();
   });
 
   el<HTMLButtonElement>('#cancel-edit-button').addEventListener('click', () => {
@@ -3035,13 +3317,35 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       // is the read's to fill again rather than the user's.
       touched.delete('type_code');
       touched.delete('tax_code');
+      byAnswer.clear();
+      // The direction decides which categories exist, so an answer that chose
+      // one was about the other side. A new read, because the category menu
+      // the model was shown is the other side's too.
+      answers = afterDirectionChange(answers);
       if (chosen.length > 0) {
-        const typed = descriptionBox.value.trim();
         // The user's own sentence is context; one the model is writing or
         // wrote is output, and is written again.
-        const theirs =
-          typed !== '' && descriptionBox.value !== readWith && descriptionBox.value !== written;
-        void readDocuments({ keepDescription: theirs });
+        void readDocuments({
+          keepDescription: ownDescription && descriptionBox.value.trim() !== '',
+        });
+      }
+    }
+    // The amount question is answered in the amount field. Taken as an answer
+    // and not sent on: what the account was charged is a number the model has
+    // no use for, but the question must not come back with the next proposal.
+    if (
+      target instanceof HTMLInputElement &&
+      target.name === 'gross_amount' &&
+      target.value.trim() !== ''
+    ) {
+      const question = unanswered(asked, answers).find((open) => open.key === AMOUNT_KEY);
+      if (question !== undefined) {
+        answers = remember(answers, {
+          key: question.key,
+          question: question.text,
+          answer: target.value.trim(),
+        });
+        showQuestions(asked);
       }
     }
     if (target === typeSelect) {
@@ -3057,6 +3361,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         markField(field.dataset.field ?? '', null);
         // And a later read of the same bilag leaves it alone. See `touched`.
         touched.add(field.dataset.field ?? '');
+        byAnswer.delete(field.dataset.field ?? '');
       }
     }
   });

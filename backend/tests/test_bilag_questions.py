@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from myntos.domain.bilag import questions
 from myntos.domain.bilag.interpretation import InvoiceReading, InvoiceSuggestion
 from myntos.domain.bilag.questions import MAX_QUESTIONS, clean, compose
 from myntos.domain.ledger.cashflow import CashFlowDirection, get_type
@@ -288,3 +289,161 @@ def test_feed_over_the_threshold_is_not_asked_about_as_an_asset() -> None:
         InvoiceReading(),
     )
     assert [question.field for question in goods] == ["type_code"]
+
+
+# --- Asked once, and answered with a press -----------------------------------------
+
+
+def _every_kind() -> list[questions.Question]:
+    """One bilag that raises every question the register can ask, uncut."""
+    return compose(
+        suggestion(
+            gross_amount=Decimal("31000.00"),
+            direction=CashFlowDirection.UT,
+            type_code="inventar",
+            tax_code=None,
+        ),
+        InvoiceReading(printed_rates=(Decimal("0.25"), Decimal("0.15"))),
+        model_question="Hva skal selskapet bruke dette til?",
+        alternative=get_type("datakostnad"),
+    )
+
+
+def test_every_question_says_which_question_it_is() -> None:
+    """The key is what an answer is matched to, so no question may go without one.
+
+    A question with the default key would be taken for the model's own, and
+    answering it would silence the model's real question instead.
+    """
+    asked = compose(
+        suggestion(
+            gross_amount=Decimal("3000.00"),
+            direction=CashFlowDirection.INN,
+            type_code="annen_inntekt",
+        ),
+        InvoiceReading(),
+        model_question="Hvem sendte pengene?",
+    )
+    assert [question.key for question in asked] == [questions.MONEY_IN, questions.MODEL]
+    assert {question.key for question in _every_kind()} == {
+        questions.CATEGORY_DOUBT,
+        questions.VAT_RATES,
+        questions.ASSET,
+    }
+
+
+def test_an_answered_question_is_not_asked_again() -> None:
+    """The report that started this: the same question, after it was answered.
+
+    The reading has not changed, so every condition that raised the question
+    still holds. Only the answer stands between the user and being asked twice.
+    """
+    reading = InvoiceReading(printed_rates=(Decimal("0.25"), Decimal("0.15")))
+    proposal = suggestion(gross_amount=Decimal("500.00"), type_code="varekjop", tax_code=None)
+
+    assert [q.key for q in compose(proposal, reading)] == [questions.VAT_RATES]
+    assert compose(proposal, reading, answered=frozenset({questions.VAT_RATES})) == []
+
+
+def test_an_answer_makes_room_rather_than_leaving_a_gap() -> None:
+    """Three are shown. Answering one lets the fourth in, rather than showing two."""
+    everything = compose(
+        suggestion(
+            gross_amount=Decimal("31000.00"),
+            direction=CashFlowDirection.UT,
+            type_code="inventar",
+            tax_code=None,
+        ),
+        InvoiceReading(printed_rates=(Decimal("0.25"), Decimal("0.15"))),
+        model_question="Hva skal selskapet bruke dette til?",
+        alternative=get_type("datakostnad"),
+        answered=frozenset({questions.CATEGORY_DOUBT}),
+    )
+    assert len(everything) == MAX_QUESTIONS
+    assert [question.key for question in everything] == [
+        questions.VAT_RATES,
+        questions.ASSET,
+        questions.MODEL,
+    ]
+
+
+def test_the_model_asks_one_question_per_bilag() -> None:
+    """After its question is answered, it may not ask another.
+
+    The model composes a fresh question on every read, and a model that may ask
+    again after every answer can keep a person answering for ever. The answer it
+    got is in front of it on the follow-up; that has to be enough.
+    """
+    asked = compose(
+        suggestion(gross_amount=Decimal("500.00"), type_code="varekjop", tax_code="1"),
+        InvoiceReading(vat_rate=Decimal("0.25")),
+        model_question="Var dette til et kundeprosjekt?",
+        answered=frozenset({questions.MODEL}),
+    )
+    assert asked == []
+
+
+def test_a_choice_between_two_categories_is_two_buttons_that_set_the_category() -> None:
+    """The two names the question prints are the two answers, with their codes."""
+    doubt = next(q for q in _every_kind() if q.key == questions.CATEGORY_DOUBT)
+    assert [(option.label, option.type_code) for option in doubt.options] == [
+        ("Verktøy og inventar", "inventar"),
+        ("Programvare og datakostnad", "datakostnad"),
+    ]
+
+
+def test_the_driftsmiddel_answers_are_the_laws_two_conditions() -> None:
+    """Cost and life both decide it (skatteloven § 14-40), so the answers name both.
+
+    Only one thing that lasts three years is an asset; the other two answers
+    leave the category alone rather than guess which cost it should be.
+    """
+    asset = next(q for q in _every_kind() if q.key == questions.ASSET)
+    assert [option.type_code for option in asset.options] == ["driftsmiddel", None, None]
+    assert "tre år eller mer" in asset.options[0].label
+
+
+def test_each_printed_rate_is_offered_as_the_code_it_means() -> None:
+    """A purchase at 25 % is input VAT code 1; at 15 %, code 11. And «several» is a split."""
+    rates = next(q for q in _every_kind() if q.key == questions.VAT_RATES)
+    assert [(option.label, option.tax_code, option.split) for option in rates.options] == [
+        ("Alt på 25 %", "1", False),
+        ("Alt på 15 %", "11", False),
+        ("Ulike deler, hver med sin sats", None, True),
+    ]
+
+
+def test_a_company_outside_the_vat_register_is_offered_no_rate() -> None:
+    """It deducts nothing, so a button that set a deducting code would set a refusal."""
+    asked = compose(
+        suggestion(gross_amount=Decimal("500.00"), type_code="varekjop", tax_code=None),
+        InvoiceReading(printed_rates=(Decimal("0.25"), Decimal("0.15"))),
+        vat_registered=False,
+    )
+    assert [option.split for option in asked[0].options] == [True]
+
+
+def test_money_in_offers_the_four_answers_it_names() -> None:
+    """Two of them are one category each; a sale and a repaid outlay are the model's to place."""
+    asked = compose(
+        suggestion(
+            gross_amount=Decimal("3000.00"),
+            direction=CashFlowDirection.INN,
+            type_code="annen_inntekt",
+        ),
+        InvoiceReading(),
+    )
+    assert [(option.label, option.type_code) for option in asked[0].options] == [
+        ("Innskudd fra eier", "egenkapitalinnskudd"),
+        ("Tilbakebetalt utlegg", None),
+        ("Et lån", "laneopptak"),
+        ("Et salg", None),
+    ]
+
+
+def test_every_option_names_a_category_that_exists() -> None:
+    """A button that sets a code the catalogue does not have sets a refusal."""
+    for question in _every_kind():
+        for option in question.options:
+            if option.type_code is not None:
+                get_type(option.type_code)

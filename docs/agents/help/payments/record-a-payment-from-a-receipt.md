@@ -67,8 +67,10 @@ counts.
      otherwise.
    - «Konto», shown only when the company has other accounts of the same kind.
    - «Betalt via»: «Bankkonto» or «Kontant».
-6. If questions appear above the description box, answer them in the box.
-   The bilag is read again with the answer, by itself.
+6. If questions appear in a framed box at the top of the form, answer each
+   one there: with its buttons, or in the «Beskrivelse» box when it has
+   none. The form is filled in again with the answer, by itself:
+   [Answer the questions about a receipt](https://myntos.no/llms/help/payments/answer-questions-about-a-receipt.md).
 7. Press «Registrer betaling». The payment is posted, then the files are
    attached («Laster opp dokumentene … 2 av 3»).
 8. The form says «Bilag 2026-0014 er ført.» (the bilag number), and the
@@ -102,8 +104,9 @@ counts.
   Removing a file with «Fjern», or leaving the page, leaves nothing behind.
 - When Myntos's AI reads the bilag, it runs on Myntos's own servers in Norway
   (Løynd); nothing is sent to an outside AI provider.
-- Picking a different «Penger inn» / «Penger ut» or editing the description
-  reads the bilag again. Fields the person changed by hand are left alone.
+- Picking a different «Penger inn» / «Penger ut» reads the bilag again, and
+  editing the description or answering a question fills the form in again
+  with it. Fields the person changed by hand are left alone.
 
 ## Related
 

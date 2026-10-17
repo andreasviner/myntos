@@ -52,6 +52,7 @@ from myntos.domain.bilag.classification import (
     preamble,
 )
 from myntos.domain.bilag.context import NO_CONTEXT, BilagContext
+from myntos.domain.bilag.followup import AskAfter, Exchange
 from myntos.domain.bilag.interpretation import (
     NOT_A_PARTY,
     FieldSource,
@@ -531,6 +532,7 @@ async def extract_streaming(
     on_description: Callable[[str], Awaitable[None]],
     title: str | None = None,
     context: BilagContext | None = None,
+    on_exchange: Callable[[Exchange], None] | None = None,
 ) -> Extraction:
     """:func:`extract`, with the description handed over as it is written.
 
@@ -546,21 +548,30 @@ async def extract_streaming(
     up, the truncated one fails its own check, and the register keeps its own
     reading for the rest. Raising instead would throw away four good lines
     because a fifth never came.
+
+    ``on_exchange`` is handed the question and the whole answer, for a caller
+    that will continue the conversation (:func:`extract_again`), and only when
+    the answer arrived whole. A follow-up built on half an answer would show the
+    model a reply it never finished as if it had, so a stream that died leaves
+    nothing to continue and the follow-up asks afresh.
     """
     context = context or NO_CONTEXT
     if not document_text.strip() and title is None and context.note is None:
         return Extraction()
 
     pieces = DescriptionStream()
+    prompt = build_prompt(document_text, title=title, context=context)
+    finished = False
     try:
         async for piece in ask(
             system=_SYSTEM,
-            prompt=build_prompt(document_text, title=title, context=context),
+            prompt=prompt,
             max_tokens=MAX_ANSWER_TOKENS,
         ):
             fresh = pieces.feed(piece)
             if fresh:
                 await on_description(fresh)
+        finished = True
     except Exception as error:
         # Named, because this is a blanket catch and a blanket catch that says
         # nothing is a place bugs go to be quiet. The message carries the type
@@ -568,8 +579,50 @@ async def extract_streaming(
         logger.info(
             "the model's answer stopped early (%s); reading what arrived", type(error).__name__
         )
+    if finished and on_exchange is not None:
+        on_exchange(Exchange(system=_SYSTEM, prompt=prompt, reply=pieces.answer))
     shown = document_text if title is None else f"{title}\n{document_text}"
     return parse_answer(pieces.answer, document_text=shown, today=today)
+
+
+#: The new turn of a follow-up, after what the user said. The five lines are in
+#: the first question, which the model sees again word for word, so this only
+#: says what is different: the user has spoken, the quotes are still quotes, and
+#: an answered question is not asked twice.
+_AGAIN = (
+    "Svar på nytt med de samme fem linjene, med det brukeren har sagt i tankene. "
+    "DATO, VALUTA og MOTPART skal fortsatt skrives av ordrett fra bilaget. "
+    "BESKRIVELSE kan ta med det brukeren har fortalt. Ikke still et spørsmål "
+    "brukeren allerede har svart på: er det ikke noe annet bare brukeren kan vite, "
+    "skriv UKJENT på SPØRSMÅL."
+)
+
+
+async def extract_again(
+    earlier: Exchange,
+    said: str,
+    *,
+    ask: AskAfter,
+    document_text: str,
+    today: date,
+    title: str | None = None,
+) -> Extraction:
+    """Ask the five lines again, after the user answered (:mod:`~myntos.domain.bilag.followup`).
+
+    Read by :func:`parse_answer` against the documents, exactly as the first
+    answer was. What the user said is in the prompt and nowhere in the text the
+    quotes are checked against, so an answer cannot set the date or the seller
+    any more than the note at the top of the first question could.
+    """
+    prompt = f"{said}\n\n{_AGAIN}" if said else _AGAIN
+    reply = await ask(
+        system=earlier.system,
+        prompt=prompt,
+        max_tokens=MAX_ANSWER_TOKENS,
+        history=((earlier.prompt, earlier.reply),),
+    )
+    shown = document_text if title is None else f"{title}\n{document_text}"
+    return parse_answer(reply, document_text=shown, today=today)
 
 
 def merge(reading: InvoiceReading, found: Extraction) -> tuple[InvoiceReading, frozenset[str]]:

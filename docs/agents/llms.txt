@@ -107,6 +107,7 @@ You have no access to the books here and must not ask for a password or a key. I
 
 ### Betaling: payments, receipts and corrections
 
+- [Answer the questions about a receipt](https://myntos.no/llms/help/payments/answer-questions-about-a-receipt.md)
 - [Attach a receipt to a payment already registered](https://myntos.no/llms/help/payments/attach-a-document-to-a-payment.md)
 - [Choose what a payment was for](https://myntos.no/llms/help/payments/choose-what-a-payment-was-for.md)
 - [Correct a payment](https://myntos.no/llms/help/payments/correct-a-payment.md)

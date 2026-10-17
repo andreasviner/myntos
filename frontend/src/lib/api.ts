@@ -1698,10 +1698,16 @@ export interface InvoiceSuggestion {
   /** Whether a model was actually consulted. False when KI is off, unconfigured, or down. */
   ki_used: boolean;
   /**
-   * What the register still needs to know, phrased so it can be answered in the
-   * explanation box. Answering and reading again produces a better proposal.
+   * What the register still needs to know. Answered with `answerSuggestion`,
+   * which comes back with a better proposal.
    */
   questions: SuggestionQuestion[];
+  /**
+   * Where the answers go: `answerSuggestion` continues from this reading
+   * instead of reading the files again. Null when no model was asked, and then
+   * the bilag is simply read again.
+   */
+  reading_id: string | null;
   /** One row per uploaded file, in upload order. */
   documents_read: DocumentRead[];
   /**
@@ -1718,6 +1724,33 @@ export interface SuggestionQuestion {
   field: string | null;
   /** True for the one question the model composed rather than the register. */
   asked_by_model: boolean;
+  /**
+   * Which question this is (`belop`, `innbetaling`, `kategori_tvil`,
+   * `kategori`, `mva_satser`, `driftsmiddel`, or `ki` for the model's own).
+   * Sent back with the answer; an answered key is not asked again.
+   */
+  key: string;
+  /** The answers it can be given with one press. Empty for an open question. */
+  options: SuggestionOption[];
+}
+
+/** One answer to a question, given with a press. */
+export interface SuggestionOption {
+  /** What the button says, and what is sent back as the answer. */
+  label: string;
+  /** The category this answer means, when it means one. */
+  type_code: string | null;
+  /** The VAT code this answer means, when it means one. */
+  tax_code: string | null;
+  /** The payment is several things: one line each, in a composite entry. */
+  split: boolean;
+}
+
+/** What the person said to one question. */
+export interface SuggestionAnswer {
+  key: string | null;
+  question: string;
+  answer: string;
 }
 
 /** One uploaded file, and how much text came out of it. */
@@ -1773,6 +1806,34 @@ export const interpretDocument = (
     body: form,
   });
 };
+
+/**
+ * Answer the questions on a proposal, and get the proposal again.
+ *
+ * Nothing is uploaded: the reading `reading_id` names is kept on the server for
+ * ten minutes after its last use, and the model is asked a follow-up to the
+ * conversation it already had about the bilag. `answers` is every answer given
+ * on this bilag so far, not only the newest, so a reading that is gone can be
+ * replaced by reading the files again and sending the same list. That is what
+ * an `ApiError` with code `reading_not_found` asks for.
+ *
+ * `forklaring` is the description as it stands, sent only when it is the
+ * person's own sentence, as for `interpretDocument`.
+ */
+export const answerSuggestion = (
+  companyId: number,
+  readingId: string,
+  answers: SuggestionAnswer[],
+  forklaring?: string,
+): Promise<InvoiceSuggestion> =>
+  json<InvoiceSuggestion>(
+    `/api/v1/companies/${companyId}/cashflow/forslag/${encodeURIComponent(readingId)}/svar`,
+    'POST',
+    {
+      answers,
+      forklaring: forklaring !== undefined && forklaring.trim() !== '' ? forklaring.trim() : null,
+    },
+  );
 
 /** What the streaming reader reports on its way to a proposal. */
 export interface InterpretHandlers {

@@ -2295,6 +2295,9 @@ def test_the_last_frame_is_what_the_json_route_would_have_returned(
         client, company["id"], text_pdf(RECEIPT_LINES), name="Order details.pdf"
     ).json()
 
+    # Each read is a reading of its own, kept under its own id for the answers,
+    # so the one field that names it is the one field that must differ.
+    assert streamed.pop("reading_id") != plain.pop("reading_id")
     assert streamed == plain
 
 
@@ -2462,3 +2465,281 @@ def test_reading_the_same_bilag_again_does_not_transcribe_it_again(
     assert reads == ["kvittering.png"]
     # And the second proposal did see the sentence.
     assert second.json()["context_used"] is True
+
+
+# --- answering the questions -------------------------------------------------------
+#
+# An answer continues the reading instead of starting it again: no upload, no
+# transcription, no second look at the pictures, and a model shown its own
+# question with the answer under it. See myntos.domain.bilag.followup.
+
+RECEIPT_WITH_A_QUESTION = RECEIPT_ANSWER + "\nSPØRSMÅL: Er dette til selskapets drift?"
+
+
+class Conversing:
+    """A Løynd that answers both questions and keeps every conversation it is handed.
+
+    A follow-up is told apart from a first question by its history, and the two
+    questions by what the first one asked for.
+    """
+
+    def __init__(self, category: str, fields: str, *, again: str | None = None) -> None:
+        self.category = category
+        self.fields = fields
+        self.again = again if again is not None else fields
+        self.calls: list[dict[str, Any]] = []
+
+    async def complete(
+        self, *, system: str, prompt: str, max_tokens: int = 16, history: Any = ()
+    ) -> str:
+        del max_tokens
+        self.calls.append({"system": system, "prompt": prompt, "history": list(history)})
+        asked = history[0][0] if history else prompt
+        if "BESKRIVELSE" in asked:
+            return self.again if history else self.fields
+        return self.category
+
+    def follow_ups(self) -> list[dict[str, Any]]:
+        return [call for call in self.calls if call["history"]]
+
+
+def counting_extractor(monkeypatch: pytest.MonkeyPatch, text: str) -> list[str]:
+    """Løynd's file reader, counting what it is handed."""
+    read: list[str] = []
+
+    async def extract(*, content: bytes, filename: str, content_type: str) -> Any:
+        del content, content_type
+        read.append(filename)
+        return loynd.ExtractedDocument(text=text)
+
+    monkeypatch.setattr(loynd, "extract_file", extract)
+    return read
+
+
+def answer(
+    client: TestClient, company_id: int, reading_id: str, answers: list[dict[str, Any]], **body: Any
+) -> Any:
+    return write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company_id}/cashflow/forslag/{reading_id}/svar",
+        json={"answers": answers, **body},
+    )
+
+
+def receipt_model(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> Conversing:
+    menu = classification.build_menu(CashFlowDirection.UT)
+    inventar = next(item for item in menu if item.type_code == "inventar")
+    model = Conversing(str(inventar.number), RECEIPT_WITH_A_QUESTION, **kwargs)
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    stub_loynd(monkeypatch, model.complete)
+    return model
+
+
+def test_an_answer_continues_the_conversation_without_reading_the_bilag_again(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The whole point: the files are not read again, and the model sees what it asked.
+
+    Both follow-ups start with the first question and the model's answer to it,
+    word for word, which is what lets Løynd reuse its work on the bilag. The
+    answer is in the one new turn after them.
+    """
+    model = receipt_model(monkeypatch)
+    read = counting_extractor(monkeypatch, "\n".join(RECEIPT_LINES))
+    company = signed_in_company(client)
+
+    first = interpret(client, company["id"], text_pdf(RECEIPT_LINES), name="ordre.pdf").json()
+    assert read == ["ordre.pdf"]
+    question = next(q for q in first["questions"] if q["key"] == "ki")
+    assert question["text"] == "Er dette til selskapets drift?"
+    firsts = [call for call in model.calls if not call["history"]]
+
+    again = answer(
+        client,
+        company["id"],
+        first["reading_id"],
+        [{"key": "ki", "question": question["text"], "answer": "Ja, til kontoret"}],
+    )
+
+    assert again.status_code == 200, again.text
+    assert read == ["ordre.pdf"]
+    follow_ups = model.follow_ups()
+    assert len(follow_ups) == 2
+    for call in follow_ups:
+        ((asked, replied),) = call["history"]
+        assert any(first_call["prompt"] == asked for first_call in firsts)
+        assert replied in {RECEIPT_WITH_A_QUESTION, model.category}
+        assert "«Er dette til selskapets drift?» Svar: «Ja, til kontoret»" in call["prompt"]
+    proposal = again.json()
+    assert proposal["reading_id"] == first["reading_id"]
+    assert proposal["type_code"] == "inventar"
+    assert proposal["occurred_on"] == date(THIS_YEAR, 8, 23).isoformat()
+
+
+def test_a_question_that_was_answered_is_not_asked_again(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The report that started this, end to end.
+
+    The model asks the same thing on the follow-up as it did the first time,
+    which a small model will. The answer the user gave is what keeps it off the
+    screen, not the model's good manners.
+    """
+    receipt_model(monkeypatch)
+    counting_extractor(monkeypatch, "\n".join(RECEIPT_LINES))
+    company = signed_in_company(client)
+    first = interpret(client, company["id"], text_pdf(RECEIPT_LINES)).json()
+
+    again = answer(
+        client,
+        company["id"],
+        first["reading_id"],
+        [{"key": "ki", "question": "Er dette til selskapets drift?", "answer": "Ja"}],
+    ).json()
+
+    assert "ki" not in {question["key"] for question in again["questions"]}
+
+
+def test_the_pictures_are_not_asked_for_a_name_again(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The app's name came off the pixels once; an answer has no pixels and needs none."""
+    model = Conversing("1", "DATO: UKJENT\nVALUTA: NOK\nMOTPART: UKJENT\nBESKRIVELSE: Servoer")
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    stub_loynd(monkeypatch, model.complete)
+    counting_extractor(monkeypatch, "Order total 1 234,00 kr\nServo x 4")
+    looked: list[str] = []
+
+    async def look(content: bytes, *, content_type: str, question: str, **_: Any) -> str:
+        del content, content_type
+        looked.append(question)
+        return "AliExpress"
+
+    monkeypatch.setattr(loynd, "ask_about_image", look)
+    company = signed_in_company(client)
+    first = interpret(client, company["id"], png_bytes(), name="ordre.png").json()
+    assert first["counterparty_name"] == "AliExpress"
+    seen = len(looked)
+
+    again = answer(client, company["id"], first["reading_id"], [], forklaring="Servoer").json()
+
+    assert len(looked) == seen
+    assert again["counterparty_name"] == "AliExpress"
+
+
+def test_a_question_never_answered_the_first_time_is_asked_afresh(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Løynd dropped the first read's answer, so there is no conversation to continue.
+
+    The answers then go where the user's sentence goes on a first read, and
+    the question is asked as a first question.
+    """
+    model = receipt_model(monkeypatch)
+    counting_extractor(monkeypatch, "\n".join(RECEIPT_LINES))
+    prompts: list[str] = []
+
+    async def stream(*, system: str, prompt: str, max_tokens: int = 16) -> Any:
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            raise loynd.LoyndUnavailableError("borte")
+        yield await model.complete(system=system, prompt=prompt, max_tokens=max_tokens)
+
+    monkeypatch.setattr(loynd, "stream", stream)
+    company = signed_in_company(client)
+    first = interpret(client, company["id"], text_pdf(RECEIPT_LINES)).json()
+
+    again = answer(
+        client,
+        company["id"],
+        first["reading_id"],
+        [{"key": "kategori", "question": "Hva ble kjøpt?", "answer": "En datamaskin"}],
+        forklaring="Mac til kontoret",
+    )
+
+    assert again.status_code == 200, again.text
+    assert len(prompts) == 2
+    assert "Mac til kontoret Hva ble kjøpt? En datamaskin" in prompts[1]
+    assert again.json()["description"] is not None
+
+
+def test_no_reading_is_kept_when_no_model_was_asked(client: TestClient) -> None:
+    """Without a model there is no conversation to continue, and reading again is free."""
+    company = signed_in_company(client)
+    first = interpret(client, company["id"], text_pdf(RECEIPT_LINES)).json()
+    assert first["ki_used"] is False
+    assert first["reading_id"] is None
+
+
+def test_an_unknown_reading_is_not_found(client: TestClient) -> None:
+    company = signed_in_company(client)
+    response = answer(client, company["id"], "finnes-ikke", [])
+    assert response.status_code == 404
+    assert response.json()["code"] == "reading_not_found"
+
+
+def test_a_colleagues_reading_is_not_yours_to_answer(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same company, same role, another person: the reading is the one who read it.
+
+    The id is random and nobody else was shown it, but an id ends up in logs and
+    browser histories, and the books being the same is not the person being the
+    same.
+    """
+    receipt_model(monkeypatch)
+    counting_extractor(monkeypatch, "\n".join(RECEIPT_LINES))
+    company = signed_in_company(client)
+    first = interpret(client, company["id"], text_pdf(RECEIPT_LINES)).json()
+
+    join_company(client, company["id"], email="kollega@example.no")
+    response = answer(client, company["id"], first["reading_id"], [])
+
+    assert response.status_code == 404
+    assert response.json()["code"] == "reading_not_found"
+
+
+def test_switching_ki_off_ends_every_reading(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Off means the documents go to no model, including through a reading kept from before."""
+    model = receipt_model(monkeypatch)
+    counting_extractor(monkeypatch, "\n".join(RECEIPT_LINES))
+    company = signed_in_company(client)
+    first = interpret(client, company["id"], text_pdf(RECEIPT_LINES)).json()
+    asked = len(model.calls)
+
+    write(client, "PATCH", f"/api/v1/companies/{company['id']}", json={"ki_enabled": False})
+    response = answer(client, company["id"], first["reading_id"], [])
+
+    assert response.status_code == 404
+    assert len(model.calls) == asked
+
+
+def test_the_model_cannot_make_an_asset_of_a_payment_under_the_threshold(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A driftsmiddel costs 30 000 or more, so a smaller payment holds none.
+
+    Found when two graphics cards for 25 278 kroner came back as an asset after
+    the person answered «til selskapets drift»: the model read "drift", and the
+    menu has a "driftsmiddel" on it. Its runner-up stands in, and it is not
+    asked about, since the doubt was about a category that could not be right.
+    """
+    menu = classification.build_menu(CashFlowDirection.UT)
+    number = {item.type_code: item.number for item in menu}
+    model = Conversing(
+        f"{number['driftsmiddel']}/{number['datakostnad']}",
+        "DATO: UKJENT\nVALUTA: NOK\nMOTPART: UKJENT\nBESKRIVELSE: To skjermkort",
+    )
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    stub_loynd(monkeypatch, model.complete)
+    counting_extractor(monkeypatch, "Kvittering\nTo skjermkort\nTotalt 25 278,00 kr")
+    company = signed_in_company(client)
+
+    proposal = interpret(client, company["id"], text_pdf(["Kvittering"])).json()
+
+    assert proposal["gross_amount"] == "25278.00"
+    assert proposal["type_code"] == "datakostnad"
+    assert "kategori_tvil" not in {question["key"] for question in proposal["questions"]}

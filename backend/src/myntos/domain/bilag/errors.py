@@ -30,3 +30,14 @@ class NoThumbnailError(AttachmentNotFoundError):
     A not-found rather than its own status, because to the page asking it is the
     same answer: show the badge instead. The original is untouched either way.
     """
+
+
+class ReadingNotFoundError(AttachmentError):
+    """No reading under that id for this company and person, or no longer.
+
+    Kept for ten minutes after it was last answered, in one process's memory,
+    and only while the company has KI switched on (docs: domain/bilag/readings.py).
+    The way on is to read the bilag again, which costs the transcription and
+    nothing else. Not found rather than forbidden, for the reason every other
+    sub-resource gives: somebody else's reading is indistinguishable from none.
+    """

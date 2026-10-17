@@ -624,6 +624,18 @@ _TAX_CODE_BY_RATE: dict[CashFlowDirection, dict[Decimal, str]] = {
     CashFlowDirection.UT: {Decimal("0.25"): "1", Decimal("0.15"): "11", Decimal("0.12"): "13"},
     CashFlowDirection.INN: {Decimal("0.25"): "3", Decimal("0.15"): "31", Decimal("0.12"): "33"},
 }
+
+
+def tax_code_for_rate(direction: CashFlowDirection, rate: Decimal) -> str | None:
+    """The domestic VAT code a printed rate means, in this direction, or ``None``.
+
+    The same table the reading proposes a code from, so a rate the user picks as
+    the answer to a question means exactly what it would have meant had the
+    bilag printed only that one.
+    """
+    return _TAX_CODE_BY_RATE[direction].get(rate)
+
+
 _SALES_TYPE_BY_RATE = {
     Decimal("0.25"): "salg_hoy_sats",
     Decimal("0.15"): "salg_middels_sats",
@@ -2899,6 +2911,25 @@ CAPITALISATION_THRESHOLD = Decimal(30000)
 # Categories where a single large purchase plausibly *is* a driftsmiddel. Goods
 # for resale, rent and salary are all large by nature and none of them is one.
 _CAPITALISABLE = frozenset({"inventar", "datakostnad"})
+
+
+def model_may_propose(type_code: str, amount: Decimal | None) -> bool:
+    """Whether a model's category can stand against the amount the bilag prints.
+
+    One rule, and it is arithmetic: a payment under the threshold cannot hold a
+    driftsmiddel, which costs 30 000 or more by definition (skatteloven § 14-40),
+    so the asset category is not the model's to propose there. Found when two
+    graphics cards for 25 278 kroner came back as «Større anskaffelse
+    (driftsmiddel)» after the user answered «til selskapets drift»: the model
+    reads "drift" and the menu has a "driftsmiddel" on it.
+
+    Only the model's proposal. A part-payment of a dearer asset is a real
+    payment under the threshold, and a person who knows that picks the category
+    by hand.
+    """
+    return not (
+        type_code == "driftsmiddel" and amount is not None and amount < CAPITALISATION_THRESHOLD
+    )
 
 
 def note_capitalisation(suggestion: InvoiceSuggestion) -> None:

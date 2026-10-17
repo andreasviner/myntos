@@ -1040,6 +1040,16 @@ That is a single decision doing several jobs at once:
 - **One place to switch.** The API is OpenAI-shaped and `LOYND_BASE_URL` is
   configuration, so a self-hosted model is a deployment choice, not a rewrite.
 
+**Løynd's web search is never used.** Løynd can look things up on the web
+before it answers, and for a caller with a key of its own it does so by
+default: a routing pass reads the first 2 000 characters of each message and
+decides whether to send queries through the search instance beside it, which
+forwards them to the search engines it fronts. A bilag's seller or order number
+turned into a search query has left the EEA. Nothing in Myntos said either way
+until 2026-10-17; every chat request now says `"search": false`
+(`integrations/loynd.py`, asserted in `test_loynd_requests.py`), which also
+saves the routing pass's own generation ahead of every answer.
+
 This rule is about the models *Myntos* calls. A company that connects its own
 agent to its books with an API key is a different thing, governed by
 [agents-and-api.md](agents-and-api.md): Myntos sends that agent's provider
@@ -1089,10 +1099,11 @@ text that goes in the ledger. They are the same sentence. "Kjøpt strømforsynin
 la ut 3000 privat" is both the thing the model is missing and a perfectly good
 bilagstekst, and two fields for one sentence are two places to write it — one of
 which stays empty. So the field is both: the model writes a proposal into it, the
-user corrects it, and a correction re-reads the bilag with the sentence as
-context. That is why there is no "read it again" button any more; a button asks
-the user to know that answering the question was only half of it, and the half
-that fills in the form was behind a control they had to notice.
+user corrects it, and a correction goes to the model as an answer (below), with
+the sentence as context. That is why there is no "read it again" button any
+more; a button asks the user to know that answering the question was only half
+of it, and the half that fills in the form was behind a control they had to
+notice.
 
 It has one consequence worth stating plainly, because it is a promise that
 changed: the description **is stored and is posted**, unlike everything else sent
@@ -1362,9 +1373,54 @@ prompt gets left as it was, so a proposal comes with up to three questions whose
 answers would settle it: what was actually charged when no total was found,
 whether money in from a private person is a deposit or a sale, which rate
 governs when a bilag prints two, and — the `utlegg` case — whether 25 278 kroner
-is one asset over the threshold or two under it. Answer in the description, and
-the bilag is read again with the answer; that loop is the whole point of the
-field, and it now closes by itself.
+is one asset over the threshold or two under it.
+
+Each is answered where it is asked. They used to sit above the description box
+as cards of their own, with «Beskrivelse (valgfritt)» between them and the box,
+and the answer was meant to go in the box. Nothing said so. The report on
+2026-10-17 was a screenshot of exactly that, and the question: how do I answer
+the AI? So the questions and the box are now one framed block, and most
+questions carry their answers as buttons (`options`): «Innskudd fra eier» or
+«Et lån», «Alt på 25 %», one thing that lasts three years or several under
+30 000. The code that wrote the question knows what each answer means, so an
+answer that decides a field says which value (`type_code`, `tax_code`) and the
+page sets it on the press, marked «Ditt svar». A question with no buttons is
+answered in the description, and the amount in the amount field.
+
+**A question is asked once.** The same report: the person had answered «la ut
+privat», and the question came back. Every question has a `key`, the page sends
+every answer with the key it answered, and an answered key is not asked again
+on that bilag whatever the reading says. The model gets one question of its own
+per bilag: once that is answered it may not ask another, because a model that
+may ask again after every answer can keep a person answering for ever.
+
+**An answer continues the conversation; it does not start a new one**
+(`domain/bilag/followup.py`, `domain/bilag/readings.py`). An answer used to be a
+whole new read with the sentence at the top: every file uploaded again, photos
+converted again, the bilag in front of the model again, the pictures asked for
+an app's name again. The text cache above saved the transcription and nothing
+else, and the model was never told what it had asked. Now the first read is
+kept, in memory, under a `reading_id` the proposal carries: the documents'
+text, the parser's reading, and the two questions put to the model *with its
+answers*. `POST …/cashflow/forslag/{reading_id}/svar` takes the answers and
+asks each question again as a follow-up: the first question and the model's
+answer repeated **exactly**, then one turn with everything the user has said.
+Exactly, because Løynd's model server keeps the work it did on a prompt and
+reuses it for a later prompt that begins the same way (vLLM's prefix cache,
+on, at 800-token blocks for this hybrid model); the bilag is nearly all of the
+first question, so the follow-up pays for the new turn and the answer. And
+always the first exchange plus one turn, never a growing chat, so the reused
+part never changes. The quotes are still checked against the documents, so an
+answer can set the date or the seller no more than the note could.
+
+The kept reading has the reading cache's rules: in memory only, at most 64,
+gone ten minutes after its last use, never a source of truth. It adds one the
+cache does not need: an entry is found only by the company **and the person**
+it was read for, because its key is a random id rather than the bytes, and an
+id ends up in logs. The page, not the server, owns the answers and sends all of
+them every time, so a reading that is gone (a restart, the ten minutes, KI
+switched off in between, which ends every reading at once) is read again and
+answered exactly as before.
 
 Almost all of those are conditions in code, not questions put to a model, because
 they are facts about our own reading and asking a model to notice them would

@@ -60,6 +60,16 @@ editor, the upload list on `/kontantstrom/`); or, for anything more than one
 page builds, put it in `BaseLayout` (the register's rows, the detail line and
 its files).
 
+**A colour that does not exist is not a fallback.** `border: 1px solid
+var(--line)` with no `--line` anywhere is not a thin grey line: a `var()` that
+resolves to nothing makes the whole declaration invalid, the property falls
+back to its initial value, and a later `border-style: dashed` then draws the
+browser's own border, three pixels and black. That was the heavy black frame
+around the model's question on `/kontantstrom/` until 2026-10-17, and nothing
+in `astro check` or the console says so. The tokens are the ones `BaseLayout`
+defines (`--border`, `--accent-line`, `--muted`, …); check a new one there
+before using it.
+
 **An id the layout already uses is the same bug wearing a different hat.**
 `BaseLayout` gives `<main>` `id="innhold"`, because that is where the skip link
 points, so a page that names its own wrapper `innhold` makes `el('#innhold')`

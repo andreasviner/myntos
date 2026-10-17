@@ -34,9 +34,24 @@ everything else the model is asked, and is checked before it is shown.
 Three rules:
 
 **A question is asked once and answered by the user.** Nothing here changes a
-field, and nothing here is stored. The answer goes in the box, the documents are
-read again, and the proposal that comes back is built the same way every other
-proposal is.
+field, and nothing here is stored. The answer goes back to the model as a
+follow-up (:mod:`myntos.domain.bilag.followup`), and the proposal that comes
+back is built the same way every other proposal is. *Once* is enforced, not
+hoped for: every question has a :attr:`Question.key`, and a key the user has
+answered is not asked again (``answered`` in :func:`compose`). The model gets
+one question of its own per bilag: after the user has answered one, a second
+is not asked, because a model that may ask again after every answer can keep a
+person answering forever, and the report that started this was a question
+asked twice.
+
+**A choice is offered as one.** Most of these questions name their own answers
+("innskudd fra eier, et lån eller et salg?"), and a person who has to type one
+of the words the question already printed is doing the form's work. So those
+come with :attr:`Question.options`, which the page shows as buttons. An option
+that settles a field says which value it means (``type_code``, ``tax_code``),
+because the code that wrote the question knows exactly what each answer
+implies, and asking a model to work out what «Innskudd fra eier» means would be
+asking it for something the software already determined.
 
 **Ask about what would change the entry.** A missing invoice number is not worth
 a question: it is prose in a description. A missing amount, an unknown or
@@ -56,6 +71,7 @@ from myntos.domain.bilag.interpretation import (
     CAPITALISATION_THRESHOLD,
     InvoiceReading,
     InvoiceSuggestion,
+    tax_code_for_rate,
 )
 from myntos.domain.ledger import landbruk
 from myntos.domain.ledger.cashflow import (
@@ -73,6 +89,35 @@ MAX_QUESTIONS = 3
 #: and the explanation belongs in the warning next to it.
 MAX_QUESTION_CHARS = 160
 
+# Which question is which. Norwegian, like every other name on the wire in this
+# API, and stable: a browser and an agent send them back with an answer, and a
+# renamed key is a question that comes back after it was answered.
+AMOUNT = "belop"
+MONEY_IN = "innbetaling"
+CATEGORY_DOUBT = "kategori_tvil"
+CATEGORY = "kategori"
+VAT_RATES = "mva_satser"
+ASSET = "driftsmiddel"
+MODEL = "ki"
+
+
+@dataclass(frozen=True)
+class Option:
+    """One answer to a question, offered so it can be given with one press.
+
+    ``label`` is what the button says and what goes back to the model as the
+    answer. ``type_code`` and ``tax_code`` are the value the answer means for
+    that field, when it means one, so the page can set the field the moment the
+    button is pressed rather than waiting for a model to agree. ``split`` means
+    the answer is "these are several things": the entry is a composite one, one
+    line per part, which no single field can say.
+    """
+
+    label: str
+    type_code: str | None = None
+    tax_code: str | None = None
+    split: bool = False
+
 
 @dataclass(frozen=True)
 class Question:
@@ -82,12 +127,16 @@ class Question:
     put the question beside it rather than in a list at the top. ``asked_by_model``
     separates the one question that was composed from the ones this module
     derived — the same distinction ``sources`` draws for every proposed value,
-    and for the same reason: the two do not deserve equal trust.
+    and for the same reason: the two do not deserve equal trust. ``key`` says
+    which question it is, so an answer can be matched to it (see the module
+    docstring), and ``options`` are the answers it can be given with a press.
     """
 
     text: str
     field: str | None = None
     asked_by_model: bool = False
+    key: str = MODEL
+    options: tuple[Option, ...] = ()
 
 
 def _written(value: Decimal) -> str:
@@ -113,6 +162,8 @@ def compose(
     model_question: str | None = None,
     alternative: CashFlowType | None = None,
     has_note: bool = False,
+    answered: frozenset[str] = frozenset(),
+    vat_registered: bool = True,
 ) -> list[Question]:
     """What to ask, in the order it is worth asking.
 
@@ -127,14 +178,27 @@ def compose(
     of a condition in code, and it is still ours to phrase: the model supplies
     two menu numbers and this module supplies the sentence, so what the user
     reads is two category names they recognise from the dropdown next to it.
+
+    ``answered`` is the keys the user has answered on this bilag. Those are not
+    asked again, whatever the reading says now, and they are left out before the
+    list is cut to :data:`MAX_QUESTIONS`, so an answer makes room for the next
+    question rather than leaving a gap. ``vat_registered`` decides whether a
+    VAT rate can be offered as an answer: a company outside the register deducts
+    nothing, so a button that sets a deducting code would set one the register
+    then refuses.
     """
     asked: list[Question] = []
 
+    def ask(question: Question) -> None:
+        if question.key not in answered:
+            asked.append(question)
+
     # 1. The amount. Nothing can be posted without it, so it outranks
-    #    everything else that might be missing.
+    #    everything else that might be missing. No buttons: the answer is a
+    #    number, and it goes in the amount field.
     if suggestion.gross_amount is None:
         if suggestion.foreign_amount is not None and suggestion.currency_code:
-            asked.append(
+            ask(
                 Question(
                     text=(
                         f"Bilaget er på {_written(suggestion.foreign_amount)} "
@@ -142,13 +206,15 @@ def compose(
                         "belastet kontoen?"
                     ),
                     field="gross_amount",
+                    key=AMOUNT,
                 )
             )
         else:
-            asked.append(
+            ask(
                 Question(
                     text="Vi fant ikke totalbeløpet. Hvilket beløp ble belastet kontoen?",
                     field="gross_amount",
+                    key=AMOUNT,
                 )
             )
 
@@ -160,19 +226,31 @@ def compose(
     #    Not on a settlement the buyer wrote: the document has already said it
     #    is a sale, and asking a farmer whether the dairy's melkeoppgjør might
     #    be an owner's deposit reads as not having read it.
+    #
+    #    Two of the four answers are one category each. The other two are not:
+    #    a sale is one of five categories depending on its VAT, and money paid
+    #    back for an outlay depends on what the outlay was, so those go to the
+    #    model as an answer and the model chooses.
     elif (
         suggestion.direction is CashFlowDirection.INN
         and suggestion.party_id is None
         and not suggestion.issued_by_buyer
         and not has_note
     ):
-        asked.append(
+        ask(
             Question(
                 text=(
                     "Pengene kom inn fra noen som ikke er registrert som kunde. Er dette "
                     "innskudd fra eier, tilbakebetalt utlegg, et lån eller et salg?"
                 ),
                 field="type_code",
+                key=MONEY_IN,
+                options=(
+                    Option("Innskudd fra eier", type_code="egenkapitalinnskudd"),
+                    Option("Tilbakebetalt utlegg"),
+                    Option("Et lån", type_code="laneopptak"),
+                    Option("Et salg"),
+                ),
             )
         )
 
@@ -189,10 +267,11 @@ def compose(
         and suggestion.type_code is not None
         and alternative.code != suggestion.type_code
     ):
-        asked.append(
+        proposed = get_type(suggestion.type_code)
+        ask(
             Question(
                 text=(
-                    f"Er dette «{get_type(suggestion.type_code).label}» eller "
+                    f"Er dette «{proposed.label}» eller "
                     f"«{alternative.label}»? Skriv gjerne hva som ble kjøpt."
                 ),
                 field="type_code",
@@ -201,32 +280,51 @@ def compose(
                 # user is owed the difference between what we read and what was
                 # guessed.
                 asked_by_model=True,
+                key=CATEGORY_DOUBT,
+                options=(
+                    Option(proposed.label, type_code=proposed.code),
+                    Option(alternative.label, type_code=alternative.code),
+                ),
             )
         )
 
     # 4. The category, which decides the account and through it the
     #    næringsspesifikasjon post. Asked only when neither the keyword reading
     #    nor the model produced one — otherwise there is a proposal to correct
-    #    rather than a blank to fill.
+    #    rather than a blank to fill. No buttons: the answer is one of thirty
+    #    categories, and the dropdown is right there.
     if suggestion.type_code is None:
-        asked.append(
+        ask(
             Question(
                 text="Hva ble kjøpt, og hva bruker selskapet det til?",
                 field="type_code",
+                key=CATEGORY,
             )
         )
 
     # 5. Several VAT rates on one bilag. One entry carries one code, so either
     #    the parts belong to separate entries or one rate governs.
+    #
+    #    Each rate is offered as the code it means in this direction, and only
+    #    to a registered company (see the docstring). "Different parts" is the
+    #    composite entry: a line per rate.
     if suggestion.tax_code is None and len(reading.printed_rates) > 1:
         shown = " og ".join(f"{int(rate * 100)} %" for rate in reading.printed_rates)
-        asked.append(
+        rates: list[Option] = []
+        if vat_registered:
+            for rate in reading.printed_rates:
+                code = tax_code_for_rate(suggestion.direction, rate)
+                if code is not None:
+                    rates.append(Option(f"Alt på {int(rate * 100)} %", tax_code=code))
+        ask(
             Question(
                 text=(
                     f"Bilaget viser {shown} mva. Gjelder satsene ulike deler av kjøpet, "
                     "eller er hele beløpet på én sats?"
                 ),
                 field="tax_code",
+                key=VAT_RATES,
+                options=(*rates, Option("Ulike deler, hver med sin sats", split=True)),
             )
         )
 
@@ -241,13 +339,19 @@ def compose(
     #    threshold every month (the pilot farm's first Coop samlefaktura, one
     #    month of kraftfôr, was asked whether it was one item), nor a kreditnota
     #    or a deduction on a settlement, which are not purchases at all.
+    #
+    #    The answers are the law's two conditions, not the question's one:
+    #    skatteloven § 14-40 makes a driftsmiddel of a thing that costs 30 000
+    #    or more *and* lasts three years or more, and the warning beside the
+    #    amount says so. One thing that lasts is the asset category; the other
+    #    two leave the category as it is.
     if (
         suggestion.gross_amount is not None
         and suggestion.gross_amount >= CAPITALISATION_THRESHOLD
         and suggestion.direction is CashFlowDirection.UT
         and not _never_an_asset(suggestion.type_code)
     ):
-        asked.append(
+        ask(
             Question(
                 text=(
                     f"{_written(suggestion.gross_amount)} kr er over grensen for "
@@ -255,6 +359,12 @@ def compose(
                     "er under 30 000 kr?"
                 ),
                 field="type_code",
+                key=ASSET,
+                options=(
+                    Option("Én ting som skal brukes i tre år eller mer", type_code="driftsmiddel"),
+                    Option("Én ting som skal brukes kortere enn tre år"),
+                    Option("Flere ting, hver under 30 000 kr"),
+                ),
             )
         )
 
@@ -262,7 +372,7 @@ def compose(
     #    not answer at all. It goes at the end because everything above is a
     #    fact about our own reading and this is a judgement about theirs.
     if model_question is not None:
-        asked.append(Question(text=model_question, asked_by_model=True))
+        ask(Question(text=model_question, asked_by_model=True, key=MODEL))
 
     return asked[:MAX_QUESTIONS]
 

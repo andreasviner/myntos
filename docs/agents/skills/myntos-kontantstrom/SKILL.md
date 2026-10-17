@@ -114,16 +114,43 @@ few screenshots.
      `beregnet` (worked out, such as a foreign amount converted at Norges
      Bank's rate). `filled` lists the same fields.
    - `warnings` and `questions` are sentences in bokmål meant for the person.
-     A question's `field` says which field its answer would settle.
+     A question's `field` says which field its answer would settle, its `key`
+     which question it is, and its `options` the answers it can be given with
+     one press. An option with a `type_code` or `tax_code` is that value for
+     that field; `split: true` means the payment is several things and belongs
+     in a composite entry (below).
+   - `reading_id` is where to send the answers (step 4). Null when no model was
+     asked.
    - `ki_used: false` means no model was asked: the company switched KI off,
      or the model could not be reached. An empty category is then not anyone's
      opinion, and photos cannot be read at all.
    - `documents_read` has one row per file; `chars: 0` is a file nothing could
      be read from.
 4. **Fill the gaps with the person, not by guessing.** Ask about each `null`
-   that matters and pass on each question. If the answer changes what the bilag
-   means, call step 2 again with it as `forklaring`: the files are remembered
-   for about ten minutes, so a second read is quick.
+   that matters and pass on each question, with its `options` as the choices
+   when it has some. Then send the answers:
+
+   `POST /api/v1/companies/{company_id}/cashflow/forslag/{reading_id}/svar`,
+   JSON body:
+
+   | Field | What to send |
+   | --- | --- |
+   | `answers` | **Every** answer given on this bilag so far, not only the newest, each `{"key": …, "question": …, "answer": …}`: the question's `key` and `text`, and the person's answer, which is the `label` of the option they picked or their own words. At most 12 |
+   | `forklaring` | Optional: the description as it stands now, the same sentence as in step 2 |
+
+   It answers with the whole proposal again, built with the answers, and the
+   same `reading_id`, so you can answer the next question the same way. It
+   does not read the files again: the model is asked a follow-up to what it
+   already read, so it takes seconds rather than a minute. A question whose
+   `key` you have answered is not asked again. When the person picked an
+   option with a `type_code` or `tax_code`, use that value in step 6, whatever
+   the new proposal says for the field: it is their choice. Stores nothing;
+   needs `write`, and runs even when your writes wait for approval.
+
+   404 `reading_not_found` means the reading is gone: it is kept for ten
+   minutes after it was last used, and none is kept once KI is switched off.
+   Call step 2 again with the files, then send the same answers to the new
+   `reading_id`.
    - **Foreign currency.** When `currency_code` is not `NOK`, `gross_amount` is
      either `null` or `foreign_amount` converted at Norges Bank's rate
      (`exchange_rate`, `rate_quoted_on`). The books are in kroner, and what
@@ -378,6 +405,7 @@ the law does not allow it, and offer the reversal or the correction.
 | 403 `missing_scope` | The key may not have bilag read (`write`) or may not post (`post`) | Tell the person what you prepared; they can register it in Myntos under «Betaling», or give a key that may post |
 | 403 `permission_denied` | The person's role is «Leser», which may read the books but not book in them | Someone with «Medlem» or more has to register it |
 | 404 `voucher_not_found`, `attachment_not_found` | No such id in this company | Read the register again for the right `id` |
+| 404 `reading_not_found` | The reading the answers were for is gone (ten minutes after its last use, or KI was switched off) | Read the bilag again with `…/cashflow/forslag` and send the same answers to its `reading_id` |
 | 404 `party_not_found` | `party_id` is not one of this company's customers or suppliers | Look the party up (myntos-parter), or leave it out |
 | 404 `no_thumbnail` | A PDF, or a picture no thumbnail could be made of | Fetch the document itself |
 | 409 `already_reversed` | The entry was reversed or corrected before | Correct the newest replacement, or leave it as it is |

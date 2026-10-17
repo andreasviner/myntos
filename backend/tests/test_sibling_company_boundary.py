@@ -30,7 +30,8 @@ nothing at all.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from myntos.core.clock import utc_now
+from myntos.integrations import loynd
 from myntos.main import create_app
 from tests.conftest import agent_header, assert_key_refused, insert_mva_filing, register, write
 
@@ -537,7 +539,66 @@ def _an_asset(client: TestClient, company_id: int) -> tuple[int, Callable[[], No
     return asset_id, readable
 
 
-FACTORIES: dict[str, Callable[[TestClient, int], tuple[int, Callable[[], None]]]] = {
+@contextmanager
+def _a_model() -> Iterator[None]:
+    """A Løynd that reads every file as one receipt and answers every question.
+
+    Only for as long as the block runs: a reading is kept only when a model was
+    asked, so building one needs a model, and nothing after the block should
+    find one there by accident.
+    """
+
+    async def extract(*, content: bytes, filename: str, content_type: str) -> Any:
+        del content, filename, content_type
+        return loynd.ExtractedDocument(text="Kvittering\nSkjermkort\nTotalt 4 990,00 kr")
+
+    async def complete(**_: Any) -> str:
+        return "1"
+
+    async def stream(**_: Any) -> Any:
+        yield "DATO: UKJENT\nVALUTA: NOK\nMOTPART: UKJENT\nBESKRIVELSE: Skjermkort\n"
+        yield "SPØRSMÅL: Er skjermkortet til selskapets drift?"
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(loynd, "is_configured", lambda: True)
+        patch.setattr(loynd, "extract_file", extract)
+        patch.setattr(loynd, "complete", complete)
+        patch.setattr(loynd, "stream", stream)
+        yield
+
+
+def _a_reading(client: TestClient, company_id: int) -> tuple[str, Callable[[], None]]:
+    """A bilag the sibling has read and is answering questions about.
+
+    The reading is the documents' text and the model's conversation about them,
+    and answering through this company's URL would continue the other client's
+    conversation and hand back what their bilag says.
+    """
+    with _a_model():
+        read = write(
+            client,
+            "POST",
+            f"/api/v1/companies/{company_id}/cashflow/forslag",
+            files=[("files", ("kvittering.pdf", PDF_BYTES, "application/pdf"))],
+        )
+    assert read.status_code == 200, read.text
+    reading_id = read.json()["reading_id"]
+    assert isinstance(reading_id, str)
+
+    def readable() -> None:
+        with _a_model():
+            owner = write(
+                client,
+                "POST",
+                f"/api/v1/companies/{company_id}/cashflow/forslag/{reading_id}/svar",
+                json={"answers": []},
+            )
+        assert owner.status_code == 200, owner.text
+
+    return reading_id, readable
+
+
+FACTORIES: dict[str, Callable[[TestClient, int], tuple[int | str, Callable[[], None]]]] = {
     "document_id": _a_document,
     "voucher_id": _a_voucher,
     "attachment_id": _an_attachment,
@@ -572,6 +633,10 @@ FACTORIES: dict[str, Callable[[TestClient, int], tuple[int, Callable[[], None]]]
     "import_id": _an_import,
     # A driftsmiddel: the other client's saldo, and what it deducts.
     "asset_id": _an_asset,
+    # A bilag being answered about: the other client's documents, read, and
+    # the model's conversation about them. The id is random rather than
+    # sequential, which is no reason to skip the wall.
+    "reading_id": _a_reading,
 }
 
 
@@ -738,6 +803,7 @@ REQUESTS: dict[tuple[str, str], dict[str, Any]] = {
         "json": {"disposed_on": f"{THIS_YEAR}-06-01", "proceeds": "10000.00"}
     },
     ("DELETE", f"{_COMPANIES}/anlegg/{{asset_id}}/avgang"): {},
+    ("POST", f"{_COMPANIES}/cashflow/forslag/{{reading_id}}/svar"): {"json": {"answers": []}},
 }
 
 

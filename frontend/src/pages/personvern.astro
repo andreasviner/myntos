@@ -290,12 +290,21 @@ const underleverandorer = [
     </li>
     <li>
       <strong>Og beskrivelsen, hvis du skriver eller retter den</strong>, inntil 255 tegn. Modellen
-      foreslår en, og skriver du noe annet, leser vi bilaget på nytt med setningen din, slik
-      at resten av skjemaet kan fylles ut fra det du vet. Merk forskjellen fra alt annet på
+      foreslår en, og skriver du noe annet, får modellen setningen din, slik at resten av
+      skjemaet kan fylles ut fra det du vet. Merk forskjellen fra alt annet på
       denne listen: beskrivelsen er teksten på bilaget i hovedboken, så den
       <strong>lagres og bokføres</strong>. Den kan likevel ikke fylle ut et felt på egen
       hånd: navn, datoer og valuta godtar vi bare når de står i selve dokumentet, og det du
       skriver er ikke dokumentet. Skriv ikke personopplysninger der du ikke trenger det.
+    </li>
+    <li>
+      <strong>Og svarene dine</strong>, når vi spør om noe bilaget ikke svarer på: spørsmålet og
+      svaret, enten du trykket på et svar eller skrev det. Svaret sendes som en oppfølging av de
+      to spørsmålene over, som sendes på nytt ordrett sammen med modellens svar på dem, slik at
+      modellen ser hva den spurte om og bilaget ikke må leses en gang til. Svarene lagres ikke.
+      For at det skal gå, holder Myntos teksten fra bilaget og det modellen ble spurt om i
+      minnet på serveren mens du svarer, i høyst ti minutter etter at du sist svarte, aldri på
+      disk og aldri for andre enn deg.
     </li>
     <li>
       <strong>Når du ber om fakturalinjer:</strong> beskrivelsen du selv skrev i boksen, inntil
@@ -305,7 +314,10 @@ const underleverandorer = [
   </ul>
   <ul>
     <li>Ingen andre data følger med: ikke hovedboken, ikke partsregisteret, ikke kontoen din.</li>
-    <li>Løynd lagrer ikke det som sendes inn, og bilagene dine trener ingen modell.</li>
+    <li>
+      Løynd lagrer ikke det som sendes inn, bilagene dine trener ingen modell, og ingenting av
+      det blir til et søk på nettet.
+    </li>
     <li>
       Laster du opp et bilde, er det modellen som leser det. Det er en avskrift og ikke en
       innskanning: den kan lese feil, og derfor står tallene i skjemaet til kontroll hos deg som

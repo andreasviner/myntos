@@ -43,7 +43,7 @@ from myntos.db.session import get_session
 from myntos.domain.arsoppgjor import models as arsoppgjor_models  # noqa: F401  (registers tables)
 from myntos.domain.bank import models as bank_models  # noqa: F401  (registers tables)
 from myntos.domain.bilag import models as bilag_models  # noqa: F401  (registers tables)
-from myntos.domain.bilag import reading_cache
+from myntos.domain.bilag import reading_cache, readings
 from myntos.domain.faktura import models as faktura_models  # noqa: F401  (registers tables)
 from myntos.domain.identity import models as identity_models  # noqa: F401  (registers tables)
 from myntos.domain.ledger import models as ledger_models  # noqa: F401  (registers tables)
@@ -130,11 +130,14 @@ def a_cold_reading_cache() -> Iterator[None]:
     the second would be handed the first one's text no matter what it had
     stubbed Løynd's extractor to say. Emptied on the way in and on the way out,
     so neither the order tests run in nor a failure half-way through one can
-    decide what the next one reads.
+    decide what the next one reads. The readings kept for answering
+    (``readings.STORE``) go with it, for the same reason.
     """
     reading_cache.CACHE.clear()
+    readings.STORE.clear()
     yield
     reading_cache.CACHE.clear()
+    readings.STORE.clear()
 
 
 @pytest.fixture(autouse=True)

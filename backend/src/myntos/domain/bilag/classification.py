@@ -48,11 +48,12 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
 from myntos.domain.bilag.context import NO_CONTEXT, BilagContext
+from myntos.domain.bilag.followup import AskAfter, Exchange
 from myntos.domain.ledger.cashflow import (
     CASH_FLOW_TYPES,
     CashFlowDirection,
@@ -416,6 +417,7 @@ async def classify(
     context: BilagContext | None = None,
     returning: bool = False,
     segments: frozenset[str] = frozenset(),
+    on_exchange: Callable[[Exchange], None] | None = None,
 ) -> Classification:
     """Ask which category the document belongs to.
 
@@ -424,6 +426,11 @@ async def classify(
     model was reachable at all is the caller's problem, since the caller is the
     one that knows what it called: an unavailable model is not an error for the
     user, it just means the register keeps its own reading.
+
+    ``on_exchange`` is handed the question and the answer exactly as they went,
+    for a caller that will continue the conversation when the user answers
+    (:func:`classify_again`). Handed even when the answer was off the menu: the
+    follow-up asks for a number again either way.
     """
     context = context or NO_CONTEXT
     # A note the user typed is a reason to ask even about a document we could not
@@ -433,14 +440,57 @@ async def classify(
         return Classification()
 
     menu = build_menu(allowed, returning=returning, segments=segments)
+    prompt = build_prompt(document_text, menu, title=title, context=context)
     reply = await ask(
         system=_SYSTEM,
-        prompt=build_prompt(document_text, menu, title=title, context=context),
+        prompt=prompt,
         # Room for two numbers and the slash between them, and nothing else. A
         # model that starts explaining gets cut off, and the numbers are what we
         # were after anyway.
         max_tokens=12,
     )
+    if on_exchange is not None:
+        on_exchange(Exchange(system=_SYSTEM, prompt=prompt, reply=reply))
+    return _read_reply(reply, menu)
+
+
+#: The new turn of a follow-up, after what the user said. Points back at the
+#: menu rather than repeating it: the menu is in the first question, which the
+#: model is shown again word for word, and repeating it would only make the new
+#: turn longer, which is the one part of a follow-up that is not reused.
+_AGAIN = (
+    "Hvilken kategori hører bilaget til, nå som du vet dette? Svar med tallet fra "
+    "listen over. Er du fortsatt i tvil mellom to, skriv begge tallene med "
+    "skråstrek mellom."
+)
+
+
+async def classify_again(
+    earlier: Exchange,
+    said: str,
+    *,
+    menu: tuple[MenuItem, ...],
+    ask: AskAfter,
+) -> Classification:
+    """Ask the category again, after the user answered (:mod:`~myntos.domain.bilag.followup`).
+
+    ``earlier`` is the first question and its answer, repeated exactly; ``said``
+    is what the user has answered since, already rendered. ``menu`` must be the
+    menu the first question showed, since the numbers in the answer are read
+    against it: the caller rebuilds it from the same arguments.
+    """
+    prompt = f"{said}\n\n{_AGAIN}" if said else _AGAIN
+    reply = await ask(
+        system=earlier.system,
+        prompt=prompt,
+        max_tokens=12,
+        history=((earlier.prompt, earlier.reply),),
+    )
+    return _read_reply(reply, menu)
+
+
+def _read_reply(reply: str, menu: tuple[MenuItem, ...]) -> Classification:
+    """The one or two categories a reply names, or nothing."""
     picked = parse_choices(reply, menu)
     if not picked:
         logger.info("the model answered outside the menu; keeping our own reading")

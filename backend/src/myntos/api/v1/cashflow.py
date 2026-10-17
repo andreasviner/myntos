@@ -56,14 +56,16 @@ from myntos.domain.bilag import (
     classification,
     derived,
     extraction,
+    followup,
     interpretation,
     questions,
     reading_cache,
+    readings,
     vendor,
 )
 from myntos.domain.bilag import context as bilag_context
 from myntos.domain.bilag import service as bilag_service
-from myntos.domain.bilag.errors import UnsupportedDocumentError
+from myntos.domain.bilag.errors import ReadingNotFoundError, UnsupportedDocumentError
 from myntos.domain.bilag.models import (
     MAX_ATTACHMENT_BYTES,
     PDF_CONTENT_TYPE,
@@ -283,13 +285,28 @@ class SummaryResponse(BaseModel):
     by_type: list[TypeTotalResponse]
 
 
+class QuestionOptionResponse(BaseModel):
+    """One answer to a question, to be given with a single press.
+
+    `label` is the answer as it is shown and as it is sent back. `type_code` or
+    `tax_code` is the value the answer means for that field, when it means one:
+    set it on the entry when the person picks this answer. `split` means the
+    payment is several things and belongs in a composite entry, one line each.
+    """
+
+    label: str
+    type_code: str | None = None
+    tax_code: str | None = None
+    split: bool = False
+
+
 class QuestionResponse(BaseModel):
     """One thing the register would like answered before this is posted.
 
     A question rather than a warning, because the answer has somewhere to go:
-    the explanation box feeds the model, and re-reading with it produces a
-    better proposal. `field` says which form field the answer would settle, so
-    the interface can put the question where the gap is.
+    it goes back to the model with ``POST …/forslag/{reading_id}/svar``, and the
+    proposal that comes back is better for it. `field` says which form field the
+    answer would settle, so the interface can put the question where the gap is.
     """
 
     text: str
@@ -298,6 +315,14 @@ class QuestionResponse(BaseModel):
     # register derived from its own reading. The interface marks them apart for
     # the reason it marks every other model output apart.
     asked_by_model: bool
+    # Which question this is ("belop", "innbetaling", "kategori_tvil",
+    # "kategori", "mva_satser", "driftsmiddel", or "ki" for the model's own).
+    # Sent back with the answer, and a key that has been answered is not asked
+    # again on the same bilag.
+    key: str
+    # The answers the question can be given with a press. Empty when the answer
+    # is a number or a sentence.
+    options: list[QuestionOptionResponse] = Field(default_factory=list)
 
 
 class DocumentReadResponse(BaseModel):
@@ -355,10 +380,14 @@ class SuggestionResponse(BaseModel):
     # The form marks each one with where it came from.
     sources: dict[str, interpretation.FieldSource]
     warnings: list[str]
-    # What is still unclear, phrased so the user can answer it in the
-    # explanation box and read the bilag again. Empty when the documents settled
-    # everything that matters.
+    # What is still unclear, phrased so the user can answer it. Empty when the
+    # documents settled everything that matters.
     questions: list[QuestionResponse]
+    # Where to send the answers: ``POST …/cashflow/forslag/{reading_id}/svar``
+    # continues from this reading rather than reading the files again. Kept for
+    # ten minutes after the last use, in memory. Null when no model was asked,
+    # since there is then no conversation to continue: read again instead.
+    reading_id: str | None = None
     # One row per uploaded file, in upload order.
     documents_read: list[DocumentReadResponse]
     # Whether anything was put in front of the model besides the documents: the
@@ -444,6 +473,7 @@ async def _ask_for_category(
     context: "bilag_context.BilagContext | None" = None,
     returning: bool = False,
     segments: frozenset[str] = frozenset(),
+    on_exchange: Callable[[followup.Exchange], None] | None = None,
 ) -> classification.Classification:
     """Which category Løynd puts the document in, and which it nearly chose.
 
@@ -460,6 +490,7 @@ async def _ask_for_category(
             context=context,
             returning=returning,
             segments=segments,
+            on_exchange=on_exchange,
         )
     except loynd.LoyndError:
         return classification.Classification()
@@ -472,6 +503,7 @@ async def _ask_for_fields(
     title: str | None,
     on_description: Callable[[str], Awaitable[None]],
     context: "bilag_context.BilagContext | None" = None,
+    on_exchange: Callable[[followup.Exchange], None] | None = None,
 ) -> extraction.Extraction:
     """What Løynd reads in the places our own parser came up empty.
 
@@ -490,6 +522,7 @@ async def _ask_for_fields(
             title=title,
             on_description=on_description,
             context=context,
+            on_exchange=on_exchange,
         )
     except loynd.LoyndError:
         return extraction.Extraction()
@@ -1074,6 +1107,84 @@ async def _as_loynd_reads(uploads: list[tuple[bytes, str, str]]) -> list[tuple[b
     return list(await asyncio.gather(*(one(item) for item in uploads)))
 
 
+@dataclass
+class _Reading:
+    """A bilag as its first read left it, kept so questions about it can be answered.
+
+    Everything here is something an answer cannot change: what the files said,
+    what our own parser read off them, the two questions put to the model with
+    its answers, and the name read off the pictures. Kept in
+    :data:`myntos.domain.bilag.readings.STORE`, which says where and for how long.
+    """
+
+    documents: list[_Document]
+    extracted: _Document
+    read_report: list[DocumentReadResponse]
+    #: The parser's own reading, before the model filled any gap in it. A
+    #: follow-up merges the model's new answer into this one, never into the
+    #: last merge, so a date or a seller the model takes back is taken back on
+    #: the form as well.
+    reading: interpretation.InvoiceReading
+    today: date
+    retning: CashFlowDirection | None
+    long_bilag: str | None
+    #: What the category menu was built from. The model answers with menu
+    #: numbers, so a follow-up has to read them against the menu the model was
+    #: shown, rebuilt from the same three things.
+    menu_allowed: CashFlowDirection | None = None
+    menu_returning: bool = False
+    menu_segments: frozenset[str] = frozenset()
+    category: followup.Exchange | None = None
+    fields: followup.Exchange | None = None
+    #: The app or shop a picture showed, when it was asked (vendor.py). A
+    #: follow-up has no pictures to ask, so the first answer stands.
+    vendor: str | None = None
+
+    def menu(self) -> tuple[classification.MenuItem, ...]:
+        return classification.build_menu(
+            self.menu_allowed, returning=self.menu_returning, segments=self.menu_segments
+        )
+
+
+async def _proposer(
+    context: CurrentCompany, db: DbSession, kept: _Reading
+) -> Callable[..., interpretation.InvoiceSuggestion]:
+    """The function that turns a reading into a proposal, for this company now.
+
+    Built again for every answer rather than kept with the reading: the party
+    register is read fresh, because a party the user added while answering is
+    one the next proposal should be able to match.
+    """
+    parties = await party_service.list_parties(db, company=context.company)
+    hints = [
+        interpretation.PartyHint(
+            id=party.id,
+            name=party.name,
+            orgnr=party.orgnr,
+            is_customer=party.party_type is PartyType.KUNDE,
+        )
+        for party in parties
+    ]
+    farm = landbruk.is_enabled(context.company)
+
+    def propose(
+        found: interpretation.InvoiceReading, model_fields: frozenset[str] = frozenset()
+    ) -> interpretation.InvoiceSuggestion:
+        return interpretation.suggest(
+            kept.extracted.text,
+            today=kept.today,
+            own_orgnr=context.company.orgnr,
+            own_name=context.company.name,
+            reading=found,
+            parties=hints,
+            model_fields=model_fields,
+            direction=kept.retning,
+            farm=farm,
+        )
+
+    return propose
+
+
 async def _propose(
     context: CurrentCompany,
     db: DbSession,
@@ -1106,6 +1217,10 @@ async def _propose(
         and none at all when there is no model.
     ``forslag``
         The finished :class:`SuggestionResponse`. Exactly one, last.
+
+    The reading is kept (:class:`_Reading`) when a model was asked, and the
+    proposal says under which ``reading_id``, so that answering one of its
+    questions continues from here (:func:`_continue`) instead of starting over.
     """
     # Whether a model may see these documents at all, decided once and honoured
     # by everything below. A company that has switched KI off gets the parser and
@@ -1160,32 +1275,7 @@ async def _propose(
     bilag_ctx = await _company_context(
         db, company=context.company, note=forklaring, direction=retning, use_loynd=use_loynd
     )
-    parties = await party_service.list_parties(db, company=context.company)
     today = utc_now().date()
-    hints = [
-        interpretation.PartyHint(
-            id=party.id,
-            name=party.name,
-            orgnr=party.orgnr,
-            is_customer=party.party_type is PartyType.KUNDE,
-        )
-        for party in parties
-    ]
-
-    def propose(
-        found: interpretation.InvoiceReading, model_fields: frozenset[str] = frozenset()
-    ) -> interpretation.InvoiceSuggestion:
-        return interpretation.suggest(
-            extracted.text,
-            today=today,
-            own_orgnr=context.company.orgnr,
-            own_name=context.company.name,
-            reading=found,
-            parties=hints,
-            model_fields=model_fields,
-            direction=retning,
-            farm=landbruk.is_enabled(context.company),
-        )
 
     # The heuristics are CPU-bound and operate on text from outside; off the
     # event loop they cannot stall other requests.
@@ -1206,6 +1296,16 @@ async def _propose(
             has_letterhead=_has_letterhead(documents),
         )
     )
+    kept = _Reading(
+        documents=documents,
+        extracted=extracted,
+        read_report=read_report,
+        reading=reading,
+        today=today,
+        retning=retning,
+        long_bilag=long_bilag,
+    )
+    propose = await _proposer(context, db, kept)
     suggestion = await asyncio.to_thread(propose, reading)
 
     # Then the two questions for the model, asked at the same time because the
@@ -1214,6 +1314,9 @@ async def _propose(
     # restricted to the direction when a registered party settled that question,
     # so a recognised customer cannot come back as an expense.
     if use_loynd:
+        kept.menu_allowed = suggestion.direction
+        kept.menu_returning = reading.shows_a_return
+        kept.menu_segments = landbruk.segments_for(context.company)
         # The description is handed over while it is still being written, and
         # that is why this is a queue rather than a straight await: the sentence
         # arrives inside a callback, and a generator cannot yield from one. The
@@ -1223,6 +1326,13 @@ async def _propose(
 
         async def on_description(piece: str) -> None:
             await pieces.put(piece)
+
+        # Each question and its answer, kept for the follow-up.
+        def keep_category(exchange: followup.Exchange) -> None:
+            kept.category = exchange
+
+        def keep_fields(exchange: followup.Exchange) -> None:
+            kept.fields = exchange
 
         async def ask_the_model() -> tuple[classification.Classification, extraction.Extraction]:
             try:
@@ -1244,13 +1354,14 @@ async def _propose(
                         # If the reading is wrong, the user flips the radio and picks
                         # again, which is a visible correction. A direction quietly
                         # reversed by a category is not.
-                        allowed=suggestion.direction,
+                        allowed=kept.menu_allowed,
                         title=extracted.title,
                         context=bilag_ctx,
                         # Both legs are printed on the page, so the question is
                         # not whether this is a refund but a refund of what.
-                        returning=reading.shows_a_return,
-                        segments=landbruk.segments_for(context.company),
+                        returning=kept.menu_returning,
+                        segments=kept.menu_segments,
+                        on_exchange=keep_category,
                     ),
                     _ask_for_fields(
                         extracted.text,
@@ -1258,6 +1369,7 @@ async def _propose(
                         title=extracted.title,
                         on_description=on_description,
                         context=bilag_ctx,
+                        on_exchange=keep_fields,
                     ),
                 )
             finally:
@@ -1278,6 +1390,166 @@ async def _propose(
     else:
         category, model_reading = classification.Classification(), extraction.Extraction()
 
+    async def from_pictures() -> str | None:
+        """Ask the pictures for the app's name, and keep the answer for the follow-ups."""
+        pictures = [
+            (content, content_type)
+            for content, _, content_type in uploads
+            if content_type in loynd.IMAGE_CONTENT_TYPES
+        ]
+        if not pictures:
+            return None
+        kept.vendor = await vendor.named_by(
+            pictures, look=loynd.ask_about_image, at_a_time=_READ_CONCURRENCY
+        )
+        return kept.vendor
+
+    proposal = await _settle(
+        context,
+        kept=kept,
+        propose=propose,
+        suggestion=suggestion,
+        category=category,
+        model_reading=model_reading,
+        name_from_pictures=from_pictures if use_loynd else None,
+        has_note=bilag_ctx.note is not None,
+        answered=frozenset(),
+        ki_used=use_loynd,
+        context_used=not bilag_ctx.is_empty,
+    )
+    # Kept only when a model was asked. Without one there is no conversation to
+    # continue, and reading the bilag again with the parser costs nothing.
+    if use_loynd:
+        proposal.reading_id = readings.STORE.open(
+            kept, company_id=context.company.id, user_id=context.membership.user_id
+        )
+    yield _EVENT_SUGGESTION, proposal
+
+
+async def _continue(
+    context: CurrentCompany,
+    db: DbSession,
+    *,
+    kept: _Reading,
+    answers: list[followup.Answer],
+    forklaring: str | None,
+) -> SuggestionResponse:
+    """The proposal again, after the user answered, without reading the bilag again.
+
+    Nothing is uploaded, converted or transcribed, and the pictures are not
+    asked for a name again: all of that is in ``kept``. The two questions to the
+    model are asked as follow-ups to the conversation the first read had
+    (:mod:`myntos.domain.bilag.followup`), which is what makes this a few seconds
+    rather than most of a first read, and what tells the model which questions
+    it asked and what the answers were.
+
+    A question the first read never got an answer to, because Løynd was down for
+    it or the bilag had no text, has no conversation to continue. It is asked
+    afresh, with the answers where the user's note goes on a first read.
+    """
+    bilag_ctx = await _company_context(
+        db, company=context.company, note=forklaring, direction=kept.retning, use_loynd=True
+    )
+    propose = await _proposer(context, db, kept)
+    suggestion = await asyncio.to_thread(propose, kept.reading)
+    said = followup.render(answers, note=bilag_ctx.note)
+
+    async def afresh() -> bilag_context.BilagContext:
+        return await _company_context(
+            db,
+            company=context.company,
+            note=followup.folded(answers, note=forklaring),
+            direction=kept.retning,
+            use_loynd=True,
+        )
+
+    # Built before the two questions rather than inside them: both would read
+    # the same database session at once otherwise.
+    folded = await afresh() if kept.category is None or kept.fields is None else bilag_ctx
+
+    async def category() -> classification.Classification:
+        if kept.category is None:
+            return await _ask_for_category(
+                kept.extracted.text,
+                allowed=kept.menu_allowed,
+                title=kept.extracted.title,
+                context=folded,
+                returning=kept.menu_returning,
+                segments=kept.menu_segments,
+            )
+        try:
+            return await classification.classify_again(
+                kept.category, said, menu=kept.menu(), ask=loynd.complete
+            )
+        except loynd.LoyndError:
+            return classification.Classification()
+
+    async def fields() -> extraction.Extraction:
+        if kept.fields is None:
+            return await _ask_for_fields(
+                kept.extracted.text,
+                today=kept.today,
+                title=kept.extracted.title,
+                on_description=_ignore,
+                context=folded,
+            )
+        try:
+            return await extraction.extract_again(
+                kept.fields,
+                said,
+                ask=loynd.complete,
+                document_text=kept.extracted.text,
+                today=kept.today,
+                title=kept.extracted.title,
+            )
+        except loynd.LoyndError:
+            return extraction.Extraction()
+
+    found, model_reading = await asyncio.gather(category(), fields())
+
+    async def remembered() -> str | None:
+        return kept.vendor
+
+    return await _settle(
+        context,
+        kept=kept,
+        propose=propose,
+        suggestion=suggestion,
+        category=found,
+        model_reading=model_reading,
+        name_from_pictures=remembered,
+        has_note=bilag_ctx.note is not None or bool(answers),
+        answered=frozenset(answer.key for answer in answers if answer.key),
+        ki_used=True,
+        context_used=True,
+    )
+
+
+async def _ignore(_: str) -> None:
+    """A description nobody is watching being written."""
+
+
+async def _settle(
+    context: CurrentCompany,
+    *,
+    kept: _Reading,
+    propose: Callable[..., interpretation.InvoiceSuggestion],
+    suggestion: interpretation.InvoiceSuggestion,
+    category: classification.Classification,
+    model_reading: extraction.Extraction,
+    name_from_pictures: Callable[[], Awaitable[str | None]] | None,
+    has_note: bool,
+    answered: frozenset[str],
+    ki_used: bool,
+    context_used: bool,
+) -> SuggestionResponse:
+    """Everything after the model has answered, the same for a first read and a follow-up.
+
+    One tail for both, for the reason the two proposal routes share one
+    generator: a follow-up built by a second copy of these rules would be the
+    copy nobody remembered to update.
+    """
+    reading = kept.reading
     # What the model read changes what the document is taken to say, so the
     # proposal is built again from the merged reading rather than patched in
     # place: a currency it found decides whether the amount may be proposed at
@@ -1287,11 +1559,23 @@ async def _propose(
     if model_fields:
         reading = merged
         suggestion = await asyncio.to_thread(propose, reading, model_fields)
-    if category.chosen is not None:
+    # The model's runner-up stands in when its first choice cannot be right for
+    # the amount, and nothing does when neither can: then the parser's own
+    # reading, if it had one, is what is left.
+    chosen = next(
+        (
+            choice
+            for choice in (category.chosen, category.alternative)
+            if choice is not None
+            and interpretation.model_may_propose(choice.code, suggestion.gross_amount)
+        ),
+        None,
+    )
+    if chosen is not None:
         interpretation.apply_type(
             suggestion,
             reading=reading,
-            type_code=category.chosen.code,
+            type_code=chosen.code,
             source=interpretation.FieldSource.MODEL,
         )
     extraction.apply_description(suggestion, model_reading, item_text=reading.item_text)
@@ -1305,26 +1589,24 @@ async def _propose(
     # So the last question goes back to the pixels, which are still here. It
     # costs one request per image and about three seconds, and it is asked only
     # in the case where the alternative is an empty field the user has to fill
-    # in themselves. See myntos.domain.bilag.vendor.
-    if use_loynd and suggestion.party_id is None and suggestion.counterparty_name is None:
-        pictures = [
-            (content, content_type)
-            for content, _, content_type in uploads
-            if content_type in loynd.IMAGE_CONTENT_TYPES
-        ]
-        if pictures:
-            named = await vendor.named_by(
-                pictures, look=loynd.ask_about_image, at_a_time=_READ_CONCURRENCY
-            )
-            if named is not None and interpretation.offerable(named):
-                suggestion.counterparty_name = named
-                suggestion.mark("party_id", interpretation.FieldSource.MODEL)
+    # in themselves. See myntos.domain.bilag.vendor. A follow-up hands in the
+    # name the first read found rather than asking again.
+    if (
+        name_from_pictures is not None
+        and suggestion.party_id is None
+        and suggestion.counterparty_name is None
+    ):
+        named = await name_from_pictures()
+        if named is not None and interpretation.offerable(named):
+            suggestion.counterparty_name = named
+            suggestion.mark("party_id", interpretation.FieldSource.MODEL)
 
     # Last, because it needs the final currency: a code the model supplied is
     # what turns a total that looked like kroner into 2 137,00 GBP, and there is
     # nothing to convert until that is settled. The driftsmiddel threshold is
     # then re-tested against whichever amount and category came out of all of
     # the above, since both halves of that test have had a chance to move.
+    today = kept.today
     await _to_kroner(suggestion, on=suggestion.occurred_on or today)
     interpretation.note_capitalisation(suggestion)
 
@@ -1347,9 +1629,11 @@ async def _propose(
     if not registered and suggestion.type_code in vatstatus.REGISTERED_ONLY_TYPES:
         suggestion.type_code = None
 
+    documents = kept.documents
+    extracted = kept.extracted
     warnings = list(suggestion.warnings)
-    if long_bilag is not None:
-        warnings.append(long_bilag)
+    if kept.long_bilag is not None:
+        warnings.append(kept.long_bilag)
     if extracted.encrypted:
         warnings.insert(0, "PDF-en er passordbeskyttet, så vi fikk ikke lest innholdet.")
     elif extracted.unreadable:
@@ -1389,45 +1673,61 @@ async def _propose(
         # runner-up to a choice that lost to our own keyword reading is a doubt
         # about a proposal nobody is looking at, and asking about it would be
         # asking the user to arbitrate between two things we did not propose.
-        alternative=category.alternative if category.in_doubt else None,
-        has_note=bilag_ctx.note is not None,
+        alternative=(
+            category.alternative
+            if category.in_doubt
+            and chosen is category.chosen
+            and category.alternative is not None
+            and interpretation.model_may_propose(category.alternative.code, suggestion.gross_amount)
+            else None
+        ),
+        has_note=has_note,
+        answered=answered,
+        vat_registered=registered,
     )
 
-    yield (
-        _EVENT_SUGGESTION,
-        SuggestionResponse(
-            direction=suggestion.direction,
-            type_code=suggestion.type_code,
-            type_label=_label_for(suggestion.type_code),
-            type_source=suggestion.type_source,
-            tax_code=suggestion.tax_code,
-            occurred_on=suggestion.occurred_on,
-            gross_amount=suggestion.gross_amount,
-            vat_amount=suggestion.vat_amount,
-            description=suggestion.description,
-            party_id=suggestion.party_id,
-            counterparty_name=suggestion.counterparty_name,
-            counterparty_orgnr=suggestion.counterparty_orgnr,
-            invoice_number=suggestion.invoice_number,
-            currency_code=suggestion.currency_code,
-            foreign_amount=suggestion.foreign_amount,
-            exchange_rate=suggestion.exchange_rate,
-            rate_quoted_on=suggestion.rate_quoted_on,
-            filled=suggestion.filled,
-            sources=suggestion.sources,
-            warnings=warnings,
-            questions=[
-                QuestionResponse(
-                    text=question.text,
-                    field=question.field,
-                    asked_by_model=question.asked_by_model,
-                )
-                for question in asked
-            ],
-            ki_used=use_loynd,
-            documents_read=read_report,
-            context_used=not bilag_ctx.is_empty,
-        ),
+    return SuggestionResponse(
+        direction=suggestion.direction,
+        type_code=suggestion.type_code,
+        type_label=_label_for(suggestion.type_code),
+        type_source=suggestion.type_source,
+        tax_code=suggestion.tax_code,
+        occurred_on=suggestion.occurred_on,
+        gross_amount=suggestion.gross_amount,
+        vat_amount=suggestion.vat_amount,
+        description=suggestion.description,
+        party_id=suggestion.party_id,
+        counterparty_name=suggestion.counterparty_name,
+        counterparty_orgnr=suggestion.counterparty_orgnr,
+        invoice_number=suggestion.invoice_number,
+        currency_code=suggestion.currency_code,
+        foreign_amount=suggestion.foreign_amount,
+        exchange_rate=suggestion.exchange_rate,
+        rate_quoted_on=suggestion.rate_quoted_on,
+        filled=suggestion.filled,
+        sources=suggestion.sources,
+        warnings=warnings,
+        questions=[
+            QuestionResponse(
+                text=question.text,
+                field=question.field,
+                asked_by_model=question.asked_by_model,
+                key=question.key,
+                options=[
+                    QuestionOptionResponse(
+                        label=option.label,
+                        type_code=option.type_code,
+                        tax_code=option.tax_code,
+                        split=option.split,
+                    )
+                    for option in question.options
+                ],
+            )
+            for question in asked
+        ],
+        ki_used=ki_used,
+        documents_read=kept.read_report,
+        context_used=context_used,
     )
 
 
@@ -1463,12 +1763,20 @@ async def suggest_from_document(
     when the user goes on to register the payment. See
     :mod:`myntos.domain.bilag.context`.
 
+    **The questions are answered with ``POST …/forslag/{reading_id}/svar``.**
+    ``questions`` lists what the documents did not settle, and ``reading_id``
+    is where to send the answers: that route continues from this reading, with
+    no upload and no transcription, and asks the model a follow-up rather than
+    the whole bilag again. Most questions come with ``options``, answers that can
+    be given with a press.
+
     Nothing is posted and nothing is stored on disk: the bytes are read,
-    interpreted and dropped. What survives the request is the *text*, held in
-    memory for a few minutes and keyed by the bytes it came from
-    (:mod:`myntos.domain.bilag.reading_cache`), so that editing the description
-    and having the bilag read again costs a prompt rather than another ninety
-    seconds of transcribing screenshots.
+    interpreted and dropped. What survives the request is in memory for a few
+    minutes: the *text*, keyed by the bytes it came from
+    (:mod:`myntos.domain.bilag.reading_cache`), so a bilag read again costs a
+    prompt rather than another ninety seconds of transcribing screenshots; and
+    the reading itself, under ``reading_id``, for the answers
+    (:mod:`myntos.domain.bilag.readings`).
 
     The documents themselves are archived only when the user goes on to register
     the payment, which is the point at which there is a voucher for them to
@@ -1577,6 +1885,97 @@ def _frame(name: str, payload: object) -> str:
     else:
         body = payload
     return f"event: {name}\ndata: {json.dumps(body, ensure_ascii=False)}\n\n"
+
+
+class SuggestionAnswerRequest(BaseModel):
+    """One question from a proposal, and what the person answered."""
+
+    # The question's `text`, as the proposal gave it. Shown to the model with
+    # the answer, so it knows what the answer was an answer to.
+    question: str = Field(min_length=1, max_length=followup.MAX_QUESTION_CHARS)
+    # The person's answer: an option's `label`, or their own words.
+    answer: str = Field(min_length=1, max_length=followup.MAX_ANSWER_CHARS)
+    # The question's `key`. A key sent here is not asked again.
+    key: str | None = Field(default=None, max_length=40)
+
+
+class AnswerSuggestionRequest(BaseModel):
+    # The description as it stands now, which the person may have rewritten
+    # since the bilag was read. The same sentence `forklaring` is on `/forslag`.
+    forklaring: str | None = Field(default=None, max_length=255)
+    # Every answer given on this bilag so far, not only the newest. Nothing is
+    # remembered between two answers but the reading itself, so a reading read
+    # again from scratch can be answered exactly as the lost one was.
+    answers: list[SuggestionAnswerRequest] = Field(
+        default_factory=list, max_length=followup.MAX_ANSWERS
+    )
+
+
+@router.post(
+    "/companies/{company_id}/cashflow/forslag/{reading_id}/svar", openapi_extra=KEY_PREVIEW
+)
+async def answer_suggestion(
+    context: CurrentCompany,
+    db: DbSession,
+    reading_id: str,
+    payload: AnswerSuggestionRequest,
+) -> SuggestionResponse:
+    """Answer the questions on a proposal, and get the proposal again.
+
+    A proposal from ``/forslag`` can come with ``questions``: what the bilag did
+    not settle, such as whether money from a private person is the owner's
+    deposit or a sale, or whether 31 000 kroner is one thing or several. This
+    sends the person's answers, and comes back with the whole proposal again,
+    built with them: the same fields as ``/forslag`` answers with, and the same
+    ``reading_id``, so it can be answered again.
+
+    **It does not read the bilag again.** The files are not sent; the reading
+    ``/forslag`` made is kept under ``reading_id``, and the model is asked a
+    follow-up to the conversation it already had about the bilag, which shows it
+    what it asked and what the person answered. A few seconds rather than a
+    minute for a bilag of screenshots.
+
+    ``answers`` is every answer given so far on this bilag, each with the
+    question's ``key`` and ``text``: an option's ``label`` when the person
+    picked one, or their own words. A key that has been answered is not asked
+    again. Where an option carries a ``type_code`` or ``tax_code``, the person
+    has chosen that value; set it on the entry yourself, because the model's
+    proposal for the field may still differ. ``forklaring`` is the description
+    as it stands now, as on ``/forslag``.
+
+    Refusals: 404 ``reading_not_found`` when the reading is gone (it is kept in
+    memory for ten minutes after it was last used, and only while the company
+    has KI switched on), or belongs to another company or another person. Read
+    the bilag again with ``/forslag``, then send the same answers to the new
+    ``reading_id``.
+
+    Stores nothing, posts nothing, and needs ``LEDGER_WRITE`` like ``/forslag``.
+    """
+    require_permission(context.membership.role, Permission.LEDGER_WRITE)
+    kept = readings.STORE.get(
+        reading_id, company_id=context.company.id, user_id=context.membership.user_id
+    )
+    # KI switched off since the bilag was read means the documents may not go
+    # to the model again, and a reading kept from before is no licence to send
+    # them. The same answer as a reading that is gone: read again, which then
+    # reads with the parser alone.
+    if not isinstance(kept, _Reading) or not (context.company.ki_enabled and loynd.is_configured()):
+        raise ReadingNotFoundError(
+            "lesingen av bilaget er ikke lenger tilgjengelig; les det på nytt"
+        )
+    forklaring = (payload.forklaring or "").strip() or None
+    proposal = await _continue(
+        context,
+        db,
+        kept=kept,
+        answers=[
+            followup.Answer(question=item.question, answer=item.answer, key=item.key)
+            for item in payload.answers
+        ],
+        forklaring=forklaring,
+    )
+    proposal.reading_id = reading_id
+    return proposal
 
 
 @router.get("/companies/{company_id}/cashflow", openapi_extra=KEY_READ)

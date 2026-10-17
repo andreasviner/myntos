@@ -39,7 +39,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       <li>Ingenting bokføres automatisk. Du ser og bekrefter hvert forslag.</li>
       <li>KI brukes bare når du selv laster opp et bilag eller ber om et fakturaforslag.</li>
       <li>Bilder leses av modellen. Et fotografert kvitteringsbilde blir til tekst hos Løynd, og ingen annen tjeneste ser det.</li>
-      <li>Er noe uklart, spør vi heller enn å gjette. Retter du beskrivelsen, leser vi bilaget på nytt med det du skrev.</li>
+      <li>Er noe uklart, spør vi heller enn å gjette. Svarer du, får modellen svaret ditt, og forslaget fylles ut på nytt uten at bilaget leses en gang til.</li>
     </ul>
     <p class="actions">
       <a class="btn btn-primary" href="https://loynd.no" rel="noopener">Mer om Løynd</a>
@@ -76,11 +76,17 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         avgjøre: 3 000 kroner inn fra en privatkonto er innskudd fra eier, et
         tilbakebetalt lån eller et salg, og bare du vet hvilket.
       </li>
+      <li>
+        <strong>Svarene dine på spørsmålene våre</strong>, sammen med spørsmålet, så
+        modellen vet hva den spurte om. Mens du svarer, holdes teksten fra bilaget i
+        minnet hos oss i høyst ti minutter etter siste svar, så bilaget ikke må leses på
+        nytt. Svarene lagres ikke.
+      </li>
     </ul>
     <p>
       Beskrivelsen er <strong>ett felt, ikke to</strong>. Modellen skriver et forslag i
-      det, og retter du det, leser vi bilaget på nytt med setningen din. Da fyller
-      resten av skjemaet seg ut ut fra det du vet. Det er også teksten som havner på
+      det, og retter du det, får modellen setningen din. Da fyller resten av skjemaet
+      seg ut ut fra det du vet. Det er også teksten som havner på
       bilaget i hovedboken, så den <strong>lagres og bokføres</strong>, i motsetning til
       resten av det vi sender modellen.
     </p>

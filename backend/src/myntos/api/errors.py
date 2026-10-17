@@ -65,6 +65,7 @@ from myntos.domain.bank.errors import (
 from myntos.domain.bilag.errors import (
     AttachmentNotFoundError,
     DocumentTooLargeError,
+    ReadingNotFoundError,
     UnsupportedDocumentError,
 )
 from myntos.domain.faktura.errors import (
@@ -291,6 +292,7 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     CompanyNotFoundError: status.HTTP_404_NOT_FOUND,
     VoucherNotFoundError: status.HTTP_404_NOT_FOUND,
     AttachmentNotFoundError: status.HTTP_404_NOT_FOUND,
+    ReadingNotFoundError: status.HTTP_404_NOT_FOUND,
     PartyNotFoundError: status.HTTP_404_NOT_FOUND,
     # 404 for the same reason as every other sub-resource: an account belonging
     # to the company next door is indistinguishable from one that never existed.
