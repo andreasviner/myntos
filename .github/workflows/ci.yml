@@ -42,7 +42,13 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      # With no `version`, the action takes pnpm's version from `packageManager`
+      # in <repo>/package.json, not the job's working directory, and there is no
+      # package.json at the root: without this the job dies here, before
+      # anything is installed.
       - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          package_json_file: frontend/package.json
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22

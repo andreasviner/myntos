@@ -3,7 +3,22 @@
 Myntos is developed in the open — the source is public so anyone can read and
 audit it, and self-host it — but it is **source-available, not open source**:
 the license is the Elastic License 2.0 (see [LICENSE](LICENSE) and
-[docs/ROADMAP.md](docs/ROADMAP.md)).
+[docs/ROADMAP.md](docs/ROADMAP.md)). That is deliberate, for two reasons:
+
+- **Security.** Myntos holds companies' books and bilag, and files to
+  Skatteetaten under a person's own ID-porten login. A change from outside can
+  look harmless and not be (the xz-utils backdoor of 2024 came in through a
+  contributor who had spent two years earning trust), so nothing is merged
+  that the maintainer does not answer for. The license also forbids offering
+  Myntos to others as a hosted service, so nobody else can run a Myntos that
+  holds other people's books without the promises this one makes: data kept
+  in the EEA, KI only through Løynd.
+- **Low-quality AI contributions.** Open-source projects now receive a steady
+  stream of AI-generated pull requests and issues: plausible, untested, often
+  wrong, and cheaper to produce than to review. In bookkeeping, where one wrong
+  amount is a real error in somebody's books, reviewing that stream would eat
+  the time the product needs. Code is taken only under a signed CLA (below),
+  which a generated drive-by pull request does not come with.
 
 Bug reports and feature discussion are very welcome. **Code contributions are
 not accepted** without a signed copyright assignment or CLA. Myntos is offered

@@ -418,14 +418,9 @@ def test_a_request_to_file_names_the_melding_when_there_are_two(client: TestClie
 
 def test_the_old_programs_settlement_is_proposed_and_recorded_from(client: TestClient) -> None:
     """Tripletex's own settlement of January-February, brought over by the SAF-T import."""
-    from tests.test_saft_voucher_import import (
-        _bilag,
-        _create_missing,
-        _opening,
-        _post,
-        year_file,
-    )
-    from tests.test_saft_voucher_import import _books as saft_books
+    from tests.test_arsoppgjor_api import _books as saft_books
+    from tests.test_saft_import import _create_missing
+    from tests.test_saft_voucher_import import _bilag, _opening, _post, year_file
 
     company = saft_books(client)
     content = year_file()

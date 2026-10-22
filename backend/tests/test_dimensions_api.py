@@ -360,7 +360,7 @@ def test_a_settlement_puts_each_line_on_its_own_driftsgren(client: TestClient) -
     dimension = next(item for item in added.json() if item["code"] == "DRIFTSGR")
     ids = {value["value"]: value["id"] for value in dimension["values"]}
 
-    lines = [dict(line) for line in MILK_SETTLEMENT]
+    lines: list[dict[str, Any]] = [dict(line) for line in MILK_SETTLEMENT]
     lines[0]["dimension_value_ids"] = [ids["6110"]]
     lines[3]["dimension_value_ids"] = [ids["6300"]]
     response = composite(client, company["id"], lines, description="Melk oktober")

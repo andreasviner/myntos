@@ -30,7 +30,7 @@ from myntos.saft.voucher_import import (
 from tests.conftest import write
 from tests.test_arsoppgjor_api import LAST_YEAR, _books
 from tests.test_cashflow_api import record
-from tests.test_saft_import import ACCOUNTS, _create_missing, saft_file, upload
+from tests.test_saft_import import ACCOUNTS, Account, _create_missing, saft_file, upload
 
 Y = LAST_YEAR
 
@@ -145,7 +145,7 @@ TOTAL_DEBIT = sum(
     Decimal(0),
 )
 
-EXTRA_ACCOUNTS = [
+EXTRA_ACCOUNTS: list[Account] = [
     ("402020", "Kraftfôr storfe", "varekostnad", "4005", "0", "0"),
     ("307120", "Melk", "salgsinntekt", "3000", "0", "0"),
     ("2700", "Utgående merverdiavgift", "kortsiktigGjeld", "2740", "0", "0"),

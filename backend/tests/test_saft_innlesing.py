@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 from tests.conftest import join_company, write
 from tests.test_arsoppgjor_api import LAST_YEAR, _books, _close
 from tests.test_cashflow_api import record
-from tests.test_saft_import import ACCOUNTS, saft_file
+from tests.test_saft_import import ACCOUNTS, ORGNR, saft_file
 from tests.test_saft_voucher_import import EXTRA_ACCOUNTS, _opening, year_file
 
 EARLIER = LAST_YEAR - 1
@@ -94,7 +94,7 @@ def earlier_file(*, end: str = "12-31", orgnr: str | None = None) -> bytes:
         year=EARLIER,
         accounts=ACCOUNTS + EXTRA_ACCOUNTS,
         after_master=entries,
-        **({"orgnr": orgnr} if orgnr else {}),
+        orgnr=orgnr or ORGNR,
     )
     return content.replace(
         f"<SelectionEndDate>{EARLIER}-12-31".encode(), f"<SelectionEndDate>{EARLIER}-{end}".encode()
