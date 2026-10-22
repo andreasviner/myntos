@@ -152,6 +152,29 @@ def _member_response(member: CompanyMembership, *, is_self: bool) -> MemberRespo
 
 @router.get("/companies/{company_id}/members")
 async def list_members(context: CurrentCompany, db: DbSession) -> list[MemberResponse]:
+    """Everyone who can open these books («Medlemmer», under «Tilgang» on /organisasjon/).
+
+    One row per person, with the role they hold over this company: ``owner``
+    («Eier», everything, the subscription included), ``admin``
+    («Administrator», also who has access, the company's details, the
+    kontoplan and closing a year), ``member`` («Medlem», enters the
+    bookkeeping) or ``viewer`` («Leser», reads only). Access is per
+    company, so somebody who keeps another set of books in the same account
+    is not listed here and cannot open these. ``is_self`` marks the caller.
+
+    ``government_linked`` says whether the person has proved who they are
+    through ID-porten, the Norwegian state's login, and ``government_name``
+    is the name ID-porten gave (null when it gave none). Colleagues see that
+    it happened and the name; the fødselsnummer (national identity number)
+    behind it never leaves the server.
+
+    Every role may read the list. 404 ``company_not_found`` for a company the
+    caller cannot open, the same answer whether or not it exists. No key may
+    read it (403 ``not_for_agent_keys``): who has access is access
+    management, which is never a key's (docs/agents-and-api.md rule 5). An
+    agent that needs to know whose rights it works with asks
+    ``GET /api/v1/agent/me``.
+    """
     require_permission(context.membership.role, Permission.MEMBER_READ)
     members = await service.list_company_members(db, context.company.id)
     return [
@@ -162,6 +185,21 @@ async def list_members(context: CurrentCompany, db: DbSession) -> list[MemberRes
 
 @router.get("/companies/{company_id}/invitations")
 async def list_invitations(context: CurrentCompany, db: DbSession) -> list[InvitationResponse]:
+    """The invitations to these books nobody has accepted yet («Ventende invitasjoner»).
+
+    Each names the address it went to, the role it grants, who sent it and
+    when, and ``expires_at``. One past its deadline stays listed until it is
+    withdrawn; it can no longer be accepted, and
+    ``POST /api/v1/companies/{company_id}/invitations/{invitation_id}/send-again``
+    sends it again with a new link. ``invite_url`` and ``email_sent`` are
+    always null here: only a hash of the link is stored, so the link is shown
+    once, when the invitation is made or sent again, and never listed.
+
+    Owners and administrators only (``member:manage``); 403
+    ``permission_denied`` for «Medlem» and «Leser». 404 ``company_not_found``
+    for a company the caller cannot open. No key may read it (403
+    ``not_for_agent_keys``): who is being let in is access management.
+    """
     require_permission(context.membership.role, Permission.MEMBER_MANAGE)
     invitations = await service.list_invitations(db, context.company.id)
     return [_invitation_response(invitation) for invitation in invitations]
@@ -286,6 +324,23 @@ async def _post_invitation(
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def revoke_invitation(invitation_id: int, context: CurrentCompany, db: DbSession) -> None:
+    """Withdraw an invitation nobody has accepted yet («Trekk tilbake»).
+
+    The link in the mail stops working at once: whoever opens it is told the
+    invitation is invalid or expired (400 ``invalid_invitation``). Nothing is
+    sent to the invited address. 204 with no body.
+
+    An invitation already accepted is not withdrawn here: the person has
+    access by then, and it is taken away with
+    ``DELETE /api/v1/companies/{company_id}/members/{user_id}``.
+
+    Owners and administrators only (``member:manage``); 403
+    ``permission_denied`` otherwise. 404 ``invitation_not_found`` for an id
+    that is not a pending invitation to these books: accepted, withdrawn
+    already, or another company's, all the same answer. 404
+    ``company_not_found`` for a company the caller cannot open. No key may
+    call it (403 ``not_for_agent_keys``): who is let in is access management.
+    """
     require_permission(context.membership.role, Permission.MEMBER_MANAGE)
     await service.revoke_invitation(db, company_id=context.company.id, invitation_id=invitation_id)
 
@@ -294,6 +349,26 @@ async def revoke_invitation(invitation_id: int, context: CurrentCompany, db: DbS
 async def change_member_role(
     user_id: int, payload: ChangeRoleRequest, context: CurrentCompany, db: DbSession
 ) -> MemberResponse:
+    """Change what somebody may do in these books: the role in the member list.
+
+    ``role`` is ``owner`` («Eier»), ``admin`` («Administrator»), ``member``
+    («Medlem») or ``viewer`` («Leser»); the member list
+    (``GET /api/v1/companies/{company_id}/members``) says what each may do.
+    It holds from the person's next request, and for their keys with it:
+    a key never does more than its person's role allows on that request, so
+    a role taken away needs no key stopped. Answers with the person's row as
+    it now is.
+
+    Owners and administrators only (``member:manage``), with two limits that
+    keep the owner role worth having: only an owner may make somebody an
+    owner, and only an owner may change an owner's role. Either is 403
+    ``permission_denied``, as is a caller without ``member:manage``. 409
+    ``last_owner`` when the change would leave the books with no owner:
+    appoint another owner first. 404 ``not_a_member`` for a ``user_id`` with
+    no access to these books, and 404 ``company_not_found`` for a company the
+    caller cannot open. No key may call it (403 ``not_for_agent_keys``):
+    managing access is never a key's (docs/agents-and-api.md rule 5).
+    """
     target = await service.get_company_membership(
         db, company_id=context.company.id, user_id=user_id
     )

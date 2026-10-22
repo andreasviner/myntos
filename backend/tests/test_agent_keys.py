@@ -623,6 +623,26 @@ def test_a_person_stops_their_own_key_and_a_manager_anyones(client: TestClient) 
     assert seen[olas_key]["revoked_reason"] == "person"
 
 
+def test_stopping_a_key_ends_the_token_the_agent_holds(client: TestClient) -> None:
+    """«Stopp» under Tilgang is the answer to a key in the wrong hands.
+
+    A password change or signing out other devices leaves keys alone on
+    purpose, so this has to work on the very next request, with the token the
+    agent already has, not only for new ones.
+    """
+    books = _books(client)
+    header = agent_header(client, books["id"])
+    assert client.get("/api/v1/agent/me", headers=header).status_code == 200
+    [key] = _keys(client, books["id"])
+
+    stopped = write(client, "DELETE", f"/api/v1/companies/{books['id']}/agent-keys/{key['id']}")
+
+    assert stopped.status_code == 204
+    assert client.get("/api/v1/agent/me", headers=header).status_code == 401
+    register = client.get(f"/api/v1/companies/{books['id']}/cashflow", headers=header)
+    assert register.status_code == 401
+
+
 def test_leaving_the_books_stops_your_keys(client: TestClient) -> None:
     books = _books(client)
     write(client, "PUT", f"/api/v1/companies/{books['id']}/agent-access", json={"enabled": True})

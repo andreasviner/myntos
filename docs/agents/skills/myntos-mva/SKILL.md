@@ -1,6 +1,6 @@
 ---
 name: myntos-mva
-description: Read and review a Norwegian company's VAT return (MVA-melding) in Myntos, period by period; say what is owed or refunded and by when; read what was filed, the receipt and the payment details; change the VAT period settings, set up a farm's second VAT return, record a termin filed from another program; and ask the person to file. Use when the person asks about mva, the mva-melding, a termin, what they owe Skatteetaten in VAT, a VAT deadline, or whether the return has been sent.
+description: Read and review a Norwegian company's VAT return (MVA-melding) in Myntos, period by period; say what is owed or refunded and by when; read what was filed, the receipt and the payment details; change the VAT period settings, set up a farm's second VAT return, record a termin filed from another program; and check it with Skatteetaten and file it, each only once the person has approved it with their own ID-porten login. Use when the person asks about mva, the mva-melding, a termin, what they owe Skatteetaten in VAT, a VAT deadline, or whether the return has been sent.
 ---
 
 # MVA-melding: the VAT return
@@ -12,10 +12,12 @@ two months for almost everyone (six terminer a year), one month or a whole year
 only when Skatteetaten has granted it. Myntos builds the melding from the
 books, VAT code by VAT code; nobody types the figures in, and the way to change
 a figure is to correct the entry behind it. The one thing not to get wrong:
-**you can read and review the melding, but you cannot check it with
-Skatteetaten or file it.** Skatteetaten requires the person's own ID-porten
-login (BankID) for both, so the person files it in Myntos, and a filed melding
-cannot be withdrawn, only replaced by a newer one for the same termin.
+**nothing you send to Skatteetaten goes until the person approves it.** You
+may ask for the check and for the filing, but each request waits on the
+person's «Godkjenning» page and runs only when they press «Godkjenn», with
+their own ID-porten login (BankID), whatever your key may do on its own:
+nothing leaves Myntos without a person's yes. A filed melding cannot be
+withdrawn, only replaced by a newer one for the same termin.
 
 ## When the person says
 
@@ -23,7 +25,7 @@ cannot be withdrawn, only replaced by a newer one for the same termin.
 - «Er mva-meldingen sendt?» / «Har vi levert for 5. termin?»
 - «Når er fristen for mva?»
 - «Gå gjennom mva-meldingen før jeg sender den»
-- «Send mva-meldingen» (you prepare it and ask them to file: see Filing)
+- «Send mva-meldingen» (you check it and ask to file it, and the person approves each: step 3)
 - «Hvor er kvitteringen fra Skatteetaten?» / «Hvilket KID-nummer skal jeg bruke?»
 - «Vi har fått månedlig termin» / «Vi leverer mva én gang i året»
 - «Gården har brøyting ved siden av, vi leverer to mva-meldinger»
@@ -139,31 +141,54 @@ betale: 12 500,00 kr» or «Til gode: 3 200,00 kr».
 `GET /api/v1/companies/{company_id}/mva/innsendinger/{filing_id}` reads one
 on its own.
 
-### 3. Filing: ask the person
+### 3. Checking and filing: each waits for the person
 
-When the review is clean and the person has said yes to the figures, ask them
-to file:
+When the review is clean and the person has said yes to the figures, ask for
+the check:
 
+`POST /api/v1/companies/{company_id}/mva/termin/kontroll` with
+`{"aar": 2026, "termin": 5}`, plus `"naering": "alminnelig"` (or
+`"primaernaering"`) for the second melding of a company that files two, and
+`"merknad"` only with text the person wrote for Skatteetaten. Say why in the
+`Myntos-Note` header. It needs `post`, on the key's own or by asking.
+
+The answer is **202** `approval_pending` with a `Location`: nothing has been
+sent. The person sees «… vil sende mva-meldingen til kontroll hos
+Skatteetaten» on their «Godkjenning» page, logs in with ID-porten if they
+have not, and presses «Godkjenn». Only then does Myntos send the melding to
+Skatteetaten's check, with their login. Follow the `Location`
+(myntos-godkjenning) until it is `done`: its `result` is the filing, with
+`status` `validert` or `avvist` and Skatteetaten's `findings`.
+
+When it is `validert` and the person wants it sent, ask to file it:
+
+`POST /api/v1/companies/{company_id}/mva/innsendinger/{filing_id}/send` with
+`{"fastsatt_merverdiavgift": "12500.00", "bekreftet": true}`, the filing's
+own `fastsatt_merverdiavgift` exactly as the check stored it.
+
+It waits in the same way («… vil sende mva-meldingen til Skatteetaten»), and
+the person's «Godkjenn» is their confirmation of that amount: it files the
+melding with their ID-porten login, as if they had pressed «Send inn
+mva-meldingen» themselves. Tell the person in one sentence that each waits
+for them under «Godkjenning». When an approved request runs it can still be
+refused, and is then `failed` with the route's answer: 409 `melding_changed`
+(the books moved since the check: check again), 409 `filing_not_submittable`
+(refused in the check, or sent already), 422 `confirmation_required` (the
+amount differs from the check's).
+
+**A key without `post`** asks the person to do it on the page instead:
 `POST /api/v1/companies/{company_id}/godkjenninger/innsending` with
-`{"type": "mva_melding", "aar": 2026, "termin": 5}`, plus
-`"naering": "alminnelig"` (or `"primaernaering"`) for the second melding of a
-company that files two.
-
-This files nothing. It puts a request on the person's «Godkjenning» page that
-leads to the MVA page, where the person logs in with ID-porten, presses
-«Kontroller hos Skatteetaten», reads Skatteetaten's answer, ticks the box
-confirming the amount and presses «Send inn mva-meldingen». Any key may ask
-(it needs only `read`); put the reason in the `Myntos-Note` header. Asking
-again for a termin that already waits returns the same request. It is refused
-with 409 `period_not_over`, 409 `not_vat_registered`, 409 `filed_elsewhere`
-and 422 `invalid_period` (the same causes as the blockers in step 2), and with
-409 `already_filed` for
-any termin that has been filed, **also when a corrected melding is due**
-(`changed_since_filed`). For a correction, tell the person in words that a new
-melding for that termin is due, what changed, and that they send it from the
-MVA page as before. How the
-request looks, how to wait for it and what comes back: myntos-godkjenning.
-Tell the person in one sentence that it waits for them under «Godkjenning».
+`{"type": "mva_melding", "aar": 2026, "termin": 5}` (and `"naering"` as
+above), which needs only `read`. It puts a request on the «Godkjenning» page
+that leads to the MVA page, where the person checks and sends it themselves.
+Asking again for a termin that already waits returns the same request. It is
+refused with 409 `period_not_over`, 409 `not_vat_registered`, 409
+`filed_elsewhere` and 422 `invalid_period` (the same causes as the blockers in
+step 2), and with 409 `already_filed` for any termin that has been filed,
+**also when a corrected melding is due** (`changed_since_filed`). A
+correction is checked and sent like the first melding, so with `post`, ask
+for the check again; without it, tell the person in words that a new melding
+for that termin is due and what changed.
 
 After they have filed, read `GET /api/v1/companies/{company_id}/mva/termin`
 again and look at `filings[0]`:
@@ -189,8 +214,12 @@ From the filing (`GET /api/v1/companies/{company_id}/mva/innsendinger/{filing_id
   `GET /api/v1/companies/{company_id}/mva/innsendinger/{filing_id}/dokument?type=kvittering`
   (the receipt, a PDF), `type=betalingsinformasjon` or
   `type=valideringsresultat` (XML). A 404 «finner ikke dokumentet» while the
-  status is `sendt` means Skatteetaten's documents have not been fetched yet;
-  ask the person to press «Hent kvittering» under the termin on the MVA page.
+  status is `sendt` means Skatteetaten's documents have not been fetched yet.
+  `POST /api/v1/companies/{company_id}/mva/innsendinger/{filing_id}/tilbakemelding`
+  fetches them from Altinn with the person's login, so it waits for their
+  approval like the filing («… vil hente Skatteetatens svar på
+  mva-meldingen»); or they press «Hent kvittering» under the termin on the
+  MVA page.
 - **What was filed, exactly:**
   `GET /api/v1/companies/{company_id}/mva/innsendinger/{filing_id}/melding.xml`,
   the stored XML, unchanged by later entries.
@@ -315,11 +344,12 @@ it will do.
 | Status and code | Means | Do |
 | --- | --- | --- |
 | 202 `approval_pending` | The settings change waits for the person's approval | Do not retry. myntos-godkjenning |
-| 403 `not_for_agent_keys` | You called a route no key may call: the check, the submission, fetching the receipt from Skatteetaten | Ask the person to file (step 3) |
+| 202 `approval_pending` | The check, the filing or the receipt fetch waits for the person, always | Tell the person it waits on «Godkjenning»; follow the `Location` |
+| 403 `missing_scope` on the check or the filing | Your key may not post, on its own or by asking | Ask the person to file (step 3, a key without `post`) |
 | 403 `missing_scope` | Changing the settings needs `write` | Tell the person; they can change it on the MVA page |
 | 403 `permission_denied` | The settings need «Administrator» or «Eier» | Tell the person someone with that role must do it |
 | 404 `filing_not_found` | No such filing in this company | Take the id from `filings` |
-| 404, detail «finner ikke dokumentet» | Skatteetaten's documents are not fetched yet | Ask the person to press «Hent kvittering» on the MVA page |
+| 404, detail «finner ikke dokumentet» | Skatteetaten's documents are not fetched yet | Ask to fetch them (`…/tilbakemelding`, step 4), or ask the person to press «Hent kvittering» on the MVA page |
 | 422 `invalid_period` | No such termin for the period length (termin 7 when two-monthly), or an unknown `period_type` | Use the termin numbers from step 1 |
 | 422 `unsupported_category` | Not `alminnelig` or `primaernaering` | Myntos files only those two; tell the person |
 | 422 `unknown_naering` | `naering` names a melding the company does not file | Use a `category` from `naeringer` |
@@ -344,10 +374,10 @@ the person.
 
 ## What you cannot do here
 
-No key can check a melding with Skatteetaten, file it, or fetch the receipt
-from Skatteetaten (403 `not_for_agent_keys`): all three run on the person's
-own ID-porten login, by Skatteetaten's rules. You cannot pay the VAT, and you
-cannot change whether the company is VAT-registered. Prepare and review, then
-ask (step 3). The person's side is explained in
+Nothing you ask to send to Skatteetaten goes without the person's approval,
+whatever your key may do on its own: the check, the filing and the receipt
+fetch all wait for them, and run with their own ID-porten login, by
+Skatteetaten's rules. You cannot pay the VAT, and you cannot change whether
+the company is VAT-registered. The person's side is explained in
 [Send the MVA-melding](https://myntos.no/llms/help/vat/send-the-vat-return.md)
 and [Approve what an AI asks](https://myntos.no/llms/help/ai/approve-what-an-ai-asks.md).

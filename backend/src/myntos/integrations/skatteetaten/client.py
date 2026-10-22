@@ -27,10 +27,10 @@ Two smaller edges, both documented and both easy to get wrong:
   business's orgnr — so the identifier is passed through as given and nothing
   here tries to normalise it into "the company number".
 
-The XML itself is not built here. Assembling the næringsspesifikasjon from the
-ledger, and the year-versioned XSDs it has to satisfy, belong to the
-skattemelding milestone (docs/ROADMAP.md phase 5); this module carries the
-bytes and the lifecycle.
+The XML itself is not built here: :mod:`myntos.skattemelding` builds the
+næringsspesifikasjon from the ledger against the year's own XSDs, and wraps it
+with the skattemelding in the envelope. This module carries the bytes and the
+lifecycle.
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ from myntos.auth.maskinporten import TokenProvider, get_token_provider
 from myntos.core.config import Settings, get_settings
 from myntos.integrations.altinn.instances import (
     AppInstanceClient,
+    DataElement,
     Instance,
     InstanceRef,
 )
@@ -68,11 +69,31 @@ FEEDBACK_DATA_TYPE = "tilbakemelding"
 # Skatteetaten's flag, not Altinn's. See the module docstring.
 XML_CONTENT_TYPE = "text/xml"
 
+# The name Skatteetaten's guide gives the envelope on upload.
+ENVELOPE_FILENAME = "skattemelding.xml"
+
+# The process step an instance made with ``skalBekreftesAvRevisor`` waits in
+# after the person's confirmation, until the revisor confirms.
+REVISOR_TASK = "Task_2Revisor"
+
+# And the opposite for Skatteetaten's own validation endpoint, which answers
+# 415 "Content-Type 'text/xml' is not supported" to the Altinn type. Found the
+# first time a skattemelding was validated live, in TT02 on 2026-10-21; the
+# MVA validation was already sending this.
+VALIDATION_CONTENT_TYPE = "application/xml"
+
 _HTTP_TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 
 # Which copy of the melding is being asked for. ``gjeldende`` (the current one)
 # has no path segment of its own; the other two do.
 Variant = Literal["gjeldende", "utkast", "fastsatt"]
+
+# What ``klargjoerforhaandsfastsetting`` answers when it has prepared a melding
+# (docs/api-v2 in Skatteetaten's repository, "Klargjør part for
+# forhåndsfastsetting"). Its other statuses come back as a 400 with the same
+# JSON shape, and are returned rather than raised: each one means something
+# different to the person (PART_HAR_GJELDENDE, PART_HAR_UGYLDIG_STATUS_I_ER, …).
+PREPARED = "OK"
 
 
 def _client() -> httpx.AsyncClient:
@@ -85,7 +106,20 @@ def _client() -> httpx.AsyncClient:
 
 
 class SkatteetatenError(Exception):
-    """Skatteetaten refused a request, or answered unusably."""
+    """Skatteetaten refused a request, or answered unusably.
+
+    ``status_code`` is the HTTP status when Skatteetaten answered at all, so a
+    caller can tell "no melding for this taxpayer yet" (403) from a fault
+    without reading the message. ``refusal`` is the ``status`` a JSON refusal
+    named (the klargjør calls answer 400 with one).
+    """
+
+    def __init__(
+        self, message: str, *, status_code: int | None = None, refusal: str | None = None
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.refusal = refusal
 
 
 class SkatteetatenNotConfiguredError(SkatteetatenError):
@@ -105,6 +139,37 @@ class ValidationResult:
 
     content: bytes
     content_type: str | None
+
+
+@dataclass(frozen=True)
+class SkattemeldingAnswer:
+    """The instance after a submission, and Skatteetaten's answer on it when there is one."""
+
+    instance: Instance
+    element: DataElement | None
+    content: bytes | None
+
+    @property
+    def waits_for_revisor(self) -> bool:
+        return self.instance.current_task == REVISOR_TASK
+
+    @property
+    def outcome(self) -> tuple[str | None, str | None]:
+        """Altinn's substatus, which Skatteetaten sets when it has processed the melding.
+
+        Its label and its description, as Skatteetaten's own test notebook
+        reads them (``status.substatus``). Kept as text: the values are
+        Skatteetaten's to word, and nothing here branches on them.
+        """
+        status = self.instance.raw.get("status")
+        substatus = status.get("substatus") if isinstance(status, dict) else None
+        if not isinstance(substatus, dict):
+            return None, None
+        label, description = substatus.get("label"), substatus.get("description")
+        return (
+            label if isinstance(label, str) else None,
+            description if isinstance(description, str) else None,
+        )
 
 
 class SkattemeldingClient:
@@ -158,6 +223,46 @@ class SkattemeldingClient:
         response = await self._request("GET", path, id_porten_token=id_porten_token)
         return response.content
 
+    async def prepare_forhaandsfastsetting(
+        self, *, inntektsaar: int, identifier: str, id_porten_token: str
+    ) -> str:
+        """Ask Skatteetaten to prepare a melding for a forhåndsfastsetting, and say what it said.
+
+        A company wound up during the year files that year before the
+        ordinary assessment (skatteforvaltningsloven § 8-2), when Skatteetaten
+        has no melding for it yet: ``GET`` answers 403 «Skatteplikt ikke
+        registrert» until this is called. After ``OK`` the melding appears a
+        little later (about 20 seconds in TT02, 2026-10-22), as an utkast that
+        carries ``gjelderForhaandsfastsetting``. Calling it again is harmless.
+
+        Returns Skatteetaten's ``status``: ``OK``, or the refusal it gave
+        (``PART_HAR_GJELDENDE``, ``FORHAANDSFASTSETTING_ER_IKKE_STOETTET_FOR_INNTEKTSAAR``,
+        ``PART_TYPE_ER_IKKE_STOETTET``, ``PART_HAR_UGYLDIG_STATUS_I_ER`` when
+        Enhetsregisteret does not mark the company dissolved, ``UKJENT``).
+        Only a person's login: the call is part of a filing they make.
+        """
+        path = f"/api/skattemelding/v2/klargjoerforhaandsfastsetting/{inntektsaar}/{identifier}"
+        try:
+            response = await self._request(
+                "POST",
+                path,
+                content_type="application/json",
+                accept="application/json",
+                id_porten_token=id_porten_token,
+            )
+        except SkatteetatenError as error:
+            if error.refusal is not None:
+                return error.refusal
+            raise
+        try:
+            answer = response.json()
+        except ValueError as error:
+            raise SkatteetatenError(f"POST {path}: the answer is not JSON") from error
+        status = answer.get("status") if isinstance(answer, dict) else None
+        if not isinstance(status, str):
+            raise SkatteetatenError(f"POST {path}: the answer has no status")
+        return status
+
     async def validate(
         self,
         *,
@@ -177,7 +282,7 @@ class SkattemeldingClient:
             "POST",
             f"/api/skattemelding/v2/valider/{inntektsaar}/{identifier}",
             content=payload,
-            content_type=XML_CONTENT_TYPE,
+            content_type=VALIDATION_CONTENT_TYPE,
             id_porten_token=id_porten_token,
         )
         return ValidationResult(
@@ -194,18 +299,33 @@ class SkattemeldingClient:
         inntektsaar: int,
         organisation_number: str | None = None,
         person_number: str | None = None,
+        skal_bekreftes_av_revisor: bool = False,
     ) -> Instance:
         """Create the Altinn instance the melding will be uploaded into.
 
         A machine token is enough here, and ``inntektsaar`` goes in as a
         ``dataValues`` entry because the app keys the melding on it and it cannot
         be corrected after the instance exists.
+
+        ``skal_bekreftes_av_revisor`` gives the process its revisor step
+        (``Task_2Revisor``), and has to be set here for the same reason: the
+        step exists only on an instance made with it (docs/revisor in
+        Skatteetaten's repository). It must agree with the
+        næringsspesifikasjon's own ``skalBekreftesAvRevisor``; an instance with
+        the step and a melding without the flag leaves the revisor nothing to
+        confirm, and the opposite slips through to be caught in Skatteetaten's
+        control. Sent as the string ``"true"``, like every value in Altinn's
+        ``dataValues``, and left out when false, which is what an instance
+        made without it means.
         """
+        data_values = {"inntektsaar": str(inntektsaar)}
+        if skal_bekreftes_av_revisor:
+            data_values["skalBekreftesAvRevisor"] = "true"
         return await self._app.create_instance(
             token=altinn_token,
             organisation_number=organisation_number,
             person_number=person_number,
-            data_values={"inntektsaar": str(inntektsaar)},
+            data_values=data_values,
         )
 
     async def upload_envelope(
@@ -213,10 +333,13 @@ class SkattemeldingClient:
     ) -> None:
         """Upload the base64 envelope holding melding and næringsspesifikasjon.
 
-        One envelope, one data type, ``text/xml``. An envelope whose base64
-        næringsspesifikasjon exceeds 10 MB has to go through Skatteetaten's
-        asynchronous job API instead — that path is not built yet, and the
-        caller will see Altinn refuse the upload rather than a silent truncation.
+        One envelope, one data type, ``text/xml``, named ``skattemelding.xml``
+        as Skatteetaten's guide names it (the header goes bare, see
+        :func:`myntos.integrations.altinn.instances.content_disposition`). An
+        envelope whose base64 næringsspesifikasjon exceeds 10 MB has to go
+        through Skatteetaten's asynchronous job API instead — that path is not
+        built yet, and the caller will see Altinn refuse the upload rather than
+        a silent truncation.
         """
         await self._app.upload_data(
             ref,
@@ -224,6 +347,7 @@ class SkattemeldingClient:
             data_type=ENVELOPE_DATA_TYPE,
             content=envelope,
             content_type=XML_CONTENT_TYPE,
+            filename=ENVELOPE_FILENAME,
         )
 
     async def submit(self, ref: InstanceRef, *, id_porten_altinn_token: str) -> Instance:
@@ -237,6 +361,16 @@ class SkattemeldingClient:
         """
         return await self._app.complete_and_submit(ref, token=id_porten_altinn_token)
 
+    async def confirm(self, ref: InstanceRef, *, id_porten_altinn_token: str) -> Instance:
+        """The person's confirmation alone: one ``process/next``, for an instance with a revisor.
+
+        On an instance made with ``skalBekreftesAvRevisor`` the second step is
+        the revisor's (``Task_2Revisor``), who confirms in Skatteetaten's own
+        viewer, so Myntos takes the instance as far as the person may and no
+        further. The token is the person's, as for :meth:`submit`.
+        """
+        return await self._app.process_next(ref, token=id_porten_altinn_token)
+
     async def receipt(self, ref: InstanceRef, *, altinn_token: str) -> Instance:
         """Read the instance back to see whether the receipt has arrived.
 
@@ -247,20 +381,22 @@ class SkattemeldingClient:
         """
         return await self._app.get_instance(ref, token=altinn_token)
 
-    async def feedback(self, ref: InstanceRef, *, altinn_token: str) -> bytes | None:
-        """Skatteetaten's answer to a submission, or ``None`` if it has not come.
+    async def feedback(self, ref: InstanceRef, *, altinn_token: str) -> SkattemeldingAnswer:
+        """Skatteetaten's answer to a submission, and where the instance has got to.
 
-        ``receipt`` says whether the instance has finished; this returns what
-        Skatteetaten actually said about it. ``None`` is the ordinary early
-        answer rather than a failure - the document appears some time after
-        Altinn accepts the submission - so a caller polls, and the absence is
-        not worth an exception.
+        ``content`` is ``None`` until Skatteetaten has processed the melding:
+        the document appears some time after Altinn accepts the submission, so
+        a caller asks again later, and the absence is not worth an exception.
+        The instance comes back either way, because its process step says
+        whether it still waits for the revisor, and Altinn's substatus says, in
+        Skatteetaten's words, whether the melding was taken.
         """
         instance = await self._app.get_instance(ref, token=altinn_token)
         element = instance.element_of_type(FEEDBACK_DATA_TYPE)
-        if element is None:
-            return None
-        return await self._app.download_data(ref, token=altinn_token, element_id=element.id)
+        content = None
+        if element is not None:
+            content = await self._app.download_data(ref, token=altinn_token, element_id=element.id)
+        return SkattemeldingAnswer(instance=instance, element=element, content=content)
 
     async def upload_attachments(
         self,
@@ -287,6 +423,7 @@ class SkattemeldingClient:
         *,
         content: bytes | None = None,
         content_type: str | None = None,
+        accept: str = "application/xml",
         id_porten_token: str | None = None,
     ) -> httpx.Response:
         """One call, on the host that matches the token it is authenticated with.
@@ -308,7 +445,7 @@ class SkattemeldingClient:
             base_url = self._base_url
             token = await self._token_provider.get_access_token((SCOPE,))
 
-        headers = {"Authorization": f"Bearer {token}", "Accept": "application/xml"}
+        headers = {"Authorization": f"Bearer {token}", "Accept": accept}
         if content_type is not None:
             headers["Content-Type"] = content_type
         async with _client() as http:
@@ -319,8 +456,20 @@ class SkattemeldingClient:
             except httpx.HTTPError as error:
                 raise SkatteetatenError(f"could not reach {base_url}") from error
         if response.is_error:
+            # The klargjør calls refuse with a 400 whose JSON names the reason;
+            # kept on the error so the caller can return it as an answer.
+            refusal = None
+            if accept == "application/json" and response.status_code == httpx.codes.BAD_REQUEST:
+                try:
+                    body = response.json()
+                except ValueError:
+                    body = None
+                if isinstance(body, dict) and isinstance(body.get("status"), str):
+                    refusal = body["status"]
             raise SkatteetatenError(
-                f"{method} {path} failed ({response.status_code}): {response.text[:400]}"
+                f"{method} {path} failed ({response.status_code}): {response.text[:400]}",
+                status_code=response.status_code,
+                refusal=refusal,
             )
         return response
 

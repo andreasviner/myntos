@@ -128,8 +128,9 @@ async def reopen_company(company_id: int, user: CurrentUser, db: DbSession) -> C
     Refusals: 404 ``company_not_found`` for an id that is not a deleted company
     the caller owns (the same answer for every such id). 409
     ``reopen_blocked`` when new books for the same orgnr have been set up in
-    the account since (delete those first), or another set of books has
-    confirmed ownership of the orgnr since; the message says which.
+    the account since (delete those first). Another account having confirmed
+    the orgnr in the meantime does not block it: more than one set of books may
+    be confirmed for an orgnr.
     """
     company, membership = await closure.get_closed(db, company_id=company_id, user_id=user.id)
     await closure.reopen_company(db, company)

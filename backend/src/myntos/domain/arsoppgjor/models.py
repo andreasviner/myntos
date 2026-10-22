@@ -27,6 +27,11 @@ from myntos.domain.ledger.models import MONEY
 class YearAction(enum.StrEnum):
     AVSLUTTET = "avsluttet"
     GJENAPNET = "gjenapnet"
+    # The books ended early because the company was wound up, and that undone.
+    # Logged like a closing: the year's end date moved, and who moved it is
+    # part of the trail bokføringsloven § 4 asks for.
+    OPPLOST = "opplost"
+    OPPLOST_ANGRET = "opplost_angret"
 
 
 class FinancialYearEvent(Base):

@@ -15,25 +15,32 @@ somebody remembered.
 
 This test was written on 2026-10-10, before the keys, ``llms.txt`` or a single
 skill existed, and 43 of the 119 routes then had no description. Those routes
-stand on the two lists below, and **the lists only shrink**. A route that gets
-its description or its skill must leave the list in the same change (a test
-fails until it does, so the list cannot rot into a set of stale excuses), and
-**a new route never goes on them**: a new route is described and taught, or it
-is put in ``_NOT_FOR_AGENTS`` with the reason no key may ever call it. Emptying
-the lists is step 2 of the build plan in agents-and-api.md.
+stood on the two lists below, and **the lists only shrank**: a route that got
+its description or its skill left the list in the same change (a test failed
+until it did, so the list could not rot into a set of stale excuses). Emptying
+them was step 2 of the build plan in agents-and-api.md, and both have been
+empty since 2026-10-21. They stay, empty, so that nobody mistakes their
+absence for permission: **a new route never goes on them**. It is described
+and taught, or it is put in ``_NOT_FOR_AGENTS`` with the reason no key may
+ever call it.
 """
 
 from __future__ import annotations
 
+import inspect
 import re
 from functools import cache
 from pathlib import Path
 from typing import Any
 
+from fastapi.routing import APIRoute, iter_route_contexts
+
 from myntos.api.deps import (
     KEY_APPROVAL_LABEL_EXTENSION,
+    KEY_ID_PORTEN_EXTENSION,
     KEY_PREVIEW_EXTENSION,
     KEY_SCOPE_EXTENSION,
+    KEY_SEND_EXTENSION,
 )
 from myntos.main import create_app
 
@@ -78,9 +85,10 @@ _MONEY = (
     "else, which is what a stolen key would be used for (rule 5)."
 )
 _GOVERNMENT = (
-    "The person's own ID-porten login and what Skatteetaten and Altinn are told. Filing and "
-    "acting for a company towards the state are the person's, by Skatteetaten's policy "
-    "(rule 5)."
+    "The person's own ID-porten login: starting it, its callback, the parties Altinn says it "
+    "may act for, and claiming a company with it. Logging in is the person's own act, not "
+    "something a key can ask for; what is sent with the login (the checks and filings) is "
+    "key_send and waits for the person's approval (rule 5)."
 )
 _ONE_COMPANY = (
     "Above the one company a key belongs to: the account that owns companies is never shown, "
@@ -158,31 +166,16 @@ _NOT_FOR_AGENTS: dict[str, str] = {
     "PATCH /api/v1/companies/{company_id}/bankkontoer/{bank_account_id}": _MONEY,
     "DELETE /api/v1/companies/{company_id}/bankkontoer/{bank_account_id}": _MONEY,
     "POST /api/v1/companies/{company_id}/bekreft": _GOVERNMENT,
-    "POST /api/v1/companies/{company_id}/mva/termin/kontroll": _GOVERNMENT,
-    "POST /api/v1/companies/{company_id}/mva/innsendinger/{filing_id}/send": _GOVERNMENT,
-    "POST /api/v1/companies/{company_id}/mva/innsendinger/{filing_id}/tilbakemelding": (
-        _GOVERNMENT
-    ),
     "GET /api/v1/skatt/altinn/authorized-parties": _GOVERNMENT,
     "GET /api/v1/skatt/idporten/callback": _GOVERNMENT,
     "GET /api/v1/skatt/idporten/start": _GOVERNMENT,
     "GET /api/v1/skatt/status": _GOVERNMENT,
 }
 
-# Routes that existed without an OpenAPI description on 2026-10-10. Closed.
-_UNDESCRIBED_BEFORE_THE_RULE = frozenset(
-    {
-        "DELETE /api/v1/companies/{company_id}/invitations/{invitation_id}",
-        "GET /api/v1/auth/me",
-        "GET /api/v1/companies/{company_id}/invitations",
-        "GET /api/v1/companies/{company_id}/members",
-        "GET /api/v1/organizations/{organization_id}",
-        "PATCH /api/v1/companies/{company_id}/members/{user_id}",
-        "PATCH /api/v1/organizations/{organization_id}",
-        "POST /api/v1/auth/login",
-        "POST /api/v1/auth/logout",
-    }
-)
+# Routes that existed without an OpenAPI description on 2026-10-10. Empty
+# since 2026-10-21, when the last nine (signing in, members, invitations, the
+# account) were described, and closed: nothing goes back on it.
+_UNDESCRIBED_BEFORE_THE_RULE = frozenset[str]()
 
 # Every route that existed on 2026-10-10, when there were no skills. Closed.
 _UNTAUGHT_BEFORE_THE_RULE = frozenset[str]()
@@ -406,6 +399,38 @@ def test_every_route_has_decided_about_keys() -> None:
     )
 
 
+def test_what_goes_as_the_person_waits_for_the_person() -> None:
+    """A route that spends the person's ID-porten login is a send, or closed to keys.
+
+    Whatever goes to Skatteetaten or Altinn as the person waits for their yes
+    every time (rule 5, key_send), so a route that opens their login and
+    declares KEY_READ or key_post would let a key act as them on its own. Read
+    off the route's source, because the login is opened by a call
+    (``government_login_for``), not by anything the schema shows.
+    """
+    # FastAPI mounts an included router lazily, so `app.routes` holds the
+    # routers rather than their routes, and a plain walk of it found nothing and
+    # passed. The route contexts are what the app actually serves.
+    routes = [
+        (context.path, context.original_route)
+        for context in iter_route_contexts(create_app().routes)
+        if isinstance(context.original_route, APIRoute)
+    ]
+    assert len(routes) > 100, "the walk no longer finds the routes; this test would pass on none"
+    loose = sorted(
+        f"{method} {path}"
+        for path, route in routes
+        if "government_login_for(" in inspect.getsource(route.endpoint)
+        and (extra := route.openapi_extra or {}).get(KEY_SCOPE_EXTENSION) is not None
+        and not (extra.get(KEY_SEND_EXTENSION) and extra.get(KEY_ID_PORTEN_EXTENSION))
+        for method in sorted(route.methods or ())
+    )
+    assert not loose, (
+        "These routes send with the person's ID-porten login but a key could call them "
+        f"without the person's approval. Declare them key_send('…', id_porten=True): {loose}"
+    )
+
+
 def test_a_skill_teaches_only_what_a_key_can_call() -> None:
     """A skill that teaches a route a key is refused on sends every agent into a 403."""
     scopes = _key_scopes()
@@ -502,6 +527,7 @@ _PAGES_WITHOUT_HELP: dict[str, str] = {
     "/bankpriser/": "A public price comparison of Norwegian banks, read rather than used.",
     "/funksjoner/": "The public feature list, which describes what the help explains.",
     "/priser/": "The public price list; nothing to do there.",
+    "/sammenlign/": "Myntos compared with other programs, read rather than used.",
     "/personvern/": "The privacy statement, read rather than used.",
     "/vilkar/": "The terms, read rather than used.",
 }

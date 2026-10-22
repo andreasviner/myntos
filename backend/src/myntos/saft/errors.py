@@ -61,6 +61,23 @@ class SaftWrongYearError(SaftImportError):
     """The file covers a year that says nothing about this opening balance."""
 
 
+class InvalidPrintoutError(SaftImportError):
+    """The upload is not a printout of vouchers with attachments this reader knows.
+
+    The documents behind the vouchers come from the old program as its own
+    printout (:mod:`myntos.saft.printout`), not in the SAF-T file.
+    """
+
+
+class PrintoutWrongCompanyError(SaftImportError):
+    """The printout is another company's vouchers.
+
+    Refused whole, like another company's SAF-T file: a document from another
+    set of books has no voucher in this one to belong to, and one that happened
+    to share a number would be put on the wrong voucher for good.
+    """
+
+
 class InvalidVoucherImportError(SaftImportError):
     """The year's vouchers cannot be posted from the file yet.
 

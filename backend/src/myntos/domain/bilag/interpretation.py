@@ -1230,7 +1230,13 @@ _ROW_RATE = re.compile(r"(\d{1,2}(?:[.,]\d)?)\s*%\s*$")
 
 #: A table heading whose last column is the VAT one, "IMVA" and "Mva." included,
 #: and "Mva.%", which says the cells below are rates printed without the sign.
-_MVA_LAST_COLUMN = re.compile(r"(?i)\S*(?:mva|moms|vat)[.:]?\s*%?\s*$")
+#: Searched, so "IMVA" needs no ``\S*`` in front, and run on a stripped line, so
+#: nothing after the "%". It used to have both, and the ``\S*`` made a search
+#: quadratic in the longest word: one 150 KB line that a 1 KB PDF unpacks to
+#: held the event loop, and with it every company's requests, for minutes.
+_MVA_LAST_COLUMN = re.compile(r"(?i)(?:mva|moms|vat)[.:]?\s*%?$")
+#: No heading is longer than this; a line that is has nothing to tell us here.
+_MAX_HEADING_LENGTH = 500
 _PERCENT_HEADING = re.compile(r"%\s*$")
 
 #: A row ending in a bare rate, for a heading that carries the "%" itself:
@@ -1302,6 +1308,8 @@ def _printed_rates(lines: list[str]) -> list[Decimal]:
 def _is_mva_heading(line: str) -> bool:
     """Whether a line is a table heading whose last column is the VAT one."""
     stripped = line.strip()
+    if len(stripped) > _MAX_HEADING_LENGTH:
+        return False
     # A heading names columns; it does not carry figures. This is what keeps
     # "Org.nr.: NO 991 107 711 MVA" out, which ends in the right word and is a
     # registration number.
@@ -2913,23 +2921,33 @@ CAPITALISATION_THRESHOLD = Decimal(30000)
 _CAPITALISABLE = frozenset({"inventar", "datakostnad"})
 
 
-def model_may_propose(type_code: str, amount: Decimal | None) -> bool:
-    """Whether a model's category can stand against the amount the bilag prints.
+# What a durable purchase under the threshold is instead: an expense, in the
+# category whose own note says «Kjøp under beløpsgrensen».
+_UNDER_THRESHOLD = "inventar"
 
-    One rule, and it is arithmetic: a payment under the threshold cannot hold a
-    driftsmiddel, which costs 30 000 or more by definition (skatteloven § 14-40),
-    so the asset category is not the model's to propose there. Found when two
+
+def at_amount(type_code: str, amount: Decimal | None) -> str:
+    """The category a model's choice comes to at the amount the bilag prints.
+
+    One rule, and it is arithmetic: a driftsmiddel costs 30 000 or more by
+    definition (skatteloven § 14-40), so a smaller payment for a durable thing
+    is the expense the law makes of it, «Verktøy og inventar». Found when two
     graphics cards for 25 278 kroner came back as «Større anskaffelse
     (driftsmiddel)» after the user answered «til selskapets drift»: the model
-    reads "drift" and the menu has a "driftsmiddel" on it.
+    reads "drift", and the menu has a "driftsmiddel" on it.
+
+    It used to throw the choice away instead, and the form then asked «Hva ble
+    kjøpt?» about a bilag whose description, written by the same model, said
+    «to grafikkort» (2026-10-17). The model was right that the cards are
+    equipment the company keeps; only the law's half of the category was wrong.
 
     Only the model's proposal. A part-payment of a dearer asset is a real
     payment under the threshold, and a person who knows that picks the category
     by hand.
     """
-    return not (
-        type_code == "driftsmiddel" and amount is not None and amount < CAPITALISATION_THRESHOLD
-    )
+    if type_code == "driftsmiddel" and amount is not None and amount < CAPITALISATION_THRESHOLD:
+        return _UNDER_THRESHOLD
+    return type_code
 
 
 def note_capitalisation(suggestion: InvoiceSuggestion) -> None:

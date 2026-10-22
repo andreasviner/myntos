@@ -8,8 +8,11 @@
 
 import type { MvaPeriodRow, SaftImport, SaftMoveReview } from './api';
 
-/** Whether the server is working on it: the page polls until it is not. */
-export function isWorking(job: SaftImport): boolean {
+/**
+ * Whether the server is working on it: the page polls until it is not. Any
+ * upload with a status, the printouts' too.
+ */
+export function isWorking(job: Pick<SaftImport, 'status'>): boolean {
   return job.status === 'reading' || job.status === 'posting';
 }
 

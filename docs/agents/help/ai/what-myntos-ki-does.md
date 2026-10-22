@@ -7,8 +7,8 @@ pages: /ki/
 # What Myntos's own KI does
 
 Myntos has its own KI, separate from any AI assistant a person connects with
-a key. It is run by **Løynd**, a Norwegian KI service from the company that
-makes Myntos, on servers in Norway. Receipts are not stored there and train no
+a key. It is run by **Løynd**, a Norwegian KI service that Myntos uses, on
+servers in Norway. Receipts are not stored there and train no
 model.
 
 It is used only when the person asks for it:

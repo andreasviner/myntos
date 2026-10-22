@@ -1,16 +1,18 @@
 """Confirming, through Altinn, that a set of books belongs to somebody.
 
 Creating a company proves nothing: anyone can type nine digits into a form. The
-confirmation is what turns it into a claim, and the rule it establishes is the
-one these tests exist to hold — **one confirmed claim per orgnr across the
-installation**, while unconfirmed books stay as unconstrained as they were.
+confirmation is what turns it into a claim, and the evidence is Altinn's list
+of parties the person may act for.
 
-Both halves of that matter, and they pull in opposite directions:
+**A second confirmed claim on an orgnr is allowed, and never without a
+warning.** The first attempt is refused with ``company_already_claimed``, and
+only a second one carrying the person's yes (``even_if_claimed``) goes through.
+Both halves matter:
 
-- Without the exclusivity, "this company already has a regnskap" could never be
-  said, and two organizations would each believe they were the ones filing.
-- Without the permissiveness, a regnskapsfører could not keep books for a client
-  whose own confirmation sits elsewhere — which is most clients.
+- Without the warning, two organizations could each believe they were the only
+  ones filing, and neither would know the other existed.
+- Without the yes, a person whom Altinn lets file for the company could not
+  file from Myntos because somebody else had set up books first.
 
 The stubs come from :mod:`tests.test_altinn_authorized_parties` rather than
 being copied: they belong next to the ``ALTINN_PARTIES`` fixture they answer
@@ -24,7 +26,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.conftest import register, write
+from tests.conftest import PASSWORD, register, write
 from tests.test_altinn_authorized_parties import (  # noqa: F401  (altinn is a fixture)
     StubAltinn,
     _sign_in_to_the_government,
@@ -94,7 +96,14 @@ def _create(client: TestClient, session: dict[str, Any], orgnr: str) -> dict[str
     return body
 
 
-def _confirm(client: TestClient, company_id: int) -> Any:
+def _confirm(client: TestClient, company_id: int, *, even_if_claimed: bool = False) -> Any:
+    if even_if_claimed:
+        return write(
+            client,
+            "POST",
+            f"/api/v1/companies/{company_id}/bekreft",
+            json={"even_if_claimed": True},
+        )
     return write(client, "POST", f"/api/v1/companies/{company_id}/bekreft")
 
 
@@ -209,7 +218,7 @@ def test_confirming_does_not_spend_the_login(client: TestClient, parties: StubAl
     assert client.get("/api/v1/skatt/status").json()["logged_in"] is True
 
 
-# --- One claim per orgnr ---------------------------------------------------------
+# --- Somebody else got there first -------------------------------------------
 
 
 def _second_account(client: TestClient) -> dict[str, Any]:
@@ -224,38 +233,81 @@ def _second_account(client: TestClient) -> dict[str, Any]:
     return session
 
 
-def test_a_second_organization_cannot_confirm_the_same_orgnr(
+def test_a_second_organization_is_warned_before_confirming_the_same_orgnr(
     client: TestClient, parties: StubAltinn
 ) -> None:
-    """The refusal the whole feature exists to produce.
+    """The warning comes first, every time.
 
-    409 with a code the frontend branches on, and prose that names the two ways
-    forward. It does not name the organization holding the claim: the caller is
-    not a member of it, and the way in is to ask them.
+    409 with a code the frontend branches on to ask «Er du sikker?», and prose
+    that names the two ways forward for a caller that shows it as it is. It does
+    not name the organization holding the claim: the caller is not a member of
+    it, and the way in is to ask them.
     """
     first = register(client)
     _sign_in_to_the_government(client)
     assert _confirm(client, _create(client, first, MINE)["id"]).status_code == 200
 
     second = _second_account(client)
-    response = _confirm(client, _create(client, second, MINE)["id"])
+    company = _create(client, second, MINE)
+    response = _confirm(client, company["id"])
     assert response.status_code == 409
     body = response.json()
     assert body["code"] == "company_already_claimed"
     assert "allerede et regnskap registrert" in body["detail"]
-    # The prose is the whole answer, so it has to carry both ways out.
+    # The prose is the whole answer for an API caller, so it carries both ways out.
     assert "administrator" in body["detail"]
+    assert "bekreft likevel" in body["detail"]
+    assert client.get(f"/api/v1/companies/{company['id']}").json()["verified"] is False
+
+
+def test_after_the_warning_the_second_organization_may_confirm_anyway(
+    client: TestClient, parties: StubAltinn
+) -> None:
+    """«Ja» confirms, and the first claim stands beside it."""
+    first = register(client)
+    _sign_in_to_the_government(client)
+    theirs = _create(client, first, MINE)
+    assert _confirm(client, theirs["id"]).status_code == 200
+
+    second = _second_account(client)
+    company = _create(client, second, MINE)
+    assert _confirm(client, company["id"]).status_code == 409
+    response = _confirm(client, company["id"], even_if_claimed=True)
+    assert response.status_code == 200, response.text
+    assert response.json()["verified"] is True
+    # Confirming again afterwards is the same no-op as for anyone else, with or
+    # without the yes: the warning is about becoming confirmed, not being so.
+    assert _confirm(client, company["id"]).status_code == 200
+
+    write(client, "POST", "/api/v1/auth/logout")
+    signed_in = write(
+        client,
+        "POST",
+        "/api/v1/auth/login",
+        json={"email": "kari@example.no", "password": PASSWORD},
+    )
+    assert signed_in.status_code == 200, signed_in.text
+    assert client.get(f"/api/v1/companies/{theirs['id']}").json()["verified"] is True
+
+
+def test_the_yes_does_not_stand_in_for_altinn(client: TestClient, parties: StubAltinn) -> None:
+    """``even_if_claimed`` waives the warning about other books, never the rights."""
+    session = register(client)
+    _sign_in_to_the_government(client)
+    company = _create(client, session, NOT_MINE)
+    response = _confirm(client, company["id"], even_if_claimed=True)
+    assert response.status_code == 403
+    assert response.json()["code"] == "not_authorized_for_party"
 
 
 def test_the_second_organization_keeps_its_own_unconfirmed_books(
     client: TestClient, parties: StubAltinn
 ) -> None:
-    """A refused confirmation must not take the books with it.
+    """A warning answered «Avbryt» must not take the books with it.
 
-    This is the regnskapsfører case, and it is the reason the exclusivity is on
-    the *claim* rather than on the orgnr: an accounting firm engaged for a
-    client whose own confirmation sits elsewhere still has to be able to keep
-    the books.
+    This is the regnskapsfører case: an accounting firm engaged for a client
+    whose own confirmation sits elsewhere keeps its books, unconfirmed, without
+    having to say yes to anything.
     """
     first = register(client)
     _sign_in_to_the_government(client)

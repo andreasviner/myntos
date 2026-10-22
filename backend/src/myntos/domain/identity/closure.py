@@ -16,7 +16,8 @@ is no general exemption. The reasoning is written out in docs/gdpr.md under
 - **Anything entered: locked away, then deleted.** ``closed_at`` takes the
   company out of every list and every route (``get_company_for_user`` refuses
   it), everybody but its owners loses their membership, every key stops,
-  every invitation goes, and the confirmed claim on the orgnr is released.
+  every invitation goes, and the confirmed claim on the orgnr stops counting,
+  so nobody confirming it later is warned about books nobody works in.
   ``retain_until`` is the last day it is kept. :func:`purge_expired` deletes
   it, stored files included, the day after.
 
@@ -72,6 +73,7 @@ from myntos.domain.ledger.errors import CompanyNotFoundError
 from myntos.domain.ledger.models import Company, Journal, Party, Transaction
 from myntos.domain.mva.models import MvaFiling, MvaFilingDocument
 from myntos.saft.models import ImportStatus, SaftImport, SaftImportFile
+from myntos.skattemelding.models import SkattemeldingFiling, SkattemeldingFilingDocument
 from myntos.storage.base import DocumentStorage
 from myntos.storage.keys import KEY_PATTERN, thumbnail_key
 
@@ -345,8 +347,11 @@ async def get_closed(
 async def reopen_company(db: AsyncSession, company: Company) -> Company:
     """Open deleted books again, as they were, for the owners still on them.
 
-    Refused while other open books hold the same orgnr: new books set up in
-    this account since, or a confirmed claim elsewhere.
+    Refused while new books for the same orgnr have been set up in this
+    account since. A confirmed claim made elsewhere in the meantime does not
+    stop it: a second confirmed claim on an orgnr is allowed (migration
+    c3e7a1f95d20), and these books were confirmed through Altinn before they
+    were deleted.
 
     What closing took is not given back: the colleagues re-join by
     invitation, keys are made anew, and access for agents is switched on
@@ -367,20 +372,6 @@ async def reopen_company(db: AsyncSession, company: Company) -> Company:
             f"det er satt opp et nytt regnskap for {company.orgnr} etter at dette ble slettet. "
             "Slett det nye først hvis du vil åpne dette igjen"
         )
-    if company.verified_at is not None:
-        holder = await db.scalar(
-            select(Company.id).where(
-                Company.orgnr == company.orgnr,
-                Company.verified_at.is_not(None),
-                Company.closed_at.is_(None),
-                Company.id != company.id,
-            )
-        )
-        if holder is not None:
-            raise ReopenBlockedError(
-                f"et annet regnskap har bekreftet eierskapet til {company.orgnr} etter at dette "
-                "ble slettet. Skriv til kontakt@myntos.no, så finner vi ut av det sammen"
-            )
     company.closed_at = None
     company.retain_until = None
     await db.flush()
@@ -400,6 +391,11 @@ async def _stored_keys(db: AsyncSession, company_id: int) -> list[str]:
         select(MvaFilingDocument.storage_key)
         .join(MvaFiling, MvaFiling.id == MvaFilingDocument.filing_id)
         .where(MvaFiling.company_id == company_id)
+    )
+    keys += await db.scalars(
+        select(SkattemeldingFilingDocument.storage_key)
+        .join(SkattemeldingFiling, SkattemeldingFiling.id == SkattemeldingFilingDocument.filing_id)
+        .where(SkattemeldingFiling.company_id == company_id)
     )
     # A thumbnail may or may not have been made; deleting one that was not is
     # nothing (DocumentStorage.delete).

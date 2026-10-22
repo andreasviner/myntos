@@ -273,6 +273,34 @@ def test_password_change_requires_the_current_password(client: TestClient) -> No
     assert response.status_code == 401
 
 
+def test_password_change_cannot_be_used_to_guess_the_password(client: TestClient) -> None:
+    """Wrong current passwords count towards the login lockout.
+
+    Otherwise a stolen session could test guesses here without limit, and the
+    right one would let it set a password that ends the owner's session.
+    """
+    register(client)
+    for _ in range(get_settings().login_max_failed_attempts):
+        write(
+            client,
+            "POST",
+            "/api/v1/auth/password",
+            json={
+                "current_password": "ikke-riktig-passord",
+                "new_password": "et-helt-nytt-passord",
+            },
+        )
+
+    locked = write(
+        client,
+        "POST",
+        "/api/v1/auth/password",
+        json={"current_password": PASSWORD, "new_password": "et-helt-nytt-passord"},
+    )
+    assert locked.status_code == 429
+    assert locked.json()["code"] == "account_locked"
+
+
 def test_providers_endpoint_reports_nothing_unconfigured(client: TestClient) -> None:
     # No provider credentials in the test environment, so the UI must be told
     # not to offer buttons rather than showing ones that 503.

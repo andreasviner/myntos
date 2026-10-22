@@ -67,9 +67,10 @@ counts.
      otherwise.
    - «Konto», shown only when the company has other accounts of the same kind.
    - «Betalt via»: «Bankkonto» or «Kontant».
-6. If questions appear in a framed box at the top of the form, answer each
-   one there: with its buttons, or in the «Beskrivelse» box when it has
-   none. The form is filled in again with the answer, by itself:
+6. If a question appears in a framed box at the top of the form, answer it
+   right under the question: with one of its buttons, or by writing the
+   answer and pressing «Neste» («Send svar» on the last). After the last,
+   the form is filled in again with the answers, by itself:
    [Answer the questions about a receipt](https://myntos.no/llms/help/payments/answer-questions-about-a-receipt.md).
 7. Press «Registrer betaling». The payment is posted, then the files are
    attached («Laster opp dokumentene … 2 av 3»).

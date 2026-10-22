@@ -1,14 +1,15 @@
 # Contributing to Myntos
 
 Myntos is developed in the open — the source is public so anyone can read and
-audit it — but it is **source-available, not open source**: the license is
-proprietary, and that is settled (see [LICENSE](LICENSE) and
+audit it, and self-host it — but it is **source-available, not open source**:
+the license is the Elastic License 2.0 (see [LICENSE](LICENSE) and
 [docs/ROADMAP.md](docs/ROADMAP.md)).
 
 Bug reports and feature discussion are very welcome. **Code contributions are
 not accepted** without a signed copyright assignment or CLA. Myntos is offered
-as a paid hosted service, and code somebody else holds the copyright to could
-not be shipped in it on those terms.
+as a hosted service, free for good, and licensed to everyone else under the
+Elastic License 2.0 by its one copyright holder; code somebody else holds the
+copyright to could not be licensed on those terms.
 
 This document describes the development setup and the conventions the codebase
 follows.
@@ -40,6 +41,7 @@ CI must be green. Run the same checks locally:
 | Backend tests | `uv run pytest` |
 | Frontend types | `pnpm check` (in `frontend/`) |
 | Frontend build | `pnpm build` |
+| What search engines see | `pnpm check:seo`, after `pnpm build` |
 
 ## Guidelines
 
@@ -55,8 +57,7 @@ CI must be green. Run the same checks locally:
   prefixes (`feat:`, `fix:`, `docs:` …) are appreciated but not enforced yet.
 - **Copyright in contributions:** any merged code must be covered by a signed
   CLA or copyright assignment. A DCO-only flow would leave the contributor
-  holding the copyright, and the proprietary license could not cover their
-  code. See [docs/ROADMAP.md](docs/ROADMAP.md).
+  holding the copyright, and the licensor could not license their code. See [docs/ROADMAP.md](docs/ROADMAP.md).
 - **Legal requirements are not negotiable.** Changes touching bookkeeping
   rules (immutability of posted entries, retention, SAF-T mapping) must
   reference the relevant regulation in the PR description.

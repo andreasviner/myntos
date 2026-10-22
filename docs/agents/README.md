@@ -16,7 +16,7 @@ There are **two halves**, because an AI meets Myntos in two different ways:
 below. Before them it has one more section, **About Myntos**, for the third way
 an AI meets Myntos: somebody asked it what Myntos is, what it costs or whether
 it can file their VAT return yet. Each line there repeats a public page
-(`/priser/`, `/funksjoner/`, `/kom-i-gang/`, `/ki/`) and links it, so when one
+(`/priser/`, `/funksjoner/`, `/kom-i-gang/`, `/sammenlign/`, `/ki/`) and links it, so when one
 of those pages changes what it promises, that line changes in the same commit.
 An assistant answers from whichever it read, and the summary is the one it
 reads first. It is published as `myntos.no/llms.txt`, and every file in either half
@@ -76,11 +76,13 @@ search this folder for the old label.
 | `myntos-manuelt-bilag` | Manual vouchers: year-end adjustments and corrections typed as debit and credit |
 | `myntos-anlegg` | The fixed asset register, the saldo per group and the year's depreciation |
 | `myntos-arsavslutning` | Closing and reopening a financial year |
+| `myntos-skattemelding` | An aksjeselskap's tax return and næringsspesifikasjon from a closed year; asking the person to file it |
 | `myntos-kontoplan` | The chart of accounts |
 | `myntos-avdelinger` | Dimensions (avdelinger, prosjekter, driftsgrener) and the result per value |
 | `myntos-landbruk` | The farming add-on: switching it, settlements, subsidies, farm VAT |
 | `myntos-landbruk-arsoppgjor` | The farm's year end: the count of livestock and stock, and private uttak |
 | `myntos-saft` | The SAF-T export |
+| `myntos-tilbakemelding` | Bug reports, improvements and wishes to Myntos itself, anonymous and needing no key. Last, because it is about Myntos rather than the books |
 
 ### Who reads a skill
 
@@ -217,6 +219,7 @@ features in the order a person does.
 | `bank` | `/bank/` | `myntos-bank` |
 | `vat` | `/mva/`, `/mva-justeringer/` | `myntos-mva`, `myntos-mva-justering` |
 | `opening-balance-and-year-end` | `/inngaende-balanse/`, `/tidligere-program/`, `/manuelt-bilag/`, `/anlegg/`, `/arsavslutning/` | `myntos-inngaende-balanse`, `myntos-tidligere-program`, `myntos-manuelt-bilag`, `myntos-anlegg`, `myntos-arsavslutning` |
+| `tax-return` | `/skattemelding/` | `myntos-skattemelding` |
 | `chart-of-accounts` | `/kontoplan/` | `myntos-kontoplan` |
 | `departments` | `/avdelinger/` | `myntos-avdelinger` |
 | `farming` | The «Landbruk» card on `/kontoplan/`, the farm types on `/kontantstrom/`, NIBIO's driftsgrener on `/avdelinger/`, the year-end count on `/buskap/` and `/private-uttak/` | `myntos-landbruk`, `myntos-avdelinger`, `myntos-landbruk-arsoppgjor` |
@@ -224,6 +227,7 @@ features in the order a person does.
 | `company-and-access` | `/organisasjon/`, `/slett-selskap/` | `myntos-selskap` |
 | `ai` | `/ki/`, `/godkjenning/`, the KI part of `/organisasjon/` | `myntos-godkjenning`, `myntos-connect` |
 | `your-account` | `/konto/`, `/bytt-til-epost/` | – |
+| `feedback` | `/tilbakemelding/`, and the «Si fra» link on `/funksjoner/` | `myntos-tilbakemelding` |
 
 A new page goes into the area whose menu it sits under, or starts a new area,
 added to this table and to `llms.txt` in the same change.

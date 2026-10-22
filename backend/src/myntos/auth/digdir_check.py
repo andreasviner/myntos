@@ -46,12 +46,49 @@ step before an Altinn instance exists, and this check stops there. It never
 creates an instance and never calls ``process/next``, in test as in anything
 else. ``--save <dir>`` keeps the melding and the answer.
 
+With ``--skattemelding <orgnr>`` the login validates a skattemelding with a
+næringsspesifikasjon for that aksjeselskap instead::
+
+    uv run python -m myntos.auth.digdir_check --person <fnr> --skattemelding <orgnr> --year 2025
+
+It fetches the company's utkast for the year, builds a næringsspesifikasjon
+with the code that builds a real one (``myntos.skattemelding``) from a fixed,
+small set of synthetic books, puts both in the envelope and sends it to
+``/valider``. Skatteetaten says it keeps nothing a validation is sent, and this
+goes no further: no Altinn instance, no ``process/next``. ``--save <dir>``
+keeps the envelope, the næringsspesifikasjon and the answer.
+
+**The one exception is ``--submit``**, which, after a validation Skatteetaten
+accepted, files that envelope through the Altinn app the way
+``api.v1.skattemelding`` does (instance, upload, both ``process/next``) and
+waits a while for Skatteetaten's answer. It exists to prove the last step of
+the chain once, in TT02, with a synthetic company, because a submission is a
+filing even there and no stub can say what Skatteetaten does with one. It
+refuses unless the Altinn app is TT02's, on top of the TestID login the person
+chain already requires (``--year`` as above)::
+
+    uv run python -m myntos.auth.digdir_check --person <fnr> --skattemelding <orgnr> --submit
+
+With ``--opplost <last day>`` the skattemelding is a wound-up company's last
+year, filed early as a forhåndsfastsetting: Skatteetaten is asked to prepare
+the melding when it has none (``klargjoerforhaandsfastsetting``, which in TT02
+works for any synthetic company, because the check that it is dissolved is
+switched off there), the books end on that day, and
+``--likvidasjonsvederlag <kroner>`` is the payout stated. The same code the
+check route runs (``myntos.skattemelding.forhaandsfastsetting``)::
+
+    uv run python -m myntos.auth.digdir_check --person <fnr> --skattemelding <orgnr> \
+        --year 2026 --opplost 2026-07-21 --likvidasjonsvederlag 5854
+
+Preparing a melding changes Skatteetaten's state for the synthetic company in
+TT02, as filing does; it is refused anywhere else.
+
 It is a diagnostic, not a test: it talks to the real services with the real
 credentials, and requesting a token is free and leaves no trace worth worrying
-about. Nothing is submitted or created anywhere, and nothing is written except
-where ``--save`` says — every call is a read, or a validation, which files
-nothing. Tokens are never printed; a token's presence is reported, never its
-value.
+about. Without ``--submit`` nothing is submitted or created anywhere, and
+nothing is written except where ``--save`` says — every call is a read, or a
+validation, which files nothing. Tokens are never printed; a token's presence
+is reported, never its value.
 """
 
 from __future__ import annotations
@@ -61,7 +98,7 @@ import asyncio
 import re
 import sys
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -88,6 +125,7 @@ from myntos.domain.mva import melding as melding_module
 from myntos.domain.mva.codes import Meldingskategori
 from myntos.domain.mva.periods import PeriodType, Termin, termin_for
 from myntos.integrations.altinn.authorized_parties import fetch_authorized_parties, flatten
+from myntos.integrations.altinn.instances import AltinnInstanceError
 from myntos.integrations.altinn.tokens import (
     INSTANCE_SCOPES,
     AltinnError,
@@ -99,6 +137,14 @@ from myntos.integrations.skatteetaten.client import SkatteetatenError
 from myntos.integrations.skatteetaten.client import build_client as build_skattemelding_client
 from myntos.integrations.skatteetaten.mva import MvaError
 from myntos.integrations.skatteetaten.mva import build_client as build_mva_client
+from myntos.skattemelding import envelope as skattemelding_envelope
+from myntos.skattemelding import forhaandsfastsetting, xmlwriter
+from myntos.skattemelding import schema as skattemelding_schema
+from myntos.skattemelding import upersonlig as skattemelding_upersonlig
+from myntos.skattemelding.errors import SkattemeldingError
+from myntos.skattemelding.naeringsspesifikasjon import AccountFigures, Grunnlag
+from myntos.skattemelding.naeringsspesifikasjon import build as build_naeringsspesifikasjon
+from myntos.skattemelding.naeringsspesifikasjon import document as naeringsspesifikasjon_document
 
 _OK = "  ok  "
 _FAIL = " fail "
@@ -367,6 +413,10 @@ async def _check_person_chain(
     org: str | None = None,
     mva_org: str | None = None,
     save_to: Path | None = None,
+    skattemelding_org: str | None = None,
+    submit: bool = False,
+    last_day: date | None = None,
+    payout: int | None = None,
 ) -> None:
     """The person-present half, end to end, for one synthetic test person.
 
@@ -411,6 +461,18 @@ async def _check_person_chain(
         await _check_fetch(settings, report, login, org, year, label="skattemelding fetch (org)")
     if mva_org is not None:
         await _check_mva_validation(settings, report, login, mva_org, save_to=save_to)
+    if skattemelding_org is not None:
+        await _check_skattemelding_validation(
+            settings,
+            report,
+            login,
+            skattemelding_org,
+            year,
+            save_to=save_to,
+            submit=submit,
+            last_day=last_day,
+            payout=payout,
+        )
 
 
 async def _check_authorized_parties(altinn_token: str, report: Report) -> None:
@@ -521,6 +583,261 @@ def sample_melding(orgnr: str, today: date) -> melding_module.Melding:
         termin=previous_termin(today),
         category=Meldingskategori.ALMINNELIG,
         orgnr=orgnr,
+    )
+
+
+# The books the --skattemelding næringsspesifikasjon is built from: a small AS
+# with a year of sales, purchases, wages, rent and interest, its tax at 22 %
+# booked at the close, and the result disposed onto 2050. The balance holds
+# exactly: the bank grew by the result before tax, the tax is still owed.
+_SAMPLE_ACCOUNTS = (
+    AccountFigures(
+        "3000", "Salgsinntekt", "salgsinntekt", "3000", Decimal("0"), Decimal("-1200000")
+    ),
+    AccountFigures(
+        "4300", "Innkjøp av varer", "varekostnad", "4005", Decimal("0"), Decimal("400000")
+    ),
+    AccountFigures("5000", "Lønn", "loennskostnad", "5000", Decimal("0"), Decimal("300000")),
+    AccountFigures(
+        "6300", "Leie lokale", "annenDriftskostnad", "6300", Decimal("0"), Decimal("120000")
+    ),
+    AccountFigures("8050", "Renteinntekt", "finansinntekt", "8050", Decimal("0"), Decimal("-2000")),
+    AccountFigures("8150", "Rentekostnad", "finanskostnad", "8150", Decimal("0"), Decimal("1000")),
+    AccountFigures(
+        "8300", "Betalbar skatt", "skattekostnad", "8300", Decimal("0"), Decimal("83820")
+    ),
+    AccountFigures(
+        "8960",
+        "Overføringer annen egenkapital",
+        "resultatDisponeringForSAF-T",
+        "8800",
+        Decimal("0"),
+        Decimal("297180"),
+    ),
+    AccountFigures(
+        "1920",
+        "Bankinnskudd",
+        "balanseverdiForOmloepsmiddel",
+        "1920",
+        Decimal("130000"),
+        Decimal("511000"),
+    ),
+    AccountFigures(
+        "2000", "Aksjekapital", "egenkapital", "2000", Decimal("-30000"), Decimal("-30000")
+    ),
+    AccountFigures(
+        "2050", "Annen egenkapital", "egenkapital", "2050", Decimal("-100000"), Decimal("-397180")
+    ),
+    AccountFigures(
+        "2500", "Betalbar skatt", "kortsiktigGjeld", "2500", Decimal("0"), Decimal("-83820")
+    ),
+)
+
+
+def sample_grunnlag(year: int) -> Grunnlag:
+    return Grunnlag(
+        year=year,
+        start=date(year, 1, 1),
+        end=date(year, 12, 31),
+        organisation_form="AS",
+        year_closed=True,
+        has_auditor=False,
+        accounts=_SAMPLE_ACCOUNTS,
+    )
+
+
+async def _check_skattemelding_validation(
+    settings: Settings,
+    report: Report,
+    login: GovernmentLogin,
+    orgnr: str,
+    year: int,
+    *,
+    save_to: Path | None = None,
+    submit: bool = False,
+    last_day: date | None = None,
+    payout: int | None = None,
+) -> None:
+    """Fetch an AS's utkast, add a Myntos-built næringsspesifikasjon, and have it validated.
+
+    Only reached after a TestID login, which refuses anything but a test
+    issuer. A verdict of ``validertMedFeil`` is a warning, not a failure: the
+    call worked, and what Skatteetaten finds is what is being asked for.
+
+    With ``last_day``, the year is a wound-up company's last, as above.
+    """
+    client = build_skattemelding_client(settings)
+    final = last_day is not None
+    if final and "sits.no" not in (settings.skatteetaten_idporten_api_base_url or ""):
+        report.fail("forhåndsfastsetting", "refused: not Skatteetaten's test environment")
+        return
+    try:
+        if final:
+            fetched = await forhaandsfastsetting.fetch_for_check(
+                client,
+                orgnr=orgnr,
+                year=year,
+                token=login.access_token,
+                final=True,
+                today=date.today(),
+            )
+        else:
+            fetched = skattemelding_envelope.parse_fetch(
+                await client.fetch(
+                    inntektsaar=year,
+                    identifier=orgnr,
+                    variant="utkast",
+                    id_porten_token=login.access_token,
+                )
+            )
+        early = forhaandsfastsetting.is_early(fetched, final=final, year=year)
+    except (SkatteetatenError, skattemelding_envelope.EnvelopeError, SkattemeldingError) as error:
+        report.fail("skattemelding utkast", f"{error}\n{_reading(str(error), orgnr, year)}")
+        return
+    partsnummer = fetched.partsnummer
+    if partsnummer is None:
+        report.fail("skattemelding utkast", f"{fetched.type} {fetched.id} has no partsnummer")
+        return
+    report.ok(
+        "skattemelding utkast",
+        f"{fetched.type} {fetched.id}, partsnummer {partsnummer}"
+        + (f", forhåndsfastsetting ({fetched.forhaandsfastsetting_format})" if early else ""),
+    )
+
+    grunnlag = sample_grunnlag(year)
+    if last_day is not None:
+        grunnlag = replace(grunnlag, end=last_day, wound_up=True)
+    nsp = build_naeringsspesifikasjon(grunnlag)
+    nsp_xml = xmlwriter.write(
+        skattemelding_schema.naeringsspesifikasjon(year),
+        naeringsspesifikasjon_document(nsp, partsreferanse=partsnummer),
+    )
+    completed, _ = skattemelding_upersonlig.complete(
+        fetched,
+        nsp,
+        skattemelding_upersonlig.Answers(
+            benefits_with_shareholders=False,
+            wound_up=final,
+            liquidation_payout=payout if early else None,
+        ),
+    )
+    request = skattemelding_envelope.request_xml(
+        year=year,
+        melding=replace(fetched, content=completed),
+        naeringsspesifikasjon=nsp_xml,
+        innsendingstype=skattemelding_envelope.Innsendingstype.KOMPLETT,
+        tin=orgnr,
+        forhaandsfastsetting=early,
+    )
+    if save_to is not None:
+        save_to.mkdir(parents=True, exist_ok=True)
+        (save_to / "naeringsspesifikasjon.xml").write_bytes(nsp_xml)
+        (save_to / "skattemelding.xml").write_bytes(completed)
+        (save_to / "skattemelding-request.xml").write_bytes(request)
+    try:
+        answer = await client.validate(
+            inntektsaar=year, identifier=orgnr, payload=request, id_porten_token=login.access_token
+        )
+    except SkatteetatenError as error:
+        report.fail("skattemelding validation", str(error))
+        return
+    if save_to is not None:
+        (save_to / "skattemelding-validering.xml").write_bytes(answer.content)
+        result = skattemelding_envelope.parse_validation(answer.content)
+        for kind, content in result.documents.items():
+            (save_to / f"{kind}.xml").write_bytes(content)
+    else:
+        result = skattemelding_envelope.parse_validation(answer.content)
+    summary = (
+        f"{orgnr} {year}: {result.result}"
+        + (f" ({', '.join(result.reasons)})" if result.reasons else "")
+        + f"\nMyntos: årsresultat {nsp.result}, skattemessig resultat {nsp.taxable_result}"
+        + (
+            f"\nSkatteetaten: beregnet skatt {result.computed_tax}"
+            if result.computed_tax is not None
+            else ""
+        )
+    )
+    details = "".join(
+        f"\n- {item.stage}/{item.type} {item.path or ''}: "
+        f"sendt {item.received}, beregnet {item.computed}"
+        for item in result.avvik
+    ) + "".join(
+        f"\n- veiledning [{item.strategy}] {item.type} {item.path or ''}: {item.text or ''}"
+        for item in result.veiledninger
+    )
+    if result.accepted:
+        report.ok("skattemelding validation", summary + details)
+    else:
+        report.warn("skattemelding validation", summary + details)
+        return
+    if submit:
+        await _submit_skattemelding(settings, report, login, orgnr, year, request, save_to)
+
+
+# How long --submit waits for Skatteetaten's answer after Altinn has taken the
+# melding, and how often it looks. Skatteetaten's own notebook says only that
+# the answer comes "litt" later.
+_ANSWER_WAIT_SECONDS = 180
+_ANSWER_POLL_SECONDS = 15
+
+
+async def _submit_skattemelding(
+    settings: Settings,
+    report: Report,
+    login: GovernmentLogin,
+    orgnr: str,
+    year: int,
+    request: bytes,
+    save_to: Path | None,
+) -> None:
+    """File a validated envelope in TT02, as the send route does, and wait for the answer.
+
+    Refuses anything but TT02's Altinn app: the TestID login already keeps this
+    to test, and a filing is the one thing this module must never do anywhere
+    else, so it is checked twice.
+    """
+    app_url = settings.altinn_skattemelding_app_url or ""
+    if ".tt02." not in app_url:
+        report.fail("skattemelding submission", f"refused: {app_url!r} is not TT02's Altinn app")
+        return
+    client = build_skattemelding_client(settings)
+    try:
+        altinn_token = (await exchange_id_porten_token(login.access_token)).value
+        instance = await client.create_instance(
+            altinn_token=altinn_token, inntektsaar=year, organisation_number=orgnr
+        )
+        await client.upload_envelope(instance.ref, altinn_token=altinn_token, envelope=request)
+        await client.submit(instance.ref, id_porten_altinn_token=altinn_token)
+    except (AltinnError, AltinnInstanceError) as error:
+        report.fail("skattemelding submission", str(error))
+        return
+    report.ok("skattemelding submission", f"instance {instance.ref.path} submitted")
+
+    waited = 0
+    while True:
+        try:
+            answer = await client.feedback(instance.ref, altinn_token=altinn_token)
+        except AltinnInstanceError as error:
+            report.warn("skattemelding answer", str(error))
+            return
+        if answer.content is not None or waited >= _ANSWER_WAIT_SECONDS:
+            break
+        await asyncio.sleep(_ANSWER_POLL_SECONDS)
+        waited += _ANSWER_POLL_SECONDS
+    label, text = answer.outcome
+    if answer.content is None:
+        report.warn(
+            "skattemelding answer",
+            f"none after {waited} s (task {answer.instance.current_task}); "
+            f"read it later from instance {instance.ref.path}",
+        )
+        return
+    if save_to is not None:
+        (save_to / "skattemelding-tilbakemelding.xml").write_bytes(answer.content)
+    report.ok(
+        "skattemelding answer",
+        f"{label or 'no status label'}: {text or ''} ({len(answer.content)} bytes)",
     )
 
 
@@ -642,6 +959,10 @@ async def run(
     org: str | None = None,
     mva_org: str | None = None,
     save_to: Path | None = None,
+    skattemelding_org: str | None = None,
+    submit: bool = False,
+    last_day: date | None = None,
+    payout: int | None = None,
 ) -> int:
     settings = get_settings()
     report = Report()
@@ -656,7 +977,19 @@ async def run(
             await _check_skattemelding_scope(settings, report)
     await _check_idporten(settings, report)
     if pid is not None:
-        await _check_person_chain(settings, report, pid, year, org, mva_org, save_to)
+        await _check_person_chain(
+            settings,
+            report,
+            pid,
+            year,
+            org,
+            mva_org,
+            save_to,
+            skattemelding_org,
+            submit,
+            last_day=last_day,
+            payout=payout,
+        )
 
     print()
     if report.failed:
@@ -706,15 +1039,60 @@ def main() -> int:
         "created and nothing is submitted",
     )
     parser.add_argument(
+        "--skattemelding",
+        metavar="ORGNR",
+        help="validate the skattemelding for this aksjeselskap, with a Myntos-built "
+        "næringsspesifikasjon from synthetic books, for --year, as the --person given "
+        "above. Validation only: no Altinn instance is created and nothing is submitted",
+    )
+    parser.add_argument(
+        "--submit",
+        action="store_true",
+        help="with --skattemelding, file the validated envelope through TT02's Altinn app "
+        "and wait for Skatteetaten's answer. TT02 only, synthetic companies only: a "
+        "submission is a filing even there",
+    )
+    parser.add_argument(
+        "--opplost",
+        metavar="DATE",
+        type=date.fromisoformat,
+        help="with --skattemelding, check the year as a wound-up company's last, ending on "
+        "this day (ISO), filed early as a forhåndsfastsetting. Asks Skatteetaten to prepare "
+        "the melding when it has none. TT02 only",
+    )
+    parser.add_argument(
+        "--likvidasjonsvederlag",
+        metavar="KRONER",
+        type=int,
+        default=0,
+        help="with --opplost, what the shareholders were paid at the dissolution (default 0)",
+    )
+    parser.add_argument(
         "--save",
         metavar="DIR",
         type=Path,
-        help="with --mva, write the melding and Skatteetaten's answer here",
+        help="with --mva or --skattemelding, write what was sent and Skatteetaten's answer here",
     )
     args = parser.parse_args()
-    if args.mva is not None and args.person is None:
-        parser.error("--mva needs --person: validation takes a person's login")
-    return asyncio.run(run(args.person, args.year, args.org, args.mva, args.save))
+    if (args.mva is not None or args.skattemelding is not None) and args.person is None:
+        parser.error("--mva and --skattemelding need --person: validation takes a person's login")
+    if args.submit and args.skattemelding is None:
+        parser.error("--submit files a skattemelding, so it needs --skattemelding")
+    if args.opplost is not None and args.skattemelding is None:
+        parser.error("--opplost is a skattemelding's last year, so it needs --skattemelding")
+    return asyncio.run(
+        run(
+            args.person,
+            args.year,
+            args.org,
+            args.mva,
+            args.save,
+            args.skattemelding,
+            submit=args.submit,
+            last_day=args.opplost,
+            payout=args.likvidasjonsvederlag if args.opplost is not None else None,
+        )
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover - entry point

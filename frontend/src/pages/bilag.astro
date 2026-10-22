@@ -65,6 +65,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         <input type="search" id="f-search" placeholder="Tekst eller bilagsnummer" />
       </label>
     </div>
+    {/* Dokumentene fra Tripletex-utskriften ligger på bilagene de hører til,
+        og et år er hundrevis av bilag. Uten dette lette piloten på de to første
+        sidene etter septembers dokumenter og meldte dem savnet (2026-10-22). */}
+    <label class="check">
+      <input type="checkbox" id="f-documents" />
+      <span>Bare bilag med dokument</span>
+    </label>
     <div class="actions">
       <button type="submit" class="btn btn-primary">Vis</button>
       <button type="button" class="btn btn-ghost" id="f-bank">Inn og ut av banken (1920)</button>
@@ -117,6 +124,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   }
   .filter-row .field {
     margin-bottom: 0.4rem;
+  }
+  .check {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin: 0.4rem 0 0;
+    width: fit-content;
+    cursor: pointer;
   }
   .actions {
     display: flex;
@@ -171,11 +186,32 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     font-size: 0.85rem;
     white-space: nowrap;
   }
+  /* Dokumentene i bilagsarkivet: et antall på raden, lenkene når bilaget åpnes. */
+  #vouchers :global(.doc-count) {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  #vouchers :global(.documents) {
+    list-style: none;
+    margin: 0.5rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 1rem;
+    font-size: 0.86rem;
+  }
+  #vouchers :global(.documents .size) {
+    color: var(--faint);
+    margin-left: 0.35rem;
+    font-variant-numeric: tabular-nums;
+  }
 </style>
 
 <script>
   import {
     ApiError,
+    documentUrl,
     listFinancialYears,
     listVouchers,
     type Company,
@@ -184,7 +220,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   } from '../lib/api';
   import { currentCompany, loadCompanies } from '../lib/company';
   import { el, setStatus, show } from '../lib/dom';
-  import { isoDate, kroner, orgnummer } from '../lib/format';
+  import { fileSize, isoDate, kroner, orgnummer } from '../lib/format';
   import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
 
   /** Kortere navn på journalene enn de lagrede, til merkelappen på raden. */
@@ -204,6 +240,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   const journal = el<HTMLSelectElement>('#f-journal');
   const account = el<HTMLInputElement>('#f-account');
   const search = el<HTMLInputElement>('#f-search');
+  const documents = el<HTMLInputElement>('#f-documents');
   const body = el<HTMLTableSectionElement>('#vouchers-body');
   const more = el<HTMLButtonElement>('#more');
 
@@ -229,6 +266,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       journal: journal.value || null,
       account: account.value.trim() || null,
       search: search.value.trim() || null,
+      withDocuments: documents.checked,
+      // Nyeste først: det som nettopp ble ført, er det man leter etter, og et år
+      // hentet fra det gamle programmet la det hundrevis av bilag ned.
+      newestFirst: true,
       offset,
     };
   }
@@ -241,6 +282,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     if (journal.value) query.set('journal', journal.value);
     if (account.value.trim()) query.set('konto', account.value.trim());
     if (search.value.trim()) query.set('sok', search.value.trim());
+    if (documents.checked) query.set('dokument', '1');
     window.history.replaceState(null, '', `${window.location.pathname}?${query.toString()}`);
   }
 
@@ -281,6 +323,25 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       table.append(tr);
     }
     td.append(table);
+    if (voucher.documents.length > 0) {
+      // Lenker rett til filen, som i registeret: et bilag fra Tripletex har sin
+      // PDF her og ingen andre steder å bli funnet.
+      const list = document.createElement('ul');
+      list.className = 'documents';
+      list.setAttribute('aria-label', `Dokumenter i bilag ${voucher.voucher_no}`);
+      for (const document_ of voucher.documents) {
+        const item = document.createElement('li');
+        const link = document.createElement('a');
+        link.href = documentUrl(company.id, document_.id);
+        link.textContent = document_.filename;
+        const size = document.createElement('span');
+        size.className = 'size';
+        size.textContent = fileSize(document_.byte_size);
+        item.append(link, size);
+        list.append(item);
+      }
+      td.append(list);
+    }
     if (voucher.created_by_name !== null) {
       const who = document.createElement('p');
       who.className = 'source';
@@ -317,6 +378,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       source.className = 'source';
       source.textContent = voucher.source_document;
       text.append(source);
+    }
+    if (voucher.documents.length > 0) {
+      const count = document.createElement('span');
+      count.className = 'doc-count';
+      count.textContent =
+        voucher.documents.length === 1 ? '1 dokument' : `${voucher.documents.length} dokumenter`;
+      text.append(count);
     }
     const from = document.createElement('td');
     const badge = document.createElement('span');
@@ -384,6 +452,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     event.preventDefault();
     void run();
   });
+  // Med en gang, som et filter man slår av og på, ikke et felt man fyller ut.
+  documents.addEventListener('change', () => void run());
   el('#f-bank').addEventListener('click', () => {
     account.value = '1920';
     journal.value = '';
@@ -394,6 +464,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     journal.value = '';
     account.value = '';
     search.value = '';
+    documents.checked = false;
     void run();
   });
   more.addEventListener('click', () => {
@@ -417,6 +488,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     month.value = params.get('maaned') ?? '';
     account.value = params.get('konto') ?? '';
     search.value = params.get('sok') ?? '';
+    documents.checked = params.get('dokument') === '1';
     const journalWanted = params.get('journal');
     if (journalWanted) journal.append(new Option(journalWanted, journalWanted, true, true));
     show(el('#filters'), true);

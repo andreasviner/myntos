@@ -1,6 +1,6 @@
 ---
 title: Move your books to Myntos from another program
-description: How a person moves a company's bookkeeping to Myntos from Fiken, Tripletex, PowerOffice Go, Conta or another Norwegian accounting program, following the Kom i gang guides, in what order, and what Myntos takes in from the SAF-T files (the balances and the vouchers, earlier years too) and what it leaves (the documents behind them). Use when someone asks how to switch to Myntos, whether Myntos can import SAF-T, or when is the best time to move.
+description: How a person moves a company's bookkeeping to Myntos from Fiken, Tripletex, PowerOffice Go, Conta or another Norwegian accounting program, following the Kom i gang guides, in what order, and what Myntos takes in from the SAF-T files (the balances and the vouchers, earlier years too) and what it leaves (the documents behind them, except from Tripletex, whose printout of the vouchers brings them too). Use when someone asks how to switch to Myntos, whether Myntos can import SAF-T, or when is the best time to move.
 pages: /kom-i-gang/
 ---
 
@@ -84,14 +84,15 @@ Then, under «Slik starter du i Myntos»:
    SAF-T files came with them.
 10. **«Før fra og med datoen du flyttet».** Register payments in Myntos from
     the changeover date. Keep the old program's bilag archive with the SAF-T
-    files: the documents behind the vouchers that came over are there.
+    files: the documents behind the vouchers that came over are there. From
+    Tripletex they can also be put in Myntos from the printout of the vouchers:
+    [Bring the documents behind the vouchers over from Tripletex](https://myntos.no/llms/help/opening-balance-and-year-end/bring-the-documents-over-from-tripletex.md).
 
 ## If something stops them
 
 | What they see | Why | What to do |
 | --- | --- | --- |
 | A menu in the old program that does not match the guide | Vendors move menus. The guides were checked against the vendors' help pages on 13 August 2026. | Each guide lists its sources under «Kilder»; the vendor's help page is newer than the guide. Searching the vendor's help for «SAF-T» is fastest. |
-| The page's notice «Saldoene og årets bilag leses fra SAF-T-filen, årene før ikke» | The opening balance and this year's vouchers come over; earlier years' vouchers and every document stay in the old program | Keep the SAF-T files and the bilag archive as the record of those years |
 | No export at all in the old program | Desktop programs and spreadsheets have no SAF-T. | The saldobalanse for the last closed year and the folder of bilag are what they need. |
 
 ## Good to know

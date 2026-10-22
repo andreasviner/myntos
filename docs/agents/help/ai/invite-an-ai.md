@@ -49,8 +49,10 @@ they want you to work in their books: then this article is how they make one.
      model is used, so the choice and the responsibility are the company's;
    - you choose for each key what it may do on its own and what it must ask
      you about first;
-   - no key can file anything to Skatteetaten, move money, change a bank
-     account number or decide who has access.
+   - everything a key wants to send out of Myntos, such as the mva-melding
+     and the skattemelding to Skatteetaten, waits for your approval every
+     time and goes with your own ID-porten login; no key can move money,
+     change a bank account number or decide who has access.
 
    Tick «Jeg har lest dette og vil slå på nøkler for …» and press «Slå på
    nøkler». The window goes straight on to the form.

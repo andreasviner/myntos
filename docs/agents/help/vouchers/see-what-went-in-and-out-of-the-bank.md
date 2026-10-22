@@ -32,7 +32,9 @@ Any role, «Leser» included.
 3. The line above the table says the account, how many vouchers, and the
    balance before and after the period («Saldo før perioden …, etter …»).
 4. The table has «Inn», «Ut» and «Saldo»: the balance after each voucher.
-   Press a voucher's number to see its lines.
+   The newest is at the top, so the top «Saldo» is the balance now and the
+   balances go back in time down the page, as on a bank statement. Press a
+   voucher's number to see its lines.
 5. «Måned» narrows it to one month; the balance before the period is then the
    balance at the end of the month before.
 

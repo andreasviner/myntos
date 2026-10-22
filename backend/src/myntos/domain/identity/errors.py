@@ -218,16 +218,13 @@ class CompanyNameMismatchError(IdentityError):
 
 
 class ReopenBlockedError(IdentityError):
-    """Deleted books cannot be opened again, because other open books hold the orgnr.
+    """Deleted books cannot be opened again, because new books hold the orgnr.
 
-    Either new books for the same orgnr set up in the same account since
-    (``uq_company_open_orgnr``), or, as below, a confirmed claim elsewhere.
-
-    Deleting gave up the confirmed claim on the orgnr (myntos.domain.identity.
-    closure), and somebody has since confirmed it in another set of books. Two
-    open confirmed claims on one orgnr is exactly what
-    ``uq_company_verified_orgnr`` forbids, and which of them is right is not
-    something Myntos can decide.
+    New books for the same orgnr set up in the same account since
+    (``uq_company_open_orgnr``): two open sets in one account is one too many,
+    and which goes is the person's to decide. A confirmed claim in another
+    account no longer blocks it, since a second confirmed claim on an orgnr is
+    allowed.
     """
 
 
@@ -376,6 +373,17 @@ class ApprovalNotPendingError(ApprovalError):
     """The request has been decided, withdrawn, has expired, or its key has stopped."""
 
 
+class ApprovalChangedError(ApprovalError):
+    """The request carries other files than the ones the person was shown.
+
+    A key may add a receipt to what waits, which is what makes «the payment and
+    its receipt in one approval» work, but it may do so at any moment,
+    including after the person has looked and before they press the button.
+    A yes covers what was on the screen, so approving names the files it
+    covers, and a request that has gained or lost one since is shown again.
+    """
+
+
 class NotYourAgentError(ApprovalError):
     """Only the person whose key asked may approve what it asked.
 
@@ -395,6 +403,14 @@ class AttachmentsNotAcceptedError(ApprovalError):
 
 class FilingIsDoneOnThePageError(ApprovalError):
     """A request to file is approved by filing, on the page that files."""
+
+
+class IdPortenLoginRequiredError(ApprovalError):
+    """A request that goes to Skatteetaten as the person, approved without their login.
+
+    Refused before it is claimed, so it still waits: the person logs in with
+    ID-porten and presses «Godkjenn» again, rather than finding it failed.
+    """
 
 
 class AlreadyFiledError(ApprovalError):

@@ -13,10 +13,10 @@ here rather than lazily.
 Creating one says nothing about *whose* company it is. ``POST
 /companies/{id}/bekreft`` is the step that settles that: the caller's ID-porten
 login is spent on Altinn's list of parties they may act for, and only an orgnr
-on that list may be confirmed. One confirmed claim exists per orgnr across the
-installation, so the second organization to try gets
-``company_already_claimed`` and the choice of asking for access or keeping
-unconfirmed books.
+on that list may be confirmed. When somebody else has confirmed the orgnr
+already, the first attempt gets ``company_already_claimed``, and the person
+chooses between asking for access there and confirming anyway
+(``even_if_claimed``).
 """
 
 import contextlib
@@ -122,6 +122,11 @@ class CompanyResponse(BaseModel):
     # here — there is nothing to sell yet, and when there is, the payment flow
     # will move it rather than a client PATCH.
     plan: str
+    # The last day of the books when the company has been dissolved (oppløst),
+    # and null while it is in business. Set by POST
+    # /companies/{id}/arsavslutning/opplosning; nothing may be posted after it,
+    # and its year's skattemelding is a forhåndsfastsetting.
+    wound_up_on: date | None = None
     # What *this* caller may do with *these* books. Access is per company
     # (myntos.domain.identity.models.CompanyMembership), so the role travels
     # with the company rather than with the session: one person can own their
@@ -153,6 +158,19 @@ class CreateCompanyRequest(BaseModel):
     # no accounts to add one *to* yet, and asking for the first one while the
     # person is already filling in a form is the cheap moment.
     bank_account: str | None = Field(default=None, max_length=34)
+
+
+class ConfirmCompanyRequest(BaseModel):
+    """What the person has already said yes to. Optional: no body is all false."""
+
+    even_if_claimed: bool = Field(
+        default=False,
+        description=(
+            "True when the person has been told that another account in Myntos "
+            "has confirmed this company already, and wants to confirm it here too. "
+            "Send it only after showing them that, never on the first attempt."
+        ),
+    )
 
 
 class UpdateCompanyRequest(BaseModel):
@@ -226,6 +244,7 @@ def _company_response(company: Company, membership: CompanyMembership) -> Compan
         # without one on every response that read it back.
         verified_at=None if company.verified_at is None else as_utc(company.verified_at),
         plan=company.plan,
+        wound_up_on=company.wound_up_on,
         role=membership.role.value,
         permissions=sorted(permission.value for permission in permissions_for(membership.role)),
     )
@@ -562,7 +581,10 @@ async def refresh_company(context: CurrentCompany, db: DbSession) -> RefreshResp
 
 @router.post("/companies/{company_id}/bekreft")
 async def verify_company(
-    context: CurrentCompany, user: CurrentUser, db: DbSession
+    context: CurrentCompany,
+    user: CurrentUser,
+    db: DbSession,
+    payload: ConfirmCompanyRequest | None = None,
 ) -> CompanyResponse:
     """Confirm, through Altinn, that these books belong to the caller.
 
@@ -577,9 +599,12 @@ async def verify_company(
       ID-porten button, not an error message.
     - **403 ``not_authorized_for_party``** — the login worked and Altinn does not
       list this orgnr. Rights are granted in Altinn, by the company, not here.
-    - **409 ``company_already_claimed``** — somebody else confirmed this orgnr
-      first. The frontend branches on that code to offer the two ways forward:
-      ask an administrator there for access, or keep these books unconfirmed.
+    - **409 ``company_already_claimed``** — another account confirmed this
+      orgnr first. A warning, not a wall: the frontend asks the person whether
+      to go on, and «Ja» sends the request again with ``even_if_claimed``,
+      which confirms these books too. Both sets can then file for the company,
+      which is why nobody gets the second without being asked. The other way
+      forward is asking an administrator there for access.
 
     ``ORGANIZATION_MANAGE``, the same permission as creating a set of books:
     settling whose company this is is an administrative act, and the personal
@@ -596,7 +621,11 @@ async def verify_company(
         if party.is_usable and party.orgnr is not None
     }
     company = await ledger_service.confirm_company_ownership(
-        db, company=context.company, user_id=user.id, authorized_parties=by_orgnr
+        db,
+        company=context.company,
+        user_id=user.id,
+        authorized_parties=by_orgnr,
+        even_if_claimed=payload is not None and payload.even_if_claimed,
     )
     # And bring the register's picture along with it. Confirming is the moment
     # somebody has just told us this company is theirs, which is exactly when a

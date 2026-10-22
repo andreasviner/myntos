@@ -1,0 +1,19 @@
+# Headers Cloudflare puts on every page of the site. The build adds its own
+# rule for /_astro/* above these (the adapter merges into this file).
+#
+# Nothing here may change what a page does, only who can wrap it:
+# - frame-ancestors 'self' and SAMEORIGIN, not 'none' and DENY: faktura.astro
+#   shows the PDF in an iframe of our own (a blob of this origin), and every
+#   other site is still refused. /godkjenning/ is where a click approves what a
+#   key asked for, and that click must not be borrowed through a frame.
+# - no script-src yet: the head script and the JSON-LD are inline, and a policy
+#   that blocks them blanks the site. Astro's security.csp can hash them; it
+#   needs checking in a browser first.
+# - HSTS without includeSubDomains: a subdomain served only over plain HTTP
+#   would become unreachable for a year, and nothing here needs it.
+/*
+  Strict-Transport-Security: max-age=31536000
+  X-Frame-Options: SAMEORIGIN
+  Content-Security-Policy: frame-ancestors 'self'; base-uri 'self'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin

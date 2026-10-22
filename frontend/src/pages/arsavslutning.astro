@@ -69,7 +69,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     <ul class="findings" id="errors" hidden></ul>
     <ul class="findings notes" id="notes" hidden></ul>
 
-    <h3 class="sub" id="lines-title">Dette blir ført per 31. desember</h3>
+    <h3 class="sub" id="lines-title"></h3>
     <div class="table-scroll">
       <table class="lines">
         <thead>
@@ -104,6 +104,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   <section class="card" id="reopen" hidden>
     <h2 class="card-title">Året er avsluttet</h2>
     <p id="closed-at"></p>
+    {/* Neste steg etter avslutningen: skattemeldingen lages av et avsluttet år. */}
+    <p>
+      Skattemeldingen for året kontrollerer og sender du under
+      <a href="/skattemelding/" id="to-skattemelding">Skattemelding</a>.
+    </p>
     <div id="reopen-form" hidden>
       <p>
         Trenger du å føre noe i året, kan det gjenåpnes. Avslutningen blir da reversert, ikke
@@ -123,6 +128,58 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       </div>
       <p class="status" id="reopen-status" hidden></p>
     </div>
+  </section>
+
+  {/* Oppløsning: et aksjeselskap som er oppløst, slutter regnskapet den dagen
+      det siste skjedde, ikke 31. desember, og skattemeldingen for året sendes
+      før selskapet er borte (forhåndsfastsetting). Vises for det siste åpne
+      året og for året regnskapet slutter i; for alle andre er det ikke et
+      spørsmål. */}
+  <section class="card" id="opplosning" hidden>
+    <h2 class="card-title">Oppløsning</h2>
+    <div id="opplost" hidden>
+      <p id="opplost-tekst"></p>
+      <p>
+        Skattemeldingen for året sendes som forhåndsfastsetting, så snart året er avsluttet:
+        <a href="/skattemelding/" id="opplost-skattemelding">Skattemelding</a>.
+      </p>
+      <div class="actions" id="angre-opplosning-block" hidden>
+        <button type="button" class="btn btn-ghost" id="angre-opplosning">
+          Angre avslutningen ved oppløsning
+        </button>
+      </div>
+      <p class="status" id="angre-status" hidden></p>
+    </div>
+    <details id="opplos" hidden>
+      <summary>Er selskapet oppløst?</summary>
+      <p>
+        Når et aksjeselskap er oppløst og det som var igjen er utbetalt til aksjonærene, slutter
+        regnskapet den dagen det siste skjedde, ikke 31. desember. Da kan året avsluttes dagen
+        etter, og skattemeldingen for året sendes før selskapet slettes (forhåndsfastsetting).
+      </p>
+      <p>
+        Før først alt som skjedde i selskapet, også utbetalingen til aksjonærene. Ingenting kan
+        føres etter dagen du velger, og det åpnes ikke noe nytt år etter dette.
+      </p>
+      <label class="field">
+        <span>Siste dag i regnskapet</span>
+        <input type="date" id="siste-dag" />
+        <span class="field-hint">
+          Dagen det siste skjedde i selskapet, som regel utbetalingen til aksjonærene. Ikke
+          nødvendigvis dagen Brønnøysundregistrene slettet det.
+        </span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="er-opplost" />
+        <span>Selskapet er oppløst.</span>
+      </label>
+      <div class="actions">
+        <button type="button" class="btn btn-ghost" id="opplos-button">
+          Avslutt regnskapet ved oppløsningen
+        </button>
+      </div>
+      <p class="status" id="opplos-status" hidden></p>
+    </details>
   </section>
 
   <section class="card" id="log-card" hidden>
@@ -236,6 +293,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     getLandbruk,
     listFinancialYears,
     reopenYear,
+    undoWindUp,
+    windUp,
     type ClosingPlan,
     type Company,
     type FinancialYearStatus,
@@ -244,7 +303,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   import { normaliseAmount } from '../lib/amount';
   import { currentCompany, loadCompanies } from '../lib/company';
   import { el, setStatus, show } from '../lib/dom';
-  import { kroner, orgnummer } from '../lib/format';
+  import { isoDate, kroner, orgnummer, todayIso } from '../lib/format';
   import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
 
   const pageStatus = el<HTMLParagraphElement>('#page-status');
@@ -299,10 +358,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       ...events.map((event) => {
         const item = document.createElement('li');
         const when = new Date(event.occurred_at).toLocaleString('nb-NO');
-        item.textContent =
-          event.action === 'avsluttet'
-            ? `${when}: avsluttet, årsresultat ${kroner(event.result ?? '0')}`
-            : `${when}: gjenåpnet. «${event.reason ?? ''}»`;
+        const said = {
+          avsluttet: `avsluttet, årsresultat ${kroner(event.result ?? '0')}`,
+          gjenapnet: `gjenåpnet. «${event.reason ?? ''}»`,
+          opplost: `regnskapet avsluttet ved oppløsning. ${event.reason ?? ''}`,
+          opplost_angret: `avslutningen ved oppløsning angret. ${event.reason ?? ''}`,
+        };
+        item.textContent = `${when}: ${said[event.action]}`;
         return item;
       }),
     );
@@ -327,6 +389,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
     const lines = [...current.tax_lines, ...current.disposition_lines];
     el('#lines').replaceChildren(...lines.map(row));
+    // Årets siste dag, som er 31. desember, eller dagen regnskapet slutter for
+    // et oppløst selskap.
+    const end = years.find((y) => y.year === current.year)?.end_date;
+    el('#lines-title').textContent = `Dette blir ført per ${end ? isoDate(end) : `31. desember`}`;
     show(el('#lines-title'), !current.closed);
     show(el('.lines', el('#plan')), !current.closed && lines.length > 0);
     show(el('#no-lines'), !current.closed && lines.length === 0 && current.closable);
@@ -343,7 +409,37 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     el('#closed-at').textContent = current.closed_at
       ? `Avsluttet ${new Date(current.closed_at).toLocaleString('nb-NO')}.`
       : '';
+    el<HTMLAnchorElement>('#to-skattemelding').href = `/skattemelding/#${current.year}`;
     show(el('#reopen-form'), current.closed && mayClose && !laterClosed);
+    renderWindingUp(current);
+  }
+
+  /** Oppløsningskortet for året på skjermen. */
+  function renderWindingUp(current: ClosingPlan): void {
+    const mayClose = canInCompany(company, 'ledger:close');
+    const lastDay = company.wound_up_on ?? null;
+    const endsHere = lastDay !== null && Number(lastDay.slice(0, 4)) === current.year;
+    // Bare det siste året kan være det siste: et år med et senere år etter seg
+    // var ikke selskapets siste.
+    const latest = !years.some((y) => y.year > current.year);
+    const offer = lastDay === null && latest && !current.closed && mayClose;
+    show(el('#opplosning'), endsHere || offer);
+    show(el('#opplost'), endsHere);
+    show(el('#opplos'), offer);
+    if (endsHere && lastDay !== null) {
+      el('#opplost-tekst').textContent =
+        `Selskapet er oppløst, og regnskapet slutter ${isoDate(lastDay)}. Ingenting kan føres ` +
+        'etter det, og det åpnes ikke noe nytt år.';
+      el<HTMLAnchorElement>('#opplost-skattemelding').href = `/skattemelding/#${current.year}`;
+    }
+    show(el('#angre-opplosning-block'), endsHere && mayClose && !current.closed);
+    el<HTMLInputElement>('#siste-dag').max = todayIso();
+  }
+
+  /** Selskapet slik det står nå, etter at sluttdatoen er satt eller angret. */
+  async function reloadCompany(): Promise<void> {
+    const current = currentCompany(await loadCompanies(true));
+    if (current !== undefined) company = current;
   }
 
   async function refresh(): Promise<void> {
@@ -405,9 +501,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         confirm.checked = false;
         await reload();
         const numbers = closed.vouchers.map((v) => v.voucher_no).join(' og ');
+        const last = company.wound_up_on && Number(company.wound_up_on.slice(0, 4)) === closed.year;
         setStatus(
           pageStatus,
-          `Regnskapsåret ${closed.year} er avsluttet${numbers ? ` med bilag ${numbers}` : ''}, og ${closed.year + 1} er åpnet.`,
+          `Regnskapsåret ${closed.year} er avsluttet${numbers ? ` med bilag ${numbers}` : ''}` +
+            (last
+              ? '. Det var selskapets siste regnskapsår; skattemeldingen sender du under Skattemelding.'
+              : `, og ${closed.year + 1} er åpnet.`),
           'ok',
         );
       })
@@ -435,6 +535,59 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       })
       .catch((error: unknown) => {
         setStatus(status, error instanceof ApiError ? error.message : 'Vi fikk ikke gjenåpnet året.');
+      })
+      .finally(() => {
+        button.disabled = false;
+      });
+  });
+
+  el('#opplos-button').addEventListener('click', () => {
+    const status = el<HTMLParagraphElement>('#opplos-status');
+    const lastDay = el<HTMLInputElement>('#siste-dag').value;
+    if (lastDay === '') {
+      setStatus(status, 'Velg siste dag i regnskapet.');
+      return;
+    }
+    if (!el<HTMLInputElement>('#er-opplost').checked) {
+      setStatus(status, 'Bekreft at selskapet er oppløst.');
+      return;
+    }
+    const button = el<HTMLButtonElement>('#opplos-button');
+    button.disabled = true;
+    windUp(company.id, lastDay)
+      .then(async (state) => {
+        el<HTMLInputElement>('#er-opplost').checked = false;
+        setStatus(status, '');
+        await reloadCompany();
+        year = state.year ?? year;
+        await reload();
+        setStatus(
+          pageStatus,
+          `Regnskapet slutter ${isoDate(lastDay)}. Avslutt året, og send så skattemeldingen som forhåndsfastsetting.`,
+          'ok',
+        );
+      })
+      .catch((error: unknown) => {
+        setStatus(status, error instanceof ApiError ? error.message : 'Vi fikk ikke avsluttet regnskapet.');
+      })
+      .finally(() => {
+        button.disabled = false;
+      });
+  });
+
+  el('#angre-opplosning').addEventListener('click', () => {
+    const status = el<HTMLParagraphElement>('#angre-status');
+    const button = el<HTMLButtonElement>('#angre-opplosning');
+    button.disabled = true;
+    undoWindUp(company.id)
+      .then(async () => {
+        setStatus(status, '');
+        await reloadCompany();
+        await reload();
+        setStatus(pageStatus, `Regnskapet for ${year} løper igjen til 31. desember.`, 'ok');
+      })
+      .catch((error: unknown) => {
+        setStatus(status, error instanceof ApiError ? error.message : 'Vi fikk ikke angret.');
       })
       .finally(() => {
         button.disabled = false;

@@ -730,7 +730,11 @@ async def post_settlement(
         return None
 
     accounts = await ledger_service._accounts_by_number(db, company)
-    financial_year = await ledger_service.ensure_financial_year(db, company, termin.end.year)
+    # Dated on the term's last day, unless the company was wound up inside the
+    # term: its books end on that day, and nothing may be dated after it
+    # (company.wound_up_on).
+    on = termin.end if company.wound_up_on is None else min(termin.end, company.wound_up_on)
+    financial_year = await ledger_service.ensure_financial_year(db, company, on.year, on=on)
     journal = await _settlement_journal(db, company)
     text = (
         f"Mva-oppgjør {chosen.label.lower()} {termin.label}"
@@ -761,9 +765,9 @@ async def post_settlement(
             db, journal.id, financial_year.year
         ),
         financial_year=financial_year.year,
-        period=termin.end.month,
-        transaction_date=termin.end,
-        gl_posting_date=termin.end,
+        period=on.month,
+        transaction_date=on,
+        gl_posting_date=on,
         description=text,
         voucher_type=SETTLEMENT_VOUCHER_TYPE,
         created_by_user_id=created_by_user_id,

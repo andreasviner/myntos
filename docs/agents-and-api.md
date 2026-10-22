@@ -12,14 +12,16 @@ them is a feature agents and integrations cannot use, and retrofitting the
 agent half later is how the security checks go missing. Read it before adding
 a route, a page, or anything that creates, reads or changes the books.
 
-Status 2026-10-12: step 1 of the build plan and most of step 2 are built and
-in the working tree, not deployed (migrations `9d2b6f4e1a37` and
-`4b8e2d6a9c13`): the company switch, keys, the token exchange with rotating
-refresh tokens, the gate every request with a key goes through, requests that
-wait for the person's approval (rule 13) and the page `/godkjenning/` where
-they are decided, «Inviter en KI» on the Tilgang card, the mails, `llms.txt`
-with both halves (rule 14), a skill for every feature and a help article for
-every page. Nothing has been tried against a real agent in production yet.
+Status 2026-10-21: steps 1 and 2 of the build plan are built and in the
+working tree, not deployed (migrations `9d2b6f4e1a37` and `4b8e2d6a9c13`):
+the company switch, keys, the token exchange with rotating refresh tokens,
+the gate every request with a key goes through, requests that wait for the
+person's approval (rule 13) and the page `/godkjenning/` where they are
+decided, «Inviter en KI» on the Tilgang card, the mails, `llms.txt` with both
+halves (rule 14), a skill for every feature, a help article for every page, a
+description on every route, and the OpenAPI document published at
+`/api/v1/openapi.json` (rule 11). Nothing has been tried against a real agent
+in production yet.
 What is still open is under [Gaps](#gaps), and the rest of the plan at the
 end.
 
@@ -67,9 +69,10 @@ that exist and that a key can reach; `llms.txt` lists every skill; and no
 route is hidden from the OpenAPI document (rule 1). A route without its agent
 half fails the suite like a route without its company check does.
 
-The routes that predate the rule stand on two lists in that file, written on
-2026-10-10, that **only shrink**: a route that gets its description or its
-skill must leave its list in the same change, and a new route never goes on
+The routes that predated the rule stood on two lists in that file, written on
+2026-10-10, that **only shrank**: a route that got its description or its
+skill left its list in the same change. Both have been empty since
+2026-10-21, and stay in the file, empty and closed: a new route never goes on
 one. If the test stops you, the fix is the docstring or the skill, not the list.
 
 *Why:* this is the rule that makes the rest remembered. A skill written months
@@ -165,13 +168,40 @@ keep the refresh token out of the conversation where it can, rotate it, and
 ask for a new connection key when anything looks wrong. Security that depends
 on a non-technical person handling a secret correctly does not exist.
 
-### 5. What a key can never do
+### 5. Nothing leaves Myntos without a person's yes, and what a key can never do
+
+**An agent may do everything, but whatever is sent out of Myntos waits for a
+person, every time.** The owner's rule, stated on 2026-10-22. A route that
+sends something outside (a check or a filing with Skatteetaten and Altinn
+now; EHF through a Peppol access point, a payment or mail to a customer when
+those exist) is declared `key_send("…")`: it needs `post`, on the key's own or
+by asking, and a key's request to it is **always** held for the key's person
+on `/godkjenning/` (rule 13), even from a key that may post on its own. «Selv»
+covers what stays inside the books; it never covers what leaves them, because
+what has been sent cannot be called back.
+
+A send to the state goes **with the person's own ID-porten login**
+(`key_send(…, id_porten=True)`), which is Skatteetaten's condition for an
+end-user system (ARCHITECTURE.md § The two auth planes): the approve route
+refuses with 409 `id_porten_login_required`, leaving the request waiting,
+until the approving person holds a usable login, and the replay then runs
+with it exactly as if they had pressed the button on the page. The key never
+sees the token. The six such routes are the MVA and skattemelding checks,
+filings and answer fetches; `test_what_goes_as_the_person_waits_for_the_person`
+fails any route that opens the login (`government_login_for`) while letting a
+key in without `key_send(…, id_porten=True)`. Logging in itself, the Altinn
+party list and claiming a company stay closed: they are the person proving
+who they are, not something sent.
+
+This replaced, on 2026-10-22, the earlier rule that no key may file at all
+and may only *ask* its person to (`POST …/godkjenninger/innsending`, which
+remains for a key without `post`). The earlier rule protected the same thing,
+the person's say over what Skatteetaten is told, by making the person redo the
+work on the page; the approval protects it without that, because what the
+person approves is exactly what runs.
 
 Whatever its scopes, a key cannot:
 
-- **File anything to Skatteetaten or Altinn.** Submission needs the person's
-  own ID-porten login, by Skatteetaten's policy (ARCHITECTURE.md § The two
-  auth planes). An agent may prepare and validate; a person submits.
 - **Move money or change where money goes.** No payment approval, no change
   to a kontonummer, KID agreement or payee, on the company or on a supplier.
   This is the fraud path for a compromised agent: one changed account number
@@ -180,13 +210,15 @@ Whatever its scopes, a key cannot:
   switch itself. A key may revoke itself and nothing else.
 - **Delete the account or a company**, or read the government-token vault.
 
-*Why:* each of these is either the law requiring a person, or the action a
-stolen key would be used for. Keeping them off the key entirely is simpler and
-safer than scoping them.
+*Why:* each of these is the action a stolen key would be used for, or the
+gate itself. Keeping them off the key entirely is simpler and safer than
+scoping them. Whether some of them (a kontonummer, an invitation) should
+become always-approved like a send, under the owner's rule above, is open
+(Gaps).
 
 **How it holds.** A key reaches a route only if the route says so, with
-`openapi_extra=KEY_READ`, `key_write("…")`, `key_post("…")` or `KEY_PREVIEW`
-on its decorator (`myntos.api.deps`); the scope is published in the OpenAPI
+`openapi_extra=KEY_READ`, `key_write("…")`, `key_post("…")`,
+`key_send("…")` or `KEY_PREVIEW` on its decorator (`myntos.api.deps`); the scope is published in the OpenAPI
 document as `x-myntos-key-scope`. The string a writing route passes is what a
 person is asked to approve (rule 13). Everything is decided in one dependency,
 `get_caller`, before any route body runs: a route that declares nothing
@@ -194,11 +226,12 @@ answers a key 403 `not_for_agent_keys`. So a new route is closed to keys until
 somebody decides otherwise, and this rule holds by its routes never
 declaring a scope. Every route closed this way is listed with its reason in
 `_NOT_FOR_AGENTS` in `test_agent_surface.py`, which also fails on a route
-that has decided neither way. Three closures are judgement calls worth
+that has decided neither way. Two closures are judgement calls worth
 knowing: `PATCH /companies/{id}` (it carries `ki_enabled`, the company's
-decision about whether its bilag reach a model), the register's board list
-with who has access (`GET /companies/{id}/register`), and the MVA check
-(`POST …/mva/termin/kontroll`), which spends the person's ID-porten login.
+decision about whether its bilag reach a model) and the register's board list
+with who has access (`GET /companies/{id}/register`). A send is published as
+`x-myntos-key-send`, and one with the person's login as
+`x-myntos-key-id-porten`.
 
 ### 6. Irreversible writes take two steps, for agents too
 
@@ -321,8 +354,13 @@ company's name and the key's, never anything from the books.
 Within `v1`, changes are additive: new fields, new routes, new optional
 parameters. Renaming or removing anything means `v2`, announced in
 `llms.txt` and the changelog with a deprecation period. The OpenAPI document
-is to be published at `/api/v1/openapi.json` as the reference developers build
-against (step 2; production serves no schema yet).
+is published at `https://api.myntos.no/api/v1/openapi.json` as the reference
+developers and agents build against: in production too, to anybody, with no
+credential (2026-10-21, not deployed). Nothing in it is secret, since the
+source it is generated from is public, and it is where every route says what
+a key may do (rule 5). The interactive page `/docs` is not served in
+production: it is a development tool that loads its script from a CDN, not
+the reference.
 
 *Why:* an agent's skill and a developer's integration are written once and
 expected to keep working. Breaking them silently breaks the customer's
@@ -370,6 +408,25 @@ route's own reason. A payment's receipt can be added to the waiting request
 the payment makes, because a voucher that does not exist yet has nothing to
 attach to.
 
+A file held with a request is served to the person (`…/godkjenninger/{id}/fil`)
+as the type its bytes are, and as a download when they are not a PDF or an
+image. The type it was sent with is the key's to choose, and the person opens
+the file before deciding: «kvittering.pdf» sent as `text/html` and shown inline
+was the key's own script running on myntos.no in the person's session, with
+every approval and every key of theirs within reach. The approval page also
+only ever opens a PDF or an image as itself (`fetchApprovalFile`).
+
+What the person approves is what they were shown, and Myntos, not the agent,
+says what that is. A request whose path names a record (the voucher a reversal
+reverses, the invoice it issues) carries `target`, a line per record read from
+the books (`myntos.auth.approval_targets`), shown as «Gjelder» above the
+agent's note: `…/cashflow/{voucher_id}/reversal` has no body, and before this
+the only sentence naming the voucher was the agent's own, which a hostile
+invoice can write (rule 7). And because a key may add a receipt to what waits
+at any moment, approving names every file the card showed
+(`POST …/godkjenn` with `{"files": [...]}`); a request that has another set by
+then is refused with 409 `approval_changed` and shown again.
+
 The rules that hold it:
 
 - **Only the key's own person approves**, signed in. The key registers in
@@ -392,14 +449,19 @@ The rules that hold it:
 - **Every writing route says what it asks**, in bokmål, as the end of
   «<nøkkel> vil …» (`key_write("…")`, `key_post("…")`).
   `test_every_writing_route_says_what_it_asks` fails a route that does not.
-- **Filing stays the person's (rule 5).** A key may *ask* its person to file
-  the MVA-melding (`POST …/godkjenninger/innsending`); the request links to
-  the MVA page, where the person files with their own ID-porten login, and it
-  turns `done` when that termin is filed. The skattemelding joins
-  `FilingType` the day Myntos files it.
+- **A send always waits (rule 5).** A `key_send` route is held for every
+  key, whatever its scopes, and the response says so (`sends_out`,
+  `needs_id_porten`); the card says where it goes and, while the person has
+  no ID-porten login, offers «Logg inn med ID-porten» in place of
+  «Godkjenn». A key without `post` may instead *ask* its person to file the
+  MVA-melding or the skattemelding (`POST …/godkjenninger/innsending`,
+  `FilingType`); that request links to the MVA or the Skattemelding page,
+  where the person files it themselves, and it turns `done` when that termin
+  or year is filed.
 
-*Why:* the owner wants people to be able to let an agent do everything except
-filing, and to decide for themselves how much of it they check first. A
+*Why:* the owner wants people to be able to let an agent do everything, to
+decide for themselves how much of it they check first, and to say yes to
+everything that leaves Myntos. A
 request stored and replayed, rather than described and re-implemented, is the
 only design where what the person approved is exactly what runs, for every
 route that writes now and every one added later without anybody remembering
@@ -444,7 +506,7 @@ general-purpose model invents menus.
 | The test that holds every route to rules 2, 5 and 13, and every page to rule 14 | `backend/tests/test_agent_surface.py` |
 | The key tests | `backend/tests/test_agent_keys.py`, `test_agent_approvals.py`, and the key variants in both boundary files |
 | Published | `myntos.no/llms.txt`, `myntos.no/llms/skills/<name>.md`, `myntos.no/llms/help/<area>/<topic>.md` |
-| OpenAPI | `api.myntos.no/api/v1/openapi.json` (step 2) |
+| OpenAPI | `api.myntos.no/api/v1/openapi.json`, its description and `servers` set in `create_app` (`backend/src/myntos/main.py`); held by `backend/tests/test_openapi_published.py` |
 | Keys, exchange, refresh, limits, the voucher stamp | `backend/src/myntos/auth/agent_keys.py` |
 | The gate, and `KEY_READ` / `key_write` / `key_post` / `KEY_PREVIEW` | `backend/src/myntos/api/deps.py` |
 | Holding and replaying a request (rule 13) | `backend/src/myntos/auth/approvals.py` |
@@ -461,11 +523,12 @@ general-purpose model invents menus.
    reuse detection, revocation, the key recorded on vouchers, the Tilgang
    card, the mails, `llms.txt` and the `myntos-connect` skill. Rules 3–6, 9,
    10, 12.
-2. **The front door.** Mostly built 2026-10-12, not deployed: a skill for
-   every feature, so `_UNTAUGHT_BEFORE_THE_RULE` is empty; a help article for
-   every page (rule 14); approval (rule 13). Left: descriptions for the nine
-   routes still on `_UNDESCRIBED_BEFORE_THE_RULE` (sign-in, members,
-   invitations, the account), and the published OpenAPI document.
+2. **The front door.** Built 2026-10-21, not deployed: a skill for every
+   feature, so `_UNTAUGHT_BEFORE_THE_RULE` is empty; a help article for every
+   page (rule 14); approval (rule 13); a description on every route, so
+   `_UNDESCRIBED_BEFORE_THE_RULE` is empty too (the last nine were sign-in,
+   members, invitations and the account); and the OpenAPI document published
+   at `/api/v1/openapi.json`, production included (rule 11).
 3. **OAuth 2.1 and an MCP server**, so Claude, ChatGPT and other MCP clients
    connect without anyone pasting a key.
 4. **Developers.** Webhooks for invoice and voucher events, a sandbox company
@@ -494,3 +557,16 @@ exist catch up.
 - **BankID accounts make no keys** until Stø answers (rule 3).
 - **OAuth 2.1 and MCP** are step 3; until then the pasted connection key is
   the only way in.
+- **The rest of rule 5 under the owner's rule (2026-10-22).** «An agent may
+  do everything» has so far been carried out for what is sent to the state.
+  Still closed to every key: kontonummer (`…/bankkontoer`), access
+  (members, roles, invitations, keys, the Tilgang switch), deleting a company
+  or the account. The likely shape for the first two is `key_send`-like: always
+  held, never «Selv», since one changed kontonummer is the fraud path and an
+  invitation is mail sent out. Two stay closed whatever is decided: approving
+  (it is the gate), and making keys (a key that makes keys hands a new secret
+  into a chat, against rule 4). Waiting for the owner's word.
+- **A send approved at the wrong moment can still fail.** The ID-porten login
+  is checked before the request is claimed, but it can expire in the seconds
+  the replay takes; the request is then `failed` with the route's 409 and has
+  to be asked for again.

@@ -24,6 +24,12 @@ export const CALLBACK_ERRORS: Record<string, string> = {
     'Innloggingen ga ikke høyt nok sikkerhetsnivå. Logg inn med BankID, ' +
     'Buypass eller Commfides i stedet for MinID.',
   innlogging_utlopt: 'Innloggingen tok for lang tid. Prøv en gang til.',
+  // The callback came back to a browser that did not start the login. Somebody
+  // can start a login, stop short of the last step and send that link to
+  // another person; finished there, it would sign them into the first account.
+  innlogging_annen_nettleser:
+    'Innloggingen ble startet i en annen nettleser, eller du har startet en ny innlogging ' +
+    'siden. Prøv en gang til herfra.',
   innlogging_feilet: 'Vi fikk ikke bekreftet kontoen din hos leverandøren. Prøv en gang til.',
   unverified_provider_email:
     'Det finnes allerede en Myntos-konto med denne e-postadressen, og leverandøren ' +
@@ -44,6 +50,12 @@ export const CALLBACK_ERRORS: Record<string, string> = {
   kobling_annen_konto:
     'Koblingen ble startet fra en annen innlogging enn den du har nå. Start den på nytt ' +
     'fra «Din konto».',
+  // The same refusal for ID-porten: a login started on one account and
+  // finished in a browser signed in as another (or as nobody) is not stored,
+  // because it would hand one person's filing rights to somebody else.
+  innlogging_annen_konto:
+    'ID-porten-innloggingen ble startet fra en annen Myntos-innlogging enn den du har nå, ' +
+    'så vi tok den ikke i bruk. Start den på nytt herfra.',
   // An account that signs in with BankID signs in with nothing else, because
   // BankID's terms forbid using it to set up or restore a sign-in of our own.
   // The first is the general refusal, on /konto/ for a Google link; the second

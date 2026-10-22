@@ -61,6 +61,11 @@ Desktop.ini
 # pipeline and the SAF-T import are measured against: useful locally, never in
 # the history.
 /regnaskaps_tests/
+# Where the owner drops what a pilot sends before it is sorted into
+# regnaskaps_tests/: the farm's Tripletex printout of its vouchers and its
+# annual reports arrived here (2026-10-22), with the farmer's name, phone
+# number, e-mail address and bank account on them.
+/dump/
 
 # Claude Code's agent worktrees: full checkouts of this repository, which
 # `git add -A` would otherwise record as embedded repositories.

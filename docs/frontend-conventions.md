@@ -241,7 +241,13 @@ to "use the default".
 
 `/tidligere-program/` is the first page whose work outlives its request: the
 SAF-T files go up once and are read and posted on the server
-(ARCHITECTURE.md § Work done after the answer). The shape, for the next one:
+(ARCHITECTURE.md § Work done after the answer), and since 2026-10-22 Tripletex's
+printout of the vouchers in the card «Vedlegg fra Tripletex» the same way
+(`uploadPrintouts`, on the same upload helper). That card shows only with
+«Tripletex» chosen under «Programmet du kommer fra» (`lib/programs.ts`): a
+choice that adds what one program has and never takes the common upload
+away, preselected by `?fra=` from the move guides and by what the person has
+already uploaded. The shape, for the next one:
 
 - **Show the upload, then let go.** The upload is the only part that needs the
   tab, and it gets a bar (`uploadSaftFiles` in `lib/api.ts` uses
@@ -406,6 +412,13 @@ Enhetsregisteret instead of leaving them false and warning about it afterwards.
 - Norwegian bokmål throughout, including code comments in `.astro` files (the
   `.ts` files under `lib/` are in English, as is the backend).
 - Never "åpen kildekode" — Myntos is source-available, not open source.
+- No stress accent on «en»/«ett»: «en konto», never «én konto» or «Én». The
+  accent is correct bokmål, but it is rare in ordinary Norwegian writing and
+  common in machine-written text, so readers take it as a sign the page was
+  generated (the owner's call, 2026-10-22). Where plain «en» could be read as
+  the article, rewrite the sentence («samme konto», «for hvert år», «bare
+  ett») instead of putting the accent back. Older pages still have it; fix it
+  when touching them.
 - Label things by what they are to the user. "Sett opp regnskapet", not "opprett
   selskap": the company already exists, it is the books that are new.
 
@@ -471,6 +484,30 @@ runs the other way, so a new page is private until somebody decides it is
 public, and `indexing.test.ts` fails if a page that calls `redirectToLogin` is
 ever listed.
 
+**A signed-in view on a public page ships in a `<template>`.** The front page
+is the only such page: its overview is `<template id="dashboard-view">`, put
+into `<section id="dashboard">` by the inline script when the hint says the
+browser was signed in, or by `mountDashboard` when `/auth/me` says so. Until
+2026-10-22 it was ordinary markup hidden by `data-auth-only="inn"`. Google, which
+runs the script and reads the CSS, looked past it; the AI search crawlers, which
+read the HTML as text, did not, and saw two h1s («Myntos: …» and «Oversikt
+ubekreftet»), «Hei, der» and «Henter oversikten …» between the description and
+the FAQ. Content in a template is not part of the document until it is cloned,
+and it is never cloned for a visitor without a session, Google's renderer
+included. A script that reaches into such a view looks its elements up after
+the mount, not when the module loads (`VerifyEmailNotice` is the example).
+
+`pnpm check:seo`, run after `pnpm build` (and in CI), reads `dist/` the way such
+a crawler does and fails on: a public page without exactly one title,
+description, canonical and h1 outside a `<template>`; a title or description
+another public page also has; a sitemap that disagrees with the robots meta;
+an internal link or `#anchor` that leads nowhere; the overview's text in the
+front page's HTML; and a `Disallow` in `robots.txt`.
+
+The front page's title says what Myntos is and costs («Myntos: gratis
+regnskapsprogram for AS og små bedrifter»), with the name first for the brand
+review; once the overview is mounted the tab says «Myntos» again.
+
 Nothing is refused in `robots.txt`. Google never reads the noindex of a page it
 may not fetch, and indexes the bare URL from any link to it instead; that is
 what the old `Disallow` lines did for `/kontantstrom/` and three others.
@@ -482,7 +519,8 @@ The rest of what a crawler reads lives in `BaseLayout`'s head:
   description, because answer engines quote it) and a `WebPage` node per page.
   A page adds its own nodes with the `schema` prop, built from the same data it
   renders: the questions on `/priser/` as `FAQPage`, each moving guide as
-  `BreadcrumbList` and `HowTo` from `data/flytting.ts`. Never write the text a
+  `BreadcrumbList` and `HowTo` from `data/flytting.ts`, each comparison on
+  `/sammenlign/` as `BreadcrumbList` from `data/sammenligning.ts`. Never write the text a
   second time for the markup; Google ignores structured data that says
   something the page does not, and an assistant repeats it anyway.
 - **Every `name` on the home page is «Myntos»**, for the Google OAuth brand

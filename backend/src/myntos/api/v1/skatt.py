@@ -52,7 +52,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from myntos.api.deps import CurrentUser, DbSession
+from myntos.api.deps import CurrentUser, DbSession, OptionalUser, bind_flow, started_here
 from myntos.auth.idporten.client import (
     IdPortenError,
     get_client,
@@ -137,6 +137,8 @@ def _safe_redirect_path(candidate: str | None) -> str | None:
     if candidate is None:
         return None
     if not candidate.startswith("/") or candidate.startswith(("//", "/\\")):
+        return None
+    if "\\" in candidate or any(ord(char) < 0x20 or ord(char) == 0x7F for char in candidate):
         return None
     return candidate[:512]
 
@@ -267,8 +269,9 @@ class AuthorizedPartyResponse(BaseModel):
     roles: list[str]
     # True when another organization has already confirmed ownership of this
     # orgnr — the "selskapet har allerede et regnskap registrert" case. Said
-    # here, next to the choice, rather than left for the confirmation to refuse
-    # afterwards. Which organization holds the claim is never disclosed: the
+    # here, next to the choice, so the person is warned when they pick it
+    # rather than when the confirmation asks afterwards. Which organization
+    # holds the claim is never disclosed: the
     # caller is not a member of it, and the way in is to ask them, not us.
     claimed: bool = False
 
@@ -309,6 +312,18 @@ def _reportable(
                 )
             )
     return offered
+
+
+async def has_usable_login(db: DbSession, user: User) -> bool:
+    """Whether ``user`` holds a government login a request could spend now.
+
+    For approving what a key asked to send to Skatteetaten: checked before the
+    request is claimed, so a person without a login is asked to log in and the
+    request still waits, rather than running and failing on the route's 409.
+    """
+    if not is_configured() or not vault_is_configured():
+        return False
+    return await _active_attempt(db, user) is not None
 
 
 async def government_login_for(
@@ -424,13 +439,16 @@ async def idporten_start(
         state=attempt.state, nonce=attempt.nonce, code_challenge=pkce.challenge
     )
     # 303: follow with GET however this was reached.
-    return RedirectResponse(url, status_code=status.HTTP_303_SEE_OTHER)
+    response = RedirectResponse(url, status_code=status.HTTP_303_SEE_OTHER)
+    bind_flow(response, attempt.state, ATTEMPT_LIFETIME)
+    return response
 
 
 @router.get("/idporten/callback")
 async def idporten_callback(
     request: Request,
     db: DbSession,
+    signed_in: OptionalUser,
     code: str | None = None,
     state: str | None = None,
     error: str | None = None,
@@ -438,12 +456,15 @@ async def idporten_callback(
 ) -> RedirectResponse:
     """Finish the login and store the authorization.
 
-    No ``CurrentUser`` dependency: ID-porten redirects a browser here, and the
-    owner comes off the attempt row rather than off the session, so a user whose
-    Myntos cookie has lapsed mid-flow still lands somewhere sensible. The
-    attempt's ``user_id`` is what binds the token to a person.
+    No ``CurrentUser`` dependency, so a lapsed cookie still lands on a page
+    that says what happened rather than on a bare 401. But the browser that
+    comes back has to be signed in as the account that started the flow,
+    exactly as a BankID link must (``auth._finish_link``). The authorize URL is
+    an ordinary link: started on one account and finished by somebody else, the
+    other person's ID-porten login, their name, their fødselsnummer, the
+    companies they can represent and the right to file for them, would land on
+    the first account, and the register would then show that account as them.
     """
-    del request  # Present for symmetry with auth.py, which records the caller.
     now = utc_now()
 
     # Looked up before anything is decided, because the attempt is what knows
@@ -484,6 +505,19 @@ async def idporten_callback(
     # first exchange is still in flight.
     attempt.consumed_at = now
     await db.flush()
+
+    # Before the exchange, so a login finished in the wrong browser is never
+    # turned into a token at all. The attempt stays spent: its link has been
+    # used by somebody, and that is reason enough not to honour it again. Both
+    # checks, because each covers what the other cannot: the cookie that the
+    # browser is the one that started (deps.bind_flow), the session that the
+    # browser is still signed in as the account the token will be stored on.
+    if not started_here(request, state):
+        logger.warning("ID-porten login finished in a browser that did not start it")
+        return _failed("innlogging_annen_nettleser", redirect_to=attempt.redirect_to)
+    if signed_in is None or signed_in.id != attempt.user_id:
+        logger.warning("ID-porten login finished in a browser not signed in as its starter")
+        return _failed("innlogging_annen_konto", redirect_to=attempt.redirect_to)
 
     try:
         login = await get_client().exchange_code(

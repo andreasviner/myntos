@@ -218,11 +218,27 @@ export function redirectToLogin(): void {
  * login or signup into an open redirect to somebody else's page that looks like
  * ours. Anything else is answered with the front page rather than refused: the
  * visitor did nothing wrong, and they are signed in either way.
+ *
+ * Decided by the browser's own URL parser rather than by looking at the first
+ * characters, because the parser is what `location.href` uses: it drops tabs
+ * and newlines and reads a backslash as a slash, so `/\evil.example` and
+ * `/<tab>/evil.example` start with a single slash and still leave the site.
  */
 export function safeNext(value: string | null): string {
-  if (value === null || !value.startsWith('/') || value.startsWith('//')) return '/';
-  return value;
+  if (value === null || !value.startsWith('/')) return '/';
+  let url: URL;
+  try {
+    url = new URL(value, NEXT_BASE);
+  } catch {
+    return '/';
+  }
+  if (url.origin !== NEXT_BASE) return '/';
+  return url.pathname + url.search + url.hash;
 }
+
+// Any origin of our own works as the base: only whether the result stays on it
+// matters, and what is returned is the path.
+const NEXT_BASE = 'https://myntos.invalid';
 
 // --- Which company the user is looking at ---------------------------------------
 //

@@ -2,7 +2,7 @@
   "name": "myntos-frontend",
   "version": "0.1.0",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "Elastic-2.0",
   "type": "module",
   "packageManager": "pnpm@10.34.5",
   "scripts": {
@@ -10,22 +10,23 @@
     "build": "astro build",
     "preview": "astro preview",
     "check": "astro check",
+    "check:seo": "node scripts/check-seo.mjs",
     "test": "vitest run",
     "deploy": "astro build && wrangler deploy --config dist/client/wrangler.json",
     "favicons": "node scripts/generate-favicons.mjs",
     "og-image": "node scripts/generate-og-image.mjs"
   },
   "dependencies": {
-    "astro": "^7.0.0"
+    "astro": "7.4.1"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.0",
-    "@astrojs/cloudflare": "^14.0.0",
-    "@astrojs/sitemap": "^3.7.3",
-    "sharp": "^0.35.3",
+    "@astrojs/cloudflare": "^14.4.2",
+    "@astrojs/sitemap": "^3.7.4",
+    "sharp": "^0.35.5",
     "typescript": "^5.6.0",
-    "vitest": "^4.1.11",
-    "wrangler": "^4.83.0"
+    "vitest": "^4.1.12",
+    "wrangler": "^4.152.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

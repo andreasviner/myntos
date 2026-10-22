@@ -18,22 +18,27 @@ and may not do is decided in one place, :func:`get_caller`, before any route
 body runs:
 
 - **the route must say a key may call it**, and with which scope
-  (:data:`KEY_READ`, :func:`key_write`, :func:`key_post`, :data:`KEY_PREVIEW`
-  in its ``openapi_extra``). A route that says nothing is closed to keys, so a
-  new route is safe before anybody has thought about agents, and rule 5 (no
-  filing, no money, no access management) holds by those routes never saying
-  so;
+  (:data:`KEY_READ`, :func:`key_write`, :func:`key_post`, :func:`key_send`,
+  :data:`KEY_PREVIEW` in its ``openapi_extra``). A route that says nothing is
+  closed to keys, so a new route is safe before anybody has thought about
+  agents, and rule 5 (no money, no access management) holds by those routes
+  never saying so;
 - **the key must carry that scope**, and the route's own permission check then
   runs against the person's role as it stands now, so a key is always the
   intersection of the two. A key that may only *ask* for the scope has its
   request stored to wait for its person instead (rule 13,
   :mod:`myntos.auth.approvals`), and a request the person approved comes back
   through here marked in the ASGI scope, and runs;
+- **what leaves Myntos always waits** (:func:`key_send`): a filing, a check
+  with Skatteetaten. It is held for the key's person even when the key may
+  post on its own, because what has been sent cannot be called back;
 - **the key's company is the only company**: any other id in the path is the
   same 404 a stranger gets (:func:`get_company_context`).
 """
 
+import hmac
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Annotated, Any, NoReturn
 
 from fastapi import Depends, HTTPException, Request, Response, status
@@ -42,6 +47,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from myntos.auth import agent_keys, approvals
 from myntos.auth.agent_keys import KeyAccess
 from myntos.auth.sessions import resolve_session
+from myntos.auth.tokens import hash_token
 from myntos.core.config import get_settings
 from myntos.core.mail import Mailer, build_mailer
 from myntos.db.session import get_session
@@ -98,6 +104,20 @@ KEY_PREVIEW_EXTENSION = "x-myntos-key-preview"
 KEY_APPROVAL_ATTACHMENTS_EXTENSION = "x-myntos-approval-attachments"
 ATTACH_TO_VOUCHER = "/api/v1/companies/{company_id}/cashflow/{id}/dokument"
 
+# A route that sends something out of Myntos: to Skatteetaten and Altinn now,
+# to a Peppol access point or a bank when those are built. A key's request to
+# one always waits for its person on /godkjenning/, whatever the key may do on
+# its own: the owner's rule (2026-10-22) is that an agent may do everything,
+# and that nothing leaves the program without a person's yes, because what has
+# been sent cannot be called back (docs/agents-and-api.md rule 5).
+KEY_SEND_EXTENSION = "x-myntos-key-send"
+
+# A send that goes as the person, with their own ID-porten login, which is
+# Skatteetaten's condition for an end-user system: the person has to hold one
+# when they approve (409 ``id_porten_login_required`` until they do), and the
+# request then runs with it.
+KEY_ID_PORTEN_EXTENSION = "x-myntos-key-id-porten"
+
 
 def _for_keys(scope: AgentKeyScope) -> dict[str, Any]:
     return {KEY_SCOPE_EXTENSION: scope.value}
@@ -131,6 +151,20 @@ def key_write(label: str, *, attachments: str | None = None) -> dict[str, Any]:
 def key_post(label: str, *, attachments: str | None = None) -> dict[str, Any]:
     """A route that does what cannot be undone, and what to call it: «utstede en faktura»."""
     return _writing(AgentKeyScope.POST, label, attachments)
+
+
+def key_send(label: str, *, id_porten: bool = False) -> dict[str, Any]:
+    """A route that sends something out of Myntos, and what to call it.
+
+    «sende skattemeldingen til Skatteetaten». It needs ``post``, on the key's
+    own or by asking, and always waits for the person, never runs on the
+    key's own. ``id_porten`` for a send that goes with the person's ID-porten
+    login.
+    """
+    extra = _writing(AgentKeyScope.POST, label, None) | {KEY_SEND_EXTENSION: True}
+    if id_porten:
+        extra[KEY_ID_PORTEN_EXTENSION] = True
+    return extra
 
 
 # For the few routes an agent is taught that need no credential at all: the
@@ -258,6 +292,11 @@ def _is_preview(route: object) -> bool:
     return extra.get(KEY_PREVIEW_EXTENSION) is True
 
 
+def _is_send(route: object) -> bool:
+    extra = getattr(route, "openapi_extra", None) or {}
+    return extra.get(KEY_SEND_EXTENSION) is True
+
+
 def approval_label_of(route: object) -> str | None:
     """What the person is asked to approve when a key's call to ``route`` waits for them."""
     extra = getattr(route, "openapi_extra", None) or {}
@@ -273,6 +312,7 @@ async def _admit_key(request: Request, db: AsyncSession, post: Mailer, access: K
     stored to wait for its person (:func:`myntos.auth.approvals.hold`, rule
     13); or neither, and it is refused. A preview, which stores nothing, runs
     for a key that may only ask to write, because there is nothing to approve.
+    A send is held even for a key that may post on its own (:func:`key_send`).
     """
     route = request.scope.get("route")
     needed = key_scope_of(route)
@@ -302,7 +342,7 @@ async def _admit_key(request: Request, db: AsyncSession, post: Mailer, access: K
         raise AgentRateLimitedError(
             "for mange forespørsler med denne nøkkelen det siste minuttet. Vent litt og prøv igjen."
         )
-    if needed in key.scope_set or _is_preview(route):
+    if _is_preview(route) or (needed in key.scope_set and not _is_send(route)):
         return
     # Held, never run, so the company wall a route would apply is applied
     # here: a request stored for another company's path would show the person
@@ -545,3 +585,48 @@ def clear_session_cookie(response: Response) -> None:
         domain=settings.session_cookie_domain,
         path="/",
     )
+
+
+# --- Which browser started a sign-in --------------------------------------------
+#
+# A provider's callback URL, code and state included, is an ordinary link, and
+# whoever started the flow can stop short of it and hand it to somebody else.
+# Opened in a stranger's browser, a login callback signed that browser into the
+# starter's account, so whatever the stranger then typed, uploaded or proved
+# with ID-porten landed on an account the starter could open. The state was
+# single-use and unguessable, which is no help when the attacker is the one who
+# was given it. So the browser that starts a flow is handed a cookie naming the
+# state, and only a callback that brings it back is honoured.
+
+
+def _flow_cookie(digest: str) -> str:
+    # One cookie per flow rather than one for all of them: a person who starts
+    # a Google link and then the switch to BankID before finishing the first
+    # must still be able to finish it. Each lapses with its attempt.
+    return f"myntos_flow_{digest[:16]}"
+
+
+def bind_flow(response: Response, state: str, lifetime: timedelta) -> None:
+    """Mark this browser as the one that started the flow with ``state``.
+
+    Host-only on the API and lax, so it comes back on the provider's top-level
+    redirect to the callback and goes nowhere else. Holds a digest rather than
+    the state itself, which the callback URL already carries in the clear.
+    """
+    digest = hash_token(state)
+    response.set_cookie(
+        key=_flow_cookie(digest),
+        value=digest,
+        max_age=int(lifetime.total_seconds()),
+        httponly=True,
+        secure=get_settings().session_cookie_secure,
+        samesite="lax",
+        path="/api/v1/",
+    )
+
+
+def started_here(request: Request, state: str) -> bool:
+    """Whether this browser is the one that started the flow with ``state``."""
+    digest = hash_token(state)
+    cookie = request.cookies.get(_flow_cookie(digest))
+    return cookie is not None and hmac.compare_digest(cookie, digest)

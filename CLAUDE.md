@@ -22,6 +22,7 @@ paragraph explaining why is the part worth keeping.
 | [docs/landbruk.md](docs/landbruk.md) | Anything with `segment="landbruk"`, `company.landbruk` or a farm account or category, and any other industry add-on. Myntos is for everyone: an industry gets an add-on, never a different product. The farm VAT rates, why a settlement from Tine is a sale, and the farm's list of what is built and what the law still requires |
 | [docs/anlegg.md](docs/anlegg.md) | Anything about driftsmidler, the anleggsregister, saldoavskrivning or the `AVSKR` journal. The rates are a year's, the saldo is derived and never stored, and the books follow the tax figures |
 | [docs/gdpr.md](docs/gdpr.md) | Account deletion, deleting a company, the session list, or any column that points at `app_user`. What is the person's to erase and what is the books' to keep, why a deleted bookkeeper leaves a tombstone with their name, and why a deleted company's books stay locked for five years before the purge |
+| [docs/feedback.md](docs/feedback.md) | The feedback box (`/tilbakemelding/`, `/api/v1/tilbakemeldinger`) and anything that might log, store or mail who sent it. Anonymous by construction: four things keep it so, and the access log is one of them |
 | [docs/frontend-conventions.md](docs/frontend-conventions.md) | Adding or changing a page. `hidden`, session and chrome, forms, the text rules |
 | [docs/integrations/](docs/integrations/) | Maskinporten, ID-porten, Altinn, MVA, SAF-T, EHF, bank statements, BankID login (Idura), Landbrukets Dataflyt. One file per counterparty |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Deciding what to build next: what is being built, phase by phase |
@@ -74,12 +75,16 @@ paragraph explaining why is the part worth keeping.
    page without a help article, a file `llms.txt` does not list and a dead link
    between them; the lists of older routes in it only shrink. Every route says
    what it is to a key: `openapi_extra=KEY_READ`, `key_write("…")` (undoable),
-   `key_post("…")` (final), `KEY_PREVIEW` (stores nothing), or a reason in
-   `_NOT_FOR_AGENTS`; undeclared is closed. The string in `key_write`/`key_post`
-   is the bokmål a person reads when a key's request waits for their approval
-   on `/godkjenning/` («Claude vil føre en betaling»). A key never files to
-   Skatteetaten, moves money, changes a kontonummer, manages access or approves
-   requests, whatever its scopes. See
+   `key_post("…")` (final), `key_send("…")` (leaves Myntos), `KEY_PREVIEW`
+   (stores nothing), or a reason in `_NOT_FOR_AGENTS`; undeclared is closed.
+   The string is the bokmål a person reads when a key's request waits for
+   their approval on `/godkjenning/` («Claude vil føre en betaling»). An agent
+   may do everything, but **nothing leaves Myntos without a person's yes**:
+   whatever a route sends out (a check or a filing with Skatteetaten now, EHF
+   or a payment later) is `key_send` and waits for the key's person every
+   time, whatever its scopes, going with their own ID-porten login where the
+   state requires it. A key never moves money, changes a kontonummer, manages
+   access or approves requests. See
    [docs/agents-and-api.md](docs/agents-and-api.md) and, for writing either
    kind of file, [docs/agents/README.md](docs/agents/README.md).
 
@@ -87,7 +92,7 @@ paragraph explaining why is the part worth keeping.
 
 ```
 make test                            # both suites
-make lint                            # ruff, ruff format --check, mypy, astro check
+make lint                            # ruff, ruff format --check, mypy, astro check, check:seo
 ```
 
 or one at a time:
@@ -97,6 +102,7 @@ cd backend && uv run pytest          # ~1900 tests, ~15 min. Reads no .env, so i
                                      # runs safely beside production's
 cd frontend && pnpm test             # vitest, src/lib only
 cd frontend && pnpm run check        # astro check, must be 0 errors
+cd frontend && pnpm build && pnpm check:seo   # what a crawler is handed
 ```
 
 A schema change needs an Alembic migration in the same commit, with a docstring

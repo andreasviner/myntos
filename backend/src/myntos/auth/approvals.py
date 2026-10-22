@@ -56,10 +56,12 @@ from myntos.domain.identity.models import (
     AgentApprovalStatus,
     AgentKey,
     AgentKeyScope,
+    FilingType,
 )
 from myntos.domain.ledger.models import Company
 from myntos.domain.mva import naering as mva_naering
 from myntos.domain.mva.models import FilingStatus, MvaFiling
+from myntos.skattemelding.models import SkattemeldingFiling
 
 logger = logging.getLogger(__name__)
 
@@ -380,6 +382,23 @@ async def settle_filings(db: AsyncSession, approvals: list[AgentApproval]) -> No
             approval.kind is not AgentApprovalKind.FILING
             or approval.status is not AgentApprovalStatus.PENDING
         ):
+            continue
+        if approval.filing_type == FilingType.SKATTEMELDING.value:
+            sent = await db.scalar(
+                select(SkattemeldingFiling)
+                .where(
+                    SkattemeldingFiling.company_id == approval.company_id,
+                    SkattemeldingFiling.year == approval.filing_year,
+                    SkattemeldingFiling.submitted_at.is_not(None),
+                )
+                .order_by(SkattemeldingFiling.submitted_at.desc())
+                .limit(1)
+            )
+            if sent is not None:
+                approval.status = AgentApprovalStatus.DONE
+                approval.decided_at = sent.submitted_at
+                approval.decided_by_user_id = sent.submitted_by_user_id
+                approval.result = json.dumps({"filing_id": sent.id})
             continue
         query = select(MvaFiling).where(
             MvaFiling.company_id == approval.company_id,

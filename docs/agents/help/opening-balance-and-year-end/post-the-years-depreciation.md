@@ -40,7 +40,7 @@ closed: a closed year takes no new vouchers.
 4. Read the red messages (they stop the button) and the grey ones (worth
    checking, for example an account whose balance differs from the register,
    or a purchase on an asset account that is not registered).
-5. Check the lines under «Dette blir ført per 31. desember», then press «Før
+5. Check the lines under «Dette blir ført per 31. desember» (or the last day of the books, for a dissolved company), then press «Før
    avskrivningene for» and the year. The voucher cannot be edited afterwards,
    only corrected or reversed.
 

@@ -81,10 +81,14 @@ def _register(client: TestClient, company_id: int) -> list[dict[str, Any]]:
     return body
 
 
-def _approve(client: TestClient, company_id: int, approval_id: int) -> Any:
-    return write(
-        client, "POST", f"/api/v1/companies/{company_id}/godkjenninger/{approval_id}/godkjenn"
-    )
+def _approve(
+    client: TestClient, company_id: int, approval_id: int, *, files: list[int] | None = None
+) -> Any:
+    """Approve as the page does: the files it was shown, unless ``files`` says which."""
+    base = f"/api/v1/companies/{company_id}/godkjenninger/{approval_id}"
+    if files is None:
+        files = [item["id"] for item in client.get(base).json()["files"]]
+    return write(client, "POST", f"{base}/godkjenn", json={"files": files})
 
 
 # --- Asking does nothing ----------------------------------------------------------
@@ -354,6 +358,74 @@ def test_a_stopped_key_leaves_nothing_to_approve(client: TestClient) -> None:
     assert _register(client, books["id"]) == []
 
 
+# --- What the person sees is what they approve -----------------------------------
+
+
+def test_a_waiting_reversal_says_which_voucher_it_reverses(client: TestClient) -> None:
+    """Myntos names the voucher from the books; the agent's note is only its claim."""
+    books = _books(client)
+    voucher = _pay(client, books["id"], agent_header(client, books["id"])).json()
+    header = _asking(client, books["id"], post="all")
+
+    held = client.post(
+        f"/api/v1/companies/{books['id']}/cashflow/{voucher['id']}/reversal",
+        # The agent says it is another voucher; the card must not rest on that.
+        headers={**header, "Myntos-Note": "Reverserer bilaget for husleie"},
+    )
+    assert held.status_code == 202, held.text
+    shown = client.get(
+        f"/api/v1/companies/{books['id']}/godkjenninger/{held.json()['approval_id']}"
+    ).json()
+
+    assert shown["note"] == "Reverserer bilaget for husleie"
+    assert shown["target"] == [
+        f"Bilag {voucher['voucher_no']}, 14.03.{THIS_YEAR}: Kontorrekvisita, 1 250,00 kr"
+    ]
+
+
+def test_a_waiting_request_for_a_voucher_that_is_not_there_says_so(client: TestClient) -> None:
+    books = _books(client)
+    header = _asking(client, books["id"], post="all")
+
+    held = client.post(f"/api/v1/companies/{books['id']}/cashflow/999999/reversal", headers=header)
+    assert held.status_code == 202, held.text
+    shown = client.get(
+        f"/api/v1/companies/{books['id']}/godkjenninger/{held.json()['approval_id']}"
+    ).json()
+
+    assert shown["target"] == ["Bilaget finnes ikke i regnskapet"]
+
+
+def test_a_file_added_after_the_person_looked_is_not_approved_with_it(
+    client: TestClient,
+) -> None:
+    """A key may add a receipt at any moment, including between looking and pressing."""
+    books = _books(client)
+    header = _asking(client, books["id"])
+    held = _pay(client, books["id"], header).json()
+    base = f"/api/v1/companies/{books['id']}/godkjenninger/{held['approval_id']}"
+    seen = client.get(base).json()
+    assert seen["files"] == []
+
+    added = client.post(
+        f"{base}/vedlegg",
+        files={"file": ("kvittering.pdf", PDF_BYTES, "application/pdf")},
+        headers=header,
+    )
+    assert added.status_code == 201, added.text
+    refused = _approve(client, books["id"], held["approval_id"], files=[])
+
+    assert refused.status_code == 409
+    assert refused.json()["code"] == "approval_changed"
+    assert client.get(base).json()["status"] == "pending"
+    assert _register(client, books["id"]) == []
+    # Looked at again, it goes through with the receipt.
+    approved = _approve(client, books["id"], held["approval_id"]).json()
+    assert approved["status"] == "done", approved
+    [entry] = _register(client, books["id"])
+    assert [item["filename"] for item in entry["attachments"]] == ["kvittering.pdf"]
+
+
 # --- A payment and its receipt are one approval -----------------------------------
 
 
@@ -426,7 +498,73 @@ def test_a_file_sent_with_the_request_itself_is_held_and_sent_again(client: Test
     assert [item["filename"] for item in entry["attachments"]] == ["faktura.pdf"]
 
 
+def test_a_held_file_is_served_as_what_its_bytes_are_not_as_the_key_named_it(
+    client: TestClient,
+) -> None:
+    # The file the person opens before approving must not become a page of the
+    # key's script on our origin by being sent as text/html.
+    books = _books(client)
+    writer = agent_header(client, books["id"])
+    voucher = _pay(client, books["id"], writer).json()
+    header = _asking(client, books["id"])
+    page = b"<script>fetch('/api/v1/auth/me')</script>"
+
+    held = client.post(
+        f"/api/v1/companies/{books['id']}/cashflow/{voucher['id']}/dokument",
+        files={"file": ("kvittering.pdf", page, "text/html")},
+        headers=header,
+    )
+    assert held.status_code == 202, held.text
+    approval = client.get(
+        f"/api/v1/companies/{books['id']}/godkjenninger/{held.json()['approval_id']}"
+    ).json()
+    shown = client.get(
+        f"/api/v1/companies/{books['id']}/godkjenninger/{approval['id']}/fil"
+        f"?id={approval['files'][0]['id']}"
+    )
+
+    assert shown.content == page
+    assert shown.headers["content-type"] == "application/octet-stream"
+    assert shown.headers["content-disposition"].startswith("attachment;")
+
+
 # --- Filing is the person's -------------------------------------------------------
+
+
+def test_what_leaves_myntos_waits_even_for_a_key_that_posts_on_its_own(
+    client: TestClient,
+) -> None:
+    books = _books(client)
+    header = agent_header(client, books["id"], scopes=("read", "write", "post"))
+
+    held = client.post(
+        f"/api/v1/companies/{books['id']}/mva/termin/kontroll",
+        json={"aar": THIS_YEAR - 1, "termin": 1},
+        headers=header,
+    )
+    assert held.status_code == 202, held.text
+    waiting = client.get(held.headers["Location"], headers=header).json()
+    assert waiting["label"] == "sende mva-meldingen til kontroll hos Skatteetaten"
+    assert (waiting["sends_out"], waiting["needs_id_porten"]) == (True, True)
+
+    # It goes with the person's ID-porten login, so without one the yes cannot
+    # be given yet, and the request still waits for it.
+    pressed = _approve(client, books["id"], waiting["id"])
+    assert pressed.status_code == 409
+    assert pressed.json()["code"] == "id_porten_login_required"
+    assert client.get(held.headers["Location"]).json()["status"] == "pending"
+
+
+def test_a_key_that_may_not_post_cannot_ask_to_send(client: TestClient) -> None:
+    books = _books(client)
+    header = agent_header(client, books["id"], scopes=("read", "write"))
+    refused = client.post(
+        f"/api/v1/companies/{books['id']}/mva/termin/kontroll",
+        json={"aar": THIS_YEAR - 1, "termin": 1},
+        headers=header,
+    )
+    assert refused.status_code == 403
+    assert refused.json()["code"] == "missing_scope"
 
 
 def test_a_key_can_ask_its_person_to_file_and_never_file(client: TestClient) -> None:

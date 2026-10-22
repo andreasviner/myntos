@@ -24,6 +24,15 @@ sent):
 The page polls the import and may be closed at any point after the upload: the
 work does not belong to the page.
 
+**The documents behind the vouchers go the same way** (``purpose`` ``vedlegg``,
+since 2026-10-22): the old program's printout is uploaded once,
+:func:`read_documents` reads it and stores the plan, and
+:func:`post_documents` puts the documents in the bilag archive on the person's
+yes. One difference, and it is the archive's: the review is not the post
+rolled back, because a file written to the document store stays written. Both
+run :func:`myntos.saft.documents.plan`, the review writes nothing, and the
+post goes ahead only while the plan is still the one the person saw.
+
 **One process.** Which imports are being worked on is kept in this process
 (:data:`_running`), as the agent keys' counters are, which is exact with the one
 uvicorn process this deployment runs. A restart (every deploy) stops the work
@@ -55,10 +64,18 @@ from myntos.domain.identity.access import Permission, has_permission
 from myntos.domain.identity.models import CompanyMembership
 from myntos.domain.ledger.errors import LedgerError
 from myntos.domain.ledger.models import Company
-from myntos.saft import compare, move, reader
-from myntos.saft.errors import InvalidSaftFileError, SaftImportError
-from myntos.saft.models import ImportPurpose, ImportStatus, SaftImport, SaftImportFile
+from myntos.saft import compare, documents, move, printout, reader
+from myntos.saft.errors import InvalidPrintoutError, InvalidSaftFileError, SaftImportError
+from myntos.saft.models import (
+    SAFT_PURPOSES,
+    ImportPurpose,
+    ImportStatus,
+    SaftImport,
+    SaftImportFile,
+)
+from myntos.saft.printout import Printout
 from myntos.saft.reader import SaftEntries
+from myntos.storage.base import DocumentStorage
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +127,43 @@ async def create(
     key_id: int | None,
 ) -> SaftImport:
     """Store the uploaded files and mark the import as being read. Reads nothing yet."""
+    if purpose is ImportPurpose.VEDLEGG:
+        _check_printouts(uploads)
+    else:
+        _check_saft_files(purpose, uploads)
+    job = SaftImport(
+        company_id=company.id,
+        purpose=purpose.value,
+        status=ImportStatus.READING.value,
+        til=til,
+        created_by_user_id=user_id,
+        created_via_agent_key_id=key_id,
+        step="Venter på å lese filene",
+        done=0,
+        total=len(uploads),
+        files=[
+            SaftImportFile(
+                position=index,
+                filename=(upload.filename or _default_name(purpose, index))[:255],
+                size=len(upload.content),
+                content=upload.content,
+            )
+            for index, upload in enumerate(uploads)
+        ],
+    )
+    db.add(job)
+    await db.flush()
+    _running.add(job.id)
+    return job
+
+
+def _default_name(purpose: ImportPurpose, index: int) -> str:
+    if purpose is ImportPurpose.VEDLEGG:
+        return f"utskrift-{index + 1}.pdf"
+    return f"saft-{index + 1}.xml"
+
+
+def _check_saft_files(purpose: ImportPurpose, uploads: Sequence[Upload]) -> None:
     if not uploads:
         raise InvalidSaftFileError("velg minst én SAF-T-fil")
     if purpose is ImportPurpose.SAMMENLIGNING and len(uploads) != 1:
@@ -126,36 +180,43 @@ async def create(
             )
         if not upload.content:
             raise InvalidSaftFileError(f"«{upload.filename}» er tom")
-    job = SaftImport(
-        company_id=company.id,
-        purpose=purpose.value,
-        status=ImportStatus.READING.value,
-        til=til,
-        created_by_user_id=user_id,
-        created_via_agent_key_id=key_id,
-        step="Venter på å lese filene",
-        done=0,
-        total=len(uploads),
-        files=[
-            SaftImportFile(
-                position=index,
-                filename=(upload.filename or f"saft-{index + 1}.xml")[:255],
-                size=len(upload.content),
-                content=upload.content,
+
+
+def _check_printouts(uploads: Sequence[Upload]) -> None:
+    if not uploads:
+        raise InvalidPrintoutError("velg utskriften av bilagene først")
+    if len(uploads) > printout.MAX_FILES:
+        raise InvalidPrintoutError(
+            f"Myntos leser høyst {printout.MAX_FILES} utskrifter i samme opplasting. Last opp "
+            "resten etterpå"
+        )
+    for upload in uploads:
+        if len(upload.content) > printout.MAX_UPLOAD_BYTES:
+            raise InvalidPrintoutError(
+                f"«{upload.filename}» er større enn 200 MB. Skriv ut en kortere periode om gangen"
             )
-            for index, upload in enumerate(uploads)
-        ],
-    )
-    db.add(job)
-    await db.flush()
-    _running.add(job.id)
-    return job
+        if not upload.content:
+            raise InvalidPrintoutError(f"«{upload.filename}» er tom")
 
 
-async def get(db: AsyncSession, *, company: Company, import_pk: int) -> SaftImport:
-    """One of ``company``'s imports, looked up with the company, never by id alone."""
+async def get(
+    db: AsyncSession,
+    *,
+    company: Company,
+    import_pk: int,
+    purposes: Sequence[ImportPurpose] = SAFT_PURPOSES,
+) -> SaftImport:
+    """One of ``company``'s imports, looked up with the company, never by id alone.
+
+    Only of the kinds ``purposes`` names: the SAF-T routes and the documents'
+    each see their own, so one cannot read, post or throw away the other's.
+    """
     job = await db.scalar(
-        select(SaftImport).where(SaftImport.id == import_pk, SaftImport.company_id == company.id)
+        select(SaftImport).where(
+            SaftImport.id == import_pk,
+            SaftImport.company_id == company.id,
+            SaftImport.purpose.in_([purpose.value for purpose in purposes]),
+        )
     )
     if job is None:
         raise ImportNotFoundError("finner ikke innlesingen")
@@ -163,12 +224,21 @@ async def get(db: AsyncSession, *, company: Company, import_pk: int) -> SaftImpo
     return job
 
 
-async def list_for(db: AsyncSession, *, company: Company, limit: int = 20) -> list[SaftImport]:
-    """The company's imports, newest first."""
+async def list_for(
+    db: AsyncSession,
+    *,
+    company: Company,
+    purposes: Sequence[ImportPurpose] = SAFT_PURPOSES,
+    limit: int = 20,
+) -> list[SaftImport]:
+    """The company's imports of the kinds ``purposes`` names, newest first."""
     jobs = list(
         await db.scalars(
             select(SaftImport)
-            .where(SaftImport.company_id == company.id)
+            .where(
+                SaftImport.company_id == company.id,
+                SaftImport.purpose.in_([purpose.value for purpose in purposes]),
+            )
             .order_by(SaftImport.id.desc())
             .limit(limit)
         )
@@ -217,13 +287,19 @@ def is_running(job: SaftImport) -> bool:
     return job.id in _running
 
 
-async def discard(db: AsyncSession, *, company: Company, import_pk: int) -> None:
+async def discard(
+    db: AsyncSession,
+    *,
+    company: Company,
+    import_pk: int,
+    purposes: Sequence[ImportPurpose] = SAFT_PURPOSES,
+) -> None:
     """Throw an import away, files and all. Not one being worked on, and not a posted one.
 
     A posted import is the record of what was brought over and when; it stays,
     without its files.
     """
-    job = await get(db, company=company, import_pk=import_pk)
+    job = await get(db, company=company, import_pk=import_pk, purposes=purposes)
     if job.status in _ACTIVE:
         raise ImportBusyError("innlesingen er i gang og kan ikke forkastes nå")
     if job.status == ImportStatus.POSTED.value:
@@ -240,10 +316,15 @@ async def start_posting(
     user_id: int,
     key_id: int | None,
     may_chart: bool,
+    purposes: Sequence[ImportPurpose] = SAFT_PURPOSES,
 ) -> SaftImport:
-    """Mark a reviewed import as being posted. :func:`post` does the posting."""
-    job = await get(db, company=company, import_pk=import_pk)
-    if job.purpose != ImportPurpose.IMPORT.value:
+    """Mark a reviewed import as being posted. :func:`post` does the posting.
+
+    For documents (``vedlegg``) "posting" is putting them in the bilag archive,
+    which :func:`post_documents` does; the same states and the same guards.
+    """
+    job = await get(db, company=company, import_pk=import_pk, purposes=purposes)
+    if job.purpose == ImportPurpose.SAMMENLIGNING.value:
         raise ImportNotPostableError("en sammenligning fører ingenting")
     if job.status != ImportStatus.READY.value or job.review is None:
         raise ImportBusyError(
@@ -289,7 +370,11 @@ async def start_posting(
     job.error_code = None
     job.step = "Venter på å føre"
     job.done = 0
-    job.total = len(job.review.get("years", [])) + 1
+    job.total = (
+        len(job.files)
+        if job.purpose == ImportPurpose.VEDLEGG.value
+        else len(job.review.get("years", [])) + 1
+    )
     job.updated_at = utc_now()
     await db.flush()
     _running.add(job.id)
@@ -533,6 +618,207 @@ async def post(sessions: Sessions, import_pk: int) -> None:
         _running.discard(import_pk)
 
 
+# --- The documents behind the vouchers ---------------------------------------------------
+
+
+async def _printouts(sessions: Sessions, import_pk: int) -> list[tuple[int, str, Printout]]:
+    """Every printout of the upload, read, one at a time so only one is in memory as bytes.
+
+    What is kept of each is the vouchers and their documents' digests, never the
+    documents: :func:`post_documents` cuts them again file by file.
+    """
+    async with sessions() as db:
+        files = list(
+            (
+                await db.execute(
+                    select(SaftImportFile.id, SaftImportFile.filename)
+                    .where(SaftImportFile.import_id == import_pk)
+                    .order_by(SaftImportFile.position)
+                )
+            ).tuples()
+        )
+    parsed: list[tuple[int, str, Printout]] = []
+    for index, (file_pk, filename) in enumerate(files):
+        await _progress(
+            sessions, import_pk, f"Leser «{filename}» ({index + 1} av {len(files)})", index
+        )
+        async with sessions() as db:
+            content = await db.scalar(
+                select(SaftImportFile.content).where(SaftImportFile.id == file_pk)
+            )
+        if content is None:
+            raise InvalidPrintoutError(
+                f"filene ble slettet etter {FILE_LIFETIME.days} dager. Last dem opp på nytt"
+            )
+        found = await run_in_threadpool(printout.read, content, name=filename)
+        del content
+        parsed.append((file_pk, filename, found))
+    return parsed
+
+
+def _reviewed(review: dict[str, Any] | None) -> frozenset[tuple[int, str]]:
+    """What the review the person saw said would go into the archive."""
+    return frozenset(
+        (int(target["voucher_id"]), voucher.get("sha256") or "")
+        for voucher in (review or {}).get("vouchers", [])
+        if voucher.get("action") == documents.Action.ATTACH.value
+        for target in voucher.get("targets", [])
+        if not target.get("already")
+    )
+
+
+async def read_documents(sessions: Sessions, import_pk: int) -> None:
+    """Read an upload's printouts and store what putting them in the archive would do."""
+    _running.add(import_pk)
+    try:
+        job = await _load(sessions, import_pk)
+        if job is None:
+            return
+        try:
+            files = await _printouts(sessions, import_pk)
+            await _progress(sessions, import_pk, "Finner bilagene i Myntos", len(files))
+            async with sessions() as db:
+                company = await _company(db, job)
+                planned = await documents.plan(
+                    db, company=company, printouts=[(name, read) for _, name, read in files]
+                )
+                review = documents_review(planned)
+        except (SaftImportError, LedgerError) as error:
+            await _finish(
+                sessions,
+                import_pk,
+                status=ImportStatus.FAILED.value,
+                step=None,
+                error=_sentence(str(error)),
+                error_code=_code(error),
+            )
+            return
+        except Exception:
+            logger.exception("Utskrift av bilag %s kunne ikke leses", import_pk)
+            await _finish(
+                sessions,
+                import_pk,
+                status=ImportStatus.FAILED.value,
+                step=None,
+                error="Noe gikk galt hos oss mens utskriftene ble lest. Prøv igjen, eller ta "
+                "kontakt.",
+                error_code="internal_error",
+            )
+            return
+        await _finish(
+            sessions,
+            import_pk,
+            status=ImportStatus.READY.value,
+            step=None,
+            done=len(files),
+            review=review,
+            error=None,
+            error_code=None,
+        )
+    finally:
+        _running.discard(import_pk)
+
+
+async def post_documents(sessions: Sessions, import_pk: int, storage: DocumentStorage) -> None:
+    """Put a reviewed upload's documents in the bilag archive, all of them or none.
+
+    The plan is made again from the files and the books as they are now, and
+    must be the one the person saw: a voucher brought over since, or a document
+    put on one by hand, changes what goes where, and then nothing is put on and
+    the upload is ``ready`` again with the new review. The rows go in one
+    transaction; a file written to the store before a failure is left there
+    unreferenced, the harmless direction (``bilag_service.attach_document``).
+    """
+    _running.add(import_pk)
+    try:
+        job = await _load(sessions, import_pk)
+        if job is None or job.status != ImportStatus.POSTING.value:
+            return
+        try:
+            files = await _printouts(sessions, import_pk)
+            await _progress(sessions, import_pk, "Legger dokumentene i bilagsarkivet", len(files))
+            async with sessions() as db:
+                company = await _company(db, job)
+                if not await _may(db, job, Permission.LEDGER_WRITE):
+                    raise ImportNotPostableError(
+                        "den som ba om det, har ikke lenger tilgang til å føre i dette regnskapet"
+                    )
+                planned = await documents.plan(
+                    db, company=company, printouts=[(name, read) for _, name, read in files]
+                )
+                review = documents_review(planned)
+                if not planned.postable or planned.attachments() != _reviewed(job.review):
+                    await db.rollback()
+                    await _finish(
+                        sessions,
+                        import_pk,
+                        status=ImportStatus.READY.value,
+                        step=None,
+                        review=review,
+                        error="Ingenting ble lagt i bilagsarkivet: bilagene i Myntos eller "
+                        "arkivet har endret seg siden utskriftene ble lest. Se over "
+                        "gjennomgangen på nytt.",
+                        error_code="review_changed",
+                    )
+                    return
+                for index, (file_pk, _, _) in enumerate(files):
+                    content = await db.scalar(
+                        select(SaftImportFile.content).where(SaftImportFile.id == file_pk)
+                    )
+                    if content is None:
+                        raise InvalidPrintoutError(
+                            f"filene ble slettet etter {FILE_LIFETIME.days} dager. Last dem opp "
+                            "på nytt"
+                        )
+                    await documents.attach(
+                        db,
+                        storage,
+                        company=company,
+                        plan=planned,
+                        file_index=index,
+                        content=content,
+                        user_id=job.posted_by_user_id,
+                    )
+                    del content
+                await db.commit()
+        except (SaftImportError, LedgerError) as error:
+            await _finish(
+                sessions,
+                import_pk,
+                status=ImportStatus.READY.value,
+                step=None,
+                error="Ingenting ble lagt i bilagsarkivet: " + _sentence(str(error)),
+                error_code=_code(error),
+            )
+            return
+        except Exception:
+            logger.exception("Dokumentene fra utskrift %s kunne ikke legges på", import_pk)
+            await _finish(
+                sessions,
+                import_pk,
+                status=ImportStatus.READY.value,
+                step=None,
+                error="Noe gikk galt hos oss, og ingenting ble lagt i bilagsarkivet. Prøv igjen, "
+                "eller ta kontakt.",
+                error_code="internal_error",
+            )
+            return
+        await _finish(
+            sessions,
+            import_pk,
+            status=ImportStatus.POSTED.value,
+            step=None,
+            done=len(files),
+            result=review,
+            posted_at=utc_now(),
+            error=None,
+            error_code=None,
+        )
+        await _empty_files(sessions, import_pk)
+    finally:
+        _running.discard(import_pk)
+
+
 async def _may(db: AsyncSession, job: SaftImport, permission: Permission) -> bool:
     """Whether the person who asked for the post still holds ``permission`` in these books."""
     if job.posted_by_user_id is None:
@@ -546,31 +832,41 @@ async def _may(db: AsyncSession, job: SaftImport, permission: Permission) -> boo
     return role is not None and has_permission(role, permission)
 
 
-async def resume(sessions: Sessions) -> None:
+async def resume(sessions: Sessions, storage: DocumentStorage) -> None:
     """Start again whatever a restart stopped halfway. Called once, at startup."""
     async with sessions() as db:
         stopped = list(
             (
                 await db.execute(
-                    select(SaftImport.id, SaftImport.status).where(SaftImport.status.in_(_ACTIVE))
+                    select(SaftImport.id, SaftImport.status, SaftImport.purpose).where(
+                        SaftImport.status.in_(_ACTIVE)
+                    )
                 )
             ).tuples()
         )
-    for import_pk, status in stopped:
+    for import_pk, status, purpose in stopped:
         if import_pk in _running:
             continue
-        if status == ImportStatus.READING.value:
+        reading = status == ImportStatus.READING.value
+        if purpose == ImportPurpose.VEDLEGG.value:
+            if reading:
+                await read_documents(sessions, import_pk)
+            else:
+                await post_documents(sessions, import_pk, storage)
+        elif reading:
             await read(sessions, import_pk)
         else:
             await post(sessions, import_pk)
 
 
-def resume_in_background(factory: Callable[[], Sessions]) -> None:
+def resume_in_background(
+    factory: Callable[[], Sessions], storage: Callable[[], DocumentStorage]
+) -> None:
     """Schedule :func:`resume` without holding up startup."""
 
     async def run() -> None:
         try:
-            await resume(factory())
+            await resume(factory(), storage())
         except Exception:
             logger.exception("Kunne ikke gjenoppta SAF-T-innlesinger etter omstart")
 
@@ -694,6 +990,62 @@ def move_review(report: move.MoveReport) -> dict[str, Any]:
     }
 
 
+def documents_review(plan: documents.DocumentPlan) -> dict[str, Any]:
+    """The documents' plan as the upload stores it and the API answers it."""
+    action = documents.Action
+    return {
+        "kind": ImportPurpose.VEDLEGG.value,
+        "postable": plan.postable,
+        "software": documents.SOFTWARE,
+        "files": [
+            {
+                "file_name": file.name,
+                "pages": file.pages,
+                "vouchers": file.vouchers,
+                "loose_pages": file.loose_pages,
+            }
+            for file in plan.files
+        ],
+        "vouchers_in_files": len(plan.vouchers),
+        "to_attach": plan.count(action.ATTACH),
+        "documents": plan.documents,
+        "already_attached": plan.count(action.ALREADY_ATTACHED),
+        "no_attachments": plan.count(action.NO_ATTACHMENTS),
+        "not_in_books": plan.count(action.NOT_IN_BOOKS),
+        "too_large": plan.count(action.TOO_LARGE),
+        "repeated": plan.count(action.REPEATED),
+        "vouchers": [
+            {
+                "number": voucher.printed.label,
+                "file_name": voucher.file_name,
+                "first_page": voucher.printed.first_page + 1,
+                "pages": voucher.printed.pages,
+                "attachment_pages": voucher.printed.attachment_pages,
+                "printed_on": voucher.printed.on.isoformat() if voucher.printed.on else None,
+                "action": voucher.action.value,
+                "sha256": voucher.printed.sha256,
+                "byte_size": voucher.printed.size,
+                "printed_debit": (
+                    _money(voucher.printed.debit) if voucher.printed.debit is not None else None
+                ),
+                "booked_debit": (
+                    _money(voucher.booked_debit) if voucher.booked_debit is not None else None
+                ),
+                "targets": [
+                    {
+                        "voucher_id": target.voucher_pk,
+                        "voucher_no": target.voucher_no,
+                        "already": target.already,
+                    }
+                    for target in voucher.targets
+                ],
+            }
+            for voucher in plan.vouchers
+        ],
+        "findings": [_finding(finding) for finding in plan.findings],
+    }
+
+
 def comparison_review(result: compare.Comparison) -> dict[str, Any]:
     """The comparison as the import stores it and the API answers it."""
     source = result.source
@@ -762,12 +1114,15 @@ __all__ = [
     "comparison_review",
     "create",
     "discard",
+    "documents_review",
     "get",
     "is_running",
     "list_for",
     "move_review",
     "post",
+    "post_documents",
     "read",
+    "read_documents",
     "resume",
     "resume_in_background",
     "start_posting",

@@ -50,68 +50,120 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           og står deretter.
         */}
         {/*
-          Spørsmålene og beskrivelsen står i samme ramme, fordi beskrivelsen er
-          der et spørsmål uten knapper besvares. De sto over feltet hver for
-          seg, med «Beskrivelse (valgfritt)» mellom, og et spørsmål i én boks
-          og et felt med en annen overskrift i den neste leses som to ting som
-          ikke har med hverandre å gjøre. Den som rapporterte det, spurte rett
-          ut hvordan man svarer KI-en (2026-10-17).
+          Spørsmålene står i sin egen ramme, ett om gangen, og hvert besvares
+          rett under seg: med knapper når spørsmålet nevner sine egne svar
+          («innskudd fra eier, et lån eller et salg?»), og ellers på en linje
+          med «Neste». Etter det siste går svarene sammen til modellen som en
+          oppfølging av samtalen den allerede hadde, så bilaget leses ikke på
+          nytt, og et besvart spørsmål stilles ikke igjen.
 
-          Et spørsmål som nevner sine egne svar («innskudd fra eier, et lån
-          eller et salg?»), får dem som knapper. Svaret går tilbake til
-          modellen som en oppfølging av samtalen den allerede hadde, så bilaget
-          leses ikke på nytt, og et besvart spørsmål stilles ikke igjen.
+          En stund sto spørsmålene i samme ramme som beskrivelsen, og et
+          spørsmål uten knapper ble besvart ved å skrive i den. Men beskrivelsen
+          er teksten betalingen bokføres med, og «la ut privat» er et svar til
+          modellen, ikke en bilagstekst. Den som prøvde det (2026-10-17), ville
+          sende svaret til modellen, ikke skrive det inn i regnskapet, og to
+          spørsmål på en gang var mer å lese enn å svare på. Derfor «Spørsmål 1
+          av 2», og det neste kommer når det første er besvart.
+
+          Svarene sendes samlet, ikke ett og ett. Ett og ett ble prøvd først:
+          modellen fikk svaret på det første («til selskapets drift»), mente
+          det også besvarte det andre («privat eller til drift?»), og «Spørsmål
+          2 av 2» kom aldri. En teller som sier to og viser ett, ser ødelagt ut.
+          Derfor «Neste» mellom spørsmålene og «Send svar» på det siste.
+
+          «Hopp over» finnes fordi det ellers ikke går an å komme til spørsmål
+          nummer to uten å svare på det første, og noen ganger vet man ikke.
         */}
-        <div class="ask-box" id="ask-box">
-          <ul class="asks" id="doc-questions" hidden></ul>
-
-          {/*
-            Ett beskrivelsesfelt, ikke to. Det var to: ett for det brukeren kunne
-            fortelle modellen, og ett nede i skjemaet for teksten som havner i
-            hovedboken. Men det er samme setning. «Kjøpt strømforsyning, la ut
-            3000 privat» er både det modellen mangler for å forstå bilaget og en
-            helt riktig bilagstekst, og to felter for samme sak er to steder å
-            skrive den. Ett av dem blir stående tomt.
-
-            Så dette feltet er begge: modellen skriver i det, brukeren retter det,
-            og retter brukeren det, går setningen til modellen som et svar, og
-            forslaget kommer tilbake med den som kontekst. Det er derfor det ikke
-            lenger finnes en «les på nytt»-knapp.
-
-            Det står over opplastingen, ikke under, fordi rekkefølgen er et
-            spørsmål: «hva gjaldt det?» er det brukeren vet uten å slå opp, og
-            skriver de det først, er det den setningen modellen leser bilaget med.
-            Skriver de ingenting, fyller modellen det ut selv. Begge veier
-            fungerer, og feltet sier hvilken det er på vei ned.
-          */}
-          <label class="field explain" data-field="description" for="description-input">
-            <span class="explain-label">
-              Beskrivelse <span class="muted">(valgfritt)</span>
-              <span class="tag" data-tag hidden></span>
-            </span>
+        {/*
+          tabindex="-1": boksen holder fokus mens modellen svarer, så neste
+          spørsmål kan få det tilbake. Kontrollen man svarte med er da skjult,
+          og et skjult element mister fokuset til ingenting.
+        */}
+        <div class="ask-box" id="ask-box" tabindex="-1" hidden>
+          <div id="ask-turn">
+            <p class="ask-head">
+              <span id="ask-count">Spørsmål</span>
+              <span class="ask-source" id="ask-source" hidden>Spurt av KI</span>
+            </p>
+            <p class="ask-text" id="ask-text"></p>
+            <div
+              class="ask-options"
+              id="ask-options"
+              role="group"
+              aria-labelledby="ask-text"
+              hidden
+            ></div>
             {/*
-              Feltet er låst mens modellen er på vei til å skrive i det, og bare
-              da. Å taste i en boks som er i ferd med å bli overskrevet er å miste
-              det man skrev, og en boks som ser tom og redigerbar ut mens den
-              venter, ser ut som en boks som ikke kommer til å bli fylt ut.
-              Skrev brukeren noe selv, står feltet åpent: da er det ingen som skal
-              overskrive det.
+              Uten name: svaret er ikke et felt i skjemaet, og skal verken
+              sendes med betalingen eller fange Enter og sende skjemaet.
             */}
-            <span class="description-wrap">
-              <textarea
-                id="description-input"
-                name="description"
-                rows="2"
+            <div class="ask-reply" id="ask-reply" hidden>
+              <input
+                type="text"
+                id="ask-input"
                 maxlength="255"
-                placeholder="Hva gjaldt betalingen?"
-              ></textarea>
-              <span class="description-busy" id="description-busy" hidden aria-hidden="true">
-                <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-              </span>
-            </span>
-          </label>
+                autocomplete="off"
+                enterkeyhint="send"
+                aria-labelledby="ask-text"
+              />
+              <button type="button" class="btn btn-primary btn-small" id="ask-send">Neste</button>
+            </div>
+            <p class="ask-more">
+              <button type="button" class="btn-link" id="ask-other" hidden>
+                Skriv et annet svar
+              </button>
+              <button type="button" class="btn-link ask-skip" id="ask-skip">Hopp over</button>
+            </p>
+          </div>
           <p class="ask-status" id="ask-status" role="status" hidden></p>
         </div>
+
+        {/*
+          Ett beskrivelsesfelt, ikke to. Det var to: ett for det brukeren kunne
+          fortelle modellen, og ett nede i skjemaet for teksten som havner i
+          hovedboken. Men det er samme setning. «Kjøpt strømforsyning, la ut
+          3000 privat» er både det modellen mangler for å forstå bilaget og en
+          helt riktig bilagstekst, og to felter for samme sak er to steder å
+          skrive den. Ett av dem blir stående tomt.
+
+          Så dette feltet er begge: modellen skriver i det, brukeren retter det,
+          og retter brukeren det, går setningen til modellen, og forslaget
+          kommer tilbake med den som kontekst. Spørsmålene besvares i rammen
+          over, ikke her. Det er derfor det ikke
+          lenger finnes en «les på nytt»-knapp.
+
+          Det står over opplastingen, ikke under, fordi rekkefølgen er et
+          spørsmål: «hva gjaldt det?» er det brukeren vet uten å slå opp, og
+          skriver de det først, er det den setningen modellen leser bilaget med.
+          Skriver de ingenting, fyller modellen det ut selv. Begge veier
+          fungerer, og feltet sier hvilken det er på vei ned.
+        */}
+        <label class="field explain" data-field="description" for="description-input">
+          <span class="explain-label">
+            Beskrivelse <span class="muted">(valgfritt)</span>
+            <span class="tag" data-tag hidden></span>
+          </span>
+          {/*
+            Feltet er låst mens modellen er på vei til å skrive i det, og bare
+            da. Å taste i en boks som er i ferd med å bli overskrevet er å miste
+            det man skrev, og en boks som ser tom og redigerbar ut mens den
+            venter, ser ut som en boks som ikke kommer til å bli fylt ut.
+            Skrev brukeren noe selv, står feltet åpent: da er det ingen som skal
+            overskrive det.
+          */}
+          <span class="description-wrap">
+            <textarea
+              id="description-input"
+              name="description"
+              rows="2"
+              maxlength="255"
+              placeholder="Hva gjaldt betalingen?"
+            ></textarea>
+            <span class="description-busy" id="description-busy" hidden aria-hidden="true">
+              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            </span>
+          </span>
+        </label>
 
         {/*
           Flere filer, fordi et bilag ofte ikke er én fil. Et kjøp fra en privat
@@ -755,73 +807,53 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     opacity: 1;
     cursor: progress;
   }
-  /* Rammen rundt spørsmålene og beskrivelsen, bare mens det er noe å svare på.
-     Uten spørsmål er beskrivelsen et vanlig felt og skal se ut som ett. */
-  .ask-box[data-asking] {
+  /* Rammen rundt spørsmålet, og den finnes bare mens det er noe å svare på
+     (eller et svar på vei til modellen). */
+  .ask-box {
     margin: 0 0 1rem;
-    padding: 0.85rem 0.9rem 0.15rem;
+    padding: 0.75rem 0.9rem 0.7rem;
     border: 1px solid var(--accent-line);
     border-radius: var(--radius-small);
     background: var(--accent-soft);
   }
-  /* Spørsmål, ikke advarsler. De står i normal tekstfarge og med et
-     spørsmålstegn-merke, så de leses som noe å svare på og ikke som noe som
-     har gått galt. */
-  .asks {
-    list-style: none;
-    margin: 0 0 0.8rem;
-    padding: 0;
-    display: grid;
-    gap: 0.75rem;
+  /* Fokuset står i boksen bare mens neste spørsmål er på vei, og boksen er
+     ikke noe man kan trykke på. En ring rundt den ville sett ut som det. */
+  .ask-box:focus {
+    outline: none;
   }
-  /* Spørsmålene og forslagslisten lages av skriptet, så reglene henges på
-     listene i malen og når radene med :global().
-
-     Hvert spørsmål hadde sin egen ramme i `var(--line)`, en farge som ikke
-     finnes. Da faller hele kantlinjen tilbake til nettleserens egen, tre
-     piksler og svart, og det var den tykke stiplede rammen rundt KI-ens
-     spørsmål på skjermbildet 2026-10-17. Rammen er nå boksen rundt alt, og
-     spørsmålene skilles med en strek. */
-  .asks :global(li) {
-    position: relative;
-    padding: 0 0 0 1.4rem;
-    font-size: 0.95rem;
-  }
-  .asks :global(li + li) {
-    padding-top: 0.75rem;
-    border-top: 1px solid var(--accent-line);
-  }
-  .asks :global(li)::before {
-    content: '?';
-    position: absolute;
-    left: 0.1rem;
-    font-weight: 700;
-    color: var(--accent, currentColor);
+  /* «Spørsmål 1 av 2 · Spurt av KI»: liten og dempet, så spørsmålet selv er
+     det man leser først. */
+  .ask-head {
+    margin: 0 0 0.25rem;
+    font-size: 0.78rem;
+    font-weight: 620;
+    color: var(--muted);
   }
   /* Gjetning, ikke avlesning: et spørsmål modellen fant på skal ikke se like
      sikkert ut som et registeret utledet av sin egen lesning. Samme gullfarge
      som merket «Foreslått av KI» på feltene. */
-  .asks :global(li[data-ki])::before {
+  .ask-source {
+    font-weight: 400;
+  }
+  .ask-source::before {
+    content: '·';
+    margin: 0 0.4rem 0 0.2rem;
     color: var(--gold);
+    font-weight: 700;
   }
-  .asks :global(.ask-text) {
-    margin: 0;
-  }
-  .asks :global(.ask-source) {
-    display: block;
-    margin-top: 0.3rem;
-    font-size: 0.78rem;
-    color: var(--muted);
+  .ask-text {
+    margin: 0 0 0.6rem;
+    font-size: 0.98rem;
   }
   /* Svarene som knapper. De brytes over flere linjer på en smal skjerm i
-     stedet for å presse siden bredere. */
-  .asks :global(.ask-options) {
+     stedet for å presse siden bredere. Knappene lages av skriptet, derav
+     :global(). */
+  .ask-options {
     display: flex;
     flex-wrap: wrap;
     gap: 0.45rem;
-    margin-top: 0.55rem;
   }
-  .asks :global(.ask-option) {
+  .ask-options :global(.ask-option) {
     padding: 0.4rem 0.85rem;
     border: 1px solid var(--accent-line);
     border-radius: var(--radius-pill);
@@ -833,21 +865,48 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     text-align: left;
     cursor: pointer;
   }
-  .asks :global(.ask-option:hover) {
+  .ask-options :global(.ask-option:hover) {
     border-color: var(--accent);
   }
-  .asks :global(.ask-option:focus-visible) {
+  .ask-options :global(.ask-option:focus-visible) {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
-  .asks :global(.ask-action) {
-    margin-top: 0.35rem;
-    font-size: 0.88rem;
+  /* Svarlinjen: feltet tar bredden, knappen står ved siden av, også på en
+     telefon. min-width: 0 fordi et tekstfelt ellers ikke krymper under sin
+     egen standardbredde, og da skyver det knappen ut av rammen. */
+  .ask-reply {
+    display: flex;
+    gap: 0.5rem;
+    align-items: stretch;
+  }
+  .ask-reply input {
+    flex: 1;
+    min-width: 0;
+    padding: 0.45rem 0.7rem;
+    background: var(--surface);
+  }
+  .ask-options:not([hidden]) + .ask-reply:not([hidden]) {
+    margin-top: 0.55rem;
+  }
+  .ask-more {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem 1.1rem;
+    margin: 0.55rem 0 0;
+    font-size: 0.85rem;
+  }
+  /* Å hoppe over er lov, men det er ikke det rammen ber om. */
+  .ask-skip {
+    color: var(--muted);
   }
   .ask-status {
-    margin: -0.4rem 0 0.8rem;
+    margin: 0.55rem 0 0;
     font-size: 0.86rem;
     color: var(--muted);
+  }
+  #ask-turn[hidden] + .ask-status {
+    margin-top: 0;
   }
   .reading {
     margin: -0.4rem 0 1rem;
@@ -1171,10 +1230,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   import {
     AMOUNT_KEY,
     afterDirectionChange,
-    answeredByText,
+    countLabel,
     howToAnswer,
+    nextLabel,
     remember,
-    unanswered,
+    stillOpen,
   } from '../lib/questions';
   import { fileSize, isoDate, kroner, todayIso } from '../lib/format';
   import { settleLimited } from '../lib/parallel';
@@ -1212,8 +1272,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   const dropMore = el<HTMLParagraphElement>('#drop-more');
   const descriptionBox = el<HTMLTextAreaElement>('#description-input');
   const descriptionBusy = el<HTMLSpanElement>('#description-busy');
-  const askList = el<HTMLUListElement>('#doc-questions');
   const askBox = el<HTMLDivElement>('#ask-box');
+  const askTurn = el<HTMLDivElement>('#ask-turn');
+  const askCount = el<HTMLSpanElement>('#ask-count');
+  const askSource = el<HTMLSpanElement>('#ask-source');
+  const askText = el<HTMLParagraphElement>('#ask-text');
+  const askOptions = el<HTMLDivElement>('#ask-options');
+  const askReply = el<HTMLDivElement>('#ask-reply');
+  const askInput = el<HTMLInputElement>('#ask-input');
+  const askOther = el<HTMLButtonElement>('#ask-other');
+  const askSend = el<HTMLButtonElement>('#ask-send');
   const askStatus = el<HTMLParagraphElement>('#ask-status');
   const reading = el<HTMLParagraphElement>('#doc-reading');
   const readingText = reading;
@@ -2184,6 +2252,27 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   let readingId: string | null = null;
   /** The questions as the last proposal asked them, before answered ones are hidden. */
   let asked: SuggestionQuestion[] = [];
+  /** The keys passed over with «Hopp over» on this bilag. Never sent anywhere. */
+  const skipped = new Set<string>();
+  /**
+   * The questions being asked now, and which one is on screen.
+   *
+   * Fixed when the round starts. A proposal that arrives during it, after an
+   * edit to the description, changes nothing in it: questions that vanished or
+   * changed under somebody answering them were most of what made this box
+   * feel broken (2026-10-17). Only the proposal that comes back after the last
+   * question decides whether there is another round.
+   */
+  let round: SuggestionQuestion[] = [];
+  let at = 0;
+  /** How many questions earlier rounds on this bilag asked, so the count goes on. */
+  let before = 0;
+  /** Whether this round has an answer the model has not had yet. */
+  let unsent = false;
+  /** Whether the round's answers are with the model, which the box then says instead. */
+  let sending = false;
+  /** The question the box was last built for, so it is not rebuilt under a cursor. */
+  let shown: SuggestionQuestion | null = null;
 
   function showFiles(): void {
     el<HTMLLabelElement>('.dropzone-cta').hidden = chosen.length > 0;
@@ -2216,79 +2305,108 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   }
 
   /**
-   * Show what the register still needs to know, and how to answer each.
+   * Take the questions a proposal asks.
    *
-   * Not decoration: these are the prompt that turns an optional box into a
-   * question with an answer. A question that names its answers gets them as
-   * buttons; one whose answer is a sentence points at the description box,
-   * which sits in the same frame; the amount points at the amount field.
-   * Answered questions are left out, so nothing answered is on screen.
+   * A round under way keeps its own (see `round`). Otherwise what is still
+   * open starts the next round, and nothing open closes the box.
    */
-  function showQuestions(questions: SuggestionQuestion[]): void {
+  function offerQuestions(questions: SuggestionQuestion[]): void {
     asked = questions;
-    const open = unanswered(questions, answers);
-    askList.hidden = open.length === 0;
-    if (open.length > 0) askBox.dataset.asking = 'true';
-    else delete askBox.dataset.asking;
-    askList.replaceChildren(...open.map(questionRow));
-    // Sende folk til boksen de skal svare i, uten å stjele fokus fra det de
-    // holder på med: bare når det faktisk er noe å svare på i den.
-    if (open.some((question) => howToAnswer(question) === 'description')) {
-      descriptionBox.setAttribute('aria-describedby', 'doc-questions');
-    } else {
-      descriptionBox.removeAttribute('aria-describedby');
+    if (at >= round.length) {
+      before += round.length;
+      round = stillOpen(questions, answers, skipped);
+      at = 0;
     }
+    showQuestion();
   }
 
-  function questionRow(question: SuggestionQuestion): HTMLLIElement {
-    const row = document.createElement('li');
-    if (question.asked_by_model) row.dataset.ki = 'true';
-    const text = document.createElement('p');
-    text.className = 'ask-text';
-    text.textContent = question.text;
-    row.append(text);
+  /** Forget the questions: the bilag is being read anew, or is gone. */
+  function dropQuestions(): void {
+    asked = [];
+    round = [];
+    at = 0;
+    before = 0;
+    unsent = false;
+    sending = false;
+    askStatus.hidden = true;
+    showQuestion();
+  }
 
+  /**
+   * Show the question on screen, with its answer right under it: buttons when
+   * it names its answers, a line to write in when it does not.
+   */
+  function showQuestion(): void {
+    const question = sending ? null : (round[at] ?? null);
+    // Whoever was answering goes on answering: focus follows to the next
+    // question, but only from inside the box, so a proposal arriving while
+    // the person is in the date field does not pull them away from it.
+    const answering = askBox.contains(document.activeElement);
+    askTurn.hidden = question === null;
+    askBox.hidden = question === null && askStatus.hidden;
+    // The control that was answered with is hidden now, and a hidden element
+    // takes focus with it to nowhere. The box holds it until the next question.
+    if (answering && askTurn.hidden && !askBox.hidden) askBox.focus({ preventScroll: true });
+    if (question === null) {
+      shown = null;
+      return;
+    }
     const way = howToAnswer(question);
-    if (way === 'options') {
-      const choices = document.createElement('div');
-      choices.className = 'ask-options';
-      choices.setAttribute('role', 'group');
-      choices.setAttribute('aria-label', question.text);
-      for (const choice of question.options) {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'ask-option';
-        button.textContent = choice.label;
-        button.addEventListener('click', () => choose(question, choice));
-        choices.append(button);
-      }
-      row.append(choices);
-    } else {
-      // Et spørsmål uten knapper sier hvor svaret skal, og tar deg dit.
-      const go = document.createElement('button');
-      go.type = 'button';
-      go.className = 'btn-link ask-action';
-      go.textContent = way === 'amount' ? 'Fyll inn beløpet' : 'Svar i beskrivelsen under';
-      go.addEventListener('click', () => {
-        const target =
-          way === 'amount'
-            ? form.querySelector<HTMLInputElement>('input[name="gross_amount"]')
-            : descriptionBox;
-        if (target === null) return;
-        revealFields();
-        target.focus();
-        const end = target.value.length;
-        target.setSelectionRange(end, end);
-      });
-      row.append(go);
+    askCount.textContent = countLabel(before, at, round.length);
+    askSend.textContent = nextLabel(at, round.length, unsent || way !== 'amount');
+    const fresh = question !== shown;
+    if (fresh) {
+      shown = question;
+      askSource.hidden = !question.asked_by_model;
+      askText.textContent = question.text;
+      askOptions.replaceChildren(
+        ...question.options.map((choice) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'ask-option';
+          button.textContent = choice.label;
+          button.addEventListener('click', () => choose(question, choice));
+          return button;
+        }),
+      );
+      askOptions.hidden = way !== 'options';
+      // A question with buttons has a line too, behind «Skriv et annet svar»:
+      // the buttons are the likely answers, not the only ones.
+      askReply.hidden = way === 'options';
+      askOther.hidden = way !== 'options';
+      askInput.value = '';
+      askInput.setCustomValidity('');
+      askInput.inputMode = way === 'amount' ? 'decimal' : 'text';
+      askInput.placeholder =
+        way === 'amount' ? 'Beløpet i kroner, for eksempel 1 250,00' : 'Skriv svaret ditt';
     }
-    if (question.asked_by_model) {
-      const source = document.createElement('span');
-      source.className = 'ask-source';
-      source.textContent = 'Spurt av KI';
-      row.append(source);
+    if (answering && (fresh || document.activeElement === askBox)) focusAnswer();
+  }
+
+  /** Focus where the question on screen is answered: its first button, or the line. */
+  function focusAnswer(): void {
+    const first = askOptions.hidden ? askInput : askOptions.querySelector('button');
+    first?.focus();
+  }
+
+  /**
+   * On to the next question, and after the last, the round's answers go to
+   * the model together.
+   *
+   * One by one was tried first: the model's reply to the first answer could
+   * settle the second question, and «Spørsmål 2 av 2» then never came.
+   */
+  function advance(): void {
+    at += 1;
+    // Past a question answered some other way meanwhile: the amount, typed
+    // into its own field.
+    const answered = new Set(answers.map((answer) => answer.key));
+    while (at < round.length && answered.has(round[at]?.key ?? null)) at += 1;
+    if (at >= round.length && unsent) {
+      void continueReading('answers');
+      return;
     }
-    return row;
+    showQuestion();
   }
 
   /**
@@ -2296,8 +2414,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
    *
    * An answer that means a value sets the field at once, as the person's own
    * choice: the follow-up then has nothing to overrule it with (`touched`).
-   * Either way the answer goes to the model, which writes the description
-   * again with it and may settle what the press could not.
+   * Either way the answer goes to the model with the round's others, and the
+   * model writes the description again with them and may settle what the
+   * press could not.
    */
   function choose(question: SuggestionQuestion, choice: SuggestionOption): void {
     answers = remember(answers, {
@@ -2323,20 +2442,95 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       markField('tax_code', 'Ditt svar');
     }
     if (!splitting && choice.split) openSplit();
-    showQuestions(asked);
-    void continueReading();
+    unsent = true;
+    advance();
   }
+
+  /**
+   * An answer written under the question, given with «Neste», «Send svar» or Enter.
+   *
+   * Words go to the model. A number for the amount question goes in the
+   * amount field and no further: what the account was charged is a figure the
+   * model has no use for, but it must not be asked for again.
+   */
+  function answerTyped(): void {
+    const question = shown;
+    if (question === null) return;
+    const typed = askInput.value.trim();
+    if (typed === '') {
+      askInput.focus();
+      return;
+    }
+    if (howToAnswer(question) === 'amount') {
+      const amount = normaliseAmount(typed);
+      if (amount === null || Number(amount) <= 0) {
+        askInput.setCustomValidity('Skriv beløpet i kroner, for eksempel 1 250,00.');
+        askInput.reportValidity();
+        return;
+      }
+      const field = form.querySelector<HTMLInputElement>('input[name="gross_amount"]');
+      if (!splitting && field !== null) {
+        field.value = amount;
+        touched.add('gross_amount');
+        byAnswer.add('gross_amount');
+        markField('gross_amount', 'Ditt svar');
+      }
+      answers = remember(answers, { key: question.key, question: question.text, answer: amount });
+      advance();
+      return;
+    }
+    answers = remember(answers, { key: question.key, question: question.text, answer: typed });
+    unsent = true;
+    advance();
+  }
+
+  askSend.addEventListener('click', answerTyped);
+  askInput.addEventListener('keydown', (event) => {
+    // Enter is «Neste», not «Registrer betaling»: the line sits inside the
+    // payment form, and the browser would otherwise submit that.
+    if (event.key !== 'Enter' || event.isComposing) return;
+    event.preventDefault();
+    answerTyped();
+  });
+  askInput.addEventListener('input', () => askInput.setCustomValidity(''));
+  askOther.addEventListener('click', () => {
+    askOther.hidden = true;
+    askReply.hidden = false;
+    askInput.focus();
+  });
+  el<HTMLButtonElement>('#ask-skip').addEventListener('click', () => {
+    if (shown === null) return;
+    skipped.add(shown.key);
+    advance();
+  });
+
+  /**
+   * Why a follow-up is sent, which decides where the page says it is waiting.
+   *
+   * The round's answers wait in the question box, where they were given.
+   * Anything else waits in the reading line under the files: an edit to the
+   * description used to put «Oppdaterer forslaget med svaret ditt» in the
+   * question box and hide the question somebody was about to answer, and to
+   * them it looked like the box had answered itself (2026-10-17).
+   */
+  type FollowUp = 'answers' | 'description' | 'again';
+  const WAITING: Record<FollowUp, string> = {
+    answers: 'Oppdaterer forslaget med svarene dine …',
+    description: 'Oppdaterer forslaget med beskrivelsen din …',
+    again: 'Sender svarene dine til den nye lesingen …',
+  };
 
   /**
    * Send the answers, and put the proposal that comes back into the form.
    *
    * A follow-up to the reading, not a new one: nothing is uploaded and the
    * model is asked about what it already read, so this is seconds where a read
-   * of screenshots is a minute. With no reading to continue (KI is off, or the
-   * reading is gone) the bilag is read again instead, and `readDocuments`
-   * sends the answers on to the new reading when it has them.
+   * of screenshots is a minute. Every answer given so far goes, whatever the
+   * reason. With no reading to continue (KI is off, or the reading is gone)
+   * the bilag is read again instead, and `readDocuments` sends the answers on
+   * to the new reading when it has them.
    */
-  async function continueReading(): Promise<void> {
+  async function continueReading(why: FollowUp): Promise<void> {
     if (readingId === null) {
       if (chosen.length > 0) await readDocuments();
       return;
@@ -2344,9 +2538,19 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     reads += 1;
     const read = reads;
     const keepDescription = ownDescription && descriptionBox.value.trim() !== '';
-    if (!keepDescription) describing(true);
-    askStatus.textContent = 'Oppdaterer forslaget med svaret ditt …';
-    askStatus.hidden = false;
+    // What the model is getting, so leaving the box unchanged sends nothing.
+    if (keepDescription) readWith = descriptionBox.value;
+    else describing(true);
+    unsent = false;
+    if (why === 'answers') {
+      sending = true;
+      askStatus.textContent = WAITING.answers;
+      askStatus.hidden = false;
+    } else {
+      readingText.textContent = WAITING[why];
+      reading.hidden = false;
+    }
+    showQuestion();
     submit.disabled = true;
     try {
       const suggestion = await answerSuggestion(
@@ -2357,17 +2561,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       );
       if (read !== reads) return;
       applySuggestion(suggestion, { keepDescription });
-      showQuestions(suggestion.questions);
+      sending = false;
+      askStatus.hidden = true;
+      offerQuestions(suggestion.questions);
     } catch (error: unknown) {
       if (read !== reads) return;
       if (error instanceof ApiError && error.code === 'reading_not_found') {
         // Borte etter ti minutter, eller fordi KI ble slått av. Bilaget leses
         // på nytt, og svarene følger med til den nye lesingen.
         readingId = null;
-        askStatus.hidden = true;
         if (chosen.length > 0) void readDocuments({ keepDescription });
         return;
       }
+      // The model never had them, so the end of the next round sends them.
+      unsent = true;
       setStatus(
         formStatus,
         error instanceof ApiError
@@ -2375,10 +2582,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           : 'Vi fikk ikke oppdatert forslaget. Sjekk feltene selv.',
       );
     } finally {
+      // Only the newest follow-up owns the statuses. A newer one carries
+      // every answer this one did, so this one's waiting is over either way.
       if (read === reads) {
+        sending = false;
         askStatus.hidden = true;
+        reading.hidden = true;
         submit.disabled = false;
         describing(false);
+        showQuestion();
       }
     }
   }
@@ -2452,6 +2664,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     if (!keepDescription) {
       written = '';
       describing(true);
+    } else {
+      // The sentence this reading is made with. Without it, the first time
+      // focus left the box afterwards the same sentence went to the model
+      // again, and the question box was replaced by «Oppdaterer forslaget»
+      // when somebody had only clicked on the question (2026-10-17).
+      readWith = descriptionBox.value;
     }
     showFiles();
     // Reading images is inference and not parsing, so a bilag of six
@@ -2464,6 +2682,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     reading.hidden = false;
     submit.disabled = true;
     setStatus(formStatus, '');
+    // The questions were the last reading's, and the new one asks its own: a
+    // question answered in between would go to a reading that is gone.
+    dropQuestions();
     // The fields open before the answer arrives, because the description is
     // written into one of them while we wait. A form that appeared only at the
     // end would leave the typing happening somewhere the user cannot see.
@@ -2508,13 +2729,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       applySuggestion(suggestion, { keepDescription });
       markUnread(suggestion);
       readingId = suggestion.reading_id;
-      showQuestions(suggestion.questions);
+      offerQuestions(suggestion.questions);
       revealFields();
       // Svar som alt er gitt på dette bilaget, går videre til den nye lesingen.
       // Etter `finally` under, som ellers ville sluppet knappen og feltet løs
       // midt i oppfølgingen.
       if (answers.length > 0 && readingId !== null) {
-        queueMicrotask(() => void continueReading());
+        queueMicrotask(() => void continueReading('again'));
       }
     } catch (error: unknown) {
       if (read !== reads) return;
@@ -2562,7 +2783,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     // Svarene gjaldt dette bilaget, og lesingen de ble sendt til, likeså.
     answers = [];
     readingId = null;
-    showQuestions([]);
+    skipped.clear();
+    dropQuestions();
     written = '';
     readWith = '';
     ownDescription = false;
@@ -2597,39 +2819,43 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   el<HTMLButtonElement>('#file-clear').addEventListener('click', clearFile);
 
   /*
-    Editing the description answers the open questions on screen and sends the
-    sentence to the model. There used to be a button for this, and a button is
-    a worse design for the same thing: it asks the user to know that answering
-    the question was only half of it, and the half that fills the form in is
-    the one behind a control they have to notice.
+    Editing the description sends the sentence to the model, with the answers
+    given so far. There used to be a button for this, and a button is a worse
+    design for the same thing: the half that fills the form in would be the
+    one behind a control the user has to notice.
 
-    It is not a new read. The answer continues the reading the server kept
+    It is not a new read. The sentence continues the reading the server kept
     (`continueReading`), so nothing is uploaded and the model is asked a
-    follow-up rather than shown the whole bilag again. Before that it was a
-    whole new read with the sentence at the top, which on a bilag of
-    screenshots was most of a minute, and the model, never told which question
-    it had asked, could ask the same one again. The wait is still debounced
+    follow-up rather than shown the whole bilag again. The wait is debounced
     past the end of a sentence rather than fired per keystroke.
+
+    It is no longer an answer to the questions. It was for a while, and a
+    question about whether a purchase was private got answered in the text
+    the payment is filed under; the questions now have their own line.
   */
   const REREAD_AFTER_MS = 1200;
   let rereadTimer: number | undefined;
 
-  /** What was written is an answer to the open questions, and goes to the model. */
+  /** What was written goes to the model as context. */
   function descriptionChanged(): void {
     readWith = descriptionBox.value;
-    for (const answer of answeredByText(unanswered(asked, answers), descriptionBox.value)) {
-      answers = remember(answers, answer);
-    }
-    showQuestions(asked);
-    void continueReading();
+    void continueReading('description');
+  }
+
+  /**
+   * Whether the box holds a sentence of the person's own that the model has
+   * not had. Their own: the model's sentence going back to the model is a
+   * request nobody made, and it was one of the ways the question box said
+   * «Oppdaterer forslaget» after a click that was not an answer.
+   */
+  function newSentence(): boolean {
+    const typed = descriptionBox.value.trim();
+    return ownDescription && chosen.length > 0 && typed !== '' && typed !== readWith.trim();
   }
 
   function scheduleReread(): void {
     window.clearTimeout(rereadTimer);
-    const typed = descriptionBox.value.trim();
-    // Nothing to read with, nothing to read, or nothing changed since last time.
-    if (chosen.length === 0 || typed === '' || typed === readWith.trim()) return;
-    rereadTimer = window.setTimeout(descriptionChanged, REREAD_AFTER_MS);
+    if (newSentence()) rereadTimer = window.setTimeout(descriptionChanged, REREAD_AFTER_MS);
   }
 
   descriptionBox.addEventListener('input', () => {
@@ -2641,9 +2867,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   // then is a pause with nothing happening in it.
   descriptionBox.addEventListener('blur', () => {
     window.clearTimeout(rereadTimer);
-    const typed = descriptionBox.value.trim();
-    if (chosen.length === 0 || typed === '' || typed === readWith.trim()) return;
-    descriptionChanged();
+    if (newSentence()) descriptionChanged();
   });
 
   el<HTMLButtonElement>('#cancel-edit-button').addEventListener('click', () => {
@@ -3322,6 +3546,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       // one was about the other side. A new read, because the category menu
       // the model was shown is the other side's too.
       answers = afterDirectionChange(answers);
+      // And what was passed over was a question about the other side too.
+      skipped.clear();
       if (chosen.length > 0) {
         // The user's own sentence is context; one the model is writing or
         // wrote is output, and is written again.
@@ -3330,22 +3556,24 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         });
       }
     }
-    // The amount question is answered in the amount field. Taken as an answer
-    // and not sent on: what the account was charged is a number the model has
-    // no use for, but the question must not come back with the next proposal.
+    // The amount question can also be answered in the amount field itself,
+    // which is where somebody who knows the figure goes first. Taken as an
+    // answer and not sent on, as under the question (`answerTyped`).
     if (
       target instanceof HTMLInputElement &&
       target.name === 'gross_amount' &&
       target.value.trim() !== ''
     ) {
-      const question = unanswered(asked, answers).find((open) => open.key === AMOUNT_KEY);
+      const question = asked.find((open) => open.key === AMOUNT_KEY);
       if (question !== undefined) {
         answers = remember(answers, {
           key: question.key,
           question: question.text,
           answer: target.value.trim(),
         });
-        showQuestions(asked);
+        // The round moves on when this was the question on screen; when it is
+        // a later one, `advance` steps over it on the way.
+        if (!sending && round[at]?.key === AMOUNT_KEY) advance();
       }
     }
     if (target === typeSelect) {

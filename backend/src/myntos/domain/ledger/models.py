@@ -116,12 +116,14 @@ class Company(Base):
     would make the first one to add that orgnr block the second — a tenancy leak
     disguised as a data-quality rule.
 
-    A *confirmed* claim is the exception. ``verified_at`` is stamped when
-    somebody proved through Altinn that they may act for the orgnr, and only one
-    such row may exist per orgnr across the whole installation — that is what
-    ``uq_company_verified_orgnr`` says. Unconfirmed rows stay unconstrained, so
-    the second accounting firm can still set up its own books; what it cannot do
-    is claim the same company as confirmed while the first claim stands.
+    A *confirmed* claim is not unique either. ``verified_at`` is stamped when
+    somebody proved through Altinn that they may act for the orgnr, and a second
+    account with the same proof may confirm its own books too, once it has been
+    told that somebody else got there first and said yes anyway
+    (:func:`~myntos.domain.ledger.service.confirm_company_ownership`). Altinn's
+    answer is the evidence, and it is as good the second time: refusing it
+    would leave a person whom Altinn lets file for the company unable to file
+    from Myntos because of somebody else's books.
     """
 
     __tablename__ = "company"
@@ -139,18 +141,18 @@ class Company(Base):
             sqlite_where=text("closed_at IS NULL"),
             postgresql_where=text("closed_at IS NULL"),
         ),
-        # Partial, so it binds confirmed claims and leaves the rest alone. The
-        # domain checks the same thing first and answers with a message people
-        # can act on; this is the backstop for two confirmations racing, where a
-        # check-then-write would let both through.
+        # What "somebody else has confirmed this orgnr" is asked of, before
+        # confirming and beside the Altinn list. Not unique since migration
+        # c3e7a1f95d20: a second confirmed claim is allowed once the person has
+        # been warned about the first, so the warning is the domain's to give
+        # and there is nothing left for the database to refuse.
         #
         # Open books only. A company deleted from Myntos is kept for up to five
-        # years and must not hold the orgnr all that time, or whoever runs the
-        # business next could not confirm it (myntos.domain.identity.closure).
+        # years and must not warn whoever runs the business next all that time
+        # (myntos.domain.identity.closure).
         Index(
-            "uq_company_verified_orgnr",
+            "ix_company_verified_orgnr",
             "orgnr",
-            unique=True,
             sqlite_where=text("verified_at IS NOT NULL AND closed_at IS NULL"),
             postgresql_where=text("verified_at IS NOT NULL AND closed_at IS NULL"),
         ),
@@ -325,6 +327,17 @@ class Company(Base):
     # Altinn's own key for the party, as it stood at confirmation. Kept because
     # an instance is later created under it and an orgnr is not the same key.
     altinn_party_id: Mapped[int | None] = mapped_column(Integer)
+
+    # --- Wound up ---------------------------------------------------------------
+    #
+    # The last day of the company's books: set when the company has been wound
+    # up (oppløst), and its last financial year ends here instead of on 31
+    # December. Nothing may be posted after it and no later year opens, and that
+    # year's skattemelding is filed as a forhåndsfastsetting, before the
+    # ordinary assessment, because skatteforvaltningsloven § 8-2 wants it
+    # before the company is gone. NULL for every company still in business. Set
+    # and cleared by myntos.domain.arsoppgjor.winding_up, never by a form.
+    wound_up_on: Mapped[date | None] = mapped_column(Date)
 
     # --- Deleted from Myntos ----------------------------------------------------
     #

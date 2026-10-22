@@ -26,7 +26,14 @@ from myntos.auth.oidc.providers import (
     microsoft_profile,
     microsoft_well_known,
 )
-from tests.conftest import PASSWORD, TEST_ORIGIN, invite_to_company, register, write
+from tests.conftest import (
+    PASSWORD,
+    TEST_ORIGIN,
+    RecordingMailer,
+    invite_to_company,
+    register,
+    write,
+)
 
 MICROSOFT_TEMPLATE = "https://login.microsoftonline.com/{tenantid}/v2.0"
 TENANT = "72f988bf-86f1-41af-91ab-2d7cd011db47"
@@ -133,11 +140,20 @@ def test_second_login_reuses_the_same_account(client: TestClient, provider: Stub
     assert len(body["memberships"]) == 1
 
 
+def _confirm_address(client: TestClient, outbox: RecordingMailer) -> None:
+    """Follow the confirmation link that signing up mailed."""
+    marker = "https://app.example/bekreft-epost/#token="
+    token = outbox.sent[-1].text.split(marker, maxsplit=1)[1].split()[0]
+    confirmed = write(client, "POST", "/api/v1/auth/email/verify", json={"token": token})
+    assert confirmed.status_code == 204, confirmed.text
+
+
 def test_a_provider_links_to_an_existing_password_account(
-    client: TestClient, provider: StubProvider
+    client: TestClient, provider: StubProvider, outbox: RecordingMailer
 ) -> None:
     """One account, two ways in — not two accounts."""
     registered = register(client, "kari@gmail.com", organization_name="Fjord Regnskap AS")
+    _confirm_address(client, outbox)
     client.cookies.clear()
 
     _callback(client, code="auth-code", state=_start(client))
@@ -159,6 +175,35 @@ def test_a_provider_links_to_an_existing_password_account(
         json={"email": "kari@gmail.com", "password": PASSWORD},
     )
     assert relogin.status_code == 200
+
+
+def test_a_verified_provider_takes_an_unconfirmed_account_back_from_whoever_made_it(
+    client: TestClient, provider: StubProvider
+) -> None:
+    """Signing up as somebody's address must not be a way into their books later.
+
+    Nobody confirmed the address, so the password is the squatter's. When the
+    owner arrives with a provider that vouches for the address, the account
+    becomes theirs alone: the password goes, and so does every session.
+    """
+    squatter = TestClient(client.app, base_url=TEST_ORIGIN)
+    registered = register(squatter, "kari@gmail.com")
+
+    _callback(client, code="auth-code", state=_start(client))
+    body = client.get("/api/v1/auth/me").json()
+
+    assert body["user"]["id"] == registered["user"]["id"]
+    assert body["user"]["has_password"] is False
+    assert body["user"]["providers"] == ["google"]
+    assert squatter.get("/api/v1/auth/me").status_code == 401
+    squatter.cookies.clear()
+    relogin = write(
+        squatter,
+        "POST",
+        "/api/v1/auth/login",
+        json={"email": "kari@gmail.com", "password": PASSWORD},
+    )
+    assert relogin.status_code == 401
 
 
 def test_unverified_email_cannot_take_over_an_existing_account(
@@ -209,6 +254,42 @@ def test_unverified_email_still_gets_its_own_new_account(
     assert body["user"]["email_verified"] is False
 
 
+def test_taking_an_address_back_with_a_reset_keeps_the_squatter_out(
+    client: TestClient, provider: StubProvider, outbox: RecordingMailer
+) -> None:
+    """A provider that does not vouch for an address can still make the account.
+
+    The owner takes it back with a reset link. The provider login the squatter
+    made it with is matched on its subject, never on the address, so it has to
+    go with the reset or it is a way straight back in.
+    """
+    provider.profile = OidcProfile(
+        subject="squatter-sub",
+        email="kari@example.no",
+        email_verified=False,
+        full_name="Kari Nordmann",
+    )
+    _callback(client, code="auth-code", state=_start(client))
+    client.cookies.clear()
+
+    owner = TestClient(client.app, base_url=TEST_ORIGIN)
+    write(owner, "POST", "/api/v1/auth/password/forgot", json={"email": "kari@example.no"})
+    marker = "https://app.example/nytt-passord/#token="
+    token = outbox.sent[-1].text.split(marker, maxsplit=1)[1].split()[0]
+    reset = write(
+        owner,
+        "POST",
+        "/api/v1/auth/password/reset",
+        json={"token": token, "new_password": "et-helt-annet-langt-passord"},
+    )
+    assert reset.status_code == 204, reset.text
+
+    again = _callback(client, code="auth-code", state=_start(client))
+
+    assert again.headers["location"].endswith("error=unverified_provider_email")
+    assert client.get("/api/v1/auth/me").status_code == 401
+
+
 def test_callback_is_single_use(client: TestClient, provider: StubProvider) -> None:
     """Replaying the callback URL must not mint a second session."""
     state = _start(client)
@@ -220,6 +301,27 @@ def test_callback_is_single_use(client: TestClient, provider: StubProvider) -> N
     assert client.get("/api/v1/auth/me").status_code == 401
     # The code was never exchanged a second time.
     assert provider.exchanges == ["auth-code"]
+
+
+def test_a_login_finished_in_another_browser_signs_nobody_in(
+    client: TestClient, provider: StubProvider
+) -> None:
+    """The callback URL is a link, and whoever started the flow holds it.
+
+    Opened in somebody else's browser, it signed that browser into the
+    starter's account, and whatever they did next was the starter's to read.
+    """
+    state = _start(client)
+    victim = TestClient(client.app, base_url=TEST_ORIGIN)
+
+    response = _callback(victim, code="auth-code", state=state)
+
+    assert response.headers["location"].endswith("error=innlogging_annen_nettleser")
+    assert victim.get("/api/v1/auth/me").status_code == 401
+    assert provider.exchanges == []
+    # And the link is spent: the starter cannot use it afterwards either.
+    again = _callback(client, code="auth-code", state=state)
+    assert again.headers["location"].endswith("error=innlogging_utlopt")
 
 
 def test_unknown_state_is_rejected(client: TestClient, provider: StubProvider) -> None:

@@ -15,7 +15,7 @@ much the AI or program may do without them:
 | «Lese» | Seeing the whole books | Always on, for every key |
 | «Forberede» | Draft invoices, customers and suppliers, matching bank lines, the chart of accounts | Yes: changed or deleted again |
 | «Bokføre» | Posting payments, issuing invoices and credit notes, importing bank statements, closing a year | No: only corrected with a new entry |
-| «Sende til Skatteetaten» | The MVA-melding and the skattemelding | Never by a key («Aldri selv») |
+| «Sende til Skatteetaten» | Checking and sending the MVA-melding and the skattemelding | Never by a key on its own («Aldri selv»): a key that may post («Selv» or «Spør meg først» for «Bokføre») can ask, and each one waits for the person on «Godkjenning», with their ID-porten login |
 
 For «Forberede» and «Bokføre» the choices are:
 
@@ -37,8 +37,8 @@ For «Forberede» and «Bokføre» the choices are:
   The AI can do all the work, and the person presses «Godkjenn» for each thing.
 - **Trust it with drafts, check the postings:** «Forberede»: «Selv»,
   «Bokføre»: «Spør meg først».
-- **Let it do everything except filing:** «Selv» for both. Filing to
-  Skatteetaten still needs the person.
+- **Let it do everything:** «Selv» for both. Whatever it sends to
+  Skatteetaten still waits for the person, every time.
 - **Only answer questions:** «Nei» for both.
 
 «Bokføre» can never be freer than «Forberede»: choosing «Spør meg først» for

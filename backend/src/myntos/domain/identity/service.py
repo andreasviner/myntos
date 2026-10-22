@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from myntos.auth.oidc import OidcProfile
-from myntos.auth.passwords import hash_password, needs_rehash, verify_password
+from myntos.auth.passwords import hashed, needs_rehash, verified
 from myntos.auth.tokens import generate_token, hash_token
 from myntos.core.clock import as_utc, utc_now
 from myntos.core.config import get_settings
@@ -227,7 +227,7 @@ async def confirm_identity(
                 if or_recent_login
                 else f"skriv inn passordet ditt for å {action}"
             )
-        if not verify_password(password, user.password_hash):
+        if not await verified(password, user.password_hash):
             _record_failed_login(user)
             # Committed for the reason authenticate_with_password commits: the
             # request is about to fail, and its rollback would otherwise
@@ -353,7 +353,7 @@ async def register_with_password(
     normalised = normalise_email(email)
     # Hash before the existence check so a weak password is rejected on its own
     # terms rather than reported as a duplicate address.
-    password_hash = hash_password(password)
+    password_hash = await hashed(password)
     if await get_user_by_email(db, normalised) is not None:
         raise EmailAlreadyRegisteredError(normalised)
 
@@ -390,7 +390,7 @@ async def authenticate_with_password(db: AsyncSession, *, email: str, password: 
     if user is not None and user.locked_until is not None and as_utc(user.locked_until) > now:
         raise AccountLockedError("kontoen er midlertidig låst etter for mange forsøk")
 
-    if not verify_password(password, user.password_hash if user else None) or user is None:
+    if not await verified(password, user.password_hash if user else None) or user is None:
         if user is not None:
             _record_failed_login(user)
             # Committed here, against the rule in the module docstring: the
@@ -413,7 +413,7 @@ async def authenticate_with_password(db: AsyncSession, *, email: str, password: 
     # Argon2 parameters may have been raised since this hash was made; the only
     # moment we hold the plaintext is right now.
     if user.password_hash is not None and needs_rehash(user.password_hash):
-        user.password_hash = hash_password(password)
+        user.password_hash = await hashed(password)
 
     user.failed_login_attempts = 0
     user.locked_until = None
@@ -447,17 +447,37 @@ async def change_password(db: AsyncSession, user: User, *, current: str, new: st
         raise NoPasswordSetError(
             "kontoen har ikke passord, så logg inn med Google, eller sett et passord først"
         )
-    if not verify_password(current, user.password_hash):
+    # The same lockout as a login, for the reason confirm_identity gives: a
+    # hijacked session could otherwise test guesses here without limit, and a
+    # right one would also let it set a password that ends the owner's session.
+    if user.locked_until is not None and as_utc(user.locked_until) > utc_now():
+        raise AccountLockedError("kontoen er midlertidig låst etter for mange forsøk")
+    if not await verified(current, user.password_hash):
+        _record_failed_login(user)
+        # Committed because the request is about to fail, and its rollback
+        # would discard the counter.
+        await db.commit()
         raise InvalidCredentialsError("feil nåværende passord")
-    user.password_hash = hash_password(new)
+    user.failed_login_attempts = 0
+    user.password_hash = await hashed(new)
+
+
+@dataclass(frozen=True)
+class ProviderSignIn:
+    """Who signed in, and what the sign-in did to the account on the way."""
+
+    user: User
+    created: bool
+    # The address was never confirmed, and the provider's verified claim just
+    # took the account back from whoever made it. The caller ends every
+    # session and stops every key, which live outside this module.
+    reclaimed: bool
 
 
 async def sign_in_with_provider(
     db: AsyncSession, provider: IdentityProvider, profile: OidcProfile
-) -> tuple[User, bool]:
+) -> ProviderSignIn:
     """Sign in (or sign up) with a verified profile from an identity provider.
-
-    Returns the user and whether the account was created just now.
 
     Three rules, and the middle one is the security-critical one:
 
@@ -484,6 +504,15 @@ async def sign_in_with_provider(
     ``email_verified_at`` is only stamped when the provider actually vouched,
     so the distinction survives in the record rather than being asserted by the
     act of signing in.
+
+    **A verified claim on an unconfirmed account takes it back**, the way a
+    completed reset does. Nobody had proved the address was theirs, so the
+    password on the account is whoever signed up's, and so is any provider they
+    linked. Stamping the address confirmed and leaving those in place was a
+    takeover waiting for its victim: sign up as somebody's address, wait for
+    them to press «Logg inn med Google», and read every set of books they are
+    invited to afterwards. The password and every other link go here; the
+    caller ends the sessions and keys (:attr:`ProviderSignIn.reclaimed`).
 
     **A BankID account is never reached this way**, verified address or not
     (:class:`EmailBelongsToBankidAccountError`): attaching Google to it would
@@ -515,7 +544,7 @@ async def sign_in_with_provider(
         identity.last_login_at = now
         identity.email_at_provider = normalise_email(profile.email)
         user.last_login_at = now
-        return user, False
+        return ProviderSignIn(user, created=False, reclaimed=False)
 
     email = normalise_email(profile.email)
     existing = await get_user_by_email(db, email)
@@ -545,14 +574,19 @@ async def sign_in_with_provider(
         )
         db.add(user)
         await db.flush()
-    else:
+    reclaimed = False
+    if existing is not None:
         user = existing
         if not user.is_active:
             raise AccountDisabledError("kontoen er deaktivert")
         if user.email_verified_at is None:
             # A verified provider assertion is as good as the confirmation
-            # link, and the person need not go and click one.
+            # link, and the person need not go and click one. It is also proof
+            # the account was never theirs until now: see the docstring.
             user.email_verified_at = now
+            user.password_hash = None
+            await db.execute(delete(UserIdentity).where(UserIdentity.user_id == user.id))
+            reclaimed = True
 
     db.add(
         UserIdentity(
@@ -573,7 +607,7 @@ async def sign_in_with_provider(
             owner=user,
             name_is_placeholder=True,
         )
-    return user, created
+    return ProviderSignIn(user, created=created, reclaimed=reclaimed)
 
 
 async def _identity_for(

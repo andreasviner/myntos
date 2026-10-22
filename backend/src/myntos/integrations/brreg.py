@@ -186,6 +186,13 @@ class RegisteredUnit:
     # field here that says something about *bookkeeping* rather than about the
     # entity: it is the answer to "which year does this company still owe".
     last_submitted_annual_accounts: str | None = None
+    # Set when the register has deleted the unit (``slettedato``). Such an entry
+    # carries little more than the number, the name and the form, and is
+    # answered rather than refused: a deleted aksjeselskap still owes the
+    # skattemelding for its last year, and the books it is filed from have to
+    # be set up from somewhere. Every caller that shows a unit shows this beside
+    # «konkurs» and «under avvikling».
+    deleted_on: str | None = None
 
     # --- Structure ------------------------------------------------------------
     # Set on a subunit: the orgnr of the main unit it belongs to. Roles are
@@ -373,6 +380,11 @@ def _unit_from(payload: dict[str, Any], *, is_subunit: bool = False) -> Register
             payload.get("registreringsdatoMerverdiavgiftsregisteret")
         ),
         last_submitted_annual_accounts=_text(payload.get("sisteInnsendteAarsregnskap")),
+        # The register used to answer a deleted unit with 410 and now answers
+        # 200 with ``respons_klasse: SlettetEnhet`` and a ``slettedato``
+        # (seen 2026-10-22). Read from the date, which both shapes carry, so a
+        # deleted unit is never mistaken for a live one with no address.
+        deleted_on=_text(payload.get("slettedato")),
         parent_orgnr=_text(payload.get("overordnetEnhet")),
         in_group=bool(payload.get("erIKonsern")),
         # ``harRegistrertAntallAnsatte`` is the register's own way of saying
@@ -414,9 +426,10 @@ async def _fetch(http: httpx.AsyncClient, url: str) -> dict[str, Any] | None:
     if response.status_code == httpx.codes.NOT_FOUND:
         return None
     if response.status_code == httpx.codes.GONE:
-        # The register answers 410 for a unit it has deleted. Saying so is more
-        # useful than "unknown number", which would send the user hunting for a
-        # typo that is not there.
+        # The register's older answer for a unit it has deleted, which carries
+        # no name to set books up under. Saying so is more useful than "unknown
+        # number", which would send the user hunting for a typo that is not
+        # there. Its newer answer is a 200, read in _unit_from.
         raise UnitDeletedError("enheten er slettet fra Enhetsregisteret")
     if response.is_error:
         raise RegisterUnavailableError("Enhetsregisteret svarte ikke som forventet")

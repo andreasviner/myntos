@@ -217,7 +217,9 @@ async def record_adjustment(
     figure = _check_amount(amount, signed=signed)
     text = description.strip() or spesifikasjon.value
 
-    financial_year = await ledger_service.ensure_financial_year(db, company, occurred_on.year)
+    financial_year = await ledger_service.ensure_financial_year(
+        db, company, occurred_on.year, on=occurred_on
+    )
     if spesifikasjon is Spesifikasjon.TAP_PAA_KRAV and account_number is None:
         # A company set up before 7830 joined the starter chart gets it now,
         # from the seed, rather than a refusal about an account it never chose

@@ -1,6 +1,6 @@
 ---
 title: Describe what a payment was for
-description: How a person uses the «Beskrivelse» box on the Betaling page in Myntos to say what a payment was for, answer the questions Myntos asks about a bilag, and have the form filled in again with that sentence. Use when someone asks what to write in the description, why Myntos asks questions about a receipt, or how to explain a payment the receipt does not explain.
+description: How a person uses the «Beskrivelse» box on the Betaling page in Myntos to say what a payment was for, and have the form filled in again with that sentence. Use when someone asks what to write in the description, or how to explain a payment the receipt does not explain.
 pages: /kontantstrom/
 skill: myntos-kontantstrom
 ---
@@ -18,7 +18,6 @@ who knows settles it.
 ## They might ask
 
 - «Hva skal jeg skrive i beskrivelsen?»
-- «Myntos spør meg om noe om kvitteringen, hvor svarer jeg?»
 - «Kvitteringen sier ikke hva det var til, hvordan forklarer jeg det?»
 - "What is the description box for in Myntos?"
 
@@ -36,11 +35,9 @@ They need the role «Medlem» or more, and the form open on
 2. Left empty, Myntos writes a description itself while the bilag is read.
    The box is locked with three dots while that happens, and the tag next to
    the label says «Skriver …».
-3. If questions appear in a framed box together with the description, they
-   are what Myntos could not settle from the bilag. One marked «Spurt av KI»
-   was composed by Myntos's AI. A question with buttons is answered by
-   pressing one; a question without is answered by writing in the box («Svar
-   i beskrivelsen under» jumps there). See
+3. If a question appears in a framed box above the description, it is
+   something Myntos could not settle from the bilag. It is answered in that
+   box, under the question, not in «Beskrivelse»: see
    [Answer the questions about a receipt](https://myntos.no/llms/help/payments/answer-questions-about-a-receipt.md).
 4. When they stop typing, or click outside the box, what they wrote goes to
    Myntos's AI, and the form is filled in again with it, without the bilag

@@ -45,45 +45,55 @@
 
 <script>
   import { ApiError, getProviders, sendVerificationMail } from '../lib/api';
-  import { el, setStatus, show } from '../lib/dom';
+  import { el, maybe, setStatus, show } from '../lib/dom';
   import { loadSession } from '../lib/session';
 
-  const notice = el<HTMLDivElement>('#verify-notice');
-  const resend = el<HTMLButtonElement>('#verify-resend');
-  const status = el<HTMLParagraphElement>('#verify-status');
-
+  /*
+    Merknaden står i oversiktens mal på forsiden, og malen settes inn først når
+    noen er logget inn (index.astro). Derfor hentes elementene når svaret er
+    kommet, ikke når modulen lastes: da ville de ikke funnet noe, og skriptet
+    stoppet med en feil for hver besøkende som ikke er logget inn. Finnes
+    merknaden ikke når svaret kommer heller, er det ingen å minne på noe.
+  */
   void Promise.all([loadSession(), getProviders()])
     .then(([session, providers]) => {
       if (session === null || session.user.email_verified || !providers.email_delivery) return;
-      el('#verify-address').textContent = session.user.email;
+      const notice = maybe<HTMLDivElement>('#verify-notice');
+      if (notice === null) return;
+      el('#verify-address', notice).textContent = session.user.email;
+      wireResend(notice);
       show(notice, true);
     })
     .catch(() => {
       // Uten svar vises ingen merknad. Den er en påminnelse, ikke en sperre.
     });
 
-  resend.addEventListener('click', () => {
-    resend.disabled = true;
-    setStatus(status, '');
-    void sendVerificationMail()
-      .then(({ sent }) => {
-        setStatus(
-          status,
-          sent
-            ? 'Sendt. Den forrige lenken virker ikke lenger.'
-            : 'Vi fikk ikke sendt e-posten. Prøv igjen om litt.',
-          sent ? 'ok' : 'error',
-        );
-        resend.disabled = sent;
-      })
-      .catch((error: unknown) => {
-        // 409: adressen ble bekreftet i en annen fane i mellomtiden.
-        if (error instanceof ApiError && error.code === 'email_already_verified') {
-          show(notice, false);
-          return;
-        }
-        setStatus(status, error instanceof ApiError ? error.message : 'Vi fikk ikke sendt e-posten.');
-        resend.disabled = false;
-      });
-  });
+  function wireResend(notice: HTMLDivElement): void {
+    const resend = el<HTMLButtonElement>('#verify-resend', notice);
+    const status = el<HTMLParagraphElement>('#verify-status', notice);
+    resend.addEventListener('click', () => {
+      resend.disabled = true;
+      setStatus(status, '');
+      void sendVerificationMail()
+        .then(({ sent }) => {
+          setStatus(
+            status,
+            sent
+              ? 'Sendt. Den forrige lenken virker ikke lenger.'
+              : 'Vi fikk ikke sendt e-posten. Prøv igjen om litt.',
+            sent ? 'ok' : 'error',
+          );
+          resend.disabled = sent;
+        })
+        .catch((error: unknown) => {
+          // 409: adressen ble bekreftet i en annen fane i mellomtiden.
+          if (error instanceof ApiError && error.code === 'email_already_verified') {
+            show(notice, false);
+            return;
+          }
+          setStatus(status, error instanceof ApiError ? error.message : 'Vi fikk ikke sendt e-posten.');
+          resend.disabled = false;
+        });
+    });
+  }
 </script>

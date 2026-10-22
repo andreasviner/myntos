@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
@@ -37,6 +37,14 @@ class VoucherLineResponse(BaseModel):
     dimensions: list[str]
 
 
+class VoucherDocumentResponse(BaseModel):
+    #: Download it from ``GET …/dokument/{attachment_id}``.
+    id: int
+    filename: str
+    content_type: str
+    byte_size: int
+
+
 class VoucherResponse(BaseModel):
     id: int
     #: The journal's code: ``KONTANT`` (payments), ``SALG`` (invoices), ``MVA``
@@ -56,6 +64,9 @@ class VoucherResponse(BaseModel):
     lines: list[VoucherLineResponse]
     movement: Decimal | None
     balance: Decimal | None
+    #: The files the bilag archive holds for the voucher: a payment's receipt,
+    #: an invoice's PDF, or the old program's document brought over with it.
+    documents: list[VoucherDocumentResponse]
 
 
 class JournalCountResponse(BaseModel):
@@ -87,6 +98,8 @@ async def list_vouchers(
     journal: Annotated[str | None, Query(max_length=16)] = None,
     konto: Annotated[str | None, Query(max_length=32)] = None,
     sok: Annotated[str | None, Query(max_length=100)] = None,
+    med_dokument: bool = False,
+    rekkefolge: Literal["eldste", "nyeste"] = "eldste",
     fra: Annotated[int, Query(ge=0)] = 0,
 ) -> VoucherPageResponse:
     """The bilagsjournal: every posted voucher of a year, with its lines, oldest first.
@@ -100,18 +113,24 @@ async def list_vouchers(
 
     ``aar`` is the year. Narrow it with ``maaned`` (1-12), ``journal`` (a code
     from ``journals`` in the answer, which counts each journal's vouchers in the
-    year), ``konto`` (an account number: only vouchers with a line on it) and
-    ``sok`` (text in the voucher's or a line's description, or its number). 100
-    vouchers a page; ``fra`` is the offset, and ``total_count`` how many match.
+    year), ``konto`` (an account number: only vouchers with a line on it),
+    ``sok`` (text in the voucher's or a line's description, or its number) and
+    ``med_dokument=true`` (only the vouchers with a document in the bilag
+    archive: after Tripletex's printout is archived, the vouchers that got their
+    pages). ``rekkefolge=nyeste`` lists the newest first, as the web page does;
+    the default is oldest first. 100 vouchers a page; ``fra`` is the offset in
+    that order, and ``total_count`` how many match.
 
     With ``konto``, each voucher has its ``movement`` on that account (debit
     positive) and the ``balance`` after it, from ``opening_balance`` (what the
     account held before the period; an income or cost account opens every year
-    at zero) to ``closing_balance``. With ``konto=1920`` that is the bank's ins
-    and outs. A voucher number is only read here; corrections are made where
-    the voucher was made. Amounts are decimal strings. 404
-    ``account_not_found`` for an account the kontoplan does not have. Needs
-    ``ledger:read``.
+    at zero) to ``closing_balance``, in date order whichever way the page is
+    listed. With ``konto=1920`` that is the bank's ins and outs. Each voucher
+    lists its ``documents`` in the bilag archive, each downloaded from
+    ``GET …/dokument/{attachment_id}``. A voucher number is only read here;
+    corrections are made where the voucher was made. Amounts are decimal
+    strings. 404 ``account_not_found`` for an account the kontoplan does not
+    have. Needs ``ledger:read``.
     """
     require_permission(context.membership.role, Permission.LEDGER_READ)
     page = await vouchers.list_vouchers(
@@ -122,6 +141,8 @@ async def list_vouchers(
         journal=journal,
         account_number=konto,
         search=sok,
+        with_documents=med_dokument,
+        newest_first=rekkefolge == "nyeste",
         offset=fra,
     )
     return VoucherPageResponse(
@@ -159,6 +180,15 @@ async def list_vouchers(
                 ],
                 movement=row.movement,
                 balance=row.balance,
+                documents=[
+                    VoucherDocumentResponse(
+                        id=document.id,
+                        filename=document.filename,
+                        content_type=document.content_type,
+                        byte_size=document.byte_size,
+                    )
+                    for document in row.documents
+                ],
             )
             for row in page.vouchers
         ],

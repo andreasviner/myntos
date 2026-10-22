@@ -1,4 +1,5 @@
 ---
+import ClaimedDialog from '../components/ClaimedDialog.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
 ---
@@ -383,9 +384,10 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
                 Det den spør om, godkjenner eller avviser du under Godkjenning.
               </li>
               <li>
-                Ingen nøkkel kan sende noe til Skatteetaten, flytte penger, endre kontonummer eller
-                bestemme hvem som har tilgang, uansett hva den får lov til. Mva-meldingen sender du
-                alltid selv.
+                Alt en nøkkel vil sende ut av Myntos, som mva-meldingen og skattemeldingen til
+                Skatteetaten, venter på at du godkjenner det, hver gang, og går med din egen
+                ID-porten-innlogging. Ingen nøkkel kan flytte penger, endre kontonummer eller
+                bestemme hvem som har tilgang, uansett hva den får lov til.
               </li>
             </ul>
             <label class="org-agent-check">
@@ -456,8 +458,9 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
                 <div>
                   <strong>Sende til Skatteetaten</strong>
                   <span class="field-hint">
-                    Mva-meldingen og skattemeldingen. Den kan be deg om det, og du sender selv på
-                    MVA-siden, med din egen ID-porten-innlogging.
+                    Kontrollen og innsendingen av mva-meldingen og skattemeldingen. En nøkkel som får
+                    bokføre kan be om det, og det venter alltid på at du godkjenner det med din egen
+                    ID-porten-innlogging.
                   </span>
                 </div>
                 <span class="org-agent-fast">Aldri selv</span>
@@ -489,6 +492,10 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
             <button class="btn btn-primary" type="button" data-agent-lukk>Ferdig</button>
           </div>
         </dialog>
+
+        {/* «Selskapet er allerede registrert … Er du sikker?», før et selskap
+            noen andre har bekreftet, blir bekreftet her også. */}
+        <ClaimedDialog />
       </section>
 
       {/* --- Fra Enhetsregisteret --------------------------------------------
@@ -1413,7 +1420,6 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
 <script>
   import { CALLBACK_ERRORS } from '../lib/providers';
   import {
-    ALREADY_CLAIMED,
     ApiError,
     ORGNR_LOCKED,
     addBankAccount,
@@ -1436,7 +1442,6 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
     revokeInvitation,
     updateBankAccount,
     updateCompany,
-    verifyCompany,
     type AgentKey,
     type BankAccount,
     type Company,
@@ -1463,20 +1468,8 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
   import { currentCompany, loadCompanies, mountChromeCompanyMenu } from '../lib/company';
   import { clearStatus, el, setStatus, show } from '../lib/dom';
   import { isoDate, kontonummer, kroner, orgnummer } from '../lib/format';
+  import { confirmOwnership } from '../lib/ownership';
   import { canInCompany, loadSession, redirectToLogin, setActiveCompany } from '../lib/session';
-
-  /**
-   * What the user is told when an orgnr is already spoken for.
-   *
-   * One string, because it is said in two places — under the Altinn list, where
-   * the choice is made, and under Selskapet, where a confirmation is refused —
-   * and two wordings for one rule would read as two rules. It names no
-   * organization on purpose: the caller is not a member of the one holding the
-   * claim, and the way in is to ask them rather than us.
-   */
-  const CLAIMED_MESSAGE =
-    'Selskapet har allerede et regnskap registrert hos noen andre. Be en administrator der ' +
-    'om tilgang.';
 
   /**
    * Whether this deployment offers the ID-porten login, and whether the caller
@@ -2380,21 +2373,17 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
   // Altinn's own list of parties the person may act for — the same rights an
   // innsending will later rest on.
   //
-  // One confirmed claim exists per orgnr. The second organization to try gets
-  // CLAIMED_MESSAGE and the two ways forward it names: ask an administrator
-  // there for access, or keep an unconfirmed set of books of their own. The
-  // second is not a consolation prize — a regnskapsfører engaged for a client
-  // whose own confirmation sits elsewhere is exactly that case.
+  // When another account has confirmed the orgnr already, confirmOwnership
+  // asks «Er du sikker på at du vil fortsette?» in ClaimedDialog, and «Ja»
+  // confirms these books too. «Avbryt» leaves them unconfirmed, which is not a
+  // consolation prize: a regnskapsfører engaged for a client whose own
+  // confirmation sits elsewhere is exactly that case.
 
   const eierskapStatus = (): HTMLParagraphElement => el<HTMLParagraphElement>('#eierskap-status');
 
   /** Say what the refusal was, and show the button that answers it. */
   function reportEierskap(error: unknown): void {
     const status = eierskapStatus();
-    if (error instanceof ApiError && error.code === ALREADY_CLAIMED) {
-      setStatus(status, CLAIMED_MESSAGE);
-      return;
-    }
     if (error instanceof ApiError && error.status === 409) {
       // The login lapsed between drawing the button and pressing it. The way
       // out is the login, not a sentence about it.
@@ -2414,10 +2403,12 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
    *
    * Folds the answer back into `companies` rather than refetching: the list is
    * loaded once per page, and a stale `verified` here would outlive the
-   * confirmation that just succeeded.
+   * confirmation that just succeeded. Null when the person was asked whether
+   * to confirm books somebody else has confirmed, and said no.
    */
-  async function confirmEierskap(company: Company): Promise<Company> {
-    const saved = await verifyCompany(company.id);
+  async function confirmEierskap(company: Company): Promise<Company | null> {
+    const saved = await confirmOwnership(company);
+    if (saved === null) return null;
     companies = companies.map((item) => (item.id === saved.id ? saved : item));
     if (selskap?.id === saved.id) selskap = saved;
     showSelskap();
@@ -2436,6 +2427,11 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
     setStatus(status, 'Spør Altinn om rollen din …', 'ok');
     try {
       const saved = await confirmEierskap(company);
+      // «Avbryt»: the person chose, and the banner still says what is missing.
+      if (saved === null) {
+        setStatus(status, '');
+        return;
+      }
       setStatus(status, '');
       setStatus(selskapStatus, `Eierskapet for ${saved.name} er bekreftet i Altinn.`, 'ok');
       // Confirming re-reads the register on the server, so what is stored is
@@ -2443,10 +2439,6 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
       // again: Brønnøysund was asked a moment ago, on our behalf.
       await loadStoredRegister(saved);
     } catch (error: unknown) {
-      if (error instanceof ApiError && error.code === ALREADY_CLAIMED) {
-        setStatus(status, CLAIMED_MESSAGE);
-        return;
-      }
       setStatus(
         status,
         error instanceof ApiError ? error.message : 'Vi fikk ikke bekreftet rollen din.',
@@ -2636,6 +2628,10 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
       setStatus(eierskapStatus(), 'Spør Altinn om rettighetene dine …', 'ok');
       void confirmEierskap(company)
         .then(async (saved) => {
+          if (saved === null) {
+            setStatus(eierskapStatus(), '');
+            return;
+          }
           setStatus(eierskapStatus(), `Eierskapet for ${saved.name} er bekreftet.`, 'ok');
           setStatus(selskapStatus, `Eierskapet for ${saved.name} er bekreftet i Altinn.`, 'ok');
           await loadStoredRegister(saved);
@@ -2826,6 +2822,7 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
     field(list, 'Aktivitet', unit.activity.join(' ') || null);
     // Only when true. "Konkurs: Nei" on every company is noise; "Konkurs: Ja"
     // is the one line somebody needs to see.
+    if (unit.deleted_on) field(list, 'Slettet fra Enhetsregisteret', isoDate(unit.deleted_on));
     if (unit.bankrupt) field(list, 'Konkurs', 'Ja');
     if (unit.under_liquidation) field(list, 'Under avvikling', 'Ja');
     if (unit.under_forced_liquidation) field(list, 'Under tvangsavvikling', 'Ja');

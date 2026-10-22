@@ -16,7 +16,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
 <BaseLayout
   title="About Myntos: free Norwegian bookkeeping software"
-  description="Myntos is a free, web-based bookkeeping application for Norwegian companies: payments with receipts, invoices, VAT, SAF-T export, built to file with the Norwegian Tax Administration."
+  description="Free Norwegian bookkeeping software that will stay free: receipts, invoices with EHF, the VAT return, a limited company's tax return and the SAF-T export."
   lang="en"
 >
   {/* A wrapper, not a second <main>: the layout's is the page's landmark, and
@@ -25,19 +25,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     <h1>About Myntos</h1>
 
     <p class="lead">
-      Myntos is a web-based <strong>bookkeeping application for Norwegian companies</strong>. It
-      records incoming and outgoing payments with their supporting documents, calculates
-      value-added tax, and is built to produce the reports Norwegian law requires: SAF-T
-      Financial exports and filings to the Norwegian Tax Administration (Skatteetaten).
+      Myntos is a free, web-based <strong>bookkeeping application for Norwegian companies</strong>.
+      It records incoming and outgoing payments with their supporting documents, issues invoices,
+      calculates value-added tax, and produces the reports Norwegian law requires: the VAT return,
+      the tax return of a limited company, and the SAF-T Financial export for the Norwegian Tax
+      Administration (Skatteetaten).
     </p>
-
-    <aside class="disclaimer" role="note" aria-label="Development status">
-      <strong>
-        ⚠️ Myntos is in beta and is provided without warranty.
-      </strong>
-      Do not rely on it as your only bookkeeping record. See
-      <a href="/ansvar/">our disclaimer and terms</a>.
-    </aside>
 
     <h2>What you can do with it</h2>
     <ul>
@@ -47,20 +40,39 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       </li>
       <li>
         <strong>Record payments in and out</strong>, each with a type that determines its account
-        and VAT treatment, and optionally a PDF of the receipt or invoice.
+        and VAT treatment, and a PDF or photo of the receipt or invoice, which Myntos reads into the
+        form for you to confirm.
       </li>
       <li>
-        <strong>See your cash flow</strong>: totals in and out, net, and VAT for the year.
+        <strong>Issue invoices</strong> checked against the Norwegian bookkeeping regulations, each
+        with its EHF e-invoice file.
       </li>
       <li>
-        <strong>Work as a team.</strong> An account belongs to an organisation, and colleagues are
-        invited into it with roles. Accountants can keep several companies under one organisation.
+        <strong>Prepare the VAT return</strong> for each period, checked by Skatteetaten before it
+        is filed, and <strong>file a limited company's tax return</strong> (skattemelding with
+        næringsspesifikasjon) through Altinn, signed in with ID-porten.
       </li>
       <li>
-        <strong>Take your data out.</strong> SAF-T export and the PDF archive are legal
-        requirements, not premium features. You can leave and take the whole ledger with you.
+        <strong>Reconcile the bank</strong> by importing account statements (camt.053), and close
+        the year.
+      </li>
+      <li>
+        <strong>Work as a team.</strong> Access is granted per company: colleagues and accountants
+        are invited into one set of books with a role, and an accountant can keep every client on
+        one account.
+      </li>
+      <li>
+        <strong>Move in and out.</strong> Earlier years come in from other Norwegian programs as
+        SAF-T files, and the whole ledger goes out the same way. SAF-T export and the document
+        archive are legal requirements, not premium features.
       </li>
     </ul>
+    <p>
+      Not built yet: payroll and the a-melding, the annual accounts to the Register of Company
+      Accounts, the shareholder register return, recording a customer's payment against an
+      invoice, and sending e-invoices over Peppol. The full list
+      is at the end of <a href="/funksjoner/#ikke-enna" lang="nb">Funksjoner</a>.
+    </p>
 
     <h2>Who it is for</h2>
     <p>
@@ -72,22 +84,23 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
     <h2>What it costs</h2>
     <p>
-      Nothing. Myntos costs 0 kr: there is no price list, no paid tier and no trial period, and it
-      takes no payment details. Filing to Altinn and Skatteetaten will cost the same when it is
-      finished. We do not sell or share the books or use them to train models. The source code is
-      public, so you can also run Myntos yourself. The full answer, in Norwegian, is on
-      <a href="/priser/" lang="nb">Priser</a>.
+      Nothing, and that will not change: Myntos is free for good. There is no price list, no paid
+      tier and no trial period, and it takes no payment details. Filing to Altinn and Skatteetaten
+      costs the same, and so will everything added later. We do not sell or share the books or use
+      them to train models. The source code is public, so you can also run Myntos yourself. The
+      full answer, in Norwegian, is on <a href="/priser/" lang="nb">Priser</a>.
     </p>
 
     <h2>Signing in, and what we do with your Google account</h2>
     <p>
       You can create an account with an email address and password. You may also sign in with
-      Google or Microsoft, in which case we receive only your <strong>name</strong> and
-      <strong>email address</strong> from that provider.
+      Google, in which case we receive only your <strong>name</strong> and
+      <strong>email address</strong> from Google. Microsoft sign-in works the same way where it is
+      offered.
     </p>
     <p>
-      You may also sign in with <strong>BankID</strong>, through Idura, which is part of Stø, the
-      company behind BankID. From BankID we receive your name and a pseudonymous identifier, and
+      Where BankID sign-in is offered, it goes through <strong>Idura</strong>, which is part of
+      Stø, the company behind BankID. From BankID we receive your name and a pseudonymous identifier, and
       nothing else that we keep: no email address, and we do not ask for your national identity
       number (fødselsnummer). A BankID is attached to an existing account only when you do it
       yourself while signed in, from your account page. An account that signs in with BankID
@@ -115,17 +128,21 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
     <h2>Source code</h2>
     <p>
-      The source code of Myntos is <strong>publicly available</strong> so that anyone can inspect
-      exactly how the numbers are produced, which matters more for accounting software than for
-      most things. Note that publicly readable is not the same as an open-source licence: the code
-      is source-available under a proprietary licence, not licensed for redistribution.
+      The source code of Myntos is
+      <a href="https://github.com/andreasviner/myntos" rel="noopener"><strong>publicly available</strong></a>
+      so that anyone can inspect exactly how the numbers are produced, which matters more for accounting software than for
+      most things. The code is source-available under the
+      <a href="https://github.com/andreasviner/myntos/blob/main/LICENSE" rel="noopener">Elastic License 2.0</a>: you may read, run, modify and
+      self-host it at no cost and without an agreement with us, but not offer it to others as a
+      hosted service. That is not an open-source licence.
     </p>
 
     <h2>Who operates it</h2>
     <p>
       Myntos is operated by <strong>Lindeman Technologies</strong>, Norway. For questions about the
       service or this page, the contact details are on
-      <a href="/personvern/">the privacy page</a>.
+      <a href="/personvern/">the privacy page</a>. The service is provided without warranty; see
+      <a href="/ansvar/">our disclaimer</a> and <a href="/vilkar/">terms</a>.
     </p>
 
     <p class="card-hint">

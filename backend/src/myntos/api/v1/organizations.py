@@ -80,6 +80,30 @@ async def create_organization(
 
 @router.get("/{organization_id}")
 async def get_organization(membership: CurrentMembership) -> OrganizationResponse:
+    """One account the caller belongs to («organisasjon»): its name, and the caller's role on it.
+
+    The account is what a person signs up for. It owns the companies set up
+    under it and nothing anybody looks at: who may open a set of books, and
+    what the caller may do in them, belong to the company
+    (``GET /api/v1/companies``). This answers what the machinery needs: the
+    id ``POST /api/v1/companies`` takes as ``organization_id``, and whether
+    the caller's role on the account lets them add a company to it
+    (``organization:manage`` in ``permissions``).
+
+    ``name`` is here for support and for scripts, and no page shows it.
+    Signup invents one («Kari Nordmann (privat)», with ``name_is_placeholder``
+    true) until somebody picks another. Never show it beside a company: an
+    account named after one of its companies, printed next to another
+    company's figures, reads as one company's data under another's name,
+    which is the one thing Myntos must never look like
+    (docs/company-isolation.md).
+
+    Every role on the account may read it. 404 ``not_a_member`` for an
+    account the caller is not on, the same answer whether or not it exists.
+    No key may read it (403 ``not_for_agent_keys``): a key works in one
+    company and never sees the account above it (docs/agents-and-api.md
+    rule 3).
+    """
     require_permission(membership.role, Permission.ORGANIZATION_READ)
     return _organization_response(membership)
 
@@ -88,6 +112,19 @@ async def get_organization(membership: CurrentMembership) -> OrganizationRespons
 async def update_organization(
     payload: UpdateOrganizationRequest, membership: CurrentMembership
 ) -> OrganizationResponse:
+    """Rename the account. ``name`` is 1 to 255 characters.
+
+    The name is for the people on the account and for support; no page shows
+    it (``GET /api/v1/organizations/{organization_id}`` says why). Never copy
+    one of its companies' names onto it, for the reason given there.
+    ``name_is_placeholder`` turns false. The ``slug`` stays as it was: it may
+    already be in links, and a rename is not reason enough to break them.
+
+    Owners and administrators of the account (``organization:manage``); 403
+    ``permission_denied`` otherwise. 404 ``not_a_member`` for an account the
+    caller is not on. No key may call it (403 ``not_for_agent_keys``): a key
+    never reaches above its one company.
+    """
     require_permission(membership.role, Permission.ORGANIZATION_MANAGE)
     service.rename_organization(membership.organization, payload.name)
     return _organization_response(membership)

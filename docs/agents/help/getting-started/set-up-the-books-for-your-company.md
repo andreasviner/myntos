@@ -50,16 +50,21 @@ client the same way, and each company's books are separate.
      press «Hent selskapene mine» and log in with ID-porten. Back on the page,
      the card lists the companies they have rights for in Altinn. Press one,
      and the page moves straight to step 2. A company marked «Allerede satt
-     opp» is already in their Myntos and cannot be picked again; one marked
-     «Registrert av en annen» has books set up by somebody else (see the
-     table below).
+     opp» is already in their Myntos and cannot be picked again. One marked
+     «Registrert av en annen» has books somebody else has set up and
+     confirmed: pressing it opens the window «Selskapet er allerede
+     registrert», which asks «Er du sikker på at du vil fortsette?». «Ja»
+     picks it like any other (and confirms it in step 3); «Avbryt» goes back
+     to the list (see the table below).
    - **By number**, under «Skriv inn organisasjonsnummeret» (or «Eller skriv
      inn organisasjonsnummeret selv» when the Altinn list is shown): type the
      nine digits in «Organisasjonsnummer». «Navn på selskapet» fills in from
      Enhetsregisteret, and the line under the number says what the register
      knows, for example the company form, the town, and «ikke
      mva-registrert», «registrert konkurs» or «under avvikling» where that is
-     true. Press «Neste».
+     true. A company the register has deleted shows «slettet fra
+     Enhetsregisteret …»: its books can still be set up, to file the last
+     skattemelding (see Good to know). Press «Neste».
 
 3. **Step 2, «Regnskapet».** A card at the top shows the company they chose,
    with «Bytt selskap» to go back. Under «Litt om regnskapet»:
@@ -95,7 +100,8 @@ client the same way, and each company's books are separate.
 | «organisasjonsnummeret har feil kontrollsiffer» | A digit is wrong; the number cannot exist. | Check it against brreg.no or a letter from the authorities. |
 | A message ending «Du kan skrive navnet selv.» under the number | Enhetsregisteret did not answer or does not know the number. | Type the registered name in «Navn på selskapet» exactly as registered, and continue. |
 | «organisasjonen fører allerede regnskap for …» | This account already has books for that number. | Pick it from the company menu at the top right instead. |
-| «Selskapet har allerede et regnskap registrert hos noen andre. Be en administrator der om tilgang.», with «Opprett nytt regnskap for …» | Somebody else has set up and confirmed books for this company in Myntos. | Usually: ask whoever keeps those books to invite them. Pressing «Opprett nytt regnskap for …» makes a second, separate set of books, which can never be confirmed in Altinn while the other one holds the company. |
+| The window «Selskapet er allerede registrert» | Somebody else has set up and confirmed books for this company in Myntos. Myntos does not say who. | Usually: «Avbryt», and ask whoever keeps those books to invite them. «Ja» makes a second, separate set of books, confirmed too. Both can then file the MVA-melding and the skattemelding for the company, so the two should know about each other. |
+| «Eierskapet er ikke bekreftet. Det kan gjøres senere under «Innstillinger for selskapet».» on «Ferdig» | Somebody confirmed the company elsewhere while they were setting up, and they answered «Avbryt» when asked. | Nothing is wrong with the books. Confirm later if they want: [Confirm the company with ID-porten](https://myntos.no/llms/help/company-and-access/confirm-the-company.md). |
 | «Innloggingen ga ikke høyt nok sikkerhetsnivå. Logg inn med BankID, Buypass eller Commfides i stedet for MinID.» | MinID is not enough for Altinn here. | Press «Hent selskapene mine» again and choose BankID, Buypass or Commfides. |
 | «Innloggingen ble avbrutt.» / «Innloggingen tok for lang tid. Prøv en gang til.» | The ID-porten login was cancelled or took too long. | Try again, or type the number. |
 | «Innloggingen kunne ikke starte. Det er en feil hos oss, ikke hos deg. Vi har fått beskjed.» | A fault on Myntos's side. | Type the number instead. |
@@ -116,6 +122,14 @@ client the same way, and each company's books are separate.
   [Confirm the company](https://myntos.no/llms/help/company-and-access/confirm-the-company.md).
 - **The ID-porten login is not the Myntos login.** It asks Altinn which
   companies the person may act for, and nothing more here.
+- **A deleted company can still be set up**, for the one thing it still owes:
+  the skattemelding for the year it was dissolved. The card in step 2 then
+  says «Selskapet er slettet fra Enhetsregisteret. …», and «Første
+  regnskapsår i Myntos» is filled in with the year it was deleted. Enter the
+  opening balance for that year, post what happened in it, then
+  [End the books when the company is dissolved](https://myntos.no/llms/help/opening-balance-and-year-end/end-the-books-when-the-company-is-dissolved.md)
+  and
+  [File the tax return when the company is dissolved](https://myntos.no/llms/help/tax-return/file-the-tax-return-when-the-company-is-dissolved.md).
 - **A company with history brings it from the old program's SAF-T files**:
   the opening balance, and the vouchers of every year uploaded, earlier years
   included. Years before «Første regnskapsår i Myntos» are added when the files

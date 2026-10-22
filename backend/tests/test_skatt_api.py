@@ -239,6 +239,54 @@ def test_a_replayed_callback_is_refused(client: TestClient, idporten: StubIdPort
     assert replay.headers["location"].endswith("error=innlogging_utlopt")
 
 
+def test_a_login_finished_in_another_browser_stores_nothing(
+    client: TestClient, idporten: StubIdPorten
+) -> None:
+    """The authorize URL is a link anybody can be sent.
+
+    Started by one account and finished by somebody else, it would put the
+    second person's ID-porten login, and with it their companies and their
+    right to file, on the first account.
+    """
+    register(client)
+    state = _start(client)
+    starter = client.cookies.get("myntos_session")
+    client.cookies.clear()
+    register(client, "ola@example.no", full_name="Ola Nordmann")
+
+    response = client.get(
+        f"/api/v1/skatt/idporten/callback?code=auth-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert response.headers["location"].endswith("error=innlogging_annen_nettleser")
+    assert client.get("/api/v1/skatt/status").json()["logged_in"] is False
+    client.cookies.clear()
+    started = client.get("/api/v1/skatt/status", headers={"Authorization": f"Bearer {starter}"})
+    assert started.json()["logged_in"] is False
+
+
+def test_a_login_finished_signed_in_as_somebody_else_stores_nothing(
+    client: TestClient, idporten: StubIdPorten
+) -> None:
+    """The browser that started it, but no longer signed in as the account that did."""
+    register(client)
+    state = _start(client)
+    starter = client.cookies.get("myntos_session")
+    register(client, "ola@example.no", full_name="Ola Nordmann")
+
+    response = client.get(
+        f"/api/v1/skatt/idporten/callback?code=auth-code&state={state}",
+        follow_redirects=False,
+    )
+
+    assert response.headers["location"].endswith("error=innlogging_annen_konto")
+    assert client.get("/api/v1/skatt/status").json()["logged_in"] is False
+    client.cookies.clear()
+    started = client.get("/api/v1/skatt/status", headers={"Authorization": f"Bearer {starter}"})
+    assert started.json()["logged_in"] is False
+
+
 def test_an_unknown_state_is_refused(client: TestClient, idporten: StubIdPorten) -> None:
     """A callback nobody started cannot produce an authorization."""
     register(client)

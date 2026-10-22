@@ -34,8 +34,19 @@ approve them.
 3. Read the card:
    - «Dette kan ikke angres når det er gjort …» marks something final, such as
      posting or issuing an invoice;
+   - «Når du godkjenner, sendes dette til Skatteetaten med din egen
+     ID-porten-innlogging, som om du trykket på knappen selv.» marks a check
+     or a filing with Skatteetaten (««Claude» vil sende skattemeldingen til
+     Skatteetaten»). If they are not logged in with ID-porten, the card shows
+     «Logg inn med ID-porten» instead of «Godkjenn»: they log in, come back
+     to the card, and approve;
+   - «Gjelder» names what the request acts on, read by Myntos from the books:
+     the voucher a reversal reverses («Bilag 2026-0014, 14.03.2026:
+     Kontorrekvisita, 1 250,00 kr»), the invoice it issues, the account it
+     changes. «… finnes ikke i regnskapet» means the record is not there, and
+     the request will be refused;
    - «Agentens forklaring:» is the AI's own sentence about it. It is the AI's
-     claim, so check it against what is actually sent;
+     claim, so check it against «Gjelder» and what is actually sent;
    - the files sent with it (a receipt, say): press a file name to open it;
    - «Det som blir sendt»: open it to see every field the request carries;
    - «Se …» links to the page where the result will show.
@@ -52,6 +63,8 @@ approve them.
 | «Myntos avviste det: …» | The request was carried out and refused by Myntos's own checks | Tell the AI; it can fix it and ask again |
 | «forespørselen ventet for lenge og har gått ut» | Not decided within 14 days | Ask the AI to ask again if still wanted |
 | «nøkkelen som ba om dette er stoppet» | The key was stopped since | Nothing can be approved from a stopped key |
+| «dette sendes til Skatteetaten med din egen ID-porten-innlogging. Logg inn med ID-porten, og godkjenn så igjen.» | The ID-porten login is missing or has expired | Press «Logg inn med ID-porten» on the card, then «Godkjenn». The request still waits |
+| «forespørselen har fått andre filer enn dem du så. Se over den igjen før du godkjenner.» | The AI added a file to the request after the card was shown | The card is shown again with the new file: open it, then press «Godkjenn» again if it is right |
 | «Ingenting venter på godkjenning.» | Nothing waits | The AI may have done it on its own («Selv»), or not asked yet |
 
 ## Good to know
@@ -59,7 +72,9 @@ approve them.
 - Requests expire after 14 days without an answer and are never carried out.
 - A receipt sent with a payment goes into the bilag archive on the new
   voucher when the payment is approved.
-- Requests to file the MVA-melding look different: see
+- Anything an AI wants to send out of Myntos waits here every time, even
+  from a key allowed to post on its own («Selv»).
+- Checks and filings with Skatteetaten, and requests to file them yourself:
   https://myntos.no/llms/help/ai/file-what-an-ai-asks-you-to-file.md.
 
 ## Related

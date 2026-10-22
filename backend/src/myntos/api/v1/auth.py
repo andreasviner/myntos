@@ -35,8 +35,10 @@ from myntos.api.deps import (
     OptionalSession,
     OptionalUser,
     OutgoingMail,
+    bind_flow,
     clear_session_cookie,
     set_session_cookie,
+    started_here,
 )
 from myntos.api.errors import error_code
 from myntos.auth import agent_keys
@@ -358,6 +360,39 @@ async def register(
 async def login(
     payload: LoginRequest, request: Request, response: Response, db: DbSession
 ) -> SessionResponse:
+    """Sign a person in with their e-mail address and password («Logg inn»).
+
+    A person's way into the web app, and only a person's: it opens a session
+    on the whole account, every company the person can open, until it is
+    signed out. An agent or a program does not sign in. It works with a key
+    the person makes for one company and exchanges at
+    ``POST /api/v1/agent/token`` (the myntos-connect skill). That is why this
+    route declares no key scope and reads no ``Authorization`` header at all:
+    a key is never exchanged for a session (docs/agents-and-api.md rule 3).
+
+    The session comes back as the ``myntos_session`` cookie, httpOnly, so no
+    script on the page can read it. ``issue_bearer_token: true`` also returns
+    the token in the body as ``session_token``, for a script or a test that
+    sends ``Authorization: Bearer …`` instead; a browser should never ask for
+    it, for the same reason. The rest of the body is what
+    ``GET /api/v1/auth/me`` answers.
+
+    Refusals, and what to do about each:
+
+    - 401 ``invalid_credentials``: the address is unknown, the password is
+      wrong, or the account has no password (it signs in with Google,
+      Microsoft or BankID). One answer for all three, so the route cannot be
+      used to find out who has an account. Check the address, or reset the
+      password with «Glemt passordet?» on /logg-inn/.
+    - 429 ``account_locked``: too many wrong passwords in a row (ten, for
+      fifteen minutes, by default). The right password is refused too until
+      the lock runs out, because the lock is on the account and not on the
+      guess; a password reset lifts it at once.
+    - 403 ``account_disabled``: the account is deactivated.
+    - 409 ``bankid_account``: the account signs in with BankID and nothing
+      else, so even the right password is not a way in. Sign in with BankID
+      (the browser goes to ``/api/v1/auth/bankid/start``).
+    """
     user = await service.authenticate_with_password(
         db, email=payload.email, password=payload.password
     )
@@ -366,12 +401,46 @@ async def login(
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(session: CurrentSession, response: Response) -> None:
+    """Sign out: end the session this request was made with («Logg ut»).
+
+    Only this one. The person's other sessions go on, and so does every key
+    they made: ending all the others is
+    ``POST /api/v1/account/sessions/revoke-others``, and a key is stopped
+    with ``POST /api/v1/agent/revoke`` or on the Tilgang page. The cookie is
+    cleared in the same answer, 204 with no body.
+
+    Without a live session the answer is 401 with no ``code``. So is a second
+    sign-out with the same session, which is already gone; a client can take
+    either as signed out. A cookie sent from an origin that is not Myntos's
+    own frontend is refused 403 with no ``code``, so another site cannot sign
+    a person out. A key is refused (403 ``not_for_agent_keys``): it has no
+    session to end, and stops itself with ``POST /api/v1/agent/revoke``.
+    """
     revoke_session(session)
     clear_session_cookie(response)
 
 
 @router.get("/me")
 async def me(user: CurrentUser, db: DbSession) -> SessionResponse:
+    """Who is signed in: the person, and the accounts they belong to.
+
+    The web app asks this as a page loads, to know whether anybody is signed
+    in. 401 with no ``code`` means nobody is: the session expired, was signed
+    out, or was never there, and the person signs in again. The body is the
+    one ``POST /api/v1/auth/login`` answers, without ``session_token``, which
+    is only ever handed out at sign-in.
+
+    ``user.has_password`` and ``user.providers`` say which ways in the account
+    has, so a page knows whether to offer changing the password or setting
+    one. ``memberships`` are accounts, not companies: the account that owns
+    companies is shown to nobody and carries no name here on purpose (see
+    ``GET /api/v1/organizations/{organization_id}``). What the person may do
+    in a set of books comes with the books, from ``GET /api/v1/companies``.
+
+    A key is refused (403 ``not_for_agent_keys``): this is a session's
+    question. A key asks ``GET /api/v1/agent/me``, which names its one
+    company, its scopes and its person.
+    """
     return await _session_response(db, user)
 
 
@@ -624,6 +693,11 @@ def _safe_redirect_path(candidate: str | None) -> str | None:
         return None
     if not candidate.startswith("/") or candidate.startswith(("//", "/\\")):
         return None
+    # A browser drops tabs and newlines from a URL and reads a backslash as a
+    # slash, so `/<tab>/evil.example` is `//evil.example` by the time the
+    # frontend follows it. None of our pages has either in its path.
+    if "\\" in candidate or any(ord(char) < 0x20 or ord(char) == 0x7F for char in candidate):
+        return None
     return candidate[:512]
 
 
@@ -667,7 +741,7 @@ async def provider_start(
         owner_id = signed_in.id
 
     try:
-        url = await _begin(
+        url, state = await _begin(
             db,
             client,
             identity_provider,
@@ -681,7 +755,9 @@ async def provider_start(
         logger.exception("could not start a %s sign-in", identity_provider.value)
         return _failed("innlogging_ikke_mulig", _FAILURE_PAGE[intent])
     # 303: the browser must follow this with GET regardless of how it arrived.
-    return RedirectResponse(url, status_code=status.HTTP_303_SEE_OTHER)
+    response = RedirectResponse(url, status_code=status.HTTP_303_SEE_OTHER)
+    bind_flow(response, state, OAUTH_ATTEMPT_LIFETIME)
+    return response
 
 
 async def _begin(
@@ -692,8 +768,11 @@ async def _begin(
     intent: OAuthIntent,
     owner_id: int | None,
     redirect_to: str | None,
-) -> str:
+) -> tuple[str, str]:
     """Park a new attempt and return the provider URL to send the browser to.
+
+    And the attempt's ``state``, which the caller ties to the browser
+    (:func:`myntos.api.deps.bind_flow`) on whatever response it sends.
 
     Raises :class:`OidcError` when the provider's discovery document cannot be
     read; what to answer then depends on whether a browser is being redirected
@@ -714,9 +793,10 @@ async def _begin(
     )
     db.add(attempt)
     await db.flush()
-    return await client.authorization_url(
+    url = await client.authorization_url(
         state=attempt.state, nonce=attempt.nonce, code_challenge=pkce.challenge
     )
+    return url, attempt.state
 
 
 class BankidLinkRequest(BaseModel):
@@ -748,6 +828,7 @@ async def start_bankid_link(
     session: CurrentSession,
     db: DbSession,
     client: BankidClient,
+    response: Response,
 ) -> AuthorizationUrlResponse:
     """Begin switching the signed-in account to BankID, once its owner has proved it.
 
@@ -773,7 +854,7 @@ async def start_bankid_link(
         db, user, password=payload.password, session=session, action="bytte til BankID"
     )
     try:
-        url = await _begin(
+        url, state = await _begin(
             db,
             client,
             IdentityProvider.BANKID,
@@ -789,6 +870,7 @@ async def start_bankid_link(
                 "innloggingen med BankID kunne ikke starte. Det er en feil hos oss, ikke hos deg."
             ),
         ) from error
+    bind_flow(response, state, OAUTH_ATTEMPT_LIFETIME)
     return AuthorizationUrlResponse(authorization_url=url)
 
 
@@ -863,6 +945,11 @@ async def provider_callback(
     attempt.consumed_at = now
     await db.flush()
 
+    # Only in the browser that started it (see bind_flow). Spent all the same:
+    # somebody else has its link, and it is not to be honoured again.
+    if not started_here(request, state):
+        return _failed("innlogging_annen_nettleser", page)
+
     try:
         profile = await client.exchange_code(
             code=code, code_verifier=attempt.code_verifier, nonce=attempt.nonce
@@ -877,7 +964,13 @@ async def provider_callback(
                 db, attempt, identity_provider, profile, signed_in, current, post, background
             )
         if client.asserts_email:
-            user, _created = await service.sign_in_with_provider(db, identity_provider, profile)
+            signed = await service.sign_in_with_provider(db, identity_provider, profile)
+            user = signed.user
+            if signed.reclaimed:
+                # Whoever made the account before its owner confirmed the
+                # address goes now, with everything they could have left behind.
+                await revoke_all_sessions(db, user.id)
+                await agent_keys.stop_keys(db, reason=AgentKeyStop.RECLAIMED, user_id=user.id)
         else:
             linked = await service.sign_in_with_linked_identity(
                 db, identity_provider, profile.subject

@@ -3,8 +3,9 @@
  *
  * The rules here decide which questions stay on screen and what goes back to
  * the model, and each one is a way of being asked twice if it is wrong: an
- * answer that does not hide its question, an edit taken for an answer, an
- * answer about the other direction sent after the person turned it around.
+ * answer that does not hide its question, a question passed over that comes
+ * back, an answer about the other direction sent after the person turned it
+ * around.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -13,9 +14,11 @@ import type { SuggestionQuestion } from './api';
 import {
   MAX_ANSWERS,
   afterDirectionChange,
-  answeredByText,
+  countLabel,
   howToAnswer,
+  nextLabel,
   remember,
+  stillOpen,
   unanswered,
 } from './questions';
 
@@ -38,9 +41,9 @@ describe('howToAnswer', () => {
     expect(howToAnswer(question('belop'))).toBe('amount');
   });
 
-  it('answers anything else in the description', () => {
-    expect(howToAnswer(question('ki'))).toBe('description');
-    expect(howToAnswer(question('kategori'))).toBe('description');
+  it('answers anything else in words of their own', () => {
+    expect(howToAnswer(question('ki'))).toBe('text');
+    expect(howToAnswer(question('kategori'))).toBe('text');
   });
 });
 
@@ -85,25 +88,41 @@ describe('unanswered', () => {
   });
 });
 
-describe('answeredByText', () => {
-  it('answers the open questions with the sentence written', () => {
-    const answers = answeredByText(
-      [question('ki'), question('driftsmiddel', ['Én', 'Flere']), question('belop')],
-      '  Skjermkort til kontoret, betalt med eget kort ',
-    );
-    expect(answers).toEqual([
-      { key: 'ki', question: 'Spørsmål ki?', answer: 'Skjermkort til kontoret, betalt med eget kort' },
-    ]);
+describe('stillOpen', () => {
+  const both = [question('kategori'), question('ki')];
+
+  it('leaves out what was answered and what was passed over', () => {
+    const answers = [{ key: 'kategori', question: 'A', answer: 'Skjermkort' }];
+    expect(stillOpen(both, answers, new Set()).map((open) => open.key)).toEqual(['ki']);
+    expect(stillOpen(both, [], new Set(['ki'])).map((open) => open.key)).toEqual(['kategori']);
+    expect(stillOpen(both, answers, new Set(['ki']))).toEqual([]);
+  });
+});
+
+describe('countLabel', () => {
+  it('counts the questions of the round', () => {
+    expect(countLabel(0, 0, 2)).toBe('Spørsmål 1 av 2');
+    expect(countLabel(0, 1, 2)).toBe('Spørsmål 2 av 2');
   });
 
-  it('is not an answer to a question with buttons', () => {
-    expect(answeredByText([question('innbetaling', ['Innskudd fra eier'])], 'Retter et ord')).toEqual(
-      [],
-    );
+  it('goes on counting when a later proposal adds a question', () => {
+    expect(countLabel(2, 0, 1)).toBe('Spørsmål 3 av 3');
   });
 
-  it('is no answer when the box is empty', () => {
-    expect(answeredByText([question('ki')], '   ')).toEqual([]);
+  it('does not count a lone question', () => {
+    expect(countLabel(0, 0, 1)).toBe('Spørsmål');
+  });
+});
+
+describe('nextLabel', () => {
+  it('says «Neste» while more questions follow', () => {
+    expect(nextLabel(0, 2, true)).toBe('Neste');
+    expect(nextLabel(0, 2, false)).toBe('Neste');
+  });
+
+  it('sends on the last, unless nothing goes to the model', () => {
+    expect(nextLabel(1, 2, true)).toBe('Send svar');
+    expect(nextLabel(0, 1, false)).toBe('Ferdig');
   });
 });
 

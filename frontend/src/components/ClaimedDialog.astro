@@ -1,0 +1,59 @@
+---
+---
+
+{/* Vinduet som spør før et selskap bekreftes når noen andre allerede har gjort det.
+
+    Flere regnskap kan bekrefte samme organisasjonsnummer, men aldri uten at
+    den som bekrefter har fått vite om det første: begge kan sende
+    mva-meldingen og skattemeldingen for selskapet. Det andre regnskapet
+    navngis ikke, fordi den som spør ikke er medlem der.
+
+    <form method="dialog">: knappen som trykkes lukker vinduet og blir
+    returnValue, og Escape lukker med tom verdi, som betyr det samme som
+    «Avbryt». Fokus starter på «Avbryt», så Enter alene ikke sier ja.
+    Skriptet er lib/ownership.ts. */}
+
+<dialog class="likevel" id="likevel-dialog" aria-labelledby="likevel-tittel">
+  <h3 id="likevel-tittel">Selskapet er allerede registrert</h3>
+  <p class="likevel-tekst">
+    <span id="likevel-navn">Selskapet</span> er allerede registrert og bekreftet i et annet
+    regnskap i Myntos. Er du sikker på at du vil fortsette?
+  </p>
+  <p class="card-hint">
+    Da blir også dette regnskapet bekreftet, og begge kan sende mva-meldingen og skattemeldingen
+    for selskapet. Vil du heller føre i det som finnes, ber du en administrator der om tilgang.
+  </p>
+  <form method="dialog" class="likevel-knapper">
+    <button type="submit" class="btn btn-primary" value="ja">Ja</button>
+    <button type="submit" class="btn btn-ghost" value="avbryt" autofocus>Avbryt</button>
+  </form>
+</dialog>
+
+<style>
+  /* Smalere enn vinduet «Inviter en KI»: et spørsmål, ikke et skjema. */
+  .likevel {
+    width: min(30rem, calc(100vw - 2rem));
+    max-height: calc(100vh - 2rem);
+    padding: 1.4rem 1.5rem 1.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: inherit;
+    overflow-y: auto;
+  }
+  .likevel::backdrop {
+    background: rgb(0 0 0 / 0.45);
+  }
+  .likevel h3 {
+    margin: 0 0 0.6rem;
+  }
+  .likevel-tekst {
+    margin: 0 0 0.6rem;
+  }
+  .likevel-knapper {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin-top: 1.1rem;
+  }
+</style>

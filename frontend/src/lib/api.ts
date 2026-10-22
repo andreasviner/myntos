@@ -15,6 +15,7 @@
  * `lib/tenant.ts` for what it is defending against.
  */
 
+import type { FeedbackKind, FeedbackStatus } from './feedback';
 import { activeCompanyId } from './tenant';
 
 const configured = import.meta.env.PUBLIC_API_BASE_URL;
@@ -661,6 +662,13 @@ export interface Company {
    */
   plan: string;
   /**
+   * The last day of the books when the company has been dissolved (oppløst),
+   * as an ISO date; null while it is in business. Nothing may be posted after
+   * it, and its year's skattemelding is a forhåndsfastsetting. Set on
+   * /arsavslutning/ (`windUp`).
+   */
+  wound_up_on?: string | null;
+  /**
    * What *this* caller may do with *these* books.
    *
    * Access is a row per person per company, so the role travels with the
@@ -788,16 +796,20 @@ export const deleteBankAccount = (companyId: number, bankAccountId: number): Pro
  * - **409, no code** — no usable government login. Offer the ID-porten button.
  * - **403 `not_authorized_for_party`** — Altinn does not list this orgnr for
  *   this person. Rights are granted in Altinn, not here.
- * - **409 `company_already_claimed`** — another organization confirmed this
- *   orgnr first. Show the message and the way out: ask an administrator there,
- *   or keep these books unconfirmed.
+ * - **409 `company_already_claimed`** — another account confirmed this orgnr
+ *   first. Ask the person whether to go on, and call again with `evenIfClaimed`
+ *   if they say yes. `confirmOwnership` in `lib/ownership.ts` does both; go
+ *   through it rather than calling this directly.
+ *
+ * `evenIfClaimed` is the person's yes to that question, and is only ever sent
+ * after they have been asked.
  */
-export const verifyCompany = (companyId: number): Promise<Company> =>
-  request<Company>(`/api/v1/companies/${companyId}/bekreft`, {
-    method: 'POST',
-  });
+export const verifyCompany = (companyId: number, evenIfClaimed = false): Promise<Company> =>
+  evenIfClaimed
+    ? json<Company>(`/api/v1/companies/${companyId}/bekreft`, 'POST', { even_if_claimed: true })
+    : request<Company>(`/api/v1/companies/${companyId}/bekreft`, { method: 'POST' });
 
-/** The code a 409 from `verifyCompany` carries when somebody claimed it first. */
+/** The code a 409 from `verifyCompany` carries when somebody confirmed it first. */
 export const ALREADY_CLAIMED = 'company_already_claimed';
 
 /** The code a 409 from `updateCompany` carries when the orgnr is settled. */
@@ -857,6 +869,12 @@ export interface RegisteredUnit {
   registered_in_vat_register_on: string | null;
   /** The last annual accounts the register has received, as a year. */
   last_submitted_annual_accounts: string | null;
+  /**
+   * The day the register deleted the unit, as an ISO date; null for a live one.
+   * A deleted unit carries little more than its name and form, and is shown as
+   * deleted («slettet») wherever «konkurs» would be.
+   */
+  deleted_on?: string | null;
   /** Set on a subunit: the main unit it belongs to, and where its roles live. */
   parent_orgnr: string | null;
   in_group: boolean;
@@ -1046,7 +1064,7 @@ export interface AuthorizedParty {
   roles: string[];
   /**
    * True when another organization has already confirmed ownership of this
-   * orgnr, so confirming it here would be refused.
+   * orgnr, so confirming it here asks «Er du sikker?» first.
    *
    * Said next to the choice rather than after a failed save. Which organization
    * holds the claim is deliberately not disclosed: the caller is not a member
@@ -1281,16 +1299,35 @@ export interface Approval {
   scope: string;
   /** The end of «<nøkkel> vil …», in bokmål: «føre en betaling». */
   label: string;
+  /**
+   * Running it sends something out of Myntos (to Skatteetaten, so far). Such a
+   * request waits for its person even from a key that may post on its own.
+   */
+  sends_out: boolean;
+  /**
+   * It goes with the person's own ID-porten login, which they must hold when
+   * they approve: 409 `id_porten_login_required` until they do.
+   */
+  needs_id_porten: boolean;
   /** The agent's own words about it. The agent's claim, not Myntos's. */
   note: string | null;
+  /**
+   * What it acts on, one line per record its path names, written by Myntos
+   * from the books («Bilag 2026-0014, 14.03.2026: …»). Filled while it waits.
+   */
+  target: string[];
   method: string;
   path: string;
   query: string;
   body: unknown;
   form: Record<string, string[]> | null;
   files: ApprovalFile[];
-  /** `naering` names the second melding of a company that files two; null is the main one. */
-  filing: { type: string; aar: number; termin: number; naering: string | null } | null;
+  /**
+   * `type` is `mva_melding` or `skattemelding`. `termin` is the MVA termin and
+   * null for the yearly skattemelding; `naering` names the second melding of a
+   * company that files two, and null is the main one.
+   */
+  filing: { type: string; aar: number; termin: number | null; naering: string | null } | null;
   key_id: number;
   key_name: string;
   person_name: string;
@@ -1311,10 +1348,20 @@ export const listApprovals = (
 ): Promise<Approval[]> =>
   request<Approval[]>(`/api/v1/companies/${companyId}/godkjenninger?status=${status}`);
 
-/** Approve and run it now, as the key. Only the key's own person may. */
-export const approveRequest = (companyId: number, approvalId: number): Promise<Approval> =>
-  request<Approval>(`/api/v1/companies/${companyId}/godkjenninger/${approvalId}/godkjenn`, {
-    method: 'POST',
+/**
+ * Approve and run it now, as the key. Only the key's own person may.
+ *
+ * `files` is every file the card showed. A key can add one while the card is
+ * open, and the yes covers what was on the screen: a request that has another
+ * set by then is refused with 409 `approval_changed` and still waits.
+ */
+export const approveRequest = (
+  companyId: number,
+  approvalId: number,
+  files: number[],
+): Promise<Approval> =>
+  json<Approval>(`/api/v1/companies/${companyId}/godkjenninger/${approvalId}/godkjenn`, 'POST', {
+    files,
   });
 
 /** Decline it, with a reason the agent can read. */
@@ -1349,11 +1396,27 @@ export const fetchApprovalFile = async (
   }
   try {
     const response = await fetch(`${API_BASE_URL}${path}`, { credentials: 'include' });
-    return response.ok ? await response.blob() : null;
+    if (!response.ok) return null;
+    // The page opens this blob in a new tab, and a blob URL is our origin: an
+    // HTML file opened there runs as myntos.no in the person's session. The
+    // file came from a key, so only a type that cannot carry a script is kept;
+    // anything else becomes bytes the browser downloads instead of showing.
+    const type = (response.headers.get('Content-Type') ?? '').split(';')[0].trim().toLowerCase();
+    const shown = VIEWABLE_FILE_TYPES.has(type) ? type : 'application/octet-stream';
+    return new Blob([await response.blob()], { type: shown });
   } catch {
     return null;
   }
 };
+
+const VIEWABLE_FILE_TYPES = new Set([
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/heic',
+]);
 
 // --- Customers and suppliers -------------------------------------------------------
 
@@ -2749,6 +2812,221 @@ export const mvaFiledXmlUrl = (companyId: number, filingId: number): string =>
 export const mvaDocumentUrl = (companyId: number, filingId: number, dataType: string): string =>
   `${API_BASE_URL}/api/v1/companies/${companyId}/mva/innsendinger/${filingId}/dokument?type=${encodeURIComponent(dataType)}`;
 
+// --- Skattemelding ---------------------------------------------------------------
+//
+// An aksjeselskap's skattemelding and næringsspesifikasjon for one income year,
+// built from a closed year's books. Checked with Skatteetaten on the person's
+// ID-porten login, then sent, as the MVA-melding is. See
+// backend/src/myntos/api/v1/skattemelding.py.
+
+/** `feil` stops the check; `merknad` is for reading. */
+export interface SkattemeldingFinding {
+  severity: 'feil' | 'merknad';
+  code: string;
+  message: string;
+}
+
+export interface SkattemeldingPost {
+  category: string;
+  code: string;
+  name: string;
+  /** As sent: the books' own side, turned round where Skatteetaten subtracts. */
+  amount: string;
+  subtracted: boolean;
+  accounts: string[];
+}
+
+export interface SkattemeldingSaldo {
+  key: string;
+  saldogruppe: string;
+  label: string;
+  opening: string;
+  additions: string;
+  grants: string;
+  disposals: string;
+  basis: string;
+  depreciation: string;
+  income: string;
+  closing: string;
+  /** What is sent: the depreciation as a percentage of the basis. */
+  rate_percent: string;
+}
+
+export interface SkattemeldingDifference {
+  type: string;
+  name: string;
+  amount: string;
+  /** Added to the result (tillegg), or taken from it. */
+  adds: boolean;
+}
+
+export type SkattemeldingStatus =
+  | 'validert'
+  | 'avvist'
+  | 'sendt'
+  | 'hos_revisor'
+  | 'mottatt'
+  | 'feilet';
+
+export interface SkattemeldingAvvik {
+  stage: string;
+  type: string;
+  path: string | null;
+  received: string | null;
+  computed: string | null;
+}
+
+export interface SkattemeldingVeiledning {
+  type: string;
+  text: string | null;
+  strategy: string | null;
+  path: string | null;
+  /** `faktiskFeil`: what stops it. The rest is advice. */
+  is_error: boolean;
+}
+
+export interface SkattemeldingFiling {
+  id: number;
+  company_id: number;
+  year: number;
+  status: SkattemeldingStatus;
+  validation_status: string;
+  validated_at: string;
+  aarsresultat: string;
+  skattemessig_resultat: string;
+  /** What Skatteetaten computed, in whole kroner. */
+  beregnet_skatt: string | null;
+  has_auditor: boolean;
+  ytelser_til_aksjonaerer: boolean;
+  /** Filed early, because the company was wound up in the year. */
+  forhaandsfastsetting?: boolean;
+  /** What the person stated the shareholders were paid, in whole kroner. */
+  likvidasjonsvederlag?: number | null;
+  findings: SkattemeldingFinding[];
+  avvik: SkattemeldingAvvik[];
+  veiledninger: SkattemeldingVeiledning[];
+  reasons: string[];
+  /** On the year: whether the books still build what was checked. */
+  matches_books: boolean | null;
+  altinn_instance_id: string | null;
+  /** Skatteetaten's own view of the instance, where a revisor confirms. */
+  viewer_url: string | null;
+  submitted_at: string | null;
+  submitted_by_name: string | null;
+  outcome: string | null;
+  outcome_text: string | null;
+  feedback_received_at: string | null;
+  error: string | null;
+  documents: { data_type: string; filename: string; content_type: string; byte_size: number }[];
+}
+
+export interface SkattemeldingYear {
+  company_id: number;
+  year: number;
+  supported_years: number[];
+  organisation_form: string | null;
+  year_closed: boolean;
+  /** The year's last day: 31 December, or a wound-up company's last day. */
+  last_day: string;
+  is_over: boolean;
+  /**
+   * The wound-up company's last year, filed early as a forhåndsfastsetting,
+   * with the payout to the shareholders the books suggest.
+   */
+  forhaandsfastsetting: boolean;
+  likvidasjonsvederlag_forslag: string | null;
+  /** The register has deleted the company and no longer lists its roles. */
+  revisor_unknown: boolean;
+  submission_available: boolean;
+  regnskapsplikt: string;
+  rules: string | null;
+  /** null: Myntos has no answer from Enhetsregisteret for the company. */
+  has_auditor: boolean | null;
+  auditor_name: string | null;
+  posts: SkattemeldingPost[];
+  saldi: SkattemeldingSaldo[];
+  permanent_differences: SkattemeldingDifference[];
+  equity_opening: string;
+  equity_changes: SkattemeldingDifference[];
+  equity_closing: string;
+  aarsresultat: string;
+  tillegg: string;
+  fradrag: string;
+  skattemessig_resultat: string;
+  /** Whole kroner. */
+  formue: { with_discount: number; without_discount: number; debt: number };
+  findings: SkattemeldingFinding[];
+  blocked: boolean;
+  /** Newest first. */
+  filings: SkattemeldingFiling[];
+}
+
+/** The year as the books have it now, or last year when `year` is left out. */
+export const getSkattemeldingYear = (companyId: number, year?: number): Promise<SkattemeldingYear> =>
+  request<SkattemeldingYear>(
+    `/api/v1/companies/${companyId}/skattemelding${year === undefined ? '' : `?aar=${year}`}`,
+  );
+
+/** What only the person can say about a wound-up or deleted company. */
+export interface FinalYearAnswers {
+  /** The last year only (`forhaandsfastsetting`): paid to the shareholders in all, whole kroner. */
+  likvidasjonsvederlag?: number;
+  /** Only for a company the register has deleted (`revisor_unknown`). */
+  revisor?: boolean;
+}
+
+/**
+ * Have Skatteetaten check the year. Files nothing.
+ *
+ * Needs the ID-porten login; rejects with 409 when there is none, and with
+ * `skattemelding_not_ready` while the year's review has a feil. For a
+ * wound-up company's last year it also needs `finalYear`, and may reject
+ * with `skattemelding_not_available` while Skatteetaten prepares the melding.
+ */
+export const checkSkattemelding = (
+  companyId: number,
+  year: number,
+  ytelserTilAksjonaerer: boolean,
+  finalYear?: FinalYearAnswers,
+): Promise<SkattemeldingFiling> =>
+  json<SkattemeldingFiling>(`/api/v1/companies/${companyId}/skattemelding/kontroll`, 'POST', {
+    aar: year,
+    ytelser_til_aksjonaerer: ytelserTilAksjonaerer,
+    ...(finalYear ?? {}),
+  });
+
+/**
+ * Irreversible: files the checked skattemelding through Altinn.
+ *
+ * `skattemessigResultat` is the figure the person confirmed. The backend
+ * refuses unless it is exactly the checked one, and refuses
+ * (`skattemelding_changed`) if the books have moved since the check.
+ */
+export const submitSkattemelding = (
+  companyId: number,
+  filingId: number,
+  skattemessigResultat: string,
+): Promise<SkattemeldingFiling> =>
+  json<SkattemeldingFiling>(
+    `/api/v1/companies/${companyId}/skattemelding/innsendinger/${filingId}/send`,
+    'POST',
+    { skattemessig_resultat: skattemessigResultat, bekreftet: true },
+  );
+
+/** Fetch Skatteetaten's answer once it has processed the melding. */
+export const fetchSkattemeldingAnswer = (
+  companyId: number,
+  filingId: number,
+): Promise<SkattemeldingFiling> =>
+  request<SkattemeldingFiling>(
+    `/api/v1/companies/${companyId}/skattemelding/innsendinger/${filingId}/tilbakemelding`,
+    { method: 'POST' },
+  );
+
+/** `naeringsspesifikasjon`, `skattemelding`, `forespoersel`, `validering`, or a stored document's type. */
+export const skattemeldingDocumentUrl = (companyId: number, filingId: number, type: string): string =>
+  `${API_BASE_URL}/api/v1/companies/${companyId}/skattemelding/innsendinger/${filingId}/dokument?type=${encodeURIComponent(type)}`;
+
 // --- SAF-T ----------------------------------------------------------------------
 
 export type SaftVersion = '1.30' | '1.40';
@@ -3255,11 +3533,6 @@ const importPath = (companyId: number): string => `${saftPath(companyId)}/innles
 
 /**
  * Uploads SAF-T files to be read on the server, reporting how much has gone up.
- *
- * XMLHttpRequest rather than `request`, because fetch cannot say how far an
- * upload has come, and a year of vouchers is a long upload on a farm's line:
- * a bar that does not move reads as a page that froze. The company wall is the
- * same as `request`'s, checked before sending and on the answer.
  */
 export function uploadSaftFiles(
   companyId: number,
@@ -3267,7 +3540,27 @@ export function uploadSaftFiles(
   options: { til?: string | null; compare?: boolean },
   onProgress: (sent: number, total: number) => void,
 ): Promise<SaftImport> {
-  const path = importPath(companyId);
+  const form = new FormData();
+  for (const file of files) form.append('files', file);
+  if (options.til) form.append('til', options.til);
+  if (options.compare) form.append('sammenlign', 'true');
+  return uploadWithProgress<SaftImport>(companyId, importPath(companyId), form, onProgress);
+}
+
+/**
+ * Posts `form` to `path`, reporting how much has gone up.
+ *
+ * XMLHttpRequest rather than `request`, because fetch cannot say how far an
+ * upload has come, and a year of vouchers is a long upload on a farm's line:
+ * a bar that does not move reads as a page that froze. The company wall is the
+ * same as `request`'s, checked before sending and on the answer.
+ */
+function uploadWithProgress<T>(
+  companyId: number,
+  path: string,
+  form: FormData,
+  onProgress: (sent: number, total: number) => void,
+): Promise<T> {
   const active = activeCompanyId();
   if (active !== null && active !== companyId) {
     return Promise.reject(
@@ -3278,10 +3571,6 @@ export function uploadSaftFiles(
       ),
     );
   }
-  const form = new FormData();
-  for (const file of files) form.append('files', file);
-  if (options.til) form.append('til', options.til);
-  if (options.compare) form.append('sammenlign', 'true');
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', `${API_BASE_URL}${path}`);
@@ -3313,7 +3602,7 @@ export function uploadSaftFiles(
         reject(error);
         return;
       }
-      resolve(body as SaftImport);
+      resolve(body as T);
     });
     xhr.send(form);
   });
@@ -3331,6 +3620,105 @@ export const postSaftImport = (companyId: number, importId: number): Promise<Saf
 
 export const discardSaftImport = (companyId: number, importId: number): Promise<void> =>
   request<void>(`${importPath(companyId)}/${importId}`, { method: 'DELETE' });
+
+// --- The documents behind the vouchers, from the old program's printout ---------------
+//
+// The same upload, read, review and yes as the SAF-T files, on the same kind
+// of record: see backend/src/myntos/saft/documents.py for how a document finds
+// its voucher.
+
+export type DocumentAction =
+  | 'attach'
+  | 'already_attached'
+  | 'no_attachments'
+  | 'not_in_books'
+  | 'too_large'
+  | 'repeated';
+
+export interface PrintedVoucher {
+  /** Tripletex's number, «240-2026». */
+  number: string;
+  file_name: string;
+  first_page: number;
+  pages: number;
+  /** The pages after Tripletex's own: the receipts and invoices. */
+  attachment_pages: number;
+  printed_on: string | null;
+  action: DocumentAction;
+  sha256: string | null;
+  byte_size: number | null;
+  printed_debit: string | null;
+  booked_debit: string | null;
+  /** The vouchers in Myntos it goes on: more than one when the import split it by date. */
+  targets: { voucher_id: number; voucher_no: string; already: boolean }[];
+}
+
+export interface DocumentReview {
+  kind: 'vedlegg';
+  postable: boolean;
+  software: string;
+  files: { file_name: string; pages: number; vouchers: number; loose_pages: number }[];
+  vouchers_in_files: number;
+  to_attach: number;
+  /** How many files go into the archive: one per voucher in Myntos. */
+  documents: number;
+  already_attached: number;
+  no_attachments: number;
+  not_in_books: number;
+  too_large: number;
+  repeated: number;
+  vouchers: PrintedVoucher[];
+  findings: SaftImportFinding[];
+}
+
+export interface DocumentImport {
+  company_id: number;
+  id: number;
+  status: SaftImportStatus;
+  created_at: string;
+  updated_at: string;
+  posted_at: string | null;
+  step: string | null;
+  done: number;
+  total: number;
+  running: boolean;
+  files_kept: boolean;
+  files: { filename: string; size: number }[];
+  review: DocumentReview | null;
+  result: DocumentReview | null;
+  error: string | null;
+  error_code: string | null;
+  may_post: boolean;
+}
+
+const documentsPath = (companyId: number): string => `${saftPath(companyId)}/vedlegg`;
+
+/** Uploads the old program's printouts to be read on the server, reporting how much has gone up. */
+export function uploadPrintouts(
+  companyId: number,
+  files: File[],
+  onProgress: (sent: number, total: number) => void,
+): Promise<DocumentImport> {
+  const form = new FormData();
+  for (const file of files) form.append('files', file);
+  return uploadWithProgress<DocumentImport>(companyId, documentsPath(companyId), form, onProgress);
+}
+
+export const listDocumentImports = (companyId: number): Promise<DocumentImport[]> =>
+  request<DocumentImport[]>(documentsPath(companyId));
+
+export const getDocumentImport = (companyId: number, importId: number): Promise<DocumentImport> =>
+  request<DocumentImport>(`${documentsPath(companyId)}/${importId}`);
+
+/** Starts putting the documents in the bilag archive. The server does it; poll the upload. */
+export const archiveDocumentImport = (
+  companyId: number,
+  importId: number,
+): Promise<DocumentImport> =>
+  request<DocumentImport>(`${documentsPath(companyId)}/${importId}/arkivering`, { method: 'POST' });
+
+export const discardDocumentImport = (companyId: number, importId: number): Promise<void> =>
+  request<void>(`${documentsPath(companyId)}/${importId}`, { method: 'DELETE' });
 
 // --- The bilagsjournal ----------------------------------------------------------------
 
@@ -3362,6 +3750,15 @@ export interface Voucher {
   /** With an account asked about: the voucher's movement on it, debit positive. */
   movement: string | null;
   balance: string | null;
+  /** The files the bilag archive holds for it, each downloaded with `documentUrl`. */
+  documents: VoucherDocument[];
+}
+
+export interface VoucherDocument {
+  id: number;
+  filename: string;
+  content_type: string;
+  byte_size: number;
 }
 
 export interface VoucherPage {
@@ -3384,6 +3781,10 @@ export interface VoucherFilter {
   journal?: string | null;
   account?: string | null;
   search?: string | null;
+  /** Only vouchers with a document in the bilag archive. */
+  withDocuments?: boolean;
+  /** The newest first; the API's default is the oldest first. */
+  newestFirst?: boolean;
   offset?: number;
 }
 
@@ -3393,6 +3794,8 @@ export function listVouchers(companyId: number, filter: VoucherFilter): Promise<
   if (filter.journal) query.set('journal', filter.journal);
   if (filter.account) query.set('konto', filter.account);
   if (filter.search) query.set('sok', filter.search);
+  if (filter.withDocuments) query.set('med_dokument', 'true');
+  if (filter.newestFirst) query.set('rekkefolge', 'nyeste');
   if (filter.offset) query.set('fra', String(filter.offset));
   return request<VoucherPage>(`/api/v1/companies/${companyId}/bilag?${query.toString()}`);
 }
@@ -3409,7 +3812,8 @@ export const reverseOpening = (companyId: number): Promise<PostedYearVoucher> =>
   request<PostedYearVoucher>(`${openingPath(companyId)}/reversering`, { method: 'POST' });
 
 export interface YearEvent {
-  action: 'avsluttet' | 'gjenapnet';
+  /** `opplost`: the books ended early at the dissolution; `opplost_angret`: undone. */
+  action: 'avsluttet' | 'gjenapnet' | 'opplost' | 'opplost_angret';
   occurred_at: string;
   user_id: number | null;
   reason: string | null;
@@ -3474,6 +3878,31 @@ export const reopenYear = (
   reason: string,
 ): Promise<{ company_id: number; year: number; reversals: PostedYearVoucher[] }> =>
   json(`${closingPath(companyId)}/gjenapning`, 'POST', { aar: year, begrunnelse: reason, bekreftet: true });
+
+/** Where a company's books stand at the dissolution. */
+export interface WindingUp {
+  company_id: number;
+  /** The last day of the books, or null while the company is in business. */
+  last_day: string | null;
+  year: number | null;
+  year_closed: boolean;
+}
+
+/**
+ * End the books on a dissolved company's last day (an ISO date). The year then
+ * ends there, nothing can be posted after it, and its skattemelding is a
+ * forhåndsfastsetting. Refused with `winding_up_conflict` when anything is
+ * dated after the day, and `invalid_winding_up_date` for a day in the future.
+ */
+export const windUp = (companyId: number, lastDay: string): Promise<WindingUp> =>
+  json<WindingUp>(`${closingPath(companyId)}/opplosning`, 'POST', {
+    siste_dag: lastDay,
+    bekreftet: true,
+  });
+
+/** Let the last year run to 31 December again, while it is open. */
+export const undoWindUp = (companyId: number): Promise<WindingUp> =>
+  request<WindingUp>(`${closingPath(companyId)}/opplosning/angre`, { method: 'POST' });
 
 // --- Manuelt bilag ----------------------------------------------------------------
 //
@@ -4331,3 +4760,62 @@ export const postDepreciation = (
 
 export const reverseDepreciation = (companyId: number, year: number): Promise<PostedYearVoucher> =>
   json<PostedYearVoucher>(`${anleggPath(companyId)}/avskrivning/reversering`, 'POST', { aar: year });
+
+// --- Tilbakemelding: feedback from anybody, kept without a name --------------------
+//
+// Public routes that ask nobody who is calling (docs/feedback.md). The cookie
+// goes along like on every request and is not read; the reference in the
+// answer is the only way back to the item, so the page shows it once and
+// leaves keeping it to the person.
+
+export interface FeedbackSent {
+  /** Shown this once and never again: only its digest is stored. */
+  reference: string;
+  number: number;
+  status: FeedbackStatus;
+  created_at: string;
+  /** /tilbakemelding/#ref=…, where the person follows it. */
+  url: string;
+}
+
+export interface FeedbackItem {
+  number: number;
+  kind: FeedbackKind;
+  source: 'person' | 'agent';
+  text: string;
+  page: string | null;
+  status: FeedbackStatus;
+  reply: string | null;
+  published: boolean;
+  created_at: string;
+  changed_at: string | null;
+}
+
+/** On the public list: the operator's own words, never the sender's. */
+export interface PublishedFeedback {
+  number: number;
+  kind: FeedbackKind;
+  summary: string;
+  status: FeedbackStatus;
+  reply: string | null;
+  received_on: string;
+  changed_at: string | null;
+}
+
+const FEEDBACK = '/api/v1/tilbakemeldinger';
+
+/** `source` stays the API's default, `person`: whoever presses the button on the page is one. */
+export const sendFeedback = (fields: {
+  kind: FeedbackKind;
+  text: string;
+  page: string | null;
+}): Promise<FeedbackSent> => json<FeedbackSent>(FEEDBACK, 'POST', fields);
+
+export const getFeedback = (reference: string): Promise<FeedbackItem> =>
+  request<FeedbackItem>(`${FEEDBACK}/${encodeURIComponent(reference)}`);
+
+export const withdrawFeedback = (reference: string): Promise<void> =>
+  request<void>(`${FEEDBACK}/${encodeURIComponent(reference)}`, { method: 'DELETE' });
+
+export const listPublishedFeedback = (): Promise<PublishedFeedback[]> =>
+  request<PublishedFeedback[]>(FEEDBACK);

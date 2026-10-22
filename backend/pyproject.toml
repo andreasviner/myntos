@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Myntos backend — Norwegian accounting with Skatteetaten integrations (skattemelding, MVA-melding, SAF-T)"
 readme = "README.md"
 requires-python = ">=3.12"
-license = "LicenseRef-Proprietary"
+license = "Elastic-2.0"
 authors = [{ name = "Andreas Lindeman", email = "andreas.e.lindeman@gmail.com" }]
 dependencies = [
     "fastapi>=0.115",
@@ -17,8 +17,10 @@ dependencies = [
     "asyncpg>=0.29",
     "alembic>=1.13",
     "httpx>=0.27",
-    # RS256 signing of Maskinporten JWT grants; also verifies Google ID tokens
-    "pyjwt[crypto]>=2.9",
+    # RS256 signing of Maskinporten JWT grants; also verifies Google ID tokens.
+    # The floors below are the releases that fixed advisories reachable here:
+    # login tokens for pyjwt, an uploaded bilag for pypdf and Pillow.
+    "pyjwt[crypto]>=2.15.1",
     # Argon2id password hashing for application accounts
     "argon2-cffi>=23.1",
     # Multipart form parsing — required by FastAPI for the bilag PDF upload
@@ -26,12 +28,12 @@ dependencies = [
     # Reads the text layer of an uploaded faktura so the entry form can fill
     # itself in. Pure Python on purpose: the bytes come from a user, and a native
     # PDF parser is a much larger thing to trust with them.
-    "pypdf>=5.1",
+    "pypdf>=6.21.1",
     # Thumbnails of photographed bilag, and the JPEG a HEIC photo is read as.
     # Native decoders handed user bytes, which is why they only ever run in a
     # short-lived child process with a memory ceiling and a timeout: see
     # myntos.domain.bilag.derived. Pillow is MIT-CMU.
-    "pillow>=12.3.0",
+    "pillow>=13.0.0",
     # HEIC is what an iPhone camera saves. pi-heif rather than pillow-heif: the
     # same binding (BSD-3) without the encoder, so the wheel bundles libheif and
     # libde265 (LGPL-3.0, loaded dynamically) and not x265, which is GPL. We only

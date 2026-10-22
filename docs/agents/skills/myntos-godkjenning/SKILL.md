@@ -1,6 +1,6 @@
 ---
 name: myntos-godkjenning
-description: Follow up requests that wait for the person's approval in Myntos (HTTP 202 approval_pending), attach a receipt to a payment that waits, withdraw a request, and ask the person to file the MVA-melding (VAT return). Use whenever a Myntos call answers 202, when the person asks what is waiting for them, or when a VAT return is ready to be filed.
+description: Follow up requests that wait for the person's approval in Myntos (HTTP 202 approval_pending), attach a receipt to a payment that waits, withdraw a request, and know that whatever is sent out of Myntos (a check or a filing with Skatteetaten) always waits for the person; ask the person to file when the key may not post. Use whenever a Myntos call answers 202, when the person asks what is waiting for them, or when a VAT return or tax return is ready to be filed.
 ---
 
 # Godkjenning: requests that wait for the person
@@ -23,10 +23,14 @@ The voucher it posts says it came via your key, as if you had posted it.
 
 This is the same for an AI assistant and for a program or script using a key.
 
-Filing to Skatteetaten (the MVA-melding, and the skattemelding when Myntos
-files it) is something no key can do, whatever it holds. You can prepare it
-and ask the person to file; they file it themselves on the MVA page with
-their own ID-porten login.
+**Whatever is sent out of Myntos always waits for the person**, even when
+your key may post on its own: a check with Skatteetaten, a filing of the
+MVA-melding or the skattemelding, fetching Skatteetaten's answer. The request
+needs `post` (on your own or by asking), answers 202 every time, and runs
+when the person presses «Godkjenn», with their own ID-porten login: they log
+in first if they have not. What has been sent cannot be called back, so the
+person says yes to each one. The request says so itself: `sends_out` is true,
+and `needs_id_porten` when it goes with their login.
 
 ## When the person says
 
@@ -103,7 +107,10 @@ have its id yet. Wait for `done`, read the id from `result`, then continue.
 - **See a file you sent with it:**
   `GET /api/v1/companies/{company_id}/godkjenninger/{approval_id}/fil` with
   `?id={file_id}` (the `id` from `files`),
-  while it waits. Afterwards the file is in the bilag archive, or gone.
+  while it waits. Afterwards the file is in the bilag archive, or gone. It
+  comes back as what its bytes are (a PDF or an image) whatever `Content-Type`
+  you sent it with; anything else comes back as `application/octet-stream`, a
+  download, because the person opens it before approving.
 
 ### A payment and its receipt in one approval
 
@@ -114,7 +121,10 @@ voucher yet, so the usual way to attach the receipt
 voucher to attach to. Attach it to the waiting request instead:
 
 `POST /api/v1/companies/{company_id}/godkjenninger/{approval_id}/vedlegg`,
-multipart, the file in the field `file` (and optionally `filename`). PDF,
+multipart, the file in the field `file` (and optionally `filename`). Add it
+right after the payment, before you tell the person it waits: a yes covers the
+files the person was shown, so a file that arrives while they are looking sends
+the card back to them to look again. PDF,
 JPEG, PNG, HEIC or WebP, at most 25 MB. The person sees the receipt beside the
 payment when they decide, and when they approve, it goes into the bilag
 archive on the new voucher. `attachments` on the approved request says how
@@ -126,8 +136,9 @@ whole thing at once.
 
 ### Asking the person to file the MVA-melding
 
-No key can file to Skatteetaten. When the VAT return for a termin is ready
-(see myntos-mva for how to check it), ask the person to file it:
+With `post` you check and file it yourself, each waiting for the person
+(myntos-mva, step 3). A key without `post` asks the person to do it on the
+page instead, once the VAT return for a termin is ready:
 
 `POST /api/v1/companies/{company_id}/godkjenninger/innsending` with
 
@@ -146,6 +157,23 @@ Tell the person: «Mva-meldingen for 4. termin er klar. Du sender den selv:
 gå til Godkjenning i Myntos, eller rett til MVA-siden, og logg inn med
 ID-porten.»
 
+### Asking the person to file the skattemelding
+
+The same for an aksjeselskap's yearly tax return, once the year is closed
+and nothing blocks it (see myntos-skattemelding):
+
+```json
+{ "type": "skattemelding", "aar": 2025 }
+```
+
+No `termin`: the skattemelding is yearly, and the answer's `filing.termin` is
+`null`. The request's button leads to the Skattemelding page for that year,
+where the person answers the skattemelding's one question, has Skatteetaten
+check it and sends it. It turns `done` once the year has been sent. Refused
+with 409 `already_filed` for a year already sent, and 422
+`skattemelding_year_not_supported` for a year Myntos cannot file or one not
+over yet.
+
 ## Refusals, and what to do about each
 
 | Status and code | Means | Do |
@@ -156,7 +184,8 @@ ID-porten.»
 | 409 `attachments_not_accepted` | This request makes nothing a file can be attached to | Attach after it has run, with the feature's own route |
 | 413 `approval_too_large` | More than 30 MB in one waiting request | Send fewer files at a time |
 | 415 `unsupported_document`, 413 `document_too_large` | The file is not one the archive takes | Send a PDF or a photo under 25 MB |
-| 409 `already_filed` | That termin is filed already | Tell the person; a correction is filed on the MVA page |
+| 409 `already_filed` | That termin or year is filed already | Tell the person; a correction is checked and sent like the first one |
+| 422 `skattemelding_year_not_supported` | A skattemelding for a year Myntos cannot file, or one not over | Ask for a year from `supported_years` in `GET /api/v1/companies/{company_id}/skattemelding` |
 | 409 `period_not_over` | The termin has not ended | Ask after it has ended |
 | 409 `not_vat_registered` | The company files no MVA-melding | Nothing to file |
 | 422 `invalid_period` | No such termin | Check `aar` and `termin` against `GET /api/v1/companies/{company_id}/mva` |
@@ -177,5 +206,6 @@ answer 403 `not_for_agent_keys`, because a key that could approve its own
 requests would be a key that may do everything. The person approves on
 «Godkjenning» in Myntos (https://myntos.no/godkjenning/). If they want you to
 do things without asking, they can make a new key with «Selv» for that right
-under «Innstillinger for selskapet» → «Tilgang» → «Inviter en KI». How the
+under «Innstillinger for selskapet» → «Tilgang» → «Inviter en KI». That never
+covers sending anything out of Myntos, which waits for them every time. How the
 person does it is in https://myntos.no/llms/help/ai/approve-what-an-ai-asks.md.

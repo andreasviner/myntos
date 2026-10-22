@@ -43,7 +43,13 @@ before the first filing to Skatteetaten.
    them to ID-porten. They log in with BankID (or Buypass or Commfides).
 4. Back in Myntos, the confirmation continues by itself: the box says «Spør
    Altinn om rollen din …».
-5. When it works, the yellow box disappears, the card says «Eierskapet for …
+5. If somebody else has already confirmed the same company in their own
+   Myntos, a window opens first: «Selskapet er allerede registrert», «… er
+   allerede registrert og bekreftet i et annet regnskap i Myntos. Er du sikker
+   på at du vil fortsette?». «Ja» confirms these books too; «Avbryt» leaves
+   them unconfirmed, and nothing else changes. See Good to know before
+   pressing «Ja».
+6. When it works, the yellow box disappears, the card says «Eierskapet for …
    er bekreftet i Altinn.», and the mark beside the heading «Selskapet» says
    «Bekreftet».
 
@@ -55,7 +61,7 @@ accounts: «Logg inn med ID-porten», and then «Bekreft eierskap i Altinn».
 | What they see | Why | What to do |
 | --- | --- | --- |
 | «Altinn viser ikke at du kan opptre for dette selskapet. Rettighetene tildeles i Altinn av den som er registrert for selskapet.» | Altinn does not list this person for this organisation number | Ask whoever is registered for the company (daglig leder, chair) to give them rights in Altinn, or to confirm the company themselves. Also check the organisation number is right |
-| «Selskapet har allerede et regnskap registrert hos noen andre. Be en administrator der om tilgang.» | Someone else has already confirmed the same company in their own Myntos | Ask an administrator of those books for an invitation. Or keep these books unconfirmed, which is fine for an accountant keeping their own copy |
+| The window «Selskapet er allerede registrert» | Someone else has already confirmed the same company in their own Myntos. Myntos does not say who | «Ja» confirms these books as well. Often better: «Avbryt», and ask whoever keeps the other books for an invitation. An accountant keeping their own copy can also just leave these unconfirmed |
 | «Innloggingen ga ikke høyt nok sikkerhetsnivå. Logg inn med BankID, Buypass eller Commfides i stedet for MinID.» | They logged in with MinID | Press the button again and choose BankID |
 | «Innloggingen ble avbrutt.» | The ID-porten login was cancelled | Press the button again |
 | «Innloggingen kunne ikke starte. Det er en feil hos oss, ikke hos deg. Vi har fått beskjed.» | A fault on Myntos's side | Nothing for them to do; try again later |
@@ -66,7 +72,11 @@ accounts: «Logg inn med ID-porten», and then «Bekreft eierskap i Altinn».
 
 - Once confirmed, the organisation number can no longer be changed:
   [Correct the organisation number](https://myntos.no/llms/help/company-and-access/correct-the-organisation-number.md).
-- Only one set of books per company can be confirmed in Myntos.
+- More than one set of books can be confirmed for the same company, but only
+  after the window above has asked. Both can then send the MVA-melding and
+  the skattemelding for the company, and Skatteetaten treats a later filing
+  as a correction of the earlier one, so the people keeping the two sets
+  should know about each other.
 - Confirming also fetches the company's details from Enhetsregisteret again.
 - Logging in with ID-porten here also links the person's identity, so the
   board list can say «Har tilgang» about them:

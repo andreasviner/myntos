@@ -1,4 +1,5 @@
 ---
+import ClaimedDialog from '../components/ClaimedDialog.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 ---
 
@@ -60,12 +61,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         <p class="status" id="altinn-status" hidden></p>
         <a class="btn btn-primary" id="altinn-login" href="#">Hent selskapene mine</a>
         <ul class="oppsett-parter" id="altinn-parter" hidden></ul>
-        {/* Svaret når selskapet allerede er tatt av noen andre. Knappen står
-            her og ikke i meldingen: den ene veien videre vi kan tilby er et
-            eget regnskap, og den andre går gjennom noen vi ikke kan navngi. */}
-        <button type="button" class="btn btn-ghost btn-small" id="altinn-nytt" hidden>
-          Opprett nytt regnskap likevel
-        </button>
       </div>
 
       <div class="card">
@@ -109,6 +104,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           <h2 id="valgt-navn"></h2>
           <p class="oppsett-orgnr" id="valgt-orgnr"></p>
           <p class="card-hint" id="valgt-detaljer"></p>
+          {/* Et slettet selskap skylder fortsatt skattemeldingen for det siste
+              året, og regnskapet den lages av må settes opp et sted. */}
+          <p class="card-hint" id="valgt-slettet" hidden>
+            Selskapet er slettet fra Enhetsregisteret. Du kan likevel sette opp regnskapet for å
+            levere den siste skattemeldingen: før året, avslutt regnskapet på selskapets siste dag
+            under Årsavslutning, og send skattemeldingen som forhåndsfastsetting.
+          </p>
         </div>
         <button type="button" class="btn btn-ghost btn-small" id="bytt-selskap">Bytt selskap</button>
       </div>
@@ -240,6 +242,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         <a class="btn btn-ghost" href="/organisasjon/">Til organisasjonen</a>
       </div>
     </section>
+
+    {/* Spør før et selskap «Registrert av en annen» blir valgt og bekreftet. */}
+    <ClaimedDialog />
   </div>
 </BaseLayout>
 
@@ -541,7 +546,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
 <script>
   import {
-    ALREADY_CLAIMED,
     ApiError,
     createCompany,
     getGovernmentLoginStatus,
@@ -549,7 +553,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     inviteMember,
     listAuthorizedParties,
     lookupUnit,
-    verifyCompany,
     type AuthorizedParty,
     type Company,
     type Invitation,
@@ -559,14 +562,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   import { loadCompanies, mountChromeCompanyMenu } from '../lib/company';
   import { el, setStatus, show } from '../lib/dom';
   import { orgnummer } from '../lib/format';
+  import { askClaimedAnyway, confirmOwnership } from '../lib/ownership';
+  import { deletedYear, standing } from '../lib/register';
   // The backend never reflects ID-porten's own error text, since it would be
   // attacker-influenced content rendered in our page: the callback sends a fixed
   // keyword and CALLBACK_ERRORS owns the wording.
   import { CALLBACK_ERRORS } from '../lib/providers';
   import { loadSession, redirectToLogin, setActiveCompany } from '../lib/session';
-
-  const CLAIMED_MESSAGE =
-    'Selskapet har allerede et regnskap registrert hos noen andre. Be en administrator der om tilgang.';
 
   const sideStatus = el<HTMLParagraphElement>('#side-status');
   const digitsOf = (value: string): string => value.replace(/[^0-9]+/g, '');
@@ -577,6 +579,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   let companies: Company[] = [];
   /** The orgnr Altinn vouched for, when it was Altinn that filled the form in. */
   let fromAltinn: string | null = null;
+  /**
+   * The orgnr the person said «Ja» for in ClaimedDialog, knowing somebody else
+   * has confirmed it. Only counts while it is also `fromAltinn`: a number
+   * typed by hand is not confirmed here at all.
+   */
+  let agreedAnyway: string | null = null;
   // --- The three steps ------------------------------------------------------------
   //
   // Sections that show one at a time, rather than three pages with state passed
@@ -612,9 +620,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     );
     // Worth saying plainly: someone outside Merverdiavgiftsregisteret should not
     // start booking output VAT, and there is no other point at which we mention it.
-    if (!unit.registered_in_vat_register) parts.push('ikke mva-registrert');
-    if (unit.bankrupt) parts.push('registrert konkurs');
-    if (unit.under_liquidation) parts.push('under avvikling');
+    // Not for a deleted unit, which the register answers with no flags at all.
+    if (!unit.registered_in_vat_register && !unit.deleted_on) parts.push('ikke mva-registrert');
+    parts.push(...standing(unit));
     return parts.join(' · ');
   }
 
@@ -743,21 +751,22 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     const altinnStatus = el<HTMLParagraphElement>('#altinn-status');
     const loginLink = el<HTMLAnchorElement>('#altinn-login');
     const list = el<HTMLUListElement>('#altinn-parter');
-    const anyway = el<HTMLButtonElement>('#altinn-nytt');
 
     let parties: AuthorizedParty[] = [];
-    // The party the "opprett nytt likevel" button would act on. Held rather
-    // than closed over per row, so the button cannot end up wired to a company
-    // the list no longer shows.
-    let contested: AuthorizedParty | null = null;
 
-    anyway.addEventListener('click', () => {
-      const party = contested;
-      if (party === null) return;
-      show(anyway, false);
+    /** Take a company from the list, and go straight on to step 2. */
+    const pick = (party: AuthorizedParty, agreed: boolean): void => {
       setStatus(altinnStatus, '');
+      fromAltinn = party.orgnr;
+      agreedAnyway = agreed ? party.orgnr : null;
       choose(party.orgnr, party.name);
-    });
+      // Straight to the next question. Picking a company out of Altinn *is*
+      // the answer to "which company", and stopping to admire a filled-in
+      // form would be a step that asks nothing.
+      el<HTMLInputElement>('#regnskap-form input[name="first_financial_year"]').focus();
+      visSteg('regnskap');
+      visValgt();
+    };
 
     /** One row: the name, then what it is, then why it is being offered. */
     const drawParty = (party: AuthorizedParty, already: boolean): HTMLButtonElement => {
@@ -802,7 +811,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
       // Two different states, and only one of them is a dead end. "Allerede satt
       // opp" is about this account and there is nothing left to do; "registrert
-      // av en annen" is about somebody else's, and there is.
+      // av en annen" is about somebody else's, and can still be picked.
       const label = already ? 'Allerede satt opp' : party.claimed ? 'Registrert av en annen' : null;
       if (label !== null) {
         const tag = document.createElement('span');
@@ -813,28 +822,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
       button.disabled = already;
       button.addEventListener('click', () => {
-        // Said here, where the choice is made, rather than left for the
-        // confirmation to refuse after the books have been created. The button
-        // below is the one way forward we can actually offer; the other goes
-        // through an organization we will not name.
+        // Asked here, where the choice is made, rather than after the books
+        // have been set up: «Ja» picks it and confirms it like any other,
+        // «Avbryt» leaves the list as it was.
         if (party.claimed) {
-          contested = party;
-          setStatus(altinnStatus, CLAIMED_MESSAGE);
-          anyway.textContent = `Opprett nytt regnskap for ${party.name}`;
-          show(anyway, true);
+          void askClaimedAnyway(party.name).then((yes) => {
+            if (yes) pick(party, true);
+          });
           return;
         }
-        contested = null;
-        show(anyway, false);
-        setStatus(altinnStatus, '');
-        fromAltinn = party.orgnr;
-        choose(party.orgnr, party.name);
-        // Straight to the next question. Picking a company out of Altinn *is*
-        // the answer to "which company", and stopping to admire a filled-in
-        // form would be a step that asks nothing.
-        el<HTMLInputElement>('#regnskap-form input[name="first_financial_year"]').focus();
-        visSteg('regnskap');
-        visValgt();
+        pick(party, false);
       });
       return button;
     };
@@ -918,6 +915,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     el('#valgt-orgnr').textContent = orgnummer(orgnr);
     const unit = registered();
     el('#valgt-detaljer').textContent = unit?.orgnr === orgnr ? describe(unit) : '';
+    // A deleted company still owes its last skattemelding, and its books start
+    // in the year it was dissolved, at the latest: said, and that year filled in.
+    const gone = unit?.orgnr === orgnr ? deletedYear(unit) : null;
+    show(el('#valgt-slettet'), gone !== null);
+    if (gone !== null) {
+      el<HTMLInputElement>('input[name="first_financial_year"]', regnskapForm).value = String(
+        Math.min(gone, thisYear),
+      );
+    }
   }
 
   selskapForm.addEventListener('submit', (event) => {
@@ -1034,9 +1040,18 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         if (!provenInAltinn) return;
         // Picked out of the Altinn list, so the proof is already in hand: this
         // person is logged in with ID-porten and Altinn just said they may act
-        // for it. Confirming here saves a second trip through BankID.
+        // for it. Confirming here saves a second trip through BankID. Somebody
+        // else's confirmation was asked about when the company was picked;
+        // one made since then is asked about now.
         try {
-          const saved = await verifyCompany(company.id);
+          const saved = await confirmOwnership(company, { agreed: agreedAnyway === orgnr });
+          if (saved === null) {
+            setStatus(
+              el('#ferdig-status'),
+              'Eierskapet er ikke bekreftet. Det kan gjøres senere under «Innstillinger for selskapet».',
+            );
+            return;
+          }
           companies = companies.map((item) => (item.id === saved.id ? saved : item));
           // Same company, now confirmed: the stored record carries the mark, so
           // the next page load does not open with a red dot that is no longer
@@ -1051,11 +1066,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           setStatus(
             el('#ferdig-status'),
             `Eierskapet ble ikke bekreftet: ${
-              error instanceof ApiError && error.code === ALREADY_CLAIMED
-                ? CLAIMED_MESSAGE
-                : error instanceof ApiError
-                  ? error.message
-                  : 'vi fikk ikke kontakt med Altinn.'
+              error instanceof ApiError ? error.message : 'vi fikk ikke kontakt med Altinn.'
             }`,
           );
         }

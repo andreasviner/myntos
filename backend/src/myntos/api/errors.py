@@ -43,10 +43,12 @@ from myntos.domain.arsoppgjor.errors import (
     FinancialYearNotFoundError,
     InvalidOpeningBalanceError,
     InvalidSaldobalanseError,
+    InvalidWindingUpDateError,
     NoOpeningBalanceError,
     OpeningBalanceExistsError,
     OpeningBalanceNotAllowedError,
     ReopeningReasonRequiredError,
+    WindingUpConflictError,
     YearNotClosableError,
     YearNotReopenableError,
 )
@@ -81,6 +83,13 @@ from myntos.domain.faktura.errors import (
     UnsupportedCurrencyError,
 )
 from myntos.domain.faktura.vat import UnsupportedSalesTaxCodeError
+from myntos.domain.feedback.errors import (
+    FeedbackBusyError,
+    FeedbackError,
+    FeedbackInboxFullError,
+    FeedbackNotFoundError,
+    InvalidFeedbackError,
+)
 from myntos.domain.identity.errors import (
     AccountDisabledError,
     AccountLockedError,
@@ -90,6 +99,7 @@ from myntos.domain.identity.errors import (
     AgentKeyRequiredError,
     AgentRateLimitedError,
     AlreadyFiledError,
+    ApprovalChangedError,
     ApprovalNotFoundError,
     ApprovalNotPendingError,
     ApprovalTooLargeError,
@@ -105,6 +115,7 @@ from myntos.domain.identity.errors import (
     IdentityAlreadyLinkedError,
     IdentityError,
     IdentityNotFoundError,
+    IdPortenLoginRequiredError,
     InvalidAgentScopeError,
     InvalidAgentTokenError,
     InvalidCredentialsError,
@@ -199,11 +210,21 @@ from myntos.saft.errors import (
     UnsupportedSaftVersionError,
 )
 from myntos.saft.jobs import ImportBusyError, ImportNotFoundError, ImportNotPostableError
+from myntos.skattemelding.errors import (
+    SkattemeldingAnswerRequiredError,
+    SkattemeldingChangedError,
+    SkattemeldingConfirmationRequiredError,
+    SkattemeldingFilingNotFoundError,
+    SkattemeldingNotAvailableError,
+    SkattemeldingNotReadyError,
+    SkattemeldingNotSubmittableError,
+    SkattemeldingYearNotSupportedError,
+)
 
 # Errors this module knows how to render. Every hierarchy is handled the same
 # way; keeping one table means a new error cannot be given a status code in one
 # place and forgotten in another.
-HandledError = IdentityError | LedgerError | FakturaError | BrregError
+HandledError = IdentityError | LedgerError | FakturaError | BrregError | FeedbackError
 
 _STATUS_BY_ERROR: dict[type[Exception], int] = {
     # --- Identity ---
@@ -277,14 +298,25 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     # 404 like every other record that is not yours to name.
     AgentKeyNotFoundError: status.HTTP_404_NOT_FOUND,
     AgentRateLimitedError: status.HTTP_429_TOO_MANY_REQUESTS,
+    # --- Feedback from anybody (docs/feedback.md) ---
+    InvalidFeedbackError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    # 404 for a reference never given out, withdrawn, or past its time alike:
+    # the reference is the only thing that names an item.
+    FeedbackNotFoundError: status.HTTP_404_NOT_FOUND,
+    # The hour's cap on everybody's feedback together, and the cap on unread
+    # items. 503 for the second, because waiting the hour does not help.
+    FeedbackBusyError: status.HTTP_429_TOO_MANY_REQUESTS,
+    FeedbackInboxFullError: status.HTTP_503_SERVICE_UNAVAILABLE,
     # --- Requests that wait for a person's approval ---
     ApprovalNotFoundError: status.HTTP_404_NOT_FOUND,
     # 409: well-formed, and refused by the state the request is already in.
     ApprovalNotPendingError: status.HTTP_409_CONFLICT,
+    ApprovalChangedError: status.HTTP_409_CONFLICT,
     NotYourAgentError: status.HTTP_403_FORBIDDEN,
     ApprovalTooLargeError: status.HTTP_413_CONTENT_TOO_LARGE,
     AttachmentsNotAcceptedError: status.HTTP_409_CONFLICT,
     FilingIsDoneOnThePageError: status.HTTP_409_CONFLICT,
+    IdPortenLoginRequiredError: status.HTTP_409_CONFLICT,
     AlreadyFiledError: status.HTTP_409_CONFLICT,
     # --- Accounting core ---
     # Same reasoning as NotAMemberError: another organization's company is
@@ -415,6 +447,22 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     MeldingChangedError: status.HTTP_409_CONFLICT,
     # 502: Skatteetaten or Altinn refused or could not be reached.
     SubmissionFailedError: status.HTTP_502_BAD_GATEWAY,
+    # --- Skattemelding ---
+    # The MVA-melding's choices, for the same reasons: another company's
+    # filing is not found; a year Myntos has no schema for, or one still
+    # running, and an unconfirmed figure are the request's fault; the books'
+    # own state (a feil in the review, books that moved after the check, a
+    # filing past sending) refuses a well-formed request.
+    SkattemeldingFilingNotFoundError: status.HTTP_404_NOT_FOUND,
+    SkattemeldingYearNotSupportedError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    SkattemeldingConfirmationRequiredError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    SkattemeldingAnswerRequiredError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    # Skatteetaten's state, not the request's: still preparing the melding, or
+    # refusing to for this company.
+    SkattemeldingNotAvailableError: status.HTTP_409_CONFLICT,
+    SkattemeldingNotReadyError: status.HTTP_409_CONFLICT,
+    SkattemeldingNotSubmittableError: status.HTTP_409_CONFLICT,
+    SkattemeldingChangedError: status.HTTP_409_CONFLICT,
     # --- SAF-T ---
     # 404: the year is a thing the company does or does not have, like a filing.
     SaftYearNotFoundError: status.HTTP_404_NOT_FOUND,
@@ -436,6 +484,7 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     NoOpeningBalanceError: status.HTTP_409_CONFLICT,
     YearNotReopenableError: status.HTTP_409_CONFLICT,
     CannotReverseHereError: status.HTTP_409_CONFLICT,
+    WindingUpConflictError: status.HTTP_409_CONFLICT,
     # 422: what was sent cannot be posted as it is. The two carrying findings
     # are answered by their routes with the list rather than through here.
     InvalidOpeningBalanceError: status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -445,6 +494,7 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     InvalidManualVoucherError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     InvalidSaldobalanseError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     ReopeningReasonRequiredError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    InvalidWindingUpDateError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     # The farm's count and private uttak: each refusal a subclass of one of
     # these, so the code says which list (count_exists, no_uttak, …).
     FarmListConflictError: status.HTTP_409_CONFLICT,
@@ -514,6 +564,12 @@ async def domain_error_handler(request: Request, exc: Exception) -> JSONResponse
         # enough. Said in the header an HTTP client already knows to read,
         # because the agent on the other end may not read the detail at all.
         response.headers["Retry-After"] = "60"
+    elif isinstance(exc, FeedbackInboxFullError):
+        # Until the operator has read some, which is days rather than minutes.
+        response.headers["Retry-After"] = str(24 * 60 * 60)
+    elif isinstance(exc, FeedbackBusyError):
+        # The cap counts a rolling hour.
+        response.headers["Retry-After"] = str(60 * 60)
     return response
 
 

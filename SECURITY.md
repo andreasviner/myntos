@@ -39,5 +39,7 @@ Out of scope:
 
 - Locked dependencies (`uv.lock`, `pnpm-lock.yaml`) with Dependabot updates
 - gitleaks secret scanning in pre-commit
-- Security headers on all API responses; API docs disabled in production
+- Security headers on all API responses; the OpenAPI document is public at
+  `/api/v1/openapi.json` (the source is public too, and agents and developers
+  build against it), while the interactive `/docs` page is off in production
 - Least-privilege Maskinporten scopes; tokens cached in memory only

@@ -33,7 +33,12 @@ import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from myntos.api.deps import KEY_SCOPE_EXTENSION, get_document_storage, get_mailer
+from myntos.api.deps import (
+    KEY_SCOPE_EXTENSION,
+    KEY_SEND_EXTENSION,
+    get_document_storage,
+    get_mailer,
+)
 from myntos.api.v1.saft_innlesing import get_import_sessions
 from myntos.auth import agent_keys
 from myntos.core.config import Settings, get_settings
@@ -45,12 +50,14 @@ from myntos.domain.bank import models as bank_models  # noqa: F401  (registers t
 from myntos.domain.bilag import models as bilag_models  # noqa: F401  (registers tables)
 from myntos.domain.bilag import reading_cache, readings
 from myntos.domain.faktura import models as faktura_models  # noqa: F401  (registers tables)
+from myntos.domain.feedback import models as feedback_models  # noqa: F401  (registers tables)
 from myntos.domain.identity import models as identity_models  # noqa: F401  (registers tables)
 from myntos.domain.ledger import models as ledger_models  # noqa: F401  (registers tables)
 from myntos.domain.mva import models as mva_models  # noqa: F401  (registers tables)
 from myntos.integrations import brreg, norgesbank
 from myntos.main import create_app
 from myntos.saft import models as saft_models  # noqa: F401  (registers tables)
+from myntos.skattemelding import models as skattemelding_models  # noqa: F401  (registers tables)
 from myntos.storage.local import LocalDocumentStorage
 
 # The frontend origin the tests pretend to be. Cookie-authenticated writes are
@@ -378,6 +385,22 @@ def _declared_scopes() -> dict[tuple[str, str], str | None]:
     }
 
 
+@functools.cache
+def _declared_sends() -> frozenset[tuple[str, str]]:
+    schema = create_app().openapi()
+    return frozenset(
+        (method.upper(), path)
+        for path, operations in schema["paths"].items()
+        for method, operation in operations.items()
+        if operation.get(KEY_SEND_EXTENSION) is True
+    )
+
+
+def is_send(method: str, path: str) -> bool:
+    """Whether a key's request to the route always waits for its person (``key_send``)."""
+    return (method, path) in _declared_sends()
+
+
 def assert_key_refused(response: Any, method: str, path: str) -> None:
     """What a key is answered on a route it must not reach (rule 9).
 
@@ -527,4 +550,58 @@ def insert_mva_filing(
 
     portal = client.portal
     assert portal is not None, "insert_mva_filing needs the client inside its with-block"
+    return portal.call(insert)
+
+
+def insert_skattemelding_filing(
+    client: TestClient,
+    company_id: int,
+    *,
+    year: int,
+    status: str = "validert",
+    skattemessig_resultat: str = "0.00",
+    altinn_instance_id: str | None = None,
+) -> int:
+    """A skattemelding filing row written straight into the app's database, and its id.
+
+    The MVA helper's reasoning and session handling. The validation answer is
+    Skatteetaten's real one from TT02, because reading a filing parses it.
+    """
+    from myntos.skattemelding.models import SkattemeldingFiling
+
+    validation_xml = (
+        Path(__file__).parent / "fixtures" / "skattemelding" / "tt02-validering-314067630-2025.xml"
+    ).read_text(encoding="utf-8")
+    override = client.app.dependency_overrides[get_session]  # type: ignore[attr-defined]
+
+    async def insert() -> int:
+        sessions = override()
+        session = await sessions.__anext__()
+        filing = SkattemeldingFiling(
+            company_id=company_id,
+            year=year,
+            status=status,
+            melding_id="SKI:755:32858",
+            partsnummer=3001570199,
+            request_xml="<skattemeldingOgNaeringsspesifikasjonRequest/>",
+            content_hash="0" * 64,
+            answers={},
+            has_auditor=False,
+            aarsresultat=Decimal(skattemessig_resultat),
+            skattemessig_resultat=Decimal(skattemessig_resultat),
+            findings=[],
+            validation_status="validertOK",
+            validation_xml=validation_xml,
+            altinn_instance_id=altinn_instance_id,
+            documents=[],
+        )
+        session.add(filing)
+        await session.flush()
+        filing_id = int(filing.id)
+        with contextlib.suppress(StopAsyncIteration):
+            await sessions.__anext__()
+        return filing_id
+
+    portal = client.portal
+    assert portal is not None, "insert_skattemelding_filing needs the client inside its with-block"
     return portal.call(insert)

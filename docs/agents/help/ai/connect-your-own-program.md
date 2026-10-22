@@ -41,8 +41,10 @@ the same rights, the same approval page, the same limits.
 - A key works in one company. A program that serves several companies needs
   one key per company.
 - 120 requests a minute per key.
-- No key can file to Skatteetaten, move money, change a bank account number or
-  manage access, whatever it is given.
+- No key can move money, change a bank account number or manage access,
+  whatever it is given. What it sends to Skatteetaten (a check, a filing)
+  waits for its person's approval every time, and goes with their ID-porten
+  login.
 - A request that waits for approval answers HTTP 202 with code
   `approval_pending`; see https://myntos.no/llms/skills/myntos-godkjenning.md.
 

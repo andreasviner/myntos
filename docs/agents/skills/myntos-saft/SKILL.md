@@ -16,7 +16,7 @@ What you must get right:
 - **It is not filed on a schedule.** Nobody sends SAF-T every year. A company
   produces it when Skatteetaten asks for it, usually at a tax audit
   (bokettersyn), and **the person uploads it themselves** in Altinn, on form
-  RF-1363. No key can file to Altinn.
+  RF-1363. Myntos does not send it anywhere, so neither can you.
 - **A file that is wrong in ways the schema cannot see is worse than none.**
   Altinn only checks the XML schema. Myntos checks what an auditor will check
   (every account, customer, supplier and VAT code a line points to exists,

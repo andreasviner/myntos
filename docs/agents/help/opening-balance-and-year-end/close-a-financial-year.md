@@ -15,7 +15,9 @@ whether the company is an aksjeselskap (AS) or an enkeltpersonforetak (ENK),
 and Myntos reads that from Enhetsregisteret. **After closing, nothing can be
 posted in that year by anyone in the company** until an owner or administrator
 reopens it with a written reason. Closing does **not** send the annual accounts
-(årsregnskap) or the tax return (skattemelding) anywhere.
+(årsregnskap) or the tax return (skattemelding) anywhere; for an aksjeselskap
+the skattemelding is built from the closed year on «Skattemelding»
+([See what the tax return will say](https://myntos.no/llms/help/tax-return/see-the-tax-return.md)).
 
 ## They might ask
 
@@ -52,7 +54,8 @@ reopens it with a written reason. Closing does **not** send the annual accounts
    field; the figures and the postings update:
    [Enter the tax when closing a year](https://myntos.no/llms/help/opening-balance-and-year-end/enter-the-tax-when-closing-a-year.md).
 5. Read the messages (red ones stop the close) and the table «Dette blir ført
-   per 31. desember» with «Konto», «Tekst», «Debet» and «Kredit». If the
+   per …» (the year's last day, 31. des. for an ordinary year) with «Konto»,
+   «Tekst», «Debet» and «Kredit». If the
    result is zero it says «Resultatet er null, så ingenting føres. Året låses
    likevel.»
 6. Tick «Jeg har gått gjennom tallene og posteringene over. Etter
@@ -60,7 +63,9 @@ reopens it with a written reason. Closing does **not** send the annual accounts
    til regnskapet.»
 7. Press «Avslutt …» (for example «Avslutt 2025»). The page says
    «Regnskapsåret … er avsluttet med bilag …, og … er åpnet.», and the close
-   is listed under «Logg».
+   is listed under «Logg». For a dissolved company's last year it says
+   instead that it was the company's last year, and no year is opened:
+   [End the books when the company is dissolved](https://myntos.no/llms/help/opening-balance-and-year-end/end-the-books-when-the-company-is-dissolved.md).
 
 ## If something stops them
 

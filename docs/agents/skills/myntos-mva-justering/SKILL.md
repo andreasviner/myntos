@@ -164,8 +164,8 @@ the person.
 ## What you cannot do here
 
 You cannot file the MVA-melding these entries end up in, or check it with
-Skatteetaten; that is the person's, on their own ID-porten login (myntos-mva
-explains how to ask them). You cannot decide the accounting for them: whether
+Skatteetaten, without the person: each waits for their approval and goes with
+their own ID-porten login (myntos-mva, step 3). You cannot decide the accounting for them: whether
 a claim is lost, or what a justering comes to. The person's side of this page
 is explained in
 [Record private use (uttak)](https://myntos.no/llms/help/vat/record-private-use-uttak.md),

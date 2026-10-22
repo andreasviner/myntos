@@ -18,90 +18,230 @@ const TYPE_SKELETON_ROWS = 4;
 /* Widths that read as amounts and dates rather than as identical grey bars. */
 const RECENT_WIDTHS = ['6.5rem', '11rem', '7rem', '5.5rem'];
 const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
+
+/*
+  Fanen sier hva Myntos er og hva det koster.
+
+  Til 2026-10-22 sto det bare «Myntos» her, av to grunner: «gratis» i en tittel
+  leses som «dårligere enn de som koster», og dette er også oversikten en
+  innlogget har åpen hele dagen. Den første veide mindre enn at tittelen er det
+  søkemotorene leser først om hva en side handler om, og «Myntos» alene ble bare
+  funnet av dem som kjente navnet fra før. Prisen er dessuten ikke noe å
+  unnskylde: Myntos er gratis for alltid, og det er det folk leter etter. Den
+  andre grunnen er løst der den hører hjemme: når oversikten tas i bruk, står
+  det bare navnet i fanen igjen (`mountDashboard`). Navnet står først av samme
+  grunn som i h1-en, Googles merkevaregjennomgang.
+*/
+const TITLE = 'Myntos: gratis regnskapsprogram for AS og små bedrifter';
+const DESCRIPTION =
+  'Gratis norsk regnskapsprogram for aksjeselskap og små bedrifter: bilag, faktura med EHF, mva-melding, skattemelding og SAF-T. 0 kr for alltid, med offentlig kildekode.';
+
+/*
+  Det Myntos gjør, kort, med lenke til avsnittet på /funksjoner/ som sier det
+  lenger. Bare det som virker i produksjon står her; det som ikke er bygget,
+  står samlet nederst på funksjonssiden.
+*/
+const features = [
+  {
+    href: '/funksjoner/#kontantstrom',
+    title: 'Bilag og betalinger',
+    text: 'Last opp kvitteringen eller fakturaen, så fyller Myntos ut beløp, mva og hva det gjelder. Du ser over og bekrefter, og alt føres med dobbel bokføring.',
+  },
+  {
+    href: '/funksjoner/#faktura',
+    title: 'Faktura med EHF',
+    text: 'Fakturaen kontrolleres mot bokføringsforskriften før den utstedes, får KID, og EHF-filen lages samtidig, i formatet e-fakturakravet fra 2027 gjelder.',
+  },
+  {
+    href: '/funksjoner/#mva',
+    title: 'Merverdiavgift',
+    text: 'Mva-koder med satser som følger datoen, og mva-meldingen for hver termin, kontrollert hos Skatteetaten før den sendes.',
+  },
+  {
+    href: '/funksjoner/#skattemelding',
+    title: 'Skattemelding for AS',
+    text: 'Næringsspesifikasjonen og skattemeldingen bygges fra regnskapet, kontrolleres av Skatteetaten og sendes gjennom Altinn.',
+  },
+  {
+    href: '/funksjoner/#bank',
+    title: 'Bankavstemming',
+    text: 'Les inn kontoutskriften fra banken. Hver bevegelse kobles til bilaget som fører den, og det som mangler, fører du rett derfra.',
+  },
+  {
+    href: '/funksjoner/#flytting',
+    title: 'SAF-T inn og ut',
+    text: 'Hent regnskapet fra Fiken, Tripletex, PowerOffice Go eller Conta, også tidligere år, og ta det med deg ut igjen i det samme formatet.',
+  },
+];
+
+/* Hvorfor Myntos og ikke et annet program. Hvert punkt lenker til siden som står inne for det. */
+const reasons = [
+  {
+    href: '/priser/',
+    title: 'Gratis, for alltid',
+    text: 'Ingen betalte nivåer, ingen prøveperiode og ingen grense for antall bilag. Innsending til Skatteetaten koster det samme som resten: ingenting.',
+  },
+  {
+    href: '/funksjoner/#apen-kildekode',
+    title: 'Offentlig kildekode',
+    text: 'Hele programmet kan leses, så du kan se nøyaktig hva som skjer med tallene dine. Vil du heller drifte det selv, kan du det.',
+  },
+  {
+    href: '/personvern/',
+    title: 'Dataene dine er dine',
+    text: 'Database og bilagsarkiv ligger i EØS, og KI-en som leser bilagene, kjører i Norge. Vi selger ikke dataene, viser ingen annonser og laster ingen sporing.',
+  },
+  {
+    href: '/funksjoner/#saft',
+    title: 'Bygget på norske regler',
+    text: 'Datamodellen følger SAF-T fra første linje, en ført postering endres aldri, og rettelser skjer med motpostering, slik bokføringsloven krever.',
+  },
+];
+
+/*
+  Spørsmålene folk stiller før de flytter et regnskap, med svar som står inne
+  for seg selv: en søkemotor eller en KI-assistent siterer gjerne ett svar uten
+  resten av siden. Hvert svar lenker til siden som sier det lenger.
+
+  Ingen FAQPage-data her, i motsetning til /priser/: hvert spørsmål ville blitt
+  et `name` på forsiden, og alle navn her skal være «Myntos» (se APP_NAME i
+  BaseLayout).
+
+  Ordlyden bruker de ordene folk søker med («skattemelding for AS», «levere
+  mva-melding», «gratis»), men bare der setningen ville sagt det samme uten
+  søkemotoren. Et svar som er skrevet for søkemotoren, merker leseren, og en
+  KI-assistent siterer det ordrett. Det som ikke er bygget, står fortsatt i
+  svaret; et søkeord er ikke grunn nok til å love mer enn programmet gjør.
+*/
+const questions = [
+  {
+    q: 'Er Myntos virkelig gratis?',
+    a: 'Ja, og det skal det alltid være. Myntos koster 0 kr, uten betalte nivåer, uten prøveperiode og uten grense for antall bilag. Å levere mva-meldingen og skattemeldingen koster heller ikke noe, og vi tar ikke imot betalingsopplysninger.',
+    href: '/priser/',
+    link: 'Les mer om prisen',
+  },
+  {
+    q: 'Passer Myntos for et aksjeselskap?',
+    a: 'Ja, det er først og fremst laget for små aksjeselskaper. Du fører bilag, sender faktura med EHF, avslutter året og leverer både mva-melding og skattemelding for AS gratis, rett fra regnskapet. Et enkeltpersonforetak kan også føre regnskapet her, men næringsspesifikasjonen for enkeltpersonforetak lages ikke i Myntos ennå.',
+    href: '/funksjoner/',
+    link: 'Se alle funksjonene',
+  },
+  {
+    q: 'Kan en regnskapsfører bruke Myntos for kundene sine?',
+    a: 'Ja. Du kan ha så mange selskaper du vil på samme konto, og du bytter mellom dem fra hvilken som helst side. Hver kunde er et eget regnskap: inviterer du kunden eller en kollega inn, får de tilgang til det ene regnskapet, med en rolle, og ser ingenting av de andre. Har du rettigheter for selskapene i Altinn, kan du hente dem derfra i stedet for å skrive inn organisasjonsnumrene.',
+    href: '/funksjoner/#samarbeid',
+    link: 'Om tilgang og roller',
+  },
+  {
+    q: 'Kan jeg levere skattemelding for AS gratis i Myntos?',
+    a: 'Ja. Myntos bygger skattemeldingen og næringsspesifikasjonen for aksjeselskapet fra et avsluttet regnskapsår, Skatteetaten kontrollerer dem, og du sender dem gjennom Altinn etter å ha logget inn med ID-porten. Innsendingen koster ingenting, som resten av programmet. Årsregnskapet til Regnskapsregisteret og aksjonærregisteroppgaven sendes ikke fra Myntos ennå.',
+    href: '/funksjoner/#skattemelding',
+    link: 'Mer om skattemeldingen',
+  },
+  {
+    q: 'Kan jeg flytte fra Fiken, Tripletex eller et annet program?',
+    a: 'Ja. Last ned SAF-T-filen for hvert regnskapsår fra det gamle programmet, og last filene opp i Myntos. Kontoene, kundene og leverandørene, inngående balanse og bilagene kommer med, også for tidligere år. Dokumentene bak bilagene og lønnsslippene er ikke med i SAF-T, så ta vare på dem før du sier opp.',
+    href: '/kom-i-gang/',
+    link: 'Slik flytter du regnskapet',
+  },
+  {
+    q: 'Hvor lagres regnskapet?',
+    a: 'I EØS: databasen i Frankfurt og bilagsarkivet i et dokumentlager under EU-jurisdiksjon. Vi selger ikke dataene og deler dem ikke med noen, og du kan ta ut hele regnskapet som SAF-T når du vil.',
+    href: '/personvern/',
+    link: 'Personvernerklæringen',
+  },
+  {
+    q: 'Kan jeg drifte Myntos selv?',
+    a: 'Ja. Kildekoden er offentlig under Elastic License 2.0, og du kan kjøre Myntos på din egen server, men ikke tilby det som tjeneste til andre. Da har du selv ansvaret for drift, sikkerhetskopier og oppdateringer, og for at regnskapet oppbevares så lenge loven krever.',
+    href: '/funksjoner/#apen-kildekode',
+    link: 'Om kildekoden',
+  },
+  {
+    q: 'Bruker Myntos KI på regnskapet mitt?',
+    a: 'Bare når du laster opp et bilag eller ber om forslag til fakturalinjer. Da leses det av Løynd, en norsk KI-tjeneste med servere i Norge, som ikke lagrer noe og ikke trener modeller på det. Beløpene leser Myntos selv, ingenting føres før du har bekreftet det, og KI kan slås av for hele selskapet.',
+    href: '/ki/',
+    link: 'Slik brukes KI i Myntos',
+  },
+];
 ---
 
-<BaseLayout
-  title="Myntos: gratis regnskapsprogram med offentlig kildekode"
-  description="Gratis norsk regnskapsprogram med offentlig kildekode: bilag, faktura, merverdiavgift og SAF-T, bygget for innlevering til Skatteetaten."
-  width="wide"
->
+<BaseLayout title={TITLE} description={DESCRIPTION} width="wide">
   {/*
-    Both views ship in the same file. The signed-out one is the default, so it
-    is what a search engine indexes and what a visitor without JavaScript sees;
-    lib/session.ts flips the document's data-auth attribute once it knows.
+    To sider i én fil, men bare den ene står i HTML-en. Den som ikke er logget
+    inn, er det søkemotorene og KI-søkene leser og indekserer, og det er den som
+    sendes ut. Oversikten for den innloggede ligger i en <template> lenger ned og
+    settes inn først når noen er logget inn.
   */}
 
   <!-- ------------------------------------------------------------------ -->
-  <!-- Signed out: what Myntos is                                          -->
+  <!-- Ikke innlogget: hva Myntos er                                       -->
   <!-- ------------------------------------------------------------------ -->
   <section data-auth-only="ut">
     <div class="hero">
-      <p class="pill">Beta</p>
+      {/* Ingen merkelapp over overskriften. Den sto som «Beta» til 2026-10-22
+          (det som ikke er bygget, står nå konkret på /funksjoner/), og så som
+          «Gratis for alltid» samme dag, men det sier overskriften og ingressen
+          allerede. Tre ganger «gratis» før første knapp leses som mas. */}
       {/*
         The app name leads the h1 deliberately. Google's OAuth brand review
         compares the consent-screen name against the home page's most prominent
         heading, and rejected "Regnskap for norske regler, i åpent lende" as not
         matching "Myntos". The metaphor still carries the footer tagline.
       */}
-      <h1>Myntos: norsk regnskapsprogram<br /><span class="grad">med offentlig kildekode</span></h1>
+      {/* Mellomrommet før <br /> er for den som leser teksten uten å tegne
+          siden: uten det står det «regnskapsprogrammed». */}
+      <h1>Myntos: gratis norsk regnskapsprogram <br /><span class="grad">med offentlig kildekode</span></h1>
       <p class="lead">
-        Myntos fører inn- og utbetalinger med bilag, regner merverdiavgift, og er bygget for å
-        levere SAF-T og skattemelding til Skatteetaten. Det koster 0 kr, og hele kildekoden er
-        offentlig, så du kan se nøyaktig hva som skjer med tallene dine.
+        Før bilag, lag fakturaer med EHF, få mva-meldingen klar og send skattemeldingen for
+        aksjeselskapet, i ett program bygget på norske regler. Myntos koster 0 kr, og det skal det
+        alltid gjøre.
       </p>
       <div class="hero-actions">
         <a class="btn btn-primary btn-large" href="/registrer/">Kom i gang gratis</a>
         <a class="btn btn-ghost btn-large" href="/funksjoner/">Se funksjonene</a>
       </div>
-      <p class="hero-note">Ingen betalingsopplysninger. Ingen bindingstid.</p>
+      <p class="hero-note">Ingen betalingsopplysninger, ingen prøveperiode og ingen bindingstid.</p>
     </div>
 
+    <h2>Det Myntos gjør</h2>
+    <div class="grid features features-six">
+      {
+        features.map((feature) => (
+          <a class="card feature" href={feature.href}>
+            <h3 class="card-title">{feature.title}</h3>
+            <p class="card-hint">{feature.text}</p>
+          </a>
+        ))
+      }
+    </div>
+
+    <h2>Hvorfor Myntos</h2>
     <div class="grid features">
-      <article class="card feature">
-        <h3 class="card-title">Bygget på norske krav</h3>
-        <p class="card-hint">
-          Datamodellen følger SAF-T Financial fra første linje: kontoplan med
-          næringsspesifikasjon per regnskapsår, mva-koder med datostyrte satser, og bilag som ikke
-          kan endres etter føring. Rettelser skjer med motpostering, slik bokføringsloven krever.
-        </p>
-      </article>
-      <article class="card feature">
-        <h3 class="card-title">Dataene blir i EØS</h3>
-        <p class="card-hint">
-          Database og dokumentlager kjøres i EØS. Bokføringsforskriften § 7-5 tillater det mot
-          skriftlig melding til skattekontoret, og Myntos skal hjelpe deg å skrive den, ikke late
-          som kravet ikke finnes.
-        </p>
-      </article>
-      <article class="card feature">
-        <h3 class="card-title">Ingen innlåsing</h3>
-        <p class="card-hint">
-          SAF-T-eksport og PDF-arkiv er ikke en ekstrafunksjon, men et lovkrav. Du skal kunne ta
-          med deg hele regnskapet ut igjen, også hvis du slutter å bruke oss.
-        </p>
-      </article>
-      <article class="card feature">
-        <h3 class="card-title">Én organisasjon, flere hoder</h3>
-        <p class="card-hint">
-          Kontoen din hører til en organisasjon, og kollegaer inviteres inn med roller.
-          Regnskapsførere kan føre flere selskaper under samme organisasjon.
-        </p>
-      </article>
+      {
+        reasons.map((reason) => (
+          <a class="card feature" href={reason.href}>
+            <h3 class="card-title">{reason.title}</h3>
+            <p class="card-hint">{reason.text}</p>
+          </a>
+        ))
+      }
     </div>
 
     <h2>Slik kommer du i gang</h2>
+    {/* Bare innloggingene som er slått på i produksjon. Her sto Microsoft og
+        BankID også, før noen av dem var det (/auth/providers sier hvilke). */}
     <ol class="steps">
       <li>
-        <strong>Opprett konto</strong> med e-post og passord, eller med Google, Microsoft
-        eller BankID.
+        <strong>Opprett konto</strong> med e-postadressen din eller Google-kontoen.
       </li>
       <li>
-        <strong>Registrer selskapet</strong> med organisasjonsnummer. Kontoplan, mva-koder og
+        <strong>Legg inn selskapet</strong> med organisasjonsnummeret. Kontoplan, mva-koder og
         regnskapsår settes opp automatisk.
       </li>
       <li>
-        <strong>Før inn- og utbetalinger</strong> med type og eventuell PDF. Typen bestemmer konto
-        og mva-kode. Det er den som gjør at tallene senere kan bli en skattemelding.
+        <strong>Hent regnskapet fra det gamle programmet</strong> med SAF-T-filene, eller begynn å
+        føre fra i dag. Typen du velger på hver betaling, bestemmer konto og mva-kode, og det er
+        den som gjør at tallene senere blir en mva-melding og en skattemelding.
       </li>
     </ol>
 
@@ -110,6 +250,21 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
       <a href="/kom-i-gang/">Se hvordan du henter regnskapet ut derfra</a>, og hva du bør laste
       ned før du sier opp abonnementet.
     </p>
+
+    <h2>Vanlige spørsmål</h2>
+    <div class="faq">
+      {
+        questions.map((item) => (
+          <div class="faq-item">
+            <h3>{item.q}</h3>
+            <p>{item.a}</p>
+            <p class="faq-link">
+              <a href={item.href}>{item.link}</a>
+            </p>
+          </div>
+        ))
+      }
+    </div>
 
     <div class="cta card">
       <div>
@@ -123,9 +278,25 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
   </section>
 
   <!-- ------------------------------------------------------------------ -->
-  <!-- Signed in: the overview                                             -->
+  <!-- Innlogget: oversikten                                               -->
   <!-- ------------------------------------------------------------------ -->
-  <section data-auth-only="inn" id="dashboard">
+  {/*
+    Tom til noen er logget inn. Innholdet står i <template id="dashboard-view">
+    under, og settes inn av det lille skriptet etter den (når nettleseren var
+    logget inn sist) eller av `mountDashboard` (når /auth/me sier det).
+
+    Til 2026-10-22 sto oversikten rett i HTML-en, skjult med CSS. En søkemotor
+    som kjører skriptet og leser CSS-en, så bort fra den, men det gjør ikke en
+    KI-søkemotor som leser teksten rett ut av HTML-en: forsiden hadde to h1-er
+    («Myntos: …» og «Oversikt ubekreftet»), og «Hei, der», «Henter oversikten …»
+    og tomme tabeller sto midt i beskrivelsen av programmet. Innholdet i en
+    <template> er ikke en del av siden før det settes inn, og det settes aldri
+    inn for den som ikke er logget inn, heller ikke for Googles gjengiver.
+    `pnpm check:seo` passer på at det forblir slik.
+  */}
+  <section data-auth-only="inn" id="dashboard"></section>
+
+  <template id="dashboard-view">
     <header class="page-head">
       <div class="page-head-id">
         {/* Hilsenen er ikke det siden handler om.
@@ -394,9 +565,13 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
         Årsoppgjørsføringer og omposteringer fører du som <a href="/manuelt-bilag/">Manuelt bilag</a>,
         driftsmidler og årets avskrivninger under <a href="/anlegg/">Anlegg og avskrivning</a>,
         og et år som er over avslutter du under <a href="/arsavslutning/">Årsavslutning</a>.
+        {/* Skattemeldingen gjøres én gang i året, av et avsluttet år, og hører
+            hjemme her ved årets tall, ikke i menyen. */}
+        Skattemeldingen for et avsluttet år kontrollerer og sender du under
+        <a href="/skattemelding/">Skattemelding</a>.
       </p>
     </div>
-  </section>
+  </template>
 
   {/*
       Enter the waiting state before the browser paints, not after.
@@ -417,11 +592,20 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
       That is the right answer for a first-ever visit: we do not know that there
       are books to lay out, and an empty account would watch a skeleton turn
       into «Ingen regnskap ennå».
+
+      Oversikten settes inn her først, fra malen over, når nettleseren var logget
+      inn sist. Samme tre linjer som `mountDashboard` i modulen under, som gjør
+      det når /auth/me sier at noen er logget inn uten at hintet visste det.
+      Begge sjekker at den ikke alt står der.
   */}
   <script is:inline>
     (function () {
       const root = document.documentElement;
       if (root.dataset.auth !== 'inn') return;
+      const host = document.getElementById('dashboard');
+      const view = document.getElementById('dashboard-view');
+      if (host === null || view === null) return;
+      if (host.childElementCount === 0) host.append(view.content.cloneNode(true));
       const hint = window.myntosHint;
 
       // The greeting and the company name, painted here rather than by the
@@ -488,7 +672,19 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
   .features {
     margin-top: 1rem;
   }
+  /* `.card + .card` gir hvert kort etter det første en toppmarg, som i et
+     rutenett skyver alle unntatt det første ned. */
+  .features > .card {
+    margin-top: 0;
+  }
+  /* Seks kort går opp i tre kolonner, ikke i fire med to igjen på en egen rad. */
+  .features-six {
+    grid-template-columns: repeat(auto-fit, minmax(min(19rem, 100%), 1fr));
+  }
   .feature {
+    display: block;
+    color: inherit;
+    text-decoration: none;
     transition:
       border-color 150ms ease,
       transform 150ms ease;
@@ -496,6 +692,27 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
   .feature:hover {
     border-color: var(--border-strong);
     transform: translateY(-2px);
+  }
+  .feature:hover .card-title {
+    color: var(--accent);
+  }
+  .faq {
+    display: grid;
+    gap: 1.75rem 2.5rem;
+    grid-template-columns: repeat(auto-fit, minmax(min(24rem, 100%), 1fr));
+    margin-top: 1.25rem;
+  }
+  .faq-item h3 {
+    margin: 0 0 0.45rem;
+  }
+  .faq-item p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.95rem;
+  }
+  .faq-item .faq-link {
+    margin-top: 0.5rem;
+    font-size: 0.9rem;
   }
   .steps {
     padding-left: 1.2rem;
@@ -733,11 +950,44 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
     these come back with it — see `skeletonInto` and `skeletonRows`.
   */
 
-  const status = el<HTMLParagraphElement>('#dash-status');
-  const loading = el<HTMLDivElement>('#loading');
-  const empty = el<HTMLDivElement>('#no-company');
-  const overview = el<HTMLDivElement>('#overview');
-  const controls = el<HTMLDivElement>('#company-controls');
+  /*
+    Oversikten finnes ikke i dokumentet før `mountDashboard` har satt den inn fra
+    malen, så elementene hentes der og ikke når modulen lastes. Ingen av
+    funksjonene under kalles før det har skjedd.
+  */
+  let status!: HTMLParagraphElement;
+  let loading!: HTMLDivElement;
+  let empty!: HTMLDivElement;
+  let overview!: HTMLDivElement;
+  let controls!: HTMLDivElement;
+
+  /**
+   * Sett inn oversikten fra malen, hvis skriptet i siden ikke alt har gjort det,
+   * og hent elementene den består av.
+   *
+   * Hilsenen fylles her også. Toppen fyller den fra /auth/me i `applyChrome`,
+   * men det skjer før denne, og en oversikt som ble satt inn etterpå, ville
+   * stått med «Hei, der». Selskapets navn trenger ingen slik hjelp:
+   * `setActiveCompany` maler det når selskapet er kjent.
+   */
+  function mountDashboard(session: Session): void {
+    const host = el<HTMLElement>('#dashboard');
+    if (host.childElementCount === 0) {
+      host.append(el<HTMLTemplateElement>('#dashboard-view').content.cloneNode(true));
+    }
+    // Oversikten er fanen man har åpen hele dagen, og der holder navnet. Satt
+    // her og ikke i skriptet i siden, som bare vet hva hintet sa: et hint fra
+    // en innlogging som er utløpt, ville ellers gitt forsiden feil tittel.
+    document.title = 'Myntos';
+    for (const node of host.querySelectorAll<HTMLElement>('[data-session-name]')) {
+      node.textContent = session.user.full_name || session.user.email;
+    }
+    status = el('#dash-status');
+    loading = el('#loading');
+    empty = el('#no-company');
+    overview = el('#overview');
+    controls = el('#company-controls');
+  }
 
   /** Every company the caller can reach. */
   let companies: Company[] = [];
@@ -965,6 +1215,7 @@ const TYPE_WIDTHS = ['9rem', '3rem', '6rem'];
 
   void loadSession().then(async (session) => {
     if (session === null) return;
+    mountDashboard(session);
     try {
       companies = await loadCompanies();
       loading.hidden = true;

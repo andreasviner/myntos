@@ -650,7 +650,12 @@ def test_a_link_finished_in_somebody_elses_browser_is_refused(
     register(victim, "kari@example.no")
     callback = broker.login(authorize_url, KARI_BANKID)
     response = victim.get("/api/v1/auth/bankid/callback", params=callback, follow_redirects=False)
-    assert response.headers["location"] == "https://app.example/konto/?error=kobling_annen_konto"
+    # Refused already because the victim's browser did not start the flow
+    # (deps.bind_flow); the check that the session is the starter's stays
+    # behind it in _finish_link.
+    assert response.headers["location"] == (
+        "https://app.example/konto/?error=innlogging_annen_nettleser"
+    )
     assert scalar(database, "SELECT count(*) FROM user_identity") == 0
     # Neither account lost its password over it.
     assert scalar(database, "SELECT count(*) FROM app_user WHERE password_hash IS NULL") == 0
@@ -1134,15 +1139,16 @@ def test_the_fodselsnummer_is_never_kept_even_when_sent(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """An application on Idura's static scope strategy could send it unasked."""
-    with_ssn = {**KARI_BANKID, "socialno": "16084138758"}
+    # Synthetic: month plus 80 is Tenor's mark, so no real person has it.
+    with_ssn = {**KARI_BANKID, "socialno": "16884140076"}
     with caplog.at_level(logging.WARNING):
         _sign_up(client, broker, with_ssn, "kari@example.no")
     assert "fødselsnummer that was not asked for" in caplog.text
-    assert "16084138758" not in caplog.text
+    assert "16884140076" not in caplog.text
 
     stored = Path(database_url.removeprefix("sqlite+aiosqlite:///")).read_bytes()
     assert KARI_BANKID["sub"].encode() in stored  # the one thing that is kept
-    for never in ("16084138758", KARI_BANKID["uniqueuserid"], KARI_BANKID["birthdate"]):
+    for never in ("16884140076", KARI_BANKID["uniqueuserid"], KARI_BANKID["birthdate"]):
         assert never.encode() not in stored
 
 

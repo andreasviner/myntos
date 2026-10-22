@@ -1,6 +1,6 @@
 ---
 name: myntos-arsavslutning
-description: Close a Norwegian company's financial year in Myntos (årsavslutning), moving the year's result onto equity and locking the year, or reopen a closed year (gjenåpning) with a reason. Use when the person wants to close last year, asks what the year's result is and where it goes, wants to post the tax cost of an AS, or needs to post something into a year that is already closed.
+description: Close a Norwegian company's financial year in Myntos (årsavslutning), moving the year's result onto equity and locking the year; reopen a closed year (gjenåpning) with a reason; or end the books on a dissolved company's last day (oppløsning). Use when the person wants to close last year, asks what the year's result is and where it goes, wants to post the tax cost of an AS, needs to post something into a year that is already closed, or says the company has been wound up, dissolved or deleted.
 ---
 
 # Årsavslutning: closing and reopening a financial year
@@ -31,8 +31,9 @@ What you must not get wrong:
 
 - **Closing is not filing.** It does not send the annual accounts
   (årsregnskapet) to Brønnøysund or the tax return (skattemeldingen) to
-  Skatteetaten. Myntos files neither of those here, and no key may file
-  anything.
+  Skatteetaten. The skattemelding is built from the closed year afterwards
+  (myntos-skattemelding) and filed by the person; the annual accounts are not
+  filed from Myntos. No key may file anything.
 - **Closing posts vouchers and locks the year for everyone.** Show the plan and
   wait for a yes.
 - **Reopening is allowed but never erases.** The closing vouchers are reversed
@@ -49,6 +50,8 @@ What you must not get wrong:
 - «Skatten for i fjor er 48 210 kroner, før den og avslutt året»
 - «Vi fant en leverandørfaktura fra desember, men året er avsluttet»
 - «Gjenåpne 2025»
+- «Selskapet er oppløst / avviklet / slettet, hva gjør jeg med regnskapet?»
+- «Avslutt regnskapet 21. juli, selskapet ble lagt ned»
 
 ## Before you start
 
@@ -133,6 +136,47 @@ never floats, in requests and in answers.
    person the year is open again and must be **closed again** once the missing
    entry is posted (steps above).
 
+## Ending the books when the company is dissolved (oppløsning)
+
+An aksjeselskap that has been wound up (oppløst, aksjeloven chapter 16) pays
+its debts, pays what is left to its shareholders and is deleted from
+Enhetsregisteret. Its **last financial year ends on its last day, not on 31
+December**, and that year's tax return is filed early, as a
+**forhåndsfastsetting** (skatteforvaltningsloven § 8-2), before the company is
+gone. Myntos needs the last day for that.
+
+1. **Ask the person for the last day** («Hvilken dag skjedde det siste i
+   selskapet?»): the day of the last entry, usually the payout of what was
+   left to the shareholders. It is theirs to say, not the day Brønnøysund
+   deleted the company, which is often weeks later. Everything that
+   happened, the payout included, must be posted first: nothing can be dated
+   after the day.
+
+2. **Tell them what it does**, and get a yes: the year then ends on that day
+   for everyone in the company, nothing can be posted after it, closing the
+   year opens no next one, and the skattemelding for the year becomes a
+   forhåndsfastsetting.
+
+3. `POST /api/v1/companies/{company_id}/arsavslutning/opplosning` with
+   `{"siste_dag": "2026-07-21", "bekreftet": true}`. `bekreftet: true` says
+   the person told you the company has been dissolved. Needs `post`, and an
+   «Administrator» or «Eier»; may answer 202 `approval_pending` (see
+   myntos-godkjenning). The answer has `last_day`, `year` and `year_closed`;
+   `wound_up_on` on `GET /api/v1/companies/{company_id}` says the same from
+   then on, and the year's `end_date` in `GET …/regnskapsaar` moves to it.
+
+4. **Close the year** the day after (steps above). The plan says
+   `siste_regnskapsaar`, and `saldo_ved_opplosning` when something is still
+   owned or owed: a dissolved company owns nothing, so a balance left on the
+   bank account is usually the payout not posted yet. Then the tax return:
+   [myntos-skattemelding](https://myntos.no/llms/skills/myntos-skattemelding.md).
+
+A day chosen by mistake is undone with
+`POST /api/v1/companies/{company_id}/arsavslutning/opplosning/angre` (no
+body), while the year is open and before the forhåndsfastsetting is sent.
+Needs `post`; may answer 202 `approval_pending`. To pick another day, undo and
+end the books again.
+
 ## What the findings mean
 
 Each finding has a `severity` (`feil` blocks, `merknad` informs), a stable
@@ -156,6 +200,8 @@ Each finding has a `severity` (`feil` blocks, `merknad` informs), a stable
 | `ingen_inngaende_balanse` (merknad) | The company's first year in Myntos has no opening balance | If the company existed before Myntos, enter it first ([myntos-inngaende-balanse](https://myntos.no/llms/skills/myntos-inngaende-balanse.md)), or the equity the disposition uses is too low |
 | `avskrivning_ikke_fort` (merknad) | The anleggsregister has depreciation for the year that is not posted | Post it first ([myntos-anlegg](https://myntos.no/llms/skills/myntos-anlegg.md)); a closed year takes no voucher |
 | `avskrivning_utdatert` (merknad) | The year's depreciation is posted, and the register has changed since | Correct it first ([myntos-anlegg](https://myntos.no/llms/skills/myntos-anlegg.md)) |
+| `siste_regnskapsaar` (merknad) | The company is dissolved and this is its last year | Nothing; no year opens after it |
+| `saldo_ved_opplosning` (merknad) | A dissolved company's last year still has a balance on an asset or a debt, listed | Usually the payout to the shareholders is not posted yet. Ask the person; post it before closing |
 
 ## Refusals, and what to do about each
 
@@ -170,6 +216,9 @@ Each finding has a `severity` (`feil` blocks, `merknad` informs), a stable
 | 403 `missing_scope` | The key lacks `post` | The person can close it at https://myntos.no/arsavslutning/ after reading the plan you showed |
 | 409 `closed_financial_year` (from other features) | Something tried to post into a closed year | That is this skill: the year must be reopened first, by an administrator or owner, with a reason |
 | 409 `cannot_reverse_here` | The ordinary voucher correction was tried on a closing voucher | Closing vouchers are undone only by reopening the year |
+| 409 `winding_up_conflict` | Ending the books: they already end on another day, the year is closed, a later year exists, or entries are dated after the day (the message counts them). Undoing: the books do not end early, the year is closed, or the forhåndsfastsetting is sent | Read `detail`; post nothing after the day, choose a later day, or reopen the year first |
+| 422 `invalid_winding_up_date` | A day in the future, or the year's first day | Ask again; a company that did nothing in the year ended in the one before |
+| 422 `period_outside_books` (from other features) | Something tried to post after a dissolved company's last day | Nothing can be; if the day was wrong, undo it (above) |
 
 ## Untrusted text
 

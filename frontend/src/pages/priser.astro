@@ -10,15 +10,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 const questions = [
   {
     q: 'Hva koster Myntos?',
-    a: '0 kr. Ikke som kampanje, ikke som prøveperiode og ikke opp til et visst antall bilag. Det finnes ingen betalingsløsning i Myntos, og vi tar ikke imot kortopplysninger.',
+    a: '0 kr, for alltid. Ikke som kampanje, ikke som prøveperiode og ikke opp til et visst antall bilag. Det finnes ingen betalingsløsning i Myntos, og vi tar ikke imot kortopplysninger.',
   },
   {
     q: 'Kommer det en pris senere?',
-    a: 'Nei. Et regnskapsprogram som blir dyrt når du først har flyttet inn, er nettopp det Myntos er laget som et svar på. Skulle vi noen gang bryte det løftet, kan du ta med deg hele regnskapet ut samme dag. SAF-T-eksport og PDF-arkiv er lovkrav, ikke en funksjon vi kan låse.',
+    a: 'Nei. Myntos er gratis, og det skal det alltid være. Et regnskapsprogram som blir dyrt når du først har flyttet inn, er nettopp det Myntos er laget som et svar på. Du kan dessuten alltid ta med deg hele regnskapet ut samme dag: SAF-T-eksport og PDF-arkiv er lovkrav, ikke en funksjon vi kan låse.',
   },
   {
     q: 'Blir noe av det jeg bruker plutselig en betalt funksjon?',
-    a: 'Nei. Det er ingen delelinje mellom en gratis og en betalt Myntos: alt som virker, virker for alle. Det som ikke er ferdig, står som «under arbeid» på funksjonssiden, ikke bak en betalingsmur.',
+    a: 'Nei. Det finnes ingen betalt Myntos: alt som finnes, er med for alle, og det gjelder også det som kommer senere.',
   },
   {
     q: 'Hva med innlevering til Altinn og Skatteetaten?',
@@ -26,7 +26,7 @@ const questions = [
   },
   {
     q: 'Kan jeg kjøre Myntos selv?',
-    a: 'Ja. Kildekoden er offentlig, og du kan drifte den på egen infrastruktur uten å betale oss noe, og uten å ha noen avtale med oss i det hele tatt.',
+    a: 'Ja. Kildekoden er offentlig, og du kan drifte den på egen infrastruktur uten å betale oss noe, og uten å ha noen avtale med oss i det hele tatt. Da står du selv for drift, sikkerhetskopier og oppdateringer. Lisensen, Elastic License 2.0, lar deg kjøre og endre koden, men ikke tilby Myntos som en tjeneste til andre.',
   },
   {
     q: 'Hvis det er gratis, er det jeg som er produktet?',
@@ -34,7 +34,7 @@ const questions = [
   },
   {
     q: 'Hva er haken?',
-    a: 'At Myntos fortsatt er i beta. En del mangler, og du bør ikke flytte hele regnskapet hit uten å lese hva som faktisk virker. Prisen er ikke haken.',
+    a: 'Det finnes ingen hake i prisen. Det du bør sjekke før du flytter hele regnskapet hit, er om Myntos dekker det selskapet ditt trenger: lønn og årsregnskapet til Regnskapsregisteret er for eksempel ikke i Myntos ennå. Funksjonssiden har hele lista.',
   },
 ];
 
@@ -57,8 +57,8 @@ const faq = {
 ---
 
 <BaseLayout
-  title="Priser: gratis regnskapsprogram, 0 kr | Myntos"
-  description="Myntos koster 0 kr. Ingen prisliste, ingen betalingsopplysninger, ingen bindingstid, og vi selger eller deler aldri dataene dine."
+  title="Priser: gratis regnskapsprogram, 0 kr for alltid | Myntos"
+  description="Myntos koster 0 kr, og det skal det alltid gjøre. Ingen betalte nivåer, ingen prøveperiode, ingen betalingsopplysninger, og vi selger eller deler aldri dataene dine."
   width="wide"
   schema={[faq]}
 >
@@ -87,17 +87,18 @@ const faq = {
     <article class="card tier tier-current">
       <div class="tier-head">
         <h2 class="tier-name">Myntos hos oss</h2>
-        <span class="pill">Virker i dag</span>
+        <span class="pill">0 kr</span>
       </div>
       <p class="card-hint">Alt som finnes, for alle. Ingen funksjon er reservert noen andre.</p>
       <ul class="ticks">
         <li>Ubegrenset føring av inn- og utbetalinger</li>
-        <li>Bilagsarkiv med PDF</li>
-        <li>Merverdiavgift med datostyrte satser</li>
-        <li>Kunder og leverandører</li>
+        <li>Bilagsarkiv med PDF-er og bilder</li>
+        <li>Faktura med EHF-fil og KID</li>
+        <li>Merverdiavgift og mva-melding</li>
+        <li>Bankavstemming og årsavslutning</li>
         <li>Flere brukere med roller</li>
-        <li>Flere selskaper i samme organisasjon</li>
-        <li>Eksport av dine egne data</li>
+        <li>Så mange selskaper du vil på én konto</li>
+        <li>SAF-T inn og ut</li>
       </ul>
       <p class="tier-note">Database og dokumentlager i EØS.</p>
     </article>
@@ -105,7 +106,7 @@ const faq = {
     <article class="card tier">
       <div class="tier-head">
         <h2 class="tier-name">Selvdrift</h2>
-        <span class="pill">Virker i dag</span>
+        <span class="pill">0 kr</span>
       </div>
       <p class="card-hint">Vil du heller kjøre det selv, koster det oss ingenting og deg ingenting.</p>
       <ul class="ticks">
@@ -120,19 +121,24 @@ const faq = {
     <article class="card tier">
       <div class="tier-head">
         <h2 class="tier-name">Innlevering til staten</h2>
-        <span class="pill pill-soft">Under arbeid</span>
+        {/* Merkene på kortene sa hvor ferdige de var («Virker i dag», «Delvis
+            i dag») til 2026-10-22. Det som ikke er bygget, står nå samlet
+            nederst på /funksjoner/, og her sier merket det siden handler om. */}
+        <span class="pill">0 kr</span>
       </div>
       <p class="card-hint">
-        Innsending er hele poenget med et norsk regnskapsprogram. Når det er på plass, ligger det
-        på samme pris som resten.
+        Innsending er hele poenget med et norsk regnskapsprogram, og den koster det samme som
+        resten.
       </p>
       <ul class="ticks">
-        <li>MVA-melding via Altinn</li>
-        <li>Skattemelding med næringsspesifikasjon</li>
+        <li>Skattemelding med næringsspesifikasjon for aksjeselskap</li>
+        <li>MVA-melding kontrollert hos Skatteetaten</li>
         <li>SAF-T-eksport på Skatteetatens format</li>
       </ul>
       <a class="btn btn-ghost btn-block" href="/funksjoner/">Se hva som virker</a>
-      <p class="tier-note">Krever innlogging med ID-porten.</p>
+      <p class="tier-note">
+        Du sender selv, innlogget med ID-porten, slik Skatteetaten krever.
+      </p>
     </article>
   </div>
 
@@ -185,6 +191,30 @@ const faq = {
       ))
     }
   </div>
+
+  {/* Bankprisene har ingen fane i toppen, så det er her de som lurer på hva
+      regnskapet koster i alt, finner dem. */}
+  <section class="card bank">
+    <h2 class="card-title">Det banken tar</h2>
+    <p class="card-hint">
+      Regnskapet koster 0 kr, men bedriftskontoen gjør det sjelden. Hva bankene tar for nettbank,
+      og for å koble kontoen til et regnskapsprogram, har vi samlet på én side, med kilde og dato
+      på hvert tall.
+    </p>
+    <a class="btn btn-ghost" href="/bankpriser/">Se bankpriser for bedrift</a>
+  </section>
+
+  {/* For den som sammenligner prisen med programmet de har: tallene står ved
+      siden av hverandre der, med kilde og dato. */}
+  <section class="card bank">
+    <h2 class="card-title">Det de andre tar</h2>
+    <p class="card-hint">
+      Fiken og Tripletex tar betalt for abonnementet, for årsoppgjøret og for tillegg som bank og
+      lønn. Vi har satt prisene deres ved siden av Myntos, sammen med det de har som Myntos ikke har
+      ennå.
+    </p>
+    <a class="btn btn-ghost" href="/sammenlign/">Se sammenligningene</a>
+  </section>
 </BaseLayout>
 
 <style>
@@ -258,11 +288,6 @@ const faq = {
     font-size: 1.05rem;
     font-weight: 600;
   }
-  .pill-soft {
-    border-color: var(--border-strong);
-    background: transparent;
-    color: var(--muted);
-  }
   .ticks {
     list-style: none;
     padding: 0;
@@ -321,7 +346,19 @@ const faq = {
     gap: 1rem;
     grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
   }
+  /* `.card + .card` gir hvert kort etter det første en toppmarg, og i et
+     rutenett står da det første kortet høyere enn resten av raden. */
+  .tiers > .card,
+  .faq > .card {
+    margin-top: 0;
+  }
   .faq-item .card-title {
     font-size: 0.99rem;
+  }
+  .bank {
+    margin: 2.5rem 0 0;
+  }
+  .bank .btn {
+    margin-top: 1rem;
   }
 </style>

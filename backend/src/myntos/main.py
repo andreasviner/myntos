@@ -7,6 +7,7 @@ Run locally with:
 
 import asyncio
 import logging
+import re
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
@@ -21,24 +22,63 @@ from myntos.api.errors import (
     domain_error_handler,
     unhandled_error_middleware,
 )
+from myntos.api.v1.feedback import keep_out_of_the_access_log
 from myntos.api.v1.router import api_router
 from myntos.api.v1.saft_innlesing import get_import_sessions
 from myntos.auth.approvals import ApprovalHeld
 from myntos.core.config import get_settings
-from myntos.core.security import security_headers_middleware
+from myntos.core.security import BodySizeLimitMiddleware, security_headers_middleware
 from myntos.db.session import get_engine
 from myntos.domain.faktura.errors import FakturaError
+from myntos.domain.feedback import service as feedback_service
+from myntos.domain.feedback.errors import FeedbackError
 from myntos.domain.identity import closure
 from myntos.domain.identity.errors import IdentityError
 from myntos.domain.ledger.errors import LedgerError
 from myntos.integrations.brreg import BrregError
-from myntos.saft import jobs
+from myntos.saft import jobs, reader
 from myntos.storage.base import DocumentStorage
 
 logger = logging.getLogger(__name__)
 
 _PURGE_FIRST_DELAY = 5 * 60
 _PURGE_INTERVAL = 24 * 60 * 60
+
+_MIB = 1024 * 1024
+# The routes that read the previous program's files, the one upload bigger than
+# a few bilag: its SAF-T files, and Tripletex's printout of the vouchers with
+# their attachments (saft/vedlegg), which is about as large for a year.
+_SAFT_UPLOAD_PATHS = re.compile(r"^/api/v1/companies/\d+/(saft/|inngaende-balanse/saft$)")
+
+# Where production answers, named in the published document so that a client
+# generated from it, or an agent reading it cold, calls the right host.
+PUBLIC_API_URL = "https://api.myntos.no"
+
+# The first thing a developer or an agent reads in /api/v1/openapi.json, so it
+# says what the rest of the document assumes: the key extensions on every
+# operation, where an agent starts, and what v1 promises
+# (docs/agents-and-api.md rules 5, 11, 12 and 13).
+_DESCRIPTION = """\
+Myntos is a Norwegian accounting program for small companies: payments and \
+receipts, vouchers, invoices, bank statements, the VAT return and the year end. \
+This is its whole API: the web app at https://myntos.no is one client of it \
+and calls nothing another client cannot.
+
+Every operation says what a key made for an agent or a program may do with it. \
+`x-myntos-key-scope` is `read`, `write` (can be undone), `post` (cannot be \
+undone) or `none` (no credential needed); an operation without it is closed to \
+keys (403 `not_for_agent_keys`). A writing operation carries \
+`x-myntos-approval-label`, the words a person approves when the key may only \
+ask (the request then answers 202 `approval_pending`), and \
+`x-myntos-key-preview` marks a write that stores nothing. Agents start at \
+https://myntos.no/llms.txt, which says how to connect and links a skill for \
+every feature.
+
+Errors are `{"detail", "code"}`: branch on `code`; `detail` is Norwegian for \
+a person. Amounts are decimal strings (`"1250.00"`), never floats. Within v1, \
+changes are additive: new operations, fields and optional parameters. Anything \
+renamed or removed means v2, announced in llms.txt with a deprecation period.
+"""
 
 
 @asynccontextmanager
@@ -61,10 +101,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:  # startup must survive a database that is briefly unreachable
         logger.warning("Could not reach the database at startup", exc_info=True)
     # SAF-T imports a restart stopped halfway start again (myntos.saft.jobs).
-    # Through the dependency, so a test's database is the one looked in.
+    # Through the dependencies, so a test's database is the one looked in and
+    # its store the one the old program's documents are put in.
     sessions = app.dependency_overrides.get(get_import_sessions, get_import_sessions)
-    jobs.resume_in_background(sessions)
     storage = app.dependency_overrides.get(get_document_storage, get_document_storage)
+    jobs.resume_in_background(sessions, storage)
     purging = asyncio.get_running_loop().create_task(_purge_daily(sessions, storage))
     yield
     purging.cancel()
@@ -74,6 +115,9 @@ async def _purge_daily(
     sessions: Callable[[], jobs.Sessions], storage: Callable[[], DocumentStorage]
 ) -> None:
     """Delete, once a day, deleted companies whose retention has run out.
+
+    And feedback that was closed longer ago than ``feedback_retention_days``
+    (docs/feedback.md), for the same reason: what decides it ships with it.
 
     In the process rather than on a systemd timer, so that it is deployed with
     the code that decides what it deletes and cannot be forgotten on a rebuilt
@@ -94,20 +138,40 @@ async def _purge_daily(
                     await closure.purge_expired(db, storage())
         except Exception:  # a failed run is retried tomorrow, and must not end the loop
             logger.exception("Could not purge companies past their retention")
+        try:
+            async with sessions()() as db:
+                days = get_settings().feedback_retention_days
+                if purged := await feedback_service.purge_closed(db, retention_days=days):
+                    logger.info("Deleted %d closed feedback items past their retention", purged)
+                await db.commit()
+        except Exception:  # as above: tomorrow again, and the loop goes on
+            logger.exception("Could not purge closed feedback")
         await asyncio.sleep(_PURGE_INTERVAL)
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    # Interactive API docs are a development tool; never expose them in production.
-    show_docs = settings.environment != "production"
+    production = settings.environment == "production"
 
     app = FastAPI(
         title="Myntos API",
         version=__version__,
-        docs_url="/docs" if show_docs else None,
+        description=_DESCRIPTION,
+        # The schema is published everywhere, production included: it is the
+        # reference developers and agents build against (docs/agents-and-api.md
+        # rule 11). Nothing in it is a secret. The source it is generated from
+        # is public, and every route already states in it what a key may do.
+        # Under /api/v1/ because it describes v1, and a v2 gets its own.
+        openapi_url="/api/v1/openapi.json",
+        # The interactive page is a development tool, not the reference: it
+        # loads its script from a CDN and sends requests from a form. Never in
+        # production. It reads the schema from openapi_url above.
+        docs_url=None if production else "/docs",
         redoc_url=None,
-        openapi_url="/openapi.json" if show_docs else None,
+        # Production's address in production only. A development server whose
+        # document named production would aim /docs' «Try it out» there; with
+        # no servers listed, a client uses the host the document came from.
+        servers=[{"url": PUBLIC_API_URL}] if production else None,
         lifespan=lifespan,
     )
 
@@ -121,6 +185,16 @@ def create_app() -> FastAPI:
     # headers — reported as an allow-list problem instead of the server error it
     # is. See the docstring there before reordering these.
     app.middleware("http")(unhandled_error_middleware)
+    # Outside the error middleware, so nothing it catches can stand in for the
+    # 413, and inside CORS, so a browser is shown the 413 rather than a CORS
+    # failure. The numbers are in BodySizeLimitMiddleware's docstring.
+    app.add_middleware(
+        BodySizeLimitMiddleware,
+        body=2 * _MIB,
+        upload=64 * _MIB,
+        large_upload=reader.MAX_UPLOAD_BYTES + _MIB,
+        large_upload_paths=_SAFT_UPLOAD_PATHS,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -140,10 +214,13 @@ def create_app() -> FastAPI:
     app.add_exception_handler(LedgerError, domain_error_handler)
     app.add_exception_handler(FakturaError, domain_error_handler)
     app.add_exception_handler(BrregError, domain_error_handler)
+    app.add_exception_handler(FeedbackError, domain_error_handler)
     # Not an error: a key's request stored to wait for its person (rule 13).
     app.add_exception_handler(ApprovalHeld, approval_held_handler)
 
     app.include_router(api_router, prefix="/api/v1")
+    # Anonymous feedback stays anonymous in the journal too (docs/feedback.md).
+    keep_out_of_the_access_log()
     return app
 
 

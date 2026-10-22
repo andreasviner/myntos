@@ -713,6 +713,9 @@ class AgentKeyStop(enum.StrEnum):
     ACCESS_OFF = "access_off"
     MEMBER_REMOVED = "member_removed"
     PASSWORD_RESET = "password_reset"  # noqa: S105 - a reason name, not a password
+    # An unconfirmed account taken back by a provider that verified the
+    # address: whoever signed up before the owner could have made the key.
+    RECLAIMED = "reclaimed"
     BANKID = "bankid"
     ACCOUNT_DELETED = "account_deleted"
     COMPANY_CLOSED = "company_closed"
@@ -898,9 +901,12 @@ class AgentApprovalStatus(enum.StrEnum):
 
 
 class FilingType(enum.StrEnum):
-    """What a key may ask its person to file. The skattemelding joins this when it can be filed."""
+    """What a key may ask its person to file, on the page where the person files it."""
 
     MVA_MELDING = "mva_melding"
+    # An aksjeselskap's skattemelding and næringsspesifikasjon for one income
+    # year. Yearly, so a request for it has no period (``filing_period`` NULL).
+    SKATTEMELDING = "skattemelding"
 
 
 def _approval_kind_type() -> Enum:

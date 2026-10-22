@@ -101,9 +101,9 @@ export const guider: Guide[] = [
     slug: 'tripletex',
     navn: 'Tripletex',
     menyTittel: 'Flytte fra Tripletex',
-    menyTekst: 'Regnskapseksport (SAF-T) med bilag, pluss lister som CSV.',
+    menyTekst: 'Regnskapseksport (SAF-T), bilagene med vedlegg som PDF, og lister som CSV.',
     ingress:
-      'Tripletex legger SAF-T-eksporten under kontoplanen framfor under innstillinger, noe som er lett å lete forbi. Filen kommer som en ZIP med både regnskapet og bilagene, og kan ta tid hvis året er stort.',
+      'Tripletex legger SAF-T-eksporten under kontoplanen framfor under innstillinger, noe som er lett å lete forbi. SAF-T-filen har regnskapet, men ikke kvitteringene og fakturaene bak bilagene: Tripletex har ingen samlet eksport av dem, men skriver dem ut som PDF fra bilagsoversikten, og den utskriften leser Myntos.',
     steg: [
       {
         tittel: 'Finn regnskapseksporten',
@@ -122,6 +122,12 @@ export const guider: Guide[] = [
           'Et år med mange bilag tar tid å pakke. Lukker du fanen for tidlig, må du starte eksporten på nytt, for det er ingen kø som fortsetter i bakgrunnen.',
       },
       {
+        tittel: 'Skriv ut bilagene med vedlegg',
+        tekst:
+          'Velg perioden i bilagsoversikten, huk av i kolonnen «Dato» så alle bilagene er valgt, og velg «Skriv ut valgte bilag». Last ned det som vises, som PDF. Hvert bilag kommer med Tripletex-siden først og vedleggene etter. Er det mye, ta en måned om gangen, som Tripletex selv anbefaler.',
+        vei: 'Bilag → Bilagsoversikt → Skriv ut valgte bilag',
+      },
+      {
         tittel: 'Ta med listene',
         tekst:
           'Kunde- og leverandørlistene eksporteres for seg som CSV, og er de enkleste å legge inn igjen manuelt i et nytt system.',
@@ -129,12 +135,15 @@ export const guider: Guide[] = [
     ],
     taVarePa: [
       'SAF-T-eksport (ZIP) for hvert regnskapsår i Tripletex',
+      'Utskriften av bilagene med vedlegg, som PDF, for hvert år',
       'Kunde- og leverandørliste som CSV',
       'Egne rapporter du er vant til å se på, som PDF. De finnes ikke i SAF-T',
     ],
     verdtAVite: [
       'Eksporten speiler regnskapet i det øyeblikket du kjører den. Fører du noe etterpå, stemmer ikke filen lenger, og du må kjøre den på nytt.',
       'Har du timer, prosjekt eller lønn i Tripletex, ligger det utenfor SAF-T Regnskap. Eksporter det du trenger fra de modulene separat.',
+      'Last opp utskriften av bilagene under «Hent regnskapet fra et annet program», med Tripletex valgt som programmet du kommer fra, etter at SAF-T-filene er hentet. Myntos legger hvert bilags sider på bilaget med samme nummer i bilagsarkivet.',
+      'Tripletex tilbyr lesetilgang i fem år etter at du har sagt opp, hvis du vil ha originalene tilgjengelige der også.',
     ],
     kilder: [
       {
@@ -362,7 +371,7 @@ export const startISteg: Steg[] = [
   {
     tittel: 'Før fra og med datoen du flyttet',
     tekst:
-      'Registrer inn- og utbetalinger med type og PDF. Dokumentasjonen for bilagene som ble hentet, ligger i bilagsarkivet til det gamle programmet: ta vare på det sammen med SAF-T-filene.',
+      'Registrer inn- og utbetalinger med type og PDF. Dokumentasjonen for bilagene som ble hentet, ligger i bilagsarkivet til det gamle programmet: ta vare på det sammen med SAF-T-filene. Kommer du fra Tripletex, kan du også legge den inn i Myntos fra utskriften av bilagene.',
   },
 ];
 
@@ -370,5 +379,5 @@ export const startISteg: Steg[] = [
 export const importStatus = {
   tittel: 'Myntos henter regnskapet fra SAF-T-filene, også tidligere år',
   tekst:
-    'Last opp SAF-T-filene under «Hent regnskapet fra et annet program», én per regnskapsår. Myntos henter kontoene, kundene og leverandørene, inngående balanse fra det første året og bilagene for hvert år, og året du står i fram til datoen filen ble tatt ut. Det som ikke er i SAF-T, kommer ikke med: dokumentene bak bilagene (PDF-ene), lønn, timer og prosjekter. Derfor handler guidene her også om å få dataene trygt ut av det gamle programmet før du sier det opp.',
+    'Last opp SAF-T-filene under «Hent regnskapet fra et annet program», én per regnskapsår. Myntos henter kontoene, kundene og leverandørene, inngående balanse fra det første året og bilagene for hvert år, og året du står i fram til datoen filen ble tatt ut. Det som ikke er i SAF-T, kommer ikke med av seg selv: dokumentene bak bilagene (PDF-ene), lønn, timer og prosjekter. Fra Tripletex kan bilagene med vedlegg lastes opp som PDF etterpå, og Myntos legger dem på riktig bilag. Derfor handler guidene her også om å få dataene trygt ut av det gamle programmet før du sier det opp.',
 };

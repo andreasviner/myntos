@@ -59,6 +59,11 @@ jobs:
         run: pnpm check
       - name: Build
         run: pnpm build
+      # What the build hands a crawler: one title, description, h1 and canonical
+      # per public page, a sitemap that matches the robots meta, and no
+      # signed-in overview in the front page's HTML (scripts/check-seo.mjs).
+      - name: SEO (check:seo)
+        run: pnpm check:seo
 
   secrets:
     name: Secret scan (gitleaks)

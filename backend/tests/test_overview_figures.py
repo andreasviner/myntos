@@ -134,6 +134,31 @@ def test_an_import_marks_the_bank_the_file_names_and_the_overview_counts_it(
     assert Decimal(_summary(client, company["id"], EARLIER)["total_in"]) == Decimal("1250.00")
 
 
+def test_newest_first_turns_the_list_around_and_keeps_each_balance(client: TestClient) -> None:
+    # /bilag/ shows the newest first: a year brought over put this week's
+    # vouchers hundreds down. Read either way, a voucher's balance is the
+    # account's after it in date order, so the top row is the closing balance.
+    company = _books(client)
+    uploaded = _upload(client, company["id"], (f"{EARLIER}.xml", _bank_on_2390_file()))
+    assert _post(client, company["id"], uploaded["id"]).status_code == 202
+    path = f"/api/v1/companies/{company['id']}/bilag"
+    oldest = client.get(path, params={"aar": EARLIER, "konto": "2390"}).json()
+    newest = client.get(
+        path, params={"aar": EARLIER, "konto": "2390", "rekkefolge": "nyeste"}
+    ).json()
+    assert len(oldest["vouchers"]) > 1
+    assert [v["id"] for v in newest["vouchers"]] == [v["id"] for v in oldest["vouchers"]][::-1]
+    balances = {v["id"]: v["balance"] for v in oldest["vouchers"]}
+    assert all(v["balance"] == balances[v["id"]] for v in newest["vouchers"])
+    assert Decimal(newest["vouchers"][0]["balance"]) == Decimal(newest["closing_balance"])
+    # The second page starts where the first ended, in the same order.
+    second = client.get(
+        path, params={"aar": EARLIER, "konto": "2390", "rekkefolge": "nyeste", "fra": 1}
+    ).json()
+    assert second["vouchers"][0]["id"] == newest["vouchers"][1]["id"]
+    assert client.get(path, params={"aar": EARLIER, "rekkefolge": "tilfeldig"}).status_code == 422
+
+
 def test_only_an_account_that_can_hold_money_is_marked(client: TestClient) -> None:
     company = signed_in_company(client)
     plan = client.get(f"/api/v1/companies/{company['id']}/kontoplan").json()

@@ -1,5 +1,6 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
+import { PROGRAMS } from '../lib/programs';
 ---
 
 <BaseLayout
@@ -18,10 +19,29 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   </header>
 
   <p class="lead">
-    Last opp SAF-T-filene fra Tripletex, Fiken, PowerOffice eller et annet program, én fil per
-    regnskapsår. Myntos henter tidligere år og året du står i, viser hva som blir ført, og fører
-    alt på én gang når du sier ja.
+    Last opp SAF-T-filene fra det gamle regnskapsprogrammet, en fil for hvert regnskapsår. Myntos
+    henter tidligere år og året du står i, viser hva som blir ført, og fører alt samlet når du sier
+    ja.
   </p>
+
+  {/* Programmet personen kommer fra. Regnskapet hentes likt fra alle, med
+      SAF-T-filene under; valget legger bare til det som gjelder det ene
+      programmet: guiden for å finne filene, og for Tripletex kortet for
+      utskriften av bilagene. Flytteguidene lenker hit med ?fra=, så den som
+      kommer fra /kom-i-gang/tripletex/ har Tripletex valgt (lib/programs.ts). */}
+  <div class="program" id="program-pick" hidden>
+    <label class="field program-field">
+      <span>Programmet du kommer fra</span>
+      <select id="program">
+        <option value="">Velg program</option>
+        {PROGRAMS.map((program) => <option value={program.slug}>{program.name}</option>)}
+      </select>
+    </label>
+    <div class="program-about" id="program-about" hidden>
+      <p id="program-documents"></p>
+      <a id="program-guide" href="/kom-i-gang/"></a>
+    </div>
+  </div>
 
   {/* Tre steg, og hvor man står. Siden gjør ett av dem om gangen, og en person
       som kommer tilbake etter å ha lukket fanen, skal se hvor arbeidet er. */}
@@ -47,7 +67,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         />
         <span class="dropzone-title">SAF-T-filer fra det gamle programmet</span>
         <span class="dropzone-hint">
-          Dra filene hit, eller trykk for å velge. XML eller ZIP, én fil per år fra 1. januar.
+          Dra filene hit, eller trykk for å velge. XML eller ZIP, en fil for hvert år, fra 1. januar.
         </span>
       </label>
       <ul class="chosen" id="chosen" hidden></ul>
@@ -83,6 +103,38 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       :global() under, forankret i #import-card. */}
   <section class="card" id="import-card" hidden aria-live="polite">
     <div id="import-body"></div>
+  </section>
+
+  {/* Dokumentene bak bilagene. SAF-T-filen har dem ikke, men Tripletex kan
+      skrive dem ut i en PDF, og hvert bilag i den har nummeret importen tok
+      vare på. Samme gang som over: last opp, se over, legg i arkivet. */}
+  <section class="card" id="docs-card" hidden>
+    <h2 class="card-title">Vedlegg fra Tripletex</h2>
+    <p class="card-hint">
+      SAF-T-filene har ikke kvitteringene og fakturaene bak bilagene. Tripletex skriver dem ut
+      samlet: under Bilag → Bilagsoversikt velger du perioden, huker av i kolonnen «Dato», velger
+      «Skriv ut valgte bilag» og laster ned PDF-en. Myntos deler den opp og legger hvert bilags
+      sider på bilaget med samme nummer, når bilagene er hentet over.
+    </p>
+    <form id="docs-form" novalidate>
+      <label class="dropzone" id="docs-dropzone">
+        <input type="file" id="docs-files" multiple accept=".pdf,application/pdf" />
+        <span class="dropzone-title">Utskrift av bilag med vedlegg</span>
+        <span class="dropzone-hint">
+          Dra PDF-ene hit, eller trykk for å velge. Gjerne en for hver måned.
+        </span>
+      </label>
+      <ul class="chosen" id="docs-chosen" hidden></ul>
+      <div class="actions">
+        <button type="submit" class="btn btn-primary" id="docs-button">Last opp og les utskriftene</button>
+      </div>
+      <div class="progress" id="docs-progress" hidden>
+        <div class="bar"><span id="docs-bar"></span></div>
+        <p class="card-hint" id="docs-progress-text"></p>
+      </div>
+      <p class="status" id="docs-status" hidden></p>
+    </form>
+    <div id="docs-body" aria-live="polite"></div>
   </section>
 
   {/* Sammenligningen: for den som fører i begge programmene en stund. */}
@@ -134,6 +186,35 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   }
   .lead {
     max-width: 46rem;
+  }
+
+  /* --- Programmet --------------------------------------------------------- */
+  .program {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.75rem;
+    align-items: flex-start;
+    margin-top: 1.25rem;
+  }
+  .program-field {
+    flex: 0 1 18rem;
+    margin: 0;
+  }
+  /* På linje med nedtrekkslisten, ikke med etiketten over den. */
+  .program-about {
+    flex: 1 1 22rem;
+    max-width: 40rem;
+    padding-top: 1.55rem;
+    font-size: 0.92rem;
+    color: var(--muted);
+  }
+  .program-about p {
+    margin: 0 0 0.3rem;
+  }
+  @media (width < 40rem) {
+    .program-about {
+      padding-top: 0;
+    }
   }
 
   /* --- Stegene ------------------------------------------------------------ */
@@ -266,20 +347,23 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     font-size: 0.85rem;
   }
 
-  /* Framdriften. Også brukt av det skriptet bygger i #import-card. */
+  /* Framdriften. Også brukt av det skriptet bygger i #import-card og #docs-card. */
   .progress,
-  #import-card :global(.progress) {
+  #import-card :global(.progress),
+  #docs-card :global(.progress) {
     margin-top: 1rem;
   }
   .bar,
-  #import-card :global(.bar) {
+  #import-card :global(.bar),
+  #docs-card :global(.bar) {
     height: 0.5rem;
     border-radius: var(--radius-pill);
     background: var(--border);
     overflow: hidden;
   }
   .bar span,
-  #import-card :global(.bar span) {
+  #import-card :global(.bar span),
+  #docs-card :global(.bar span) {
     display: block;
     height: 100%;
     width: 0;
@@ -287,7 +371,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     border-radius: inherit;
     transition: width 200ms ease;
   }
-  #import-card :global(.bar[data-indeterminate='true'] span) {
+  #import-card :global(.bar[data-indeterminate='true'] span),
+  #docs-card :global(.bar[data-indeterminate='true'] span) {
     width: 35%;
     animation: glide 1.4s ease-in-out infinite;
   }
@@ -300,24 +385,28 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     }
   }
   @media (prefers-reduced-motion: reduce) {
-    #import-card :global(.bar[data-indeterminate='true'] span) {
+    #import-card :global(.bar[data-indeterminate='true'] span),
+    #docs-card :global(.bar[data-indeterminate='true'] span) {
       animation: none;
       width: 100%;
       opacity: 0.4;
     }
   }
 
-  /* --- Det skriptet bygger: innlesingen ---------------------------------- */
+  /* --- Det skriptet bygger: innlesingen og vedleggene -------------------- */
   #import-card :global(h2),
-  #compare-body :global(h3) {
+  #compare-body :global(h3),
+  #docs-card :global(h2) {
     margin: 0 0 0.35rem;
   }
   #import-card :global(h3),
-  #compare-body :global(h3) {
+  #compare-body :global(h3),
+  #docs-card :global(h3) {
     font-size: 1rem;
     margin: 1.25rem 0 0.4rem;
   }
-  #import-card :global(.working-note) {
+  #import-card :global(.working-note),
+  #docs-card :global(.working-note) {
     margin-top: 1rem;
     padding: 0.75rem 1rem;
     border-radius: var(--radius-small);
@@ -352,7 +441,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     text-align: right;
     white-space: nowrap;
   }
-  #import-card :global(.tag) {
+  #import-card :global(.tag),
+  #docs-card :global(.tag) {
     display: inline-block;
     padding: 0.05rem 0.5rem;
     border-radius: var(--radius-pill);
@@ -361,12 +451,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     border: 1px solid var(--border-strong);
     color: var(--muted);
   }
-  #import-card :global(.tag[data-tone='accent']) {
+  #import-card :global(.tag[data-tone='accent']),
+  #docs-card :global(.tag[data-tone='accent']) {
     border-color: var(--accent-line);
     background: var(--accent-soft);
     color: var(--accent);
   }
-  #import-card :global(.tag[data-tone='gold']) {
+  #import-card :global(.tag[data-tone='gold']),
+  #docs-card :global(.tag[data-tone='gold']) {
     border-color: var(--gold);
     background: var(--gold-soft);
     color: var(--fg);
@@ -395,18 +487,21 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   #import-card :global(.term-list .muted) {
     font-size: 0.88rem;
   }
-  #import-card :global(.adds) {
+  #import-card :global(.adds),
+  #docs-card :global(.adds) {
     display: grid;
     gap: 0.6rem;
     grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
     align-items: start;
   }
-  #import-card :global(.adds details) {
+  #import-card :global(.adds details),
+  #docs-card :global(.adds details) {
     border: 1px solid var(--border);
     border-radius: var(--radius-small);
     background: var(--surface);
   }
-  #import-card :global(.adds summary) {
+  #import-card :global(.adds summary),
+  #docs-card :global(.adds summary) {
     display: flex;
     align-items: baseline;
     gap: 0.5rem;
@@ -414,23 +509,28 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     padding: 0.65rem 0.8rem;
     list-style: none;
   }
-  #import-card :global(.adds summary::-webkit-details-marker) {
+  #import-card :global(.adds summary::-webkit-details-marker),
+  #docs-card :global(.adds summary::-webkit-details-marker) {
     display: none;
   }
-  #import-card :global(.adds .count) {
+  #import-card :global(.adds .count),
+  #docs-card :global(.adds .count) {
     font-size: 1.35rem;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
   }
-  #import-card :global(.adds .what) {
+  #import-card :global(.adds .what),
+  #docs-card :global(.adds .what) {
     color: var(--muted);
     font-size: 0.9rem;
   }
-  #import-card :global(.adds .filter) {
+  #import-card :global(.adds .filter),
+  #docs-card :global(.adds .filter) {
     margin: 0 0.8rem 0.5rem;
     width: calc(100% - 1.6rem);
   }
-  #import-card :global(.adds ul) {
+  #import-card :global(.adds ul),
+  #docs-card :global(.adds ul) {
     list-style: none;
     margin: 0;
     padding: 0 0.8rem 0.7rem;
@@ -438,36 +538,55 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     overflow-y: auto;
     font-size: 0.88rem;
   }
-  #import-card :global(.adds li) {
+  #import-card :global(.adds li),
+  #docs-card :global(.adds li) {
     padding: 0.25rem 0;
     border-bottom: 1px solid var(--border);
     display: flex;
     justify-content: space-between;
     gap: 0.6rem;
   }
-  #import-card :global(.adds li .sub) {
+  #import-card :global(.adds li .sub),
+  #docs-card :global(.adds li .sub) {
     color: var(--faint);
     white-space: nowrap;
   }
+  /* Et bilag delt på fem datoer har fem numre her, og på en telefon sto
+     de utenfor flisen. */
+  #docs-card :global(.adds li .sub) {
+    white-space: normal;
+    text-align: right;
+  }
+  /* «Merk som levert fra det gamle programmet» er bredere enn en telefon, og
+     en knapp brytes ellers ikke (BaseLayout): siden ble 432 px bred på 390. */
+  #import-card :global(.vat-terms .btn) {
+    white-space: normal;
+    text-align: center;
+  }
   #import-card :global(.findings),
-  #compare-body :global(.findings) {
+  #compare-body :global(.findings),
+  #docs-card :global(.findings) {
     margin: 0.75rem 0;
     padding-left: 1.2rem;
   }
-  #import-card :global(.findings.errors) {
+  #import-card :global(.findings.errors),
+  #docs-card :global(.findings.errors) {
     color: var(--negative);
   }
   #import-card :global(.notes),
-  #compare-body :global(.notes) {
+  #compare-body :global(.notes),
+  #docs-card :global(.notes) {
     margin-top: 0.75rem;
   }
   #import-card :global(.notes summary),
-  #compare-body :global(.notes summary) {
+  #compare-body :global(.notes summary),
+  #docs-card :global(.notes summary) {
     cursor: pointer;
     color: var(--muted);
   }
   #import-card :global(.notes li),
-  #compare-body :global(.notes li) {
+  #compare-body :global(.notes li),
+  #docs-card :global(.notes li) {
     color: var(--muted);
     margin: 0.35rem 0;
   }
@@ -476,12 +595,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     margin-right: 0.35rem;
     color: var(--fg);
   }
-  #import-card :global(.confirm) {
+  #import-card :global(.confirm),
+  #docs-card :global(.confirm) {
     margin-top: 1.25rem;
     padding-top: 1rem;
     border-top: 1px solid var(--border);
   }
-  #import-card :global(.links) {
+  #import-card :global(.links),
+  #docs-card :global(.links) {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
@@ -514,16 +635,24 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 <script>
   import {
     ApiError,
+    archiveDocumentImport,
+    discardDocumentImport,
     discardSaftImport,
+    getDocumentImport,
     getSaftImport,
     getOpeningState,
     getMvaOverview,
+    listDocumentImports,
     listSaftImports,
     markMvaFiledElsewhere,
     postSaftImport,
+    uploadPrintouts,
     uploadSaftFiles,
     type Company,
+    type DocumentImport,
+    type DocumentReview,
     type MvaPeriodRow,
+    type PrintedVoucher,
     type SaftComparisonReview,
     type SaftImport,
     type SaftImportFinding,
@@ -543,7 +672,22 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     termsToConfirm,
     yearsToClose,
   } from '../lib/saftimport';
+  import {
+    documentsNote,
+    guideLink,
+    initialProgram,
+    programBySlug,
+    showsPrintouts,
+    type Program,
+  } from '../lib/programs';
   import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+  import {
+    archiveLabel,
+    archivedSummary,
+    currentDocumentImport,
+    documentsSummary,
+    documentsYear,
+  } from '../lib/vedlegg';
 
   const MONTHS = [
     'jan', 'feb', 'mar', 'apr', 'mai', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'des',
@@ -556,12 +700,17 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   const importBody = el<HTMLDivElement>('#import-body');
   const compareBody = el<HTMLDivElement>('#compare-body');
   const fileInput = el<HTMLInputElement>('#upload-files');
+  const docsBody = el<HTMLDivElement>('#docs-body');
+  const programSelect = el<HTMLSelectElement>('#program');
 
   let company: Company;
   let chosen: File[] = [];
   let importJob: SaftImport | null = null;
   let compareJob: SaftImport | null = null;
   let history: SaftImport[] = [];
+  let docsChosen: File[] = [];
+  let docsJob: DocumentImport | null = null;
+  let program: Program | null = null;
   let timer: number | undefined;
 
   // --- Små byggeklosser -------------------------------------------------------
@@ -805,8 +954,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       confirm.append(
         node(
           'p',
-          'Alt føres i én operasjon, og bilagene kan ikke endres etterpå. Rettelser gjøres i det ' +
-            'gamle programmet.',
+          'Alt føres samlet, og bilagene kan ikke endres etterpå. Rettelser gjøres i det gamle ' +
+            'programmet.',
           'card-hint',
         ),
       );
@@ -971,7 +1120,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     button.addEventListener('click', () => {
       const chosen = boxes.filter((b) => b.box.checked).map((b) => b.question);
       if (chosen.length === 0) {
-        setStatus(status, 'Kryss av minst én termin.');
+        setStatus(status, 'Kryss av minst en termin.');
         return;
       }
       button.disabled = true;
@@ -1065,6 +1214,213 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke startet føringen.');
     }
   }
+
+  // --- Vedleggene fra Tripletex -------------------------------------------------
+
+  function renderDocs(): void {
+    const job = docsJob;
+    docsBody.replaceChildren();
+    // Opplastingen står klar når ingenting venter på å bli sett over eller er
+    // under arbeid, som for SAF-T-filene over.
+    const settled = job === null || job.status === 'posted' || job.status === 'failed';
+    const may = canInCompany(company, 'ledger:write');
+    show(el('#docs-form'), may && settled);
+    // Bare for programmet som skriver ut bilagene (lib/programs.ts).
+    show(el('#docs-card'), showsPrintouts(program) && (may || job !== null));
+    if (job === null) return;
+    if (job.status === 'reading' || job.status === 'posting') {
+      renderDocsWorking(job);
+    } else if (job.status === 'failed') {
+      renderDocsFailed(job);
+    } else if (job.status === 'ready' && job.review !== null) {
+      renderDocsReview(job, job.review);
+    } else if (job.status === 'posted' && job.result !== null) {
+      renderDocsArchived(job.result);
+    }
+  }
+
+  function renderDocsWorking(job: DocumentImport): void {
+    const archiving = job.status === 'posting';
+    docsBody.append(
+      node('h3', archiving ? 'Myntos legger dokumentene i bilagsarkivet' : 'Myntos leser utskriftene'),
+    );
+    docsBody.append(node('p', job.step ?? 'Venter …', 'card-hint'));
+    const progress = node('div', undefined, 'progress');
+    const bar = node('div', undefined, 'bar');
+    const fill = node('span');
+    const known = !archiving && job.total > 0;
+    bar.dataset.indeterminate = String(!known);
+    if (known) fill.style.width = `${Math.max(8, Math.round((job.done / job.total) * 100))}%`;
+    bar.append(fill);
+    progress.append(bar);
+    docsBody.append(progress);
+    docsBody.append(
+      node(
+        'p',
+        'Arbeidet skjer hos Myntos, ikke i nettleseren. Du kan lukke siden imens: når du kommer ' +
+          'tilbake, står resultatet her.',
+        'working-note',
+      ),
+    );
+  }
+
+  function renderDocsFailed(job: DocumentImport): void {
+    docsBody.append(node('h3', 'Utskriftene kunne ikke leses'));
+    const status = node('p', job.error ?? 'Ukjent feil.', 'status');
+    status.dataset.tone = 'error';
+    docsBody.append(status);
+    const actions = node('div', undefined, 'links');
+    actions.append(button('Forkast', 'btn btn-ghost', () => void discardDocs(job)));
+    docsBody.append(actions);
+  }
+
+  function voucherRows(vouchers: PrintedVoucher[], sub: (v: PrintedVoucher) => string): [string, string][] {
+    return vouchers.map((voucher) => [`Bilag ${voucher.number}`, sub(voucher)]);
+  }
+
+  function renderDocsReview(job: DocumentImport, review: DocumentReview): void {
+    docsBody.append(node('h3', 'Dette legges i bilagsarkivet'));
+    if (job.error !== null) {
+      const status = node('p', job.error, 'status');
+      status.dataset.tone = 'error';
+      docsBody.append(status);
+    }
+    docsBody.append(node('p', documentsSummary(review)));
+    const by = (action: PrintedVoucher['action']) => review.vouchers.filter((v) => v.action === action);
+    const tiles = [
+      addTile(
+        review.to_attach,
+        'bilag får vedleggene sine',
+        voucherRows(by('attach'), (v) => v.targets.map((t) => t.voucher_no).join(', ')),
+      ),
+      addTile(
+        review.no_attachments,
+        'bilag har ingen vedlegg',
+        voucherRows(by('no_attachments'), (v) => (v.printed_on === null ? '' : isoDate(v.printed_on))),
+      ),
+      addTile(
+        review.not_in_books,
+        'bilag finnes ikke i Myntos',
+        voucherRows(by('not_in_books'), (v) => (v.printed_on === null ? '' : isoDate(v.printed_on))),
+      ),
+      addTile(
+        review.already_attached,
+        'bilag har dokumentet fra før',
+        voucherRows(by('already_attached'), (v) => v.targets.map((t) => t.voucher_no).join(', ')),
+      ),
+      addTile(
+        review.too_large,
+        'bilag er for store',
+        voucherRows(by('too_large'), (v) => fileSize(v.byte_size ?? 0)),
+      ),
+    ].filter((tile): tile is HTMLDetailsElement => tile !== null);
+    if (tiles.length > 0) {
+      const adds = node('div', undefined, 'adds');
+      adds.append(...tiles);
+      docsBody.append(adds);
+    }
+    findings(docsBody, review.findings);
+
+    const confirm = node('div', undefined, 'confirm');
+    if (review.postable) {
+      confirm.append(
+        node(
+          'p',
+          'Hvert bilag blir en PDF med Tripletex-siden først og vedleggene etter, slik Tripletex ' +
+            'skrev dem ut. Det som legges i bilagsarkivet, kan ikke tas ut igjen: bokføringsloven ' +
+            'krever at dokumentasjonen oppbevares i fem år etter regnskapsåret.',
+          'card-hint',
+        ),
+      );
+    }
+    const actions = node('div', undefined, 'links');
+    const archive = button(archiveLabel(review), 'btn btn-primary', () => void startArchiving(job));
+    archive.disabled = !job.may_post;
+    actions.append(archive, button('Forkast', 'btn btn-ghost', () => void discardDocs(job)));
+    confirm.append(actions);
+    if (!job.files_kept) {
+      confirm.append(
+        node('p', 'Utskriftene er slettet etter 14 dager. Forkast og last dem opp på nytt.', 'card-hint'),
+      );
+    }
+    docsBody.append(confirm);
+  }
+
+  function renderDocsArchived(result: DocumentReview): void {
+    docsBody.append(node('h3', 'Vedleggene er lagt i bilagsarkivet'));
+    const done = node('p', archivedSummary(result), 'status');
+    done.dataset.tone = 'ok';
+    docsBody.append(done);
+    docsBody.append(
+      node(
+        'p',
+        'Du finner dem under Bilag, der «Bare bilag med dokument» viser dem alene: trykk på et ' +
+          'bilagsnummer for å se linjene og dokumentet. Har du flere måneder, laster du opp neste ' +
+          'utskrift over.',
+        'card-hint',
+      ),
+    );
+    const year = documentsYear(result);
+    const links = node('div', undefined, 'links');
+    links.append(
+      // Bare bilagene som fikk dokumenter: et år er hundrevis av bilag fra
+      // januar av, og septembers lå fire «Vis flere» ned (2026-10-22).
+      link(
+        year === null
+          ? '/bilag/?journal=IMPORT&dokument=1'
+          : `/bilag/?aar=${year}&journal=IMPORT&dokument=1`,
+        'Se bilagene med dokument',
+        'btn btn-primary',
+      ),
+    );
+    docsBody.append(links);
+  }
+
+  async function discardDocs(job: DocumentImport): Promise<void> {
+    try {
+      await discardDocumentImport(company.id, job.id);
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke forkastet utskriftene.');
+      return;
+    }
+    docsJob = currentDocumentImport(await listDocumentImports(company.id).catch(() => []));
+    renderDocs();
+  }
+
+  async function startArchiving(job: DocumentImport): Promise<void> {
+    try {
+      docsJob = await archiveDocumentImport(company.id, job.id);
+      renderDocs();
+      schedule();
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke lagt vedleggene i bilagsarkivet.');
+    }
+  }
+
+  // --- Programmet ---------------------------------------------------------------
+
+  function renderProgram(): void {
+    programSelect.value = program?.slug ?? '';
+    show(el('#program-about'), program !== null);
+    if (program !== null) {
+      el('#program-documents').textContent = documentsNote(program);
+      const guide = guideLink(program);
+      const anchor = el<HTMLAnchorElement>('#program-guide');
+      anchor.href = guide.href;
+      anchor.textContent = guide.text;
+    }
+    renderDocs();
+  }
+
+  programSelect.addEventListener('change', () => {
+    program = programBySlug(programSelect.value);
+    // I adressen også, så en omlasting viser det samme valget.
+    const url = new URL(window.location.href);
+    if (program === null) url.searchParams.delete('fra');
+    else url.searchParams.set('fra', program.slug);
+    window.history.replaceState(window.history.state, '', url);
+    renderProgram();
+  });
 
   // --- Sammenligningen ---------------------------------------------------------
 
@@ -1197,18 +1553,24 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     const working = [importJob, compareJob].filter(
       (job): job is SaftImport => job !== null && isWorking(job),
     );
-    if (working.length === 0) return;
+    const docs = docsJob !== null && isWorking(docsJob) ? docsJob : null;
+    if (working.length === 0 && docs === null) return;
     timer = window.setTimeout(() => {
-      void Promise.all(working.map((job) => getSaftImport(company.id, job.id)))
-        .then((fresh) => {
+      void Promise.all([
+        Promise.all(working.map((job) => getSaftImport(company.id, job.id))),
+        docs === null ? Promise.resolve(null) : getDocumentImport(company.id, docs.id),
+      ])
+        .then(([fresh, freshDocs]) => {
           for (const job of fresh) {
             if (job.purpose === 'import') importJob = job;
             else compareJob = job;
             history = [job, ...history.filter((item) => item.id !== job.id)];
           }
+          if (freshDocs !== null) docsJob = freshDocs;
           renderImport();
           renderComparison();
           renderHistory();
+          renderDocs();
         })
         .catch(() => {
           // Et mistet svar er ikke en feil ved innlesingen: neste runde spør igjen.
@@ -1307,6 +1669,92 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       });
   });
 
+  // --- Opplasting av utskriftene ----------------------------------------------
+
+  function renderDocsChosen(): void {
+    const list = el<HTMLUListElement>('#docs-chosen');
+    list.replaceChildren(
+      ...docsChosen.map((file, index) => {
+        const item = node('li');
+        const name = node('span', file.name);
+        name.append(node('span', fileSize(file.size), 'size'));
+        item.append(
+          name,
+          button('Fjern', 'btn btn-ghost btn-small', () => {
+            docsChosen = docsChosen.filter((_, i) => i !== index);
+            renderDocsChosen();
+          }),
+        );
+        return item;
+      }),
+    );
+    show(list, docsChosen.length > 0);
+  }
+
+  function addPrintouts(files: FileList | null): void {
+    if (files === null) return;
+    const known = new Set(docsChosen.map((file) => `${file.name}:${file.size}`));
+    for (const file of files) {
+      if (!known.has(`${file.name}:${file.size}`)) docsChosen.push(file);
+    }
+    renderDocsChosen();
+  }
+
+  const docsInput = el<HTMLInputElement>('#docs-files');
+  docsInput.addEventListener('change', () => {
+    addPrintouts(docsInput.files);
+    docsInput.value = '';
+  });
+  const docsDropzone = el<HTMLLabelElement>('#docs-dropzone');
+  docsDropzone.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    docsDropzone.dataset.over = 'true';
+  });
+  docsDropzone.addEventListener('dragleave', () => delete docsDropzone.dataset.over);
+  docsDropzone.addEventListener('drop', (event) => {
+    event.preventDefault();
+    delete docsDropzone.dataset.over;
+    addPrintouts(event.dataTransfer?.files ?? null);
+  });
+
+  el<HTMLFormElement>('#docs-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const status = el<HTMLParagraphElement>('#docs-status');
+    if (docsChosen.length === 0) {
+      setStatus(status, 'Velg utskriften fra Tripletex først.');
+      return;
+    }
+    const submit = el<HTMLButtonElement>('#docs-button');
+    submit.disabled = true;
+    setStatus(status, '');
+    const progress = el('#docs-progress');
+    show(progress, true);
+    const text = el('#docs-progress-text');
+    text.textContent = 'Laster opp …';
+    uploadPrintouts(company.id, docsChosen, (sent, total) => {
+      el<HTMLSpanElement>('#docs-bar').style.width = `${Math.round((sent / total) * 100)}%`;
+      text.textContent =
+        sent < total
+          ? `Laster opp … ${fileSize(sent)} av ${fileSize(total)}. Hold siden åpen til utskriftene er oppe.`
+          : 'Lastet opp. Myntos leser utskriftene nå.';
+    })
+      .then((job) => {
+        docsChosen = [];
+        renderDocsChosen();
+        docsJob = job;
+        renderDocs();
+        schedule();
+      })
+      .catch((error: unknown) => {
+        setStatus(status, error instanceof ApiError ? error.message : 'Vi fikk ikke lastet opp utskriftene.');
+      })
+      .finally(() => {
+        submit.disabled = false;
+        show(progress, false);
+        el<HTMLSpanElement>('#docs-bar').style.width = '0';
+      });
+  });
+
   el<HTMLFormElement>('#compare-form').addEventListener('submit', (event) => {
     event.preventDefault();
     const file = el<HTMLInputElement>('#compare-file').files?.[0];
@@ -1346,9 +1794,18 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     history = await listSaftImports(company.id);
     importJob = currentImport(history);
     compareJob = currentComparison(history);
+    const printouts = await listDocumentImports(company.id);
+    docsJob = currentDocumentImport(printouts);
+    program = initialProgram({
+      requested: new URLSearchParams(window.location.search).get('fra'),
+      printouts,
+      imports: history,
+    });
     renderImport();
     renderComparison();
     renderHistory();
+    renderProgram();
+    show(el('#program-pick'), true);
     // Spurt der kortene tegnes: å hente er å føre, å sammenligne er bare å lese.
     show(el('#compare-card'), canInCompany(company, 'ledger:read'));
     if (canInCompany(company, 'ledger:write')) {

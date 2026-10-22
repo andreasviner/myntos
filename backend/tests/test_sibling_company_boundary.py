@@ -38,10 +38,19 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from myntos.api.v1 import approvals as approvals_api
 from myntos.core.clock import utc_now
 from myntos.integrations import loynd
 from myntos.main import create_app
-from tests.conftest import agent_header, assert_key_refused, insert_mva_filing, register, write
+from tests.conftest import (
+    agent_header,
+    assert_key_refused,
+    insert_mva_filing,
+    insert_skattemelding_filing,
+    is_send,
+    register,
+    write,
+)
 
 # Two real orgnrs, so the check digits hold and both creations succeed.
 MINE = "910000004"
@@ -288,6 +297,28 @@ def _a_filing(client: TestClient, company_id: int) -> tuple[int, Callable[[], No
     return filing_id, readable
 
 
+def _a_skattemelding_filing(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """A skattemelding filing, already sent, with an Altinn instance on it.
+
+    The MVA filing's reasoning: written straight in, and sent, so the answer
+    fetch gets as far as the lookup too.
+    """
+    filing_id = insert_skattemelding_filing(
+        client,
+        company_id,
+        year=THIS_YEAR - 1,
+        status="sendt",
+        skattemessig_resultat="381000.00",
+        altinn_instance_id="50001337/0b7c2d4e-5f60-4a71-8b92-a3b4c5d6e7f8",
+    )
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/skattemelding/innsendinger/{filing_id}")
+        assert owner.status_code == 200, owner.text
+
+    return filing_id, readable
+
+
 CAMT_MARCH = (Path(__file__).parent / "fixtures" / "bank" / "camt053_v02_mars.xml").read_bytes()
 
 
@@ -510,6 +541,31 @@ def _an_import(client: TestClient, company_id: int) -> tuple[int, Callable[[], N
     return import_id, readable
 
 
+def _a_printout_upload(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """The sibling's printout of its old program's vouchers, uploaded to be archived.
+
+    Reading it through this company's URL would show which documents the other
+    client has and on which vouchers; archiving it would put the other client's
+    receipts in these books for good. A SAF-T import's id is not one: the
+    documents' routes refuse it as unknown, which would prove nothing here. Any
+    file will do, as for the import.
+    """
+    made = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company_id}/saft/vedlegg",
+        files={"files": ("bilag.pdf", b"%PDF-1.4 ikke en utskrift", "application/pdf")},
+    )
+    assert made.status_code == 202, made.text
+    import_id = int(made.json()["id"])
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/saft/vedlegg/{import_id}")
+        assert owner.status_code == 200, owner.text
+
+    return import_id, readable
+
+
 def _an_asset(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
     """A machine in the sibling's anleggsregister.
 
@@ -639,6 +695,29 @@ FACTORIES: dict[str, Callable[[TestClient, int], tuple[int | str, Callable[[], N
     "reading_id": _a_reading,
 }
 
+# Two kinds of filing are both ``{filing_id}``: the MVA-melding's and the
+# skattemelding's, in two tables. Keyed by the name alone, the skattemelding
+# routes would be handed an MVA filing's id, which no skattemelding filing
+# has, and the 404 would prove nothing. A path naming its own kind of filing
+# gets its own factory.
+FACTORIES_BY_SECTION: dict[
+    tuple[str, str], Callable[[TestClient, int], tuple[int | str, Callable[[], None]]]
+] = {
+    ("/skattemelding/", "filing_id"): _a_skattemelding_filing,
+    # The documents' uploads share the SAF-T imports' table and ``{import_id}``,
+    # but each set of routes reads only its own kind.
+    ("/saft/vedlegg/", "import_id"): _a_printout_upload,
+}
+
+
+def _factory(
+    path: str, parameter: str
+) -> Callable[[TestClient, int], tuple[int | str, Callable[[], None]]]:
+    for (section, name), factory in FACTORIES_BY_SECTION.items():
+        if name == parameter and section in path:
+            return factory
+    return FACTORIES[parameter]
+
 
 # --- What each route needs before it will look the id up ------------------------------
 #
@@ -742,7 +821,7 @@ REQUESTS: dict[tuple[str, str], dict[str, Any]] = {
     ("GET", f"{_COMPANIES}/godkjenninger/{{approval_id}}"): {},
     ("DELETE", f"{_COMPANIES}/godkjenninger/{{approval_id}}"): {},
     ("GET", f"{_COMPANIES}/godkjenninger/{{approval_id}}/fil"): {"params": {"id": 1}},
-    ("POST", f"{_COMPANIES}/godkjenninger/{{approval_id}}/godkjenn"): {},
+    ("POST", f"{_COMPANIES}/godkjenninger/{{approval_id}}/godkjenn"): {"json": {"files": []}},
     ("POST", f"{_COMPANIES}/godkjenninger/{{approval_id}}/avvis"): {"json": {}},
     ("POST", f"{_COMPANIES}/godkjenninger/{{approval_id}}/vedlegg"): {
         "files": {"file": ("kvittering.pdf", PDF_BYTES, "application/pdf")}
@@ -763,6 +842,15 @@ REQUESTS: dict[tuple[str, str], dict[str, Any]] = {
     },
     ("POST", f"{_COMPANIES}/mva/innsendinger/{{filing_id}}/tilbakemelding"): {},
     ("POST", f"{_COMPANIES}/mva/innsendinger/{{filing_id}}/angre"): {},
+    ("GET", f"{_COMPANIES}/skattemelding/innsendinger/{{filing_id}}"): {},
+    ("GET", f"{_COMPANIES}/skattemelding/innsendinger/{{filing_id}}/dokument"): {
+        "params": {"type": "naeringsspesifikasjon"}
+    },
+    # The sibling filing's own figure, confirmed, as on the MVA side.
+    ("POST", f"{_COMPANIES}/skattemelding/innsendinger/{{filing_id}}/send"): {
+        "json": {"skattemessig_resultat": "381000.00", "bekreftet": True}
+    },
+    ("POST", f"{_COMPANIES}/skattemelding/innsendinger/{{filing_id}}/tilbakemelding"): {},
     ("GET", f"{_COMPANIES}/bank/kontoutskrifter/{{statement_id}}/fil"): {},
     # Any voucher id in the body: the line is looked up first, through the
     # company, and that lookup is the thing being refused.
@@ -797,6 +885,9 @@ REQUESTS: dict[tuple[str, str], dict[str, Any]] = {
     ("GET", f"{_COMPANIES}/saft/innlesing/{{import_id}}"): {},
     ("DELETE", f"{_COMPANIES}/saft/innlesing/{{import_id}}"): {},
     ("POST", f"{_COMPANIES}/saft/innlesing/{{import_id}}/foring"): {},
+    ("GET", f"{_COMPANIES}/saft/vedlegg/{{import_id}}"): {},
+    ("DELETE", f"{_COMPANIES}/saft/vedlegg/{{import_id}}"): {},
+    ("POST", f"{_COMPANIES}/saft/vedlegg/{{import_id}}/arkivering"): {},
     ("PATCH", f"{_COMPANIES}/anlegg/{{asset_id}}"): {"json": {"description": "Rettet"}},
     ("DELETE", f"{_COMPANIES}/anlegg/{{asset_id}}"): {},
     ("POST", f"{_COMPANIES}/anlegg/{{asset_id}}/avgang"): {
@@ -892,7 +983,7 @@ def test_no_route_reaches_a_sibling_companys_records(
     confirm the id is real, and these ids are sequential.
     """
     mine, theirs = _two_companies(client)
-    smuggled, readable_by_its_owner = FACTORIES[parameter](client, theirs["id"])
+    smuggled, readable_by_its_owner = _factory(path, parameter)(client, theirs["id"])
 
     # The record exists and its own company can read it. Without this the
     # refusal below would be indistinguishable from a refusal of nothing.
@@ -911,7 +1002,11 @@ def test_no_route_reaches_a_sibling_companys_records(
 
 @pytest.mark.parametrize(("method", "path", "parameter"), _sub_resource_routes())
 def test_no_route_reaches_a_sibling_companys_records_with_a_key(
-    client: TestClient, method: str, path: str, parameter: str
+    client: TestClient,
+    method: str,
+    path: str,
+    parameter: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The narrow wall again, with a key for the caller's own company (rule 9).
 
@@ -919,15 +1014,36 @@ def test_no_route_reaches_a_sibling_companys_records_with_a_key(
     own gate lets the request through: what is left is the same ``company_id``
     filter the session version tests. A route a key may not call at all
     answers that instead, before any id is read.
+
+    A send (``key_send``) is held for the person before any id is read, so its
+    202 is the same for a real id and a made-up one and says nothing; the wall
+    is where it runs, so it is approved here and must end in the 404.
     """
     mine, theirs = _two_companies(client)
-    smuggled, readable_by_its_owner = FACTORIES[parameter](client, theirs["id"])
+    smuggled, readable_by_its_owner = _factory(path, parameter)(client, theirs["id"])
     readable_by_its_owner()
     header = agent_header(client, mine["id"])
 
     url = path.replace("{company_id}", str(mine["id"])).replace(f"{{{parameter}}}", str(smuggled))
     response = write(client, method, url, headers=header, **REQUESTS[(method, path)])
 
+    if is_send(method, path):
+        assert response.status_code == 202, response.text
+        approval_id = response.json()["approval_id"]
+
+        async def logged_in(db: Any, user: Any) -> bool:
+            return True
+
+        monkeypatch.setattr(approvals_api, "has_usable_login", logged_in)
+        ran = write(
+            client,
+            "POST",
+            f"/api/v1/companies/{mine['id']}/godkjenninger/{approval_id}/godkjenn",
+            json={"files": []},
+        )
+        assert ran.status_code == 200, ran.text
+        assert (ran.json()["status"], ran.json()["result_status"]) == ("failed", 404), ran.text
+        return
     assert_key_refused(response, method, path)
 
 

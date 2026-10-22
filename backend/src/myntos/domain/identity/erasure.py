@@ -90,6 +90,7 @@ from myntos.domain.ledger.models import (
     Transaction,
 )
 from myntos.domain.mva.models import MvaFiling, MvaFilingElsewhere
+from myntos.skattemelding.models import SkattemeldingFiling
 
 # The address a tombstone is left with. ``.invalid`` is reserved (RFC 2606), so
 # it can never be delivered to, and pydantic's EmailStr refuses it, so nobody
@@ -146,7 +147,7 @@ async def has_books(db: AsyncSession, company_id: int) -> bool:
     """Whether anything has been entered in these books that must be kept.
 
     Broad on purpose. A voucher and a bilag are the obvious ones; an issued or
-    even a draft salgsdokument, an MVA filing, a party, an opening balance, an
+    even a draft salgsdokument, an MVA or skattemelding filing, a party, an opening balance, an
     imported bank statement and a closed year are also somebody's bookkeeping,
     and deleting books that held any of them would need a judgement about which
     ones mattered. A company with none of
@@ -161,6 +162,7 @@ async def has_books(db: AsyncSession, company_id: int) -> bool:
         exists().where(Attachment.company_id == company_id),
         exists().where(SalesDocument.company_id == company_id),
         exists().where(MvaFiling.company_id == company_id),
+        exists().where(SkattemeldingFiling.company_id == company_id),
         exists().where(Party.company_id == company_id),
         exists().where(
             Account.company_id == company_id, AccountOpeningBalance.account_id == Account.id
@@ -189,6 +191,12 @@ async def _is_named_by_records(db: AsyncSession, user_id: int) -> bool:
         exists().where(Attachment.uploaded_by_user_id == user_id),
         exists().where(
             or_(MvaFiling.created_by_user_id == user_id, MvaFiling.submitted_by_user_id == user_id)
+        ),
+        exists().where(
+            or_(
+                SkattemeldingFiling.created_by_user_id == user_id,
+                SkattemeldingFiling.submitted_by_user_id == user_id,
+            )
         ),
         # Who took back a «sendt fra et annet program» statement: the term's
         # history is who said it was filed elsewhere and who changed their mind.

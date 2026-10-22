@@ -1,4 +1,4 @@
-"""A SAF-T file being read on the server, and what reading it found.
+"""A file from the previous program being read on the server, and what reading it found.
 
 The previous program's files used to be uploaded with every request and kept by
 nobody, and the page held them in the browser between the read, the accounts
@@ -6,6 +6,12 @@ added one request at a time, the second read and the post. A year of vouchers
 made that minutes of a tab that could not be closed. Now the files are uploaded
 once into a :class:`SaftImport`, read on the server (:mod:`myntos.saft.jobs`),
 and the person may leave and come back to the answer.
+
+Mostly SAF-T files, as the name says. Since 2026-10-22 also the old program's
+printout of the vouchers with their attachments (``purpose`` ``vedlegg``,
+:mod:`myntos.saft.documents`): the same upload, read, review and yes, for a
+file that is just as large and just as much a working copy, so the same table
+rather than a second one built the same way.
 
 **The files are a working copy, not the archive.** ``content`` is emptied as
 soon as the import is posted or thrown away, or after
@@ -47,6 +53,13 @@ class ImportPurpose(enum.StrEnum):
     IMPORT = "import"
     #: Compare the old program's year with Myntos's, during a parallel run.
     SAMMENLIGNING = "sammenligning"
+    #: Put the documents from the old program's printout on the vouchers
+    #: brought over: the bilag archive, not the books.
+    VEDLEGG = "vedlegg"
+
+
+#: The kinds read from SAF-T files, which the SAF-T routes list.
+SAFT_PURPOSES = (ImportPurpose.IMPORT, ImportPurpose.SAMMENLIGNING)
 
 
 class ImportStatus(enum.StrEnum):

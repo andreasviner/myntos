@@ -41,11 +41,27 @@ export function isWaiting(approval: Pick<Approval, 'status'>): boolean {
  * «Claude vil føre en betaling». The label comes from the route itself, in
  * bokmål (`key_post("føre en betaling")`), so it is Myntos saying what the
  * request does, not the agent. A request to file reads as a request, because
- * that is all it is: the person files on the MVA page.
+ * that is all it is: the person files on the MVA or the Skattemelding page.
  */
 export function approvalHeading(approval: Pick<Approval, 'kind' | 'key_name' | 'label'>): string {
   if (approval.kind === 'filing') return `«${approval.key_name}» ber deg om ${approval.label}`;
   return `«${approval.key_name}» vil ${approval.label}`;
+}
+
+/**
+ * Where the person files what a key asked them to file, and the button's words.
+ *
+ * Straight to the termin or the year, and to the right melding when a company
+ * files two MVA-meldinger: the request is only useful if it lands where the
+ * button is.
+ */
+export function filingPage(filing: Approval['filing']): { href: string; label: string } {
+  if (filing?.type === 'skattemelding') {
+    return { href: `/skattemelding/#${filing.aar}`, label: 'Gå til skattemeldingen' };
+  }
+  if (filing === null || filing.termin === null) return { href: '/mva/', label: 'Gå til MVA-siden' };
+  const naering = filing.naering ? `${filing.naering}-` : '';
+  return { href: `/mva/#${naering}${filing.aar}-${filing.termin}`, label: 'Gå til MVA-siden' };
 }
 
 /** Whether what is asked can be undone afterwards, for the line under the heading. */
@@ -53,10 +69,54 @@ export function isFinal(approval: Pick<Approval, 'scope'>): boolean {
   return approval.scope === 'post';
 }
 
+/**
+ * The line under the heading that says what pressing «Godkjenn» sets off.
+ *
+ * A request that sends something out of Myntos says where it goes and with
+ * whose login, because that is what the person is saying yes to: a key may
+ * post on its own if they chose so, but nothing leaves Myntos without their
+ * yes (docs/agents-and-api.md rule 5). A posting says it cannot be undone.
+ * Null for what can be changed back.
+ */
+export function consequence(
+  approval: Pick<Approval, 'kind' | 'scope' | 'sends_out' | 'needs_id_porten'>,
+): string | null {
+  if (approval.kind !== 'request') return null;
+  if (approval.sends_out && approval.needs_id_porten) {
+    return 'Når du godkjenner, sendes dette til Skatteetaten med din egen ID-porten-innlogging, som om du trykket på knappen selv.';
+  }
+  if (approval.sends_out) {
+    return 'Når du godkjenner, sendes dette ut av Myntos, og det kan ikke hentes tilbake.';
+  }
+  if (isFinal(approval)) return 'Dette kan ikke angres når det er gjort, bare rettes med en ny postering.';
+  return null;
+}
+
+/**
+ * Whether the card should offer «Logg inn med ID-porten» before «Godkjenn».
+ *
+ * Only to the person who may approve it, for a request that goes with their
+ * login, while they have none. Approving without one is refused and the
+ * request still waits, so this saves a press rather than guarding anything.
+ */
+export function needsLogin(
+  approval: Pick<Approval, 'kind' | 'is_own' | 'needs_id_porten'>,
+  government: { available: boolean; logged_in: boolean },
+): boolean {
+  return (
+    approval.kind === 'request' &&
+    approval.is_own &&
+    approval.needs_id_porten &&
+    government.available &&
+    !government.logged_in
+  );
+}
+
 // Where in the app the thing a request touches is shown, by the path it went
 // to. Longest first, so /mva/spesifikasjoner wins over /mva.
 const PAGES: [string, string, string][] = [
   ['/mva/spesifikasjoner', '/mva-justeringer/', 'Mva-justeringer'],
+  ['/skattemelding', '/skattemelding/', 'Skattemelding'],
   ['/inngaende-balanse', '/inngaende-balanse/', 'Inngående balanse'],
   ['/manuelt-bilag', '/manuelt-bilag/', 'Manuelt bilag'],
   ['/anlegg', '/anlegg/', 'Anlegg og avskrivning'],

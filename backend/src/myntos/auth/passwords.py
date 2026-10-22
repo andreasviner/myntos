@@ -18,7 +18,9 @@ Two properties matter as much as the algorithm:
   produce a different byte sequence and fail to verify.
 """
 
+import asyncio
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from functools import lru_cache
 
@@ -90,6 +92,27 @@ def verify_password(password: str, password_hash: str | None) -> bool:
         return _HASHER.verify(password_hash, normalise(password))
     except (VerifyMismatchError, VerificationError, InvalidHashError):
         return False
+
+
+# Argon2 is 64 MiB and about a tenth of a second of CPU per call, on purpose.
+# Called straight from a coroutine it held the event loop for that long, and the
+# one process serves everyone: nine logins a second, for addresses that need not
+# exist (the decoy costs the same), kept every other request waiting. The
+# library releases the GIL, so threads run it in parallel; its own threads, so a
+# flood of logins queues behind itself and not behind reading somebody's PDF.
+_HASHING = ThreadPoolExecutor(max_workers=4, thread_name_prefix="argon2")
+
+
+async def hashed(password: str) -> str:
+    """:func:`hash_password`, off the event loop."""
+    return await asyncio.get_running_loop().run_in_executor(_HASHING, hash_password, password)
+
+
+async def verified(password: str, password_hash: str | None) -> bool:
+    """:func:`verify_password`, off the event loop."""
+    return await asyncio.get_running_loop().run_in_executor(
+        _HASHING, verify_password, password, password_hash
+    )
 
 
 def needs_rehash(password_hash: str) -> bool:

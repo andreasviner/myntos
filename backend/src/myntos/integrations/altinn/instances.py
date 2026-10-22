@@ -202,8 +202,8 @@ class AppInstanceClient:
         # within an instance, so an unnamed upload still needs a stable name.
         headers = {
             "Content-Type": content_type,
-            "Content-Disposition": (
-                f'attachment; filename="{filename or _default_filename(data_type, content_type)}"'
+            "Content-Disposition": content_disposition(
+                filename or _default_filename(data_type, content_type)
             ),
         }
         payload = await self._request(
@@ -242,7 +242,7 @@ class AppInstanceClient:
             content=content,
             headers={
                 "Content-Type": content_type,
-                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Disposition": content_disposition(filename),
             },
             expected=(httpx.codes.OK, httpx.codes.CREATED),
         )
@@ -397,6 +397,27 @@ _EXTENSIONS = {
     "application/pdf": ".pdf",
     "application/json": ".json",
 }
+
+
+# A filename RFC 6266 lets stand bare, as a token.
+_TOKEN_FILENAME = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def content_disposition(filename: str) -> str:
+    """``attachment; filename=…``, bare where the name allows it and quoted only where it must be.
+
+    Skatteetaten's guide for the skattemelding app says the envelope's header
+    is ``attachment; filename=skattemelding.xml`` and that the quoted form
+    (``filename="skattemelding.xml"``) is refused. RFC 6266 allows both for a
+    name made of token characters, so the bare one is sent whenever it can be,
+    which is every name Myntos makes itself. A name with spaces or other
+    characters (a bilag's own filename) needs quotes, and gets them with any
+    quote or backslash in it escaped.
+    """
+    if _TOKEN_FILENAME.match(filename):
+        return f"attachment; filename={filename}"
+    escaped = filename.replace("\\", "\\\\").replace('"', '\\"')
+    return f'attachment; filename="{escaped}"'
 
 
 def _default_filename(data_type: str, content_type: str) -> str:

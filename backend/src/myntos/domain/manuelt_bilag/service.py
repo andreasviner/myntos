@@ -855,7 +855,9 @@ async def post_voucher(
         raise InvalidManualVoucherError(
             "det manuelle bilaget kan ikke føres slik det er. Se funnene", problems
         )
-    year = await ledger_service.ensure_financial_year(db, company, entry.occurred_on.year)
+    year = await ledger_service.ensure_financial_year(
+        db, company, entry.occurred_on.year, on=entry.occurred_on
+    )
     journal = await _journal(db, company)
     explanation = entry.explanation.strip()
 

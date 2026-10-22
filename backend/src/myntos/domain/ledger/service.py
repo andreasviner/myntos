@@ -674,10 +674,12 @@ async def get_register_snapshot(
 # it into a claim: the person logs in with ID-porten, Altinn is asked which
 # parties they may act for, and only an orgnr on that list may be confirmed.
 #
-# One confirmed claim exists per orgnr across the installation. That is the rule
-# the message in CompanyAlreadyClaimedError describes, and it is deliberately
-# narrower than "one set of books per orgnr" — an accountant may still keep
-# unconfirmed books for a client whose own confirmation sits elsewhere.
+# More than one set of books may be confirmed for an orgnr, but never without
+# the person being told. The first attempt on an orgnr somebody else has
+# confirmed is refused with CompanyAlreadyClaimedError, and only a second one
+# saying even_if_claimed goes through: Altinn's word is as good the second
+# time, and the warning is there so that nobody files from a second set of
+# books without knowing the first exists.
 
 
 async def claimed_elsewhere(db: AsyncSession, orgnrs: Sequence[str], *, user_id: int) -> set[str]:
@@ -717,6 +719,7 @@ async def confirm_company_ownership(
     company: Company,
     user_id: int,
     authorized_parties: dict[str, int],
+    even_if_claimed: bool = False,
 ) -> Company:
     """Record that somebody proved through Altinn that these books are theirs.
 
@@ -728,6 +731,12 @@ async def confirm_company_ownership(
     Re-confirming a company that is already confirmed is allowed and is a no-op
     on the timestamp: the claim was already established, and a second BankID
     should not look like a failure.
+
+    ``even_if_claimed`` is the person's «Ja» to the warning that somebody else
+    has confirmed the orgnr already. Without it that case is refused, so the
+    warning is always seen first; with it, the claim is recorded like any
+    other. Altinn is asked either way: the yes covers the other books, never
+    the rights.
     """
     party_id = authorized_parties.get(company.orgnr)
     if party_id is None:
@@ -742,33 +751,27 @@ async def confirm_company_ownership(
         await db.flush()
         return company
 
-    holder = await db.scalar(
-        select(Company.id).where(
-            Company.orgnr == company.orgnr,
-            Company.verified_at.is_not(None),
-            Company.closed_at.is_(None),
-            Company.id != company.id,
+    if not even_if_claimed:
+        holder = await db.scalar(
+            select(Company.id).where(
+                Company.orgnr == company.orgnr,
+                Company.verified_at.is_not(None),
+                Company.closed_at.is_(None),
+                Company.id != company.id,
+            )
         )
-    )
-    if holder is not None:
-        raise CompanyAlreadyClaimedError(
-            "Selskapet har allerede et regnskap registrert. "
-            "Be en administrator der om tilgang, eller opprett et nytt."
-        )
+        if holder is not None:
+            raise CompanyAlreadyClaimedError(
+                "Selskapet har allerede et regnskap registrert hos noen andre. "
+                "Be en administrator der om tilgang, eller bekreft likevel."
+            )
 
+    # Two confirmations racing both succeed, and that is now allowed: each
+    # person either saw the warning or confirmed before anyone else had.
     company.verified_at = utc_now()
     company.verified_by_user_id = user_id
     company.altinn_party_id = party_id
-    try:
-        await db.flush()
-    except IntegrityError as error:
-        # Two confirmations of the same orgnr landing at once. The partial
-        # unique index is what makes the loser lose; this turns it into the
-        # same answer the check above would have given.
-        raise CompanyAlreadyClaimedError(
-            "Selskapet har allerede et regnskap registrert. "
-            "Be en administrator der om tilgang, eller opprett et nytt."
-        ) from error
+    await db.flush()
     return company
 
 
@@ -873,13 +876,27 @@ async def _open_financial_year(db: AsyncSession, company: Company, year: int) ->
     return financial_year
 
 
-async def ensure_financial_year(db: AsyncSession, company: Company, year: int) -> FinancialYear:
+async def ensure_financial_year(
+    db: AsyncSession, company: Company, year: int, *, on: date | None = None
+) -> FinancialYear:
     """The company's financial year, opening it on demand.
 
     Refuses a year before the company's first one: the seeded VAT rates are
     only claimed to be valid from then, and posting into a period whose rates
     we never knew would snapshot an invented rate onto the entry.
+
+    Refuses anything after a wound-up company's last day
+    (``company.wound_up_on``): a year after it, and, when the caller passes the
+    voucher's date as ``on``, a day after it in the last year. That year ends
+    on the last day, not on 31 December, and a voucher dated past its end would
+    be in no period the SAF-T file or the næringsspesifikasjon can report.
     """
+    wound_up = company.wound_up_on
+    if wound_up is not None and (year > wound_up.year or (on is not None and on > wound_up)):
+        raise PeriodOutsideBooksError(
+            f"selskapet er oppløst, og regnskapet sluttet {wound_up:%d.%m.%Y}; "
+            "det går ikke an å føre etter det"
+        )
     existing = await db.scalar(
         select(FinancialYear).where(
             FinancialYear.company_id == company.id, FinancialYear.year == year
@@ -1365,7 +1382,7 @@ async def record_cash_flow(
     entry_type = cashflow.get_type(type_code)
     landbruk.require_segment(company, entry_type.segment)
     gross = _check_gross(gross_amount)
-    financial_year = await ensure_financial_year(db, company, occurred_on.year)
+    financial_year = await ensure_financial_year(db, company, occurred_on.year, on=occurred_on)
     journal = await _cash_journal(db, company)
     accounts = await _accounts_for(db, company, [(entry_type, account_number)])
     # Resolved through the company, so a party id belonging to another tenant
@@ -1497,7 +1514,7 @@ async def record_composite(
     for entry_type in types:
         landbruk.require_segment(company, entry_type.segment)
     grosses = [_check_gross(part.gross_amount) for part in parts]
-    financial_year = await ensure_financial_year(db, company, occurred_on.year)
+    financial_year = await ensure_financial_year(db, company, occurred_on.year, on=occurred_on)
     journal = await _cash_journal(db, company)
     accounts = await _accounts_for(
         db, company, [(t, part.account_number) for t, part in zip(types, parts, strict=True)]

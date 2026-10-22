@@ -126,9 +126,12 @@ registration and access, which cannot be done from a repository.
       upload**, and we only sent it when a caller passed a filename - so the
       envelope and the MVA metadata, both uploaded unnamed, would always have
       failed with 400 "The request must include a Content-Disposition header"
-- [ ] The **second** `process/next`, which submits. Everything before it is
-      proven. Needs a real envelope rather than the minimal one used to prove
-      the transport, since a submission is a filing even in TT02
+- [x] The **second** `process/next`, which submits, **verified 2026-10-22**:
+      `digdir_check --person 08866995401 --skattemelding 314067630 --year 2025
+      --submit` from the TT02 copy filed the envelope Myntos built (validated
+      `validertOK` the day before) and fetched Skatteetaten's answer,
+      «Mottatt: Din skattemelding er mottatt». See skatteetaten.md (Filing from
+      Myntos)
 - [x] The MVA validation call, live, **answered 2026-10-10** by
       `digdir_check --person 05849898878 --mva 311124226 --save <dir>` from the
       TT02 copy: the melding Myntos built passes, and the one finding is about
@@ -434,15 +437,27 @@ and full digital bokføring from 2030-01-01. See docs/integrations/efaktura.md.
 
 ## Phase 5 — Skattemelding + næringsspesifikasjon
 
-- [ ] Build næringsspesifikasjon from the ledger (formats per
-      github.com/Skatteetaten/skattemeldingen, api-v2)
-- [ ] Fetch current skattemelding (Maskinporten), validate + submit,
-      receipts. The client is written (`integrations/skatteetaten/client`) and
-      `submit` takes the person's Altinn token as a required argument, so the
-      rule that a systembruker may fetch/validate/create/upload but **the final
-      submit requires an ID-porten-logged-in person** is visible in the
-      signature. What remains is the envelope, the async job API for
-      næringsspesifikasjoner over 10 MB, and the review-and-sign UI step
+- [x] Build næringsspesifikasjon from the ledger (formats per
+      github.com/Skatteetaten/skattemeldingen, api-v2), **for an AS, built
+      2026-10-22** (`backend/src/myntos/skattemelding/`): the posts from each
+      account's post for the year, the saldo groups a–j from the
+      anleggsregister, the permanent differences and the equity
+      reconciliation, against the year's XSD
+- [x] Fetch the current skattemelding, validate + submit, receipts, **built
+      2026-10-22** and run end to end in TT02 (validated 2026-10-21, filed and
+      answered 2026-10-22). All of it on the person's ID-porten login, on the
+      Skattemelding page; an agent asks through «Godkjenning». A company with a
+      revisor stops at `Task_2Revisor` for the revisor to confirm in
+      Skatteetaten's viewer, which is tested against stubs only: the synthetic
+      AS has none. See skatteetaten.md (Filing from Myntos). Production needs
+      the three settings named there in `.env` before the page offers filing
+- [ ] An enkeltpersonforetak's næringsspesifikasjon, which goes with the
+      owner's personal skattemelding on fødselsnummer (`enk_ikke_ferdig` until
+      then)
+- [ ] Real estate and shares in the formue (their formue value, not their book
+      value), saldo groups beyond a–j, PDF attachments, and the async job API
+      for næringsspesifikasjoner over 10 MB
+- [ ] The revisor path once in TT02, with a synthetic AS that has one
 - [ ] Regnskapsfører/multi-client: `consumer_org` delegation now; Altinn 3
       systembruker is built (phase 0b above). Altinn 2 shut down 2026-06-19,
       and tilgangspakker replace roles in access checks from 2026-12-01
@@ -475,11 +490,12 @@ to every feature from now on, not only to this phase.
       `myntos-connect` skill. Gaps in [agents-and-api.md](agents-and-api.md#gaps)
 - [x] The test that holds every new route to the rules
       (`backend/tests/test_agent_surface.py`) and the skill template
-      (`docs/agents/README.md`); the routes that predate it stand on two lists
-      that only shrink
-- [ ] The front door: empty those lists (a description on every older route,
-      and a skill for each route a key may call), the published OpenAPI
-      document, the feature skills
+      (`docs/agents/README.md`); the routes that predated it stood on two lists
+      that only shrank
+- [x] The front door (2026-10-21, not deployed): both lists empty (a
+      description on every older route, and a skill for each route a key may
+      call), the feature skills, and the OpenAPI document published at
+      `https://api.myntos.no/api/v1/openapi.json`, production included
 - [ ] OAuth 2.1 with PKCE and a remote MCP server, so agents connect without a
       pasted key
 - [ ] Developers: webhooks, sandbox companies, a developer page
@@ -566,20 +582,28 @@ its current system, with its accountant checking the books and the year-end.
 - [x] CODEOWNERS
 - [ ] OpenSSF Scorecard action + bestpractices.dev badge
 - [x] Code of Conduct (Contributor Covenant 3.0), reports to conduct@myntos.no
-- [x] License: **proprietary, decided 2026-10-10.** Myntos is to be a paid
-      hosted service, and of the options weighed only this one leaves that
-      intact: AGPL forecloses a commercial hosted offering without a CLA from
-      every contributor, and FSL/BSL would convert each release to Apache-2.0
-      after the change date. The source stays **public and readable** —
-      source-available, not open source, and the README says so plainly.
+- [x] License: **Elastic License 2.0, decided 2026-10-22**, replacing the
+      proprietary license decided 2026-10-10. That one was chosen when Myntos
+      was to be a paid hosted service: AGPL forecloses a hosted offering
+      without a CLA from every contributor, and FSL/BSL would convert each
+      release to Apache-2.0 after the change date. On 2026-10-22 the service
+      became free for good, and the website promised that anyone may self-host
+      it without an agreement, which the proprietary license did not grant.
+      ELv2 grants it (use, copy, modify, distribute) and forbids what the first
+      decision protected: offering Myntos to others as a hosted or managed
+      service. It never converts, so the FSL/BSL objection does not apply. The
+      source is **public and readable** — source-available, not open source
+      (ELv2 is not OSI-approved), and the README says so plainly.
       Consequences that stay in force:
       - Code contributions need a signed CLA or copyright assignment
         (CONTRIBUTING.md). Without one the contributor keeps the copyright and
         the license cannot cover their code.
       - No copyleft in what is *distributed*. The dependency tree is MIT, BSD
         and Apache-2.0, plus LGPL-3.0 in libheif/libde265 (bundled by pi-heif
-        for HEIC). Those run on our server and are not distributed, which LGPL
-        permits; re-check if Myntos is ever shipped for self-hosting.
+        for HEIC). The repository ships source only, so a self-hoster installs
+        pi-heif and its libraries from PyPI under their own licences, and our
+        server runs them without distributing them, which LGPL permits.
+        Re-check if Myntos is ever shipped as a built package or image.
       - If the Maskinporten client or SAF-T exporter are ever extracted as
         standalone libraries, MIT/Apache-2.0 for those remains sensible — they
         carry no business value and adoption helps other Norwegian projects.

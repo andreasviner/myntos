@@ -363,7 +363,7 @@ means the farm cannot do without it; **wish** means it can, with more work.
 | Driftsgrenregnskap (melk, storfe, sau) | Wish | **Built** (2026-10-15): dimensions with NIBIO's driftsgrener and avdelinger, the result per driftsgren by month, carried in and out of SAF-T (rule 7) | Quantities (litres, kg, head) per line |
 | Private uttak and kår | Law (a list of uttak, bokføringsforskriften § 3-1 nr. 5; kår via a-melding, § 6-52) | **Built** for uttak (rule 8): `/private-uttak/` at the norms, VAT free on the yearly primærnæring melding | Kår needs payroll (FEATURES #14) |
 | EHF in through Peppol | Law from 2030, expected now | Nothing | FEATURES #13; access point through invoice.be |
-| SAF-T 1.40 | Law on request | **Built**, and the opening balance and the year's vouchers are read from the old program's SAF-T file (Tripletex's farm accounts included), with a comparison for the parallel run | Earlier years' vouchers and the documents (FEATURES #17) |
+| SAF-T 1.40 | Law on request | **Built**, and the opening balance and every year's vouchers are read from the old program's SAF-T files (Tripletex's farm accounts included), with a comparison for the parallel run; the documents behind them from Tripletex's printout of the vouchers (2026-10-22, all 51 of the pilot's September matched) | The documents from programs other than Tripletex (FEATURES #17) |
 | Bank reconciliation | Wish | **Built** (camt.053) | Live bank feed (FEATURES #9) |
 | Approval and payment | Wish | Nothing | FEATURES #11, #36 |
 | Backup to the farm's own OneDrive or SharePoint | Wish | Nothing | Full export (FEATURES #44). The farm's own Microsoft 365 is its choice of storage; Myntos's own archive stays in R2 `eu` |

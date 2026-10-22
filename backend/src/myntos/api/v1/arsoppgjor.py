@@ -26,6 +26,10 @@ cannot disagree.
     Close the year.
 ``POST /companies/{id}/arsavslutning/gjenapning``
     Reopen it, with a reason.
+``POST /companies/{id}/arsavslutning/opplosning``
+    End the books on a dissolved company's last day.
+``POST /companies/{id}/arsavslutning/opplosning/angre``
+    Let them run to 31 December again.
 
 No second id appears in any path: the year is a query or body field and is
 always looked up through the company, so there is nothing to smuggle across the
@@ -53,7 +57,7 @@ from myntos.api.deps import (
     key_post,
 )
 from myntos.core.clock import utc_now
-from myntos.domain.arsoppgjor import closing, opening
+from myntos.domain.arsoppgjor import closing, opening, winding_up
 from myntos.domain.arsoppgjor.errors import (
     InvalidOpeningBalanceError,
     YearNotClosableError,
@@ -886,3 +890,120 @@ async def reopen_year(
         year=payload.aar,
         reversals=[_posted(context.company.id, t) for t in reversals],
     )
+
+
+# --- Oppløsning ------------------------------------------------------------------------
+
+
+class WindUpRequest(BaseModel):
+    # The last day of the books: the day the last thing happened in the
+    # company, usually the payout to the shareholders.
+    siste_dag: date
+    # That the company has been dissolved (oppløst). Ending the books changes
+    # what may be posted for every colleague and what the skattemelding is, so
+    # a request that did not come through the page's question is refused.
+    bekreftet: bool = False
+
+
+class WindUpResponse(BaseModel):
+    company_id: int
+    # The last day of the books, or null while the company is in business.
+    last_day: date | None
+    # The financial year that ends on it.
+    year: int | None
+    year_closed: bool
+
+
+def _wound_up(company_id: int, state: winding_up.WindingUp) -> WindUpResponse:
+    return WindUpResponse(
+        company_id=company_id,
+        last_day=state.last_day,
+        year=state.year,
+        year_closed=state.year_closed,
+    )
+
+
+@router.post(
+    "/companies/{company_id}/arsavslutning/opplosning",
+    response_model=None,
+    openapi_extra=key_post("avslutte regnskapet fordi selskapet er oppløst"),
+)
+async def wind_up(
+    payload: WindUpRequest, context: CurrentCompany, db: DbSession, user: CurrentUser
+) -> WindUpResponse | JSONResponse:
+    """End the books on the company's last day, because it has been dissolved (oppløsning).
+
+    For an aksjeselskap that has been wound up (oppløst, aksjeloven kapittel
+    16): its debts paid, what was left paid out to the shareholders, and the
+    company deleted or about to be deleted from Enhetsregisteret. Its last
+    financial year then ends on ``siste_dag`` instead of 31 December, so it
+    can be closed the day after (``POST /arsavslutning``), and that year's
+    skattemelding is filed early, as a forhåndsfastsetting
+    (``GET /skattemelding`` says ``forhaandsfastsetting: true``), which
+    skatteforvaltningsloven § 8-2 asks for before the company is gone.
+
+    Body: ``siste_dag``, the last day of the books as an ISO date, which is the
+    person's to say: the day the last thing happened in the company, usually
+    the payout to the shareholders, not necessarily the day Brønnøysund
+    deleted it; and ``bekreftet``, the person's yes that the company has been
+    dissolved. Without ``bekreftet: true`` it is refused (422
+    ``confirmation_required``).
+
+    From then on nothing can be posted after ``siste_dag`` (422
+    ``period_outside_books`` on any posting), closing the year opens no next
+    one, and ``last_day`` is on the company (``wound_up_on`` in
+    ``GET /companies/{company_id}``). Logged in the year's events
+    (``GET /regnskapsaar``, action ``opplost``). Undone with
+    ``POST /arsavslutning/opplosning/angre`` while the year is open.
+
+    Refusals: 409 ``winding_up_conflict`` (the books already end on another
+    day, the year is closed, a later year exists, or entries are dated after
+    the day; the message says which and how many); 422
+    ``invalid_winding_up_date`` (a day in the future, or the year's first
+    day); 404 ``financial_year_not_found`` for a year the company does not
+    keep in Myntos.
+
+    Needs ``ledger:close`` (an administrator or owner). For an API key it needs
+    the ``post`` scope, and answers 202 ``approval_pending`` when the person
+    approves the key's posts one by one.
+    """
+    require_permission(context.membership.role, Permission.LEDGER_CLOSE)
+    if not payload.bekreftet:
+        return _refused(
+            "bekreft at selskapet er oppløst før regnskapet avsluttes",
+            "confirmation_required",
+            [],
+        )
+    state = await winding_up.end_books(
+        db,
+        company=context.company,
+        last_day=payload.siste_dag,
+        today=_today(),
+        created_by_user_id=user.id,
+    )
+    return _wound_up(context.company.id, state)
+
+
+@router.post(
+    "/companies/{company_id}/arsavslutning/opplosning/angre",
+    openapi_extra=key_post("angre at regnskapet er avsluttet ved oppløsning"),
+)
+async def undo_wind_up(context: CurrentCompany, db: DbSession, user: CurrentUser) -> WindUpResponse:
+    """Undo ending the books at oppløsning: the last year runs to 31 December again.
+
+    For a day chosen by mistake, or a company that was not dissolved after
+    all. Allowed while the last year is open; the change is logged in the
+    year's events (action ``opplost_angret``). To choose another day, undo and
+    end the books again.
+
+    Refusals: 409 ``winding_up_conflict`` (the books do not end early, the year
+    is closed and must be reopened first, or the year's skattemelding has been
+    sent to Skatteetaten as a forhåndsfastsetting, which rests on the day).
+
+    Needs ``ledger:close`` (an administrator or owner). For an API key it needs
+    the ``post`` scope, and answers 202 ``approval_pending`` when the person
+    approves the key's posts one by one.
+    """
+    require_permission(context.membership.role, Permission.LEDGER_CLOSE)
+    state = await winding_up.undo(db, company=context.company, created_by_user_id=user.id)
+    return _wound_up(context.company.id, state)

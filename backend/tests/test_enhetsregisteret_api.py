@@ -445,6 +445,45 @@ def test_deleted_unit_is_reported_as_deleted(
     assert response.json()["code"] == "unit_deleted"
 
 
+def test_deleted_unit_answered_as_a_document_says_so(
+    client: TestClient, brreg_answers: Callable[[Handler], list[str]]
+) -> None:
+    # The register's newer answer for a deleted unit, as it came for a real one
+    # on 2026-10-22: a 200 with almost nothing in it. Read as a live company it
+    # was a company with no address that could be invoiced and set up as any
+    # other; it has to say it is gone.
+    brreg_answers(
+        lambda _request: httpx.Response(
+            200,
+            json={
+                "organisasjonsnummer": ORGNR,
+                "navn": "EQUINOR ASA",
+                "organisasjonsform": {"kode": "ASA", "beskrivelse": "Allmennaksjeselskap"},
+                "historiskeNavn": [],
+                "respons_klasse": "SlettetEnhet",
+                "slettedato": "2026-07-21",
+            },
+        )
+    )
+
+    response = signed_in(client).get(f"/api/v1/enhetsregisteret/{ORGNR}")
+
+    assert response.status_code == 200
+    assert response.json()["deleted_on"] == "2026-07-21"
+    assert response.json()["name"] == "EQUINOR ASA"
+    assert response.json()["address_line"] is None
+
+
+def test_live_unit_is_not_deleted(
+    client: TestClient, brreg_answers: Callable[[Handler], list[str]]
+) -> None:
+    brreg_answers(lambda _request: httpx.Response(200, json=UNIT))
+
+    response = signed_in(client).get(f"/api/v1/enhetsregisteret/{ORGNR}")
+
+    assert response.json()["deleted_on"] is None
+
+
 def test_unreachable_register_is_a_bad_gateway_not_a_server_error(
     client: TestClient, brreg_answers: Callable[[Handler], list[str]]
 ) -> None:

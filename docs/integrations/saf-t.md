@@ -100,9 +100,10 @@ transferred to Norway within one month after the annual accounts are adopted,
 at latest 7 months after year-end. Export/print access must survive
 subscription termination, and the SAF-T file plus a full bilag export are how
 that is met (the SAF-T file is built; the bilag export is not yet, ROADMAP
-phase 3). Self-hosting is not the answer: the licence is proprietary (settled
-2026-10-10), so a customer leaving keeps their data, not a copy of the
-program.
+phase 3). Self-hosting is not the answer either, although the licence allows
+it since 2026-10-22 (Elastic License 2.0): somebody leaving the service should
+not have to run a server to keep their records readable, so the data has to
+leave with them.
 
 ## What Myntos does (built 2026-10-09)
 
@@ -279,9 +280,10 @@ against the 1.40 XSD and compares every account's and party's opening balance
 with Tripletex's: no differences, from either file. `tests/test_saft_import.py`
 is the same flow on a synthetic file in Tripletex's shape.
 
-**Not read:** the documents behind any voucher, which stay in the old
-program's bilag archive. Earlier years' vouchers are read since 2026-10-13,
-below.
+**Not read:** the documents behind any voucher, which are not in SAF-T. From
+Tripletex they come over from its printout since 2026-10-22, below («The
+documents behind the vouchers»). Earlier years' vouchers are read since
+2026-10-13, below.
 
 ### The year so far, and the parallel run (built 2026-10-12)
 
@@ -347,7 +349,8 @@ own 2026 file valid against the 1.40 XSD, and every closing balance per account
 and party equal to the opening plus Tripletex's movement.
 `tests/test_saft_voucher_import.py` is the same on a synthetic file.
 
-**Not done:** the PDFs (not in SAF-T). The terms the old program filed are
+**The PDFs** are not in SAF-T; Tripletex's come over from its printout (below,
+«The documents behind the vouchers»). The terms the old program filed are
 marked «Sendt fra et annet program» on the MVA page since 2026-10-15, proposed
 from the imported `mva_avregning` vouchers and then refused a check and a
 submission ([mva.md](mva.md) «Filed elsewhere»).
@@ -438,6 +441,108 @@ sale and Tripletex's year-end and the running year cut at February, brought
 over in one go, closed, compared, and listed. Not yet run on the farm's real
 files: `regnaskaps_tests/saft_pilot.py` drives the single-file routes and needs
 a variant for the import.
+
+## The documents behind the vouchers, from Tripletex's printout (built 2026-10-22)
+
+The farm pilot asked Tripletex for the original attachments as a ZIP and was
+told there is no such export; Tripletex's help article «Hvordan laster jeg ned
+regnskapsdataene mine?» prints them instead: «Bilag → Bilagsoversikt», choose
+the period, tick the box in the «Dato» column, «Skriv ut valgte bilag», and
+download the PDF. In it every voucher starts with a page Tripletex draws itself
+(«Bilag nummer 240-2026» twice, «Firma», «Org.nr.», the voucher's date and its
+posting lines under «Konteringssammendrag»), and its attachments follow until
+the next such page: a supplier's PDF as its pages, a scan as an image, an EHF
+as Tripletex's rendering of it. The pilot's September was 110 pages, 16 MB, 51
+vouchers, 34 of them with attachments.
+
+| Module | Does |
+| --- | --- |
+| `saft.printout` | Pure. Finds the cover pages (header and «Konteringssammendrag»), the pages after each, the org.nr., date and debit total on each cover, and cuts each voucher with attachments into a PDF of its pages, cover first. pypdf, as every PDF from outside |
+| `saft.documents` | Finds each printed voucher's vouchers in Myntos and makes the plan; puts the documents in the bilag archive (`bilag_service.attach_document`) |
+| `saft.jobs` | `read_documents`, `post_documents`: the same background work, states and resume as the SAF-T import, on the same `saft_import` table with `purpose` `vedlegg` (no migration) |
+
+| Route | Key | Does |
+| --- | --- | --- |
+| `POST …/saft/vedlegg` | `KEY_PREVIEW`, `ledger:write` | Upload one or more printouts (24 at most, 200 MB for the request, the SAF-T upload's limit in `main._SAFT_UPLOAD_PATHS`); 202, read in the background |
+| `GET …/saft/vedlegg`, `GET …/saft/vedlegg/{import_id}` | `KEY_READ` | The uploads, the review, the result |
+| `POST …/saft/vedlegg/{import_id}/arkivering` | `key_post`, `ledger:write` | Put the documents in the archive; 202 |
+| `DELETE …/saft/vedlegg/{import_id}` | `key_write` | Throw an upload away before archiving |
+
+The SAF-T routes see only SAF-T uploads and these only printouts
+(`jobs.get(…, purposes=…)`), so neither can read, post or throw away the
+other's. The page is the card «Vedlegg fra Tripletex» on `/tidligere-program/`,
+shown when «Tripletex» is chosen under «Programmet du kommer fra»
+(`lib/programs.ts`: chosen already from the Tripletex move guide's
+`?fra=tripletex`, from an upload of printouts, or from the SoftwareCompanyName
+of SAF-T files already read). The documents show on `/bilag/` (`documents` on
+each voucher of `GET …/bilag`), since an imported voucher is not in the
+register, and `med_dokument=true` lists only the vouchers that have one: the
+pilot's 48 documents went in on the first try, and were reported missing,
+because a year of 596 vouchers listed from January put September on the fifth
+page (2026-10-22). «Se bilagene med dokument» after archiving opens that list.
+
+**The decisions, each with its reason in the module:**
+
+- **Matched by the number the import kept, never by what the document says.**
+  `voucher_import._document` wrote «Tripletex bilag 240-2026» as every imported
+  voucher's `SourceDocumentID`; the printout heads the voucher with the same
+  number. The lookup is that key in the company's `IMPORT` journal, posted and
+  not a reversal. A printed voucher Myntos does not have is reported
+  (`bilag_finnes_ikke`) and left out, never placed by reading the invoice.
+- **Two checks beside the number.** Every cover's «Org.nr.» must be the
+  company's (`printout_wrong_company`, the whole file refused, like another
+  company's SAF-T file), and the cover's debit total is compared with the
+  books' (`belop_avviker`, a note: the voucher was changed in Tripletex after
+  the SAF-T file was taken, and the document still belongs to the number).
+  The pilot's September: all 51 numbers found among the vouchers brought
+  over, all 51 totals equal.
+- **Cover included.** The voucher's PDF is its pages as printed, Tripletex's
+  own page first: it is the old program's record of the posting and of who
+  booked it, and an auditor holding the attachment wants it beside it. Pages
+  are copied, never redrawn.
+- **Only vouchers with attachments.** One printed alone is Tripletex's page of
+  posting lines Myntos already holds; in the archive it would look like
+  documentation and be none (`uten_vedlegg`). 17 of the pilot's 51.
+- **Every part of a split voucher.** The import splits a Tripletex voucher by
+  date (`2026-246`, `2026-246-1010`); each part gets the document, because each
+  is a voucher an auditor may open alone. 10 of the pilot's 34, so its 34
+  vouchers with attachments are 48 documents.
+- **Nothing twice, by digest.** pypdf cuts the same pages into the same bytes
+  every time (no file id, no date), so a document already on a voucher is
+  recognised by its SHA-256 and skipped, and uploading a month again is
+  harmless. One trap, found on the real file: reading a page's text changes
+  pypdf's objects for it, and a page cut after that is other bytes than the
+  same page cut fresh, so `read` cuts from a second reader.
+- **The review is the plan, not the post rolled back.** The archive cannot
+  roll back, so `documents.plan` writes nothing and runs for the review and
+  again for the post; the post goes ahead only while the (voucher, digest)
+  pairs are the ones the review showed, else `review_changed`. Each document is
+  cut again file by file at the post and refused if its digest changed, so a
+  year of documents is never held in memory between the two.
+- **Not read: a cover running onto a second page.** Handled when the same
+  header continues before any attachment, but not seen in a real printout yet
+  (the pilot's longest cover, 25 lines, fit on one). January's printout, with
+  the opening of the year, is the one to check against.
+
+**Checked against:** `tests/test_saft_vedlegg.py`, a hand-written printout in
+the pilot's shape (a scan as a page with no text, the amounts' no-break spaces,
+«Sum debet» printed and not) against two years brought over: the documents on
+the right vouchers and both parts of a split one, the downloaded file the
+cover and its two pages with the digest the review gave, the same printout
+again finding nothing new, another company's refused, the post stopped by a
+document attached in between. And the real thing:
+`regnaskaps_tests/vedlegg_pilot.py` (gitignored, beside `saft_pilot.py`) brings
+the pilot's 2025 and 2026 SAF-T files over through the server import (724
+vouchers), uploads its real September printout and archives it: 51 vouchers
+read, every number found and every debit total equal, 48 documents on the 48
+vouchers the review named, each with as many pages as the printout gave it, and
+the same printout uploaded again finding nothing new. Reading the 110 pages
+takes 1.3 s and cutting the 34 documents 0.4 s.
+
+**Not done:** another program's printout (Fiken, PowerOffice and Conta each
+have their own export of the documents; none has been seen), and the
+documents of vouchers posted in Myntos from a bank line or a manual entry,
+which have their own upload.
 
 ## Dimensions: the file's analysis, both ways (built 2026-10-15)
 

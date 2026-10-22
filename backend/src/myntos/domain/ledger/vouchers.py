@@ -16,6 +16,12 @@ asks a program to produce (docs/FEATURES.md, item 5): the bilagsjournal, and,
 narrowed to one account with its balance carried, the hovedbok for that account,
 which for 1920 is the company's ins and outs of the bank.
 
+**With the documents in the archive.** Each voucher lists the files the bilag
+archive holds for it. The register shows a payment's receipts, but a voucher
+brought over from the old program is not in the register, and when its
+documents came over too (Tripletex's printout, :mod:`myntos.saft.documents`)
+this was the only page that could show them.
+
 **A balance carried, only for one account.** Narrowed to an account, each
 voucher shows its movement on that account and the balance after it, opening
 with what the account held before the period: for a balance-sheet account
@@ -33,6 +39,8 @@ from decimal import Decimal
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from myntos.domain.bilag import service as bilag_service
+from myntos.domain.bilag.models import Attachment
 from myntos.domain.ledger import service as ledger_service
 from myntos.domain.ledger.errors import AccountNotFoundError
 from myntos.domain.ledger.models import (
@@ -62,6 +70,16 @@ class VoucherLine:
 
 
 @dataclass(frozen=True)
+class VoucherDocument:
+    """A file in the bilag archive on the voucher, downloaded by its id."""
+
+    id: int
+    filename: str
+    content_type: str
+    byte_size: int
+
+
+@dataclass(frozen=True)
 class VoucherRow:
     id: int
     journal: str
@@ -82,6 +100,7 @@ class VoucherRow:
     #: it. None when no account was asked about.
     movement: Decimal | None = None
     balance: Decimal | None = None
+    documents: tuple[VoucherDocument, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -121,6 +140,7 @@ def _filtered(
     journal: str | None,
     account: Account | None,
     search: str | None,
+    with_documents: bool,
 ) -> Select[tuple[int]]:
     query = (
         select(Transaction.id)
@@ -157,6 +177,12 @@ def _filtered(
                 .exists(),
             )
         )
+    if with_documents:
+        query = query.where(
+            select(Attachment.id)
+            .where(Attachment.transaction_pk == Transaction.id, Attachment.company_id == company.id)
+            .exists()
+        )
     return query
 
 
@@ -187,10 +213,25 @@ async def list_vouchers(
     journal: str | None = None,
     account_number: str | None = None,
     search: str | None = None,
+    with_documents: bool = False,
+    newest_first: bool = False,
     offset: int = 0,
     limit: int = PAGE_SIZE,
 ) -> VoucherPage:
-    """One page of the year's posted vouchers, oldest first, with their lines."""
+    """One page of the year's posted vouchers, with their lines, oldest first by default.
+
+    ``newest_first`` turns the list around, which is how /bilag/ shows it: what
+    was just posted is what a person looks for, and a year brought over from the
+    old program put it hundreds of vouchers down. The balance beside each
+    voucher is the account's after that voucher in date order either way, so a
+    page read from the top down shows the balance going back in time, as a bank
+    statement does.
+
+    ``with_documents`` keeps the vouchers the bilag archive has a file for. A
+    printout from Tripletex put 48 documents on a farm's September, and they
+    were there, but on the fifth page of 596 vouchers listed from January: the
+    pilot looked at the first two and reported them missing (2026-10-22).
+    """
     start, end = _period(year, month)
     account: Account | None = None
     if account_number:
@@ -202,11 +243,12 @@ async def list_vouchers(
         if account is None:
             raise AccountNotFoundError(f"kontoplanen har ingen konto {account_number.strip()}")
 
-    ordered = _filtered(company, start, end, journal, account, search).order_by(
+    ordered = _filtered(company, start, end, journal, account, search, with_documents).order_by(
         Transaction.transaction_date, Transaction.id
     )
     ids = list(await db.scalars(ordered))
-    page_ids = ids[offset : offset + limit]
+    listed = ids[::-1] if newest_first else ids
+    page_ids = listed[offset : offset + limit]
 
     movements: dict[int, Decimal] = {}
     opening: Decimal | None = None
@@ -255,18 +297,21 @@ async def list_vouchers(
     authors = await ledger_service._author_names(
         db, [t.created_by_user_id for t in transactions.values()]
     )
+    attached = await bilag_service.list_attachments(db, company=company, voucher_pks=page_ids)
 
-    balance = opening
-    if balance is not None:
-        for pk in ids[:offset]:
-            balance += movements.get(pk, ZERO)
+    # The balance after each voucher, carried in date order whatever order the
+    # page is in, so the same voucher shows the same balance read either way.
+    after: dict[int, Decimal] = {}
+    if opening is not None:
+        running = opening
+        for pk in ids:
+            running += movements.get(pk, ZERO)
+            after[pk] = running
     rows: list[VoucherRow] = []
     for pk in page_ids:
         transaction = transactions[pk]
         journal_row = journals[transaction.journal_id]
         movement = movements.get(pk) if account is not None else None
-        if balance is not None and movement is not None:
-            balance += movement
         rows.append(
             VoucherRow(
                 id=transaction.id,
@@ -305,7 +350,16 @@ async def list_vouchers(
                     )
                 ),
                 movement=movement,
-                balance=balance if account is not None else None,
+                balance=after.get(pk) if account is not None else None,
+                documents=tuple(
+                    VoucherDocument(
+                        id=attachment.id,
+                        filename=attachment.filename,
+                        content_type=attachment.content_type,
+                        byte_size=attachment.byte_size,
+                    )
+                    for attachment in attached.get(transaction.id, [])
+                ),
             )
         )
 

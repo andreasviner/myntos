@@ -1,0 +1,137 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { myntosFelles, sammenligninger, SJEKKET } from '../../data/sammenligning';
+
+/**
+ * Oversikten over sammenligningene. Kortene er inngangen, fordi folk kommer
+ * hit med navnet på programmet de har. Hver sammenligning har sin egen side
+ * ([program].astro), bygget av data/sammenligning.ts som denne.
+ */
+const sjekketNorsk = new Date(SJEKKET).toLocaleDateString('nb-NO', {
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+});
+---
+
+<BaseLayout
+  title="Sammenlign Myntos med Fiken og Tripletex | Myntos"
+  description="Myntos ved siden av Fiken og Tripletex: hva hvert program koster i året, hva de har som Myntos ikke har ennå, og hva som er annerledes i Myntos."
+  width="wide"
+>
+  <div class="head">
+    <p class="pill">Sammenlign</p>
+    <h1>Myntos ved siden av de andre</h1>
+    <p class="lead">
+      Leter du etter et alternativ til regnskapsprogrammet du har? Her er Myntos sammenlignet med
+      Fiken og Tripletex, med prisene fra deres egne sider og det Myntos ikke gjør ennå.
+    </p>
+  </div>
+
+  <div class="grid cards">
+    {
+      sammenligninger.map((s) => (
+        <a class="card compare-card" href={`/sammenlign/${s.slug}/`}>
+          <h2 class="card-title">Myntos eller {s.navn}?</h2>
+          <p class="card-hint">{s.kortTekst}</p>
+          <span class="go">Se sammenligningen</span>
+        </a>
+      ))
+    }
+  </div>
+
+  <h2>Det som er likt i alle sammenligningene</h2>
+  <ul class="ticks">
+    {myntosFelles.map((punkt) => <li>{punkt}</li>)}
+  </ul>
+  <p class="muted note-line">
+    Det Myntos ikke gjør ennå, står samlet nederst på <a href="/funksjoner/#ikke-enna">funksjonssiden</a>.
+    Prisene er kontrollert {sjekketNorsk}.
+  </p>
+
+  <div class="cta card">
+    <div>
+      <h2 class="cta-title">Ta med deg regnskapet</h2>
+      <p class="card-hint">
+        Alle norske regnskapsprogrammer gir deg regnskapet som SAF-T. Guidene viser hvor knappen er
+        i hvert av dem.
+      </p>
+    </div>
+    <a class="btn btn-primary btn-large" href="/kom-i-gang/">Flytt regnskapet hit</a>
+  </div>
+</BaseLayout>
+
+<style>
+  .head {
+    max-width: 44rem;
+    padding: 2rem 0 1rem;
+  }
+  .cards {
+    grid-template-columns: repeat(auto-fit, minmax(min(19rem, 100%), 1fr));
+  }
+  /* `.card + .card` gir hvert kort etter det første en toppmarg i rutenettet. */
+  .cards > .card {
+    margin-top: 0;
+  }
+  .compare-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    color: inherit;
+    text-decoration: none;
+    transition: border-color 150ms ease;
+  }
+  .compare-card:hover {
+    border-color: var(--accent-line);
+  }
+  .compare-card .card-title {
+    margin: 0;
+    font-size: 1.15rem;
+  }
+  .go {
+    margin-top: 0.6rem;
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 0.92rem;
+  }
+  .ticks {
+    list-style: none;
+    padding: 0;
+    margin: 1rem 0 0;
+    display: grid;
+    gap: 0.5rem;
+    max-width: 48rem;
+  }
+  .ticks li {
+    position: relative;
+    padding-left: 1.6rem;
+  }
+  .ticks li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.55em;
+    width: 0.7rem;
+    height: 0.38rem;
+    border-left: 2px solid var(--accent);
+    border-bottom: 2px solid var(--accent);
+    transform: rotate(-45deg);
+  }
+  .note-line {
+    margin-top: 1.25rem;
+  }
+  .cta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.25rem;
+    margin-top: 3rem;
+    background: linear-gradient(140deg, var(--accent-soft), var(--surface) 60%);
+    border-color: var(--accent-line);
+  }
+  .cta-title {
+    margin: 0 0 0.2rem;
+    font-size: 1.3rem;
+  }
+</style>

@@ -60,6 +60,7 @@ from myntos.api.deps import (
     CurrentUser,
     DbSession,
     Storage,
+    key_send,
     key_write,
 )
 from myntos.api.v1.skatt import government_login_for
@@ -1096,7 +1097,10 @@ class ValidationPayload(BaseModel):
     naering: str | None = Field(default=None, max_length=32)
 
 
-@router.post("/companies/{company_id}/mva/termin/kontroll")
+@router.post(
+    "/companies/{company_id}/mva/termin/kontroll",
+    openapi_extra=key_send("sende mva-meldingen til kontroll hos Skatteetaten", id_porten=True),
+)
 async def validate_period(
     payload: ValidationPayload,
     context: CurrentCompany,
@@ -1105,11 +1109,13 @@ async def validate_period(
 ) -> FilingResponse:
     """Have Skatteetaten check a period's melding («Kontroller hos Skatteetaten»). Files nothing.
 
-    **No key can call this** (403 ``not_for_agent_keys``). It runs on the
-    person's own ID-porten login, and what Skatteetaten is told is the
-    person's to say, by Skatteetaten's policy. An agent prepares and reviews
-    the period with the read routes and asks the person to check and file on
-    the MVA page.
+    **A key's request always waits for its person** (``key_send``): 202
+    ``approval_pending``, whatever the key may do on its own. The key needs
+    ``post``, on its own or by asking. Approved on /godkjenning/, it runs with
+    the person's own ID-porten login, which they must hold when they approve,
+    as if they had pressed the button themselves: what Skatteetaten is told is
+    the person's to say, by Skatteetaten's policy, and nothing leaves Myntos
+    without a person's yes (docs/agents-and-api.md rule 5).
 
     It builds the melding as the books have it now, sends it to Skatteetaten's
     validation with ``merknad`` (optional free text, which the check asks for
@@ -1239,7 +1245,11 @@ def _failed(filing: MvaFiling, message: str) -> JSONResponse:
     )
 
 
-@router.post("/companies/{company_id}/mva/innsendinger/{filing_id}/send", response_model=None)
+@router.post(
+    "/companies/{company_id}/mva/innsendinger/{filing_id}/send",
+    response_model=None,
+    openapi_extra=key_send("sende mva-meldingen til Skatteetaten", id_porten=True),
+)
 async def submit_filing(
     filing_id: int,
     payload: SubmissionPayload,
@@ -1253,10 +1263,13 @@ async def submit_filing(
     Cannot be withdrawn: a filed melding is only ever replaced, by a newer one
     for the same period.
 
-    **No key can call this** (403 ``not_for_agent_keys``). Filing is the
-    person's, on their own ID-porten login, by Skatteetaten's policy. An agent
-    asks the person to file (``POST /companies/{company_id}/godkjenninger/innsending``),
-    and the person checks and sends it from the MVA page.
+    **A key's request always waits for its person** (``key_send``): 202
+    ``approval_pending``, whatever the key may do on its own. The key needs
+    ``post``, on its own or by asking. Approved on /godkjenning/, it runs with
+    the person's own ID-porten login, which they must hold when they approve,
+    as if they had pressed the button themselves: what Skatteetaten is told is
+    the person's to say, by Skatteetaten's policy, and nothing leaves Myntos
+    without a person's yes (docs/agents-and-api.md rule 5).
 
     The body confirms the figure the person was shown: ``fastsatt_merverdiavgift``
     must equal the checked filing's exactly, and ``bekreftet`` must be true.
@@ -1382,7 +1395,10 @@ async def submit_filing(
     return _filing_response(filing)
 
 
-@router.post("/companies/{company_id}/mva/innsendinger/{filing_id}/tilbakemelding")
+@router.post(
+    "/companies/{company_id}/mva/innsendinger/{filing_id}/tilbakemelding",
+    openapi_extra=key_send("hente Skatteetatens svar på mva-meldingen", id_porten=True),
+)
 async def fetch_feedback(
     filing_id: int,
     context: CurrentCompany,
@@ -1392,11 +1408,11 @@ async def fetch_feedback(
 ) -> FilingResponse:
     """Fetch Skatteetaten's receipt and payment information for a filed melding («Hent kvittering»).
 
-    **No key can call this** (403 ``not_for_agent_keys``). It reads from Altinn
-    on the person's own ID-porten login. An agent reads what is already stored
-    with ``GET /companies/{company_id}/mva/innsendinger/{filing_id}`` and
-    ``…/dokument``, and asks the person to press «Hent kvittering» on the MVA
-    page when the receipt is missing.
+    It reads from Altinn on the person's own ID-porten login, so **a key's
+    request always waits for its person** like a filing (``key_send``). What
+    is already stored needs no approval:
+    ``GET /companies/{company_id}/mva/innsendinger/{filing_id}`` and
+    ``…/dokument``.
 
     Skatteetaten produces three documents after a submission: the receipt
     (``kvittering``, a PDF), the payment information (``betalingsinformasjon``)

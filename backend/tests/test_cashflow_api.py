@@ -2717,15 +2717,16 @@ def test_switching_ki_off_ends_every_reading(
     assert len(model.calls) == asked
 
 
-def test_the_model_cannot_make_an_asset_of_a_payment_under_the_threshold(
+def test_an_asset_under_the_threshold_is_equipment_and_an_expense(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A driftsmiddel costs 30 000 or more, so a smaller payment holds none.
 
     Found when two graphics cards for 25 278 kroner came back as an asset after
     the person answered «til selskapets drift»: the model read "drift", and the
-    menu has a "driftsmiddel" on it. Its runner-up stands in, and it is not
-    asked about, since the doubt was about a category that could not be right.
+    menu has a "driftsmiddel" on it. The model is right that they are equipment
+    the company keeps, and under the threshold that is «Verktøy og inventar».
+    Its runner-up is still a real alternative to that, so the doubt is asked.
     """
     menu = classification.build_menu(CashFlowDirection.UT)
     number = {item.type_code: item.number for item in menu}
@@ -2741,5 +2742,31 @@ def test_the_model_cannot_make_an_asset_of_a_payment_under_the_threshold(
     proposal = interpret(client, company["id"], text_pdf(["Kvittering"])).json()
 
     assert proposal["gross_amount"] == "25278.00"
-    assert proposal["type_code"] == "datakostnad"
-    assert "kategori_tvil" not in {question["key"] for question in proposal["questions"]}
+    assert proposal["type_code"] == "inventar"
+    doubt = next(q for q in proposal["questions"] if q["key"] == "kategori_tvil")
+    assert [option["type_code"] for option in doubt["options"]] == ["inventar", "datakostnad"]
+
+
+def test_a_lone_asset_choice_under_the_threshold_is_not_asked_what_was_bought(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `utlegg` fixture, 2026-10-17: the choice was thrown away, and the
+    form asked «Hva ble kjøpt?» under the model's own «To skjermkort»."""
+    menu = classification.build_menu(CashFlowDirection.UT)
+    number = {item.type_code: item.number for item in menu}
+    model = Conversing(
+        str(number["driftsmiddel"]),
+        "DATO: UKJENT\nVALUTA: NOK\nMOTPART: UKJENT\nBESKRIVELSE: To skjermkort",
+    )
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    stub_loynd(monkeypatch, model.complete)
+    counting_extractor(monkeypatch, "Kvittering\nTo skjermkort\nTotalt 25 278,00 kr")
+    company = signed_in_company(client)
+
+    proposal = interpret(client, company["id"], text_pdf(["Kvittering"])).json()
+
+    assert proposal["type_code"] == "inventar"
+    assert {question["key"] for question in proposal["questions"]} & {
+        "kategori",
+        "kategori_tvil",
+    } == set()

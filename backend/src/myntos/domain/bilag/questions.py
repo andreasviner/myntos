@@ -293,10 +293,21 @@ def compose(
     #    nor the model produced one — otherwise there is a proposal to correct
     #    rather than a blank to fill. No buttons: the answer is one of thirty
     #    categories, and the dropdown is right there.
+    #
+    #    What was bought is asked only when nothing says so yet. With a
+    #    description, the person's or the model's, the missing half is what the
+    #    company uses it for: «Hva ble kjøpt?» under a box reading «kjøpte
+    #    skjermkort på finn» was asking somebody to retype their own sentence,
+    #    and they asked why (2026-10-17).
     if suggestion.type_code is None:
+        described = has_note or bool(suggestion.description and suggestion.description.strip())
         ask(
             Question(
-                text="Hva ble kjøpt, og hva bruker selskapet det til?",
+                text=(
+                    "Hva bruker selskapet dette til?"
+                    if described
+                    else "Hva ble kjøpt, og hva bruker selskapet det til?"
+                ),
                 field="type_code",
                 key=CATEGORY,
             )

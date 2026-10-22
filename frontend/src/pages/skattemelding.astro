@@ -1,0 +1,997 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Skattemelding | Myntos"
+  description="Se næringsspesifikasjonen for aksjeselskapet, kontroller skattemeldingen hos Skatteetaten og send den inn."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Skattemelding</p>
+      {/* Selskapet er overskriften, som på mva-siden: skattemeldingen sendes
+          for ett bestemt organisasjonsnummer, og det skal stå der knappen er. */}
+      <h1 data-session-company></h1>
+      <p class="muted orgnr" id="orgnr"></p>
+    </div>
+    <div class="head-actions year-nav" role="group" aria-label="Inntektsår">
+      <button type="button" class="btn btn-ghost btn-small" id="year-prev" aria-label="Året før"
+        >‹</button
+      >
+      <span class="year" id="year"></span>
+      <button type="button" class="btn btn-ghost btn-small" id="year-next" aria-label="Året etter"
+        >›</button
+      >
+    </div>
+  </header>
+
+  <p class="lead">
+    Skattemeldingen for et aksjeselskap lages av regnskapet for et avsluttet år: resultatet og
+    balansen post for post (næringsspesifikasjonen), saldoene fra anleggsregisteret og formuen.
+    Skatteetaten kontrollerer den og regner ut skatten før noe sendes, og den sendes bare når du
+    bekrefter det skattemessige resultatet du så.
+  </p>
+
+  <p class="status" id="page-status" hidden></p>
+  <div class="empty" id="loading">Henter …</div>
+
+  <div id="content" hidden>
+    {/* Et oppløst selskaps siste år: skattemeldingen sendes før den ordinære
+        fastsettingen, og det er det første man må vite om året. */}
+    <section class="card" id="forhand" hidden>
+      <h2 class="card-title">Forhåndsfastsetting</h2>
+      <p id="forhand-tekst"></p>
+      <p class="card-hint">
+        Skatteetaten skal ha skattemeldingen for året selskapet oppløses i før selskapet slettes
+        (skatteforvaltningsloven § 8-2). Første gang du kontrollerer, ber Myntos Skatteetaten gjøre
+        den klar, og det kan ta et minutt.
+      </p>
+    </section>
+
+    {/* Det som stopper, først: en skattemelding som ikke kan kontrolleres er
+        det viktigste å vite om året, og hver feil lenker dit den rettes. */}
+    <ul class="findings errors" id="errors" hidden></ul>
+
+    <section class="card">
+      <h2 class="card-title" id="year-title"></h2>
+      <dl class="totals">
+        <dt>Årsresultat</dt>
+        <dd id="aarsresultat"></dd>
+        <dt>Lagt til</dt>
+        <dd id="tillegg"></dd>
+        <dt>Trukket fra</dt>
+        <dd id="fradrag"></dd>
+        <dt>Skattemessig resultat</dt>
+        <dd class="grand" id="skattemessig"></dd>
+      </dl>
+      <p class="card-hint">
+        Slik regner Skatteetaten ut resultatet av tallene som sendes: skattekostnaden i regnskapet
+        legges til igjen, fordi den ikke er fradragsberettiget. Skatten selv regner Skatteetaten ut i
+        kontrollen.
+      </p>
+      <ul class="findings notes" id="notes" hidden></ul>
+    </section>
+
+    <section class="card">
+      <h2 class="card-title">Formue</h2>
+      <dl class="totals">
+        <dt>Driftsmidler med verdsettingsrabatt</dt>
+        <dd id="formue-rabatt"></dd>
+        <dt>Andre eiendeler</dt>
+        <dd id="formue-annet"></dd>
+        <dt>Gjeld</dt>
+        <dd id="formue-gjeld"></dd>
+      </dl>
+      <p class="card-hint">
+        Verdiene i balansen per <span id="formue-dag">31. desember</span>, i hele kroner. Fast eiendom
+        og aksjer er ikke med, fordi verdien for formue ikke er den i regnskapet; merknadene over
+        sier hvilke.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2 class="card-title">Næringsspesifikasjonen</h2>
+      <p class="card-hint">
+        Hver konto står på posten den har under <a href="/kontoplan/">Kontoplan</a>. Beløpene er slik
+        de sendes: inntekter, gjeld og egenkapital som positive tall.
+      </p>
+      <div class="table-scroll">
+        <table class="data posts">
+          <thead>
+            <tr>
+              <th>Post</th>
+              <th>Hva</th>
+              <th class="num">Beløp</th>
+            </tr>
+          </thead>
+          <tbody id="posts"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="posts-empty" hidden>Ingen poster: det er ikke ført noe i året.</p>
+
+      <div id="saldi-block" hidden>
+        <h3>Saldoavskrivninger</h3>
+        <div class="table-scroll">
+          <table class="data">
+            <thead>
+              <tr>
+                <th>Saldo</th>
+                <th class="num">Grunnlag</th>
+                <th class="num">Avskrivning</th>
+                <th class="num">Sats</th>
+                <th class="num">Utgående saldo</th>
+              </tr>
+            </thead>
+            <tbody id="saldi"></tbody>
+          </table>
+        </div>
+        <p class="card-hint">
+          Fra <a href="/anlegg/">Anlegg og avskrivning</a>. Skatteetaten får satsen, og regner
+          avskrivningen ut av grunnlaget selv.
+        </p>
+      </div>
+
+      <h3 class="equity-title">Egenkapital</h3>
+      <dl class="totals equity" id="equity"></dl>
+    </section>
+
+    <section class="card" id="file">
+      <h2 class="card-title">Kontroll og innsending</h2>
+      <p class="card-hint" id="step-not_over" hidden></p>
+      <p class="card-hint" id="step-blocked" hidden>
+        Rett det som står øverst på siden. Da kan skattemeldingen kontrolleres.
+      </p>
+      <p class="card-hint" id="step-read_only" hidden>
+        Det er den som kan føre i regnskapet, som kontrollerer og sender skattemeldingen.
+      </p>
+      <p class="card-hint" id="step-not_configured" hidden>
+        Innsending av skattemeldingen er ikke satt opp her. Et aksjeselskap kan bare sende den fra et
+        regnskapsprogram, ikke fra Skatteetatens egne sider.
+      </p>
+      <a class="btn btn-primary" id="login" href="#" hidden>Logg inn med ID-porten</a>
+
+      <form id="check-form" novalidate hidden>
+        {/* Skatteetatens eget spørsmål, med deres ord. Det står ikke i regnskapet,
+            så Myntos gjetter ikke: det må besvares før kontrollen. */}
+        <fieldset class="question">
+          <legend>
+            Skal selskapet rapportere opplysninger om ytelser mellom selskap og personlig aksjonær,
+            deltaker eller nærstående til denne?
+          </legend>
+          <span class="field-hint">
+            Spørsmålet i skattemeldingen, med Skatteetatens ord. Ytelser er for eksempel lån, lønn,
+            leie eller gaver mellom selskapet og en aksjonær som er en person, eller noen som står
+            vedkommende nær. Myntos kan ikke se det i regnskapet, så det er bare du som kan svare.
+          </span>
+          <label class="radio"><input type="radio" name="ytelser" value="nei" /> Nei</label>
+          <label class="radio"><input type="radio" name="ytelser" value="ja" /> Ja</label>
+        </fieldset>
+        {/* Bare for et oppløst selskaps siste år: hva aksjonærene fikk, som
+            gevinsten eller tapet på aksjene regnes ut fra. Foreslått fra
+            regnskapet, men det er den som sender som oppgir det. */}
+        <label class="field" id="payout-field" hidden>
+          <span>Utbetalt til aksjonærene ved oppløsningen</span>
+          <input type="text" id="payout" inputmode="numeric" autocomplete="off" />
+          <span class="field-hint">
+            Det aksjonærene fikk utbetalt til sammen da selskapet ble oppløst, i hele kroner
+            (likvidasjonsvederlag). Forslaget er det regnskapet viser: egenkapitalen som ble betalt ut
+            utover årets resultat. Fikk de ingenting, skriv 0.
+          </span>
+        </label>
+        {/* Et slettet selskap har ingen roller i Enhetsregisteret lenger, så
+            Myntos kan ikke se om det hadde revisor. */}
+        <fieldset class="question" id="revisor-question" hidden>
+          <legend>Hadde selskapet revisor?</legend>
+          <span class="field-hint">
+            Enhetsregisteret viser ikke lenger rollene i et slettet selskap. Hadde selskapet revisor,
+            må revisoren bekrefte næringsspesifikasjonen etter at du har sendt.
+          </span>
+          <label class="radio"><input type="radio" name="revisor" value="nei" /> Nei</label>
+          <label class="radio"><input type="radio" name="revisor" value="ja" /> Ja</label>
+        </fieldset>
+        <button class="btn btn-primary" type="submit" id="check">Kontroller hos Skatteetaten</button>
+        <p class="card-hint">
+          Kontrollen sender ingenting inn. Du ser svaret og skatten Skatteetaten regner ut før du
+          bestemmer deg.
+        </p>
+      </form>
+      <p class="status" id="action-status" hidden></p>
+
+      {/* Innsendingen er et steg og ikke en dialog: en sendt skattemelding kan
+          ikke trekkes tilbake, bare erstattes av en ny. Kortet viser det
+          Skatteetaten svarte på kontrollen og hva som sendes, for hvem. */}
+      <div class="review" id="review" hidden>
+        <h3>Send inn</h3>
+        <p id="review-verdict"></p>
+        <p id="review-tax" hidden></p>
+        <ul class="findings errors" id="review-errors" hidden></ul>
+        <ul class="findings" id="review-advice" hidden></ul>
+        <p class="card-hint" id="review-derived" hidden></p>
+        <p class="card-hint" id="review-revisor" hidden>
+          Revisoren må bekrefte næringsspesifikasjonen i Skatteetatens løsning etter at du har sendt.
+          Skatteetaten behandler skattemeldingen først da.
+        </p>
+        <div id="review-send">
+          <label class="check">
+            <input type="checkbox" id="confirm" />
+            <span id="confirm-text"></span>
+          </label>
+          <button class="btn btn-primary" type="button" id="submit" disabled>Send inn skattemeldingen</button>
+        </div>
+        <p class="status" id="submit-status" hidden></p>
+      </div>
+
+      <p class="status" id="changed" data-tone="error" hidden>
+        Regnskapet for året er endret etter kontrollen. Kontroller skattemeldingen på nytt før den
+        sendes.
+      </p>
+
+      <div id="history" hidden>
+        <h3>Skattemeldinger for året</h3>
+        <ol class="filings" id="filings"></ol>
+      </div>
+    </section>
+  </div>
+</BaseLayout>
+
+<style>
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .orgnr {
+    margin: 0.2rem 0 0;
+  }
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--muted);
+    margin: 0 0 0.4rem;
+  }
+  .year-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .year {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    min-width: 3.5rem;
+    text-align: center;
+  }
+  .card {
+    margin-bottom: 1.5rem;
+  }
+  /* Merkelappen får bryte linjen på en smal skjerm; beløpet aldri. */
+  .totals {
+    display: grid;
+    grid-template-columns: minmax(0, max-content) max-content;
+    gap: 0.3rem 1.5rem;
+    margin: 0.5rem 0 1rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .totals :global(dt) {
+    color: var(--muted);
+  }
+  .totals :global(dd) {
+    margin: 0;
+    text-align: right;
+  }
+  .totals .grand {
+    font-weight: 700;
+    font-size: 1.15rem;
+  }
+  .findings {
+    padding-left: 1.2rem;
+    margin: 0.5rem 0 1rem;
+  }
+  /* Funnene, postene, saldoene og innsendingene lages av skriptet, så reglene
+     henges på listene og tabellene i malen og når radene med :global(). */
+  .findings :global(li) {
+    margin-bottom: 0.35rem;
+  }
+  .errors {
+    color: var(--negative);
+  }
+  .errors :global(a) {
+    margin-left: 0.35rem;
+  }
+  .posts :global(tr.group th) {
+    padding-top: 1rem;
+    text-align: left;
+  }
+  .posts :global(tr.side th) {
+    padding-top: 1.5rem;
+    font-size: 1rem;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--fg-strong);
+  }
+  /* Kontoene står under navnet og ikke i en egen kolonne, så beløpet får
+     plass også på en smal skjerm. */
+  .posts :global(.accounts) {
+    display: block;
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  /* «Aksjekapital/Egenkapital andre foretak» har ikke noe sted å brytes, og
+     ville ellers gjort tabellen bredere enn skjermen. */
+  .posts :global(td) {
+    hyphens: auto;
+    overflow-wrap: anywhere;
+  }
+  .posts :global(td:first-child) {
+    white-space: nowrap;
+    overflow-wrap: normal;
+  }
+  @media (max-width: 600px) {
+    .posts :global(th),
+    .posts :global(td) {
+      padding-left: 0.35rem;
+      padding-right: 0.35rem;
+    }
+  }
+  .equity-title,
+  #saldi-block h3 {
+    margin-top: 1.5rem;
+  }
+  .question {
+    border: 0;
+    padding: 0;
+    margin: 0 0 1rem;
+    display: grid;
+    gap: 0.4rem;
+    max-width: 40rem;
+  }
+  .question legend {
+    font-weight: 600;
+    margin-bottom: 0.4rem;
+  }
+  .radio {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+  .review {
+    margin-top: 1.5rem;
+    padding: 1rem 1.2rem;
+    border: 2px solid var(--accent);
+    border-radius: var(--radius-small);
+    max-width: 40rem;
+  }
+  .review h3,
+  #history h3 {
+    margin-top: 0;
+  }
+  .check {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    margin: 0.8rem 0;
+  }
+  .check input {
+    margin-top: 0.25rem;
+  }
+  #history {
+    margin-top: 2rem;
+  }
+  .filings {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 0.75rem;
+  }
+  .filings > :global(li) {
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-small);
+    padding: 0.75rem 1rem;
+  }
+  .filings :global(.filing-head) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+    align-items: baseline;
+  }
+  .filings :global(.filing-meta) {
+    margin: 0.35rem 0 0;
+    font-size: 0.9rem;
+  }
+  .filings :global(.filing-links) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1rem;
+    margin-top: 0.5rem;
+  }
+  .filings :global(.badge[data-tone='ok']) {
+    background: var(--accent-soft);
+    color: var(--positive);
+  }
+  .filings :global(.badge[data-tone='error']) {
+    background: var(--danger-bg);
+    color: var(--negative);
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    checkSkattemelding,
+    fetchSkattemeldingAnswer,
+    getGovernmentLoginStatus,
+    getSkattemeldingYear,
+    governmentLoginStartUrl,
+    skattemeldingDocumentUrl,
+    submitSkattemelding,
+    type Company,
+    type FinalYearAnswers,
+    type GovernmentLoginStatus,
+    type SkattemeldingFinding,
+    type SkattemeldingYear,
+  } from '../lib/api';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import { isoDate, kroner, orgnummer } from '../lib/format';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+  import {
+    checkableFrom,
+    fixLink,
+    isFiled,
+    nextStep,
+    payoutKroner,
+    payoutSuggestion,
+    postGroups,
+    sendable,
+    splitAvvik,
+    STATUS_LABELS,
+    STATUS_TONES,
+    yearFromHash,
+  } from '../lib/skattemelding';
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const actionStatus = el<HTMLParagraphElement>('#action-status');
+  const submitStatus = el<HTMLParagraphElement>('#submit-status');
+  const checkForm = el<HTMLFormElement>('#check-form');
+  const checkButton = el<HTMLButtonElement>('#check');
+  const confirmBox = el<HTMLInputElement>('#confirm');
+  const submitButton = el<HTMLButtonElement>('#submit');
+
+  let company: Company;
+  // Null til første svar: da velger API-et året (i fjor, når det kan sendes).
+  let year: number | null = null;
+  let view: SkattemeldingYear | null = null;
+  let government: GovernmentLoginStatus = {
+    available: false,
+    logged_in: false,
+    pid: null,
+    acr: null,
+    expires_at: null,
+    linked: false,
+    linked_name: null,
+    linked_at: null,
+  };
+
+  // Spurt der det brukes, aldri tatt vare på: selskapet på skjermen kan endre seg.
+  const mayWrite = (): boolean => canInCompany(company, 'ledger:write');
+
+  const DOCUMENTS: [string, string][] = [
+    ['naeringsspesifikasjon', 'Næringsspesifikasjonen (XML)'],
+    ['skattemelding', 'Skattemeldingen (XML)'],
+    ['validering', 'Kontrollresultatet'],
+  ];
+
+  function cell(text: string, className?: string): HTMLTableCellElement {
+    const td = document.createElement('td');
+    if (className !== undefined) td.className = className;
+    td.textContent = text;
+    return td;
+  }
+
+  function badge(text: string, tone?: string): HTMLSpanElement {
+    const span = document.createElement('span');
+    span.className = 'badge';
+    span.textContent = text;
+    if (tone !== undefined) span.dataset.tone = tone;
+    return span;
+  }
+
+  function wholeKroner(amount: number): string {
+    return kroner(String(amount)).replace(/,00(?=\s)/, '');
+  }
+
+  function dateTime(value: string): string {
+    return new Date(value).toLocaleString('nb-NO', { dateStyle: 'medium', timeStyle: 'short' });
+  }
+
+  function link(href: string, text: string): HTMLAnchorElement {
+    const a = document.createElement('a');
+    a.href = href;
+    a.textContent = text;
+    return a;
+  }
+
+  // --- Funnene -----------------------------------------------------------------
+
+  function findingItem(finding: SkattemeldingFinding): HTMLLIElement {
+    const item = document.createElement('li');
+    item.textContent = finding.message;
+    const fix = fixLink(finding.code);
+    if (fix !== null && finding.severity === 'feil') item.append(link(fix.href, `Gå til ${fix.label}`));
+    return item;
+  }
+
+  function renderFindings(current: SkattemeldingYear): void {
+    const errors = current.findings.filter((f) => f.severity === 'feil');
+    const notes = current.findings.filter((f) => f.severity === 'merknad');
+    el('#errors').replaceChildren(...errors.map(findingItem));
+    show(el('#errors'), errors.length > 0);
+    el('#notes').replaceChildren(...notes.map(findingItem));
+    show(el('#notes'), notes.length > 0);
+  }
+
+  // --- Tallene -------------------------------------------------------------------
+
+  function renderFigures(current: SkattemeldingYear): void {
+    el('#year-title').textContent = `Inntektsåret ${current.year}`;
+    show(el('#forhand'), current.forhaandsfastsetting);
+    el('#forhand-tekst').textContent =
+      `Selskapet er oppløst, og regnskapet sluttet ${isoDate(current.last_day)}. Skattemeldingen ` +
+      `for ${current.year} sendes nå, merket som fullt avviklet i inntektsåret, med det aksjonærene ` +
+      'fikk utbetalt.';
+    el('#formue-dag').textContent = current.forhaandsfastsetting
+      ? isoDate(current.last_day)
+      : '31. desember';
+    el('#aarsresultat').textContent = kroner(current.aarsresultat);
+    el('#tillegg').textContent = kroner(current.tillegg);
+    el('#fradrag').textContent = kroner(current.fradrag);
+    el('#skattemessig').textContent = kroner(current.skattemessig_resultat);
+    el('#formue-rabatt').textContent = wholeKroner(current.formue.with_discount);
+    el('#formue-annet').textContent = wholeKroner(current.formue.without_discount);
+    el('#formue-gjeld').textContent = wholeKroner(current.formue.debt);
+  }
+
+  function renderPosts(current: SkattemeldingYear): void {
+    const body = el<HTMLTableSectionElement>('#posts');
+    body.replaceChildren();
+    let side: boolean | null = null;
+    for (const group of postGroups(current.posts)) {
+      if (group.result !== side) {
+        side = group.result;
+        const row = document.createElement('tr');
+        row.className = 'group side';
+        const th = document.createElement('th');
+        th.colSpan = 3;
+        th.textContent = group.result ? 'Resultatregnskap' : 'Balanse';
+        row.append(th);
+        body.append(row);
+      }
+      const heading = document.createElement('tr');
+      heading.className = 'group';
+      const th = document.createElement('th');
+      th.colSpan = 3;
+      th.textContent = group.title;
+      heading.append(th);
+      body.append(heading);
+      for (const post of group.posts) {
+        const tr = document.createElement('tr');
+        const name = cell(post.name);
+        if (post.subtracted) {
+          const note = document.createElement('span');
+          note.className = 'muted';
+          note.textContent = ' (trekkes fra)';
+          name.append(note);
+        }
+        const accounts = document.createElement('span');
+        accounts.className = 'accounts';
+        accounts.textContent = `${post.accounts.length === 1 ? 'Konto' : 'Kontoer'} ${post.accounts.join(', ')}`;
+        name.append(accounts);
+        tr.append(cell(post.code), name, cell(kroner(post.amount), 'num'));
+        body.append(tr);
+      }
+    }
+    show(el('#posts-empty'), current.posts.length === 0);
+
+    const saldi = el<HTMLTableSectionElement>('#saldi');
+    saldi.replaceChildren(
+      ...current.saldi.map((saldo) => {
+        const tr = document.createElement('tr');
+        tr.append(
+          cell(saldo.label),
+          cell(kroner(saldo.basis), 'num'),
+          cell(kroner(saldo.depreciation), 'num'),
+          cell(`${saldo.rate_percent.replace('.', ',')} %`, 'num'),
+          cell(kroner(saldo.closing), 'num'),
+        );
+        return tr;
+      }),
+    );
+    show(el('#saldi-block'), current.saldi.length > 0);
+
+    const equity = el('#equity');
+    const rows: [string, string][] = [['Inngående egenkapital', kroner(current.equity_opening)]];
+    for (const change of current.equity_changes) {
+      rows.push([`${change.name}`, `${change.adds ? '+' : '−'} ${kroner(change.amount)}`]);
+    }
+    rows.push(['Utgående egenkapital', kroner(current.equity_closing)]);
+    equity.replaceChildren(
+      ...rows.flatMap(([label, value]) => {
+        const dt = document.createElement('dt');
+        dt.textContent = label;
+        const dd = document.createElement('dd');
+        dd.textContent = value;
+        return [dt, dd];
+      }),
+    );
+  }
+
+  // --- Kontroll og innsending ------------------------------------------------------
+
+  function renderActions(current: SkattemeldingYear): void {
+    const step = nextStep(current, government, mayWrite());
+    for (const name of ['not_over', 'blocked', 'read_only', 'not_configured']) {
+      show(el(`#step-${name}`), step === name);
+    }
+    el('#step-not_over').textContent =
+      `Året er ikke over. Skattemeldingen kan kontrolleres fra ${isoDate(checkableFrom(current.last_day))}.`;
+    const login = el<HTMLAnchorElement>('#login');
+    login.href = governmentLoginStartUrl(`/skattemelding/#${current.year}`);
+    show(login, step === 'login');
+    show(checkForm, step === 'check');
+    show(el('#payout-field'), current.forhaandsfastsetting);
+    const payout = el<HTMLInputElement>('#payout');
+    // Fylt ut fra regnskapet første gang, og aldri over noe den som sender
+    // har skrevet selv.
+    if (payout.value.trim() === '' || payout.dataset.suggested === payout.value) {
+      payout.value = payoutSuggestion(current.likvidasjonsvederlag_forslag);
+      payout.dataset.suggested = payout.value;
+    }
+    show(el('#revisor-question'), current.revisor_unknown);
+    const answered = current.filings[0]?.has_auditor;
+    if (current.revisor_unknown && answered !== undefined && new FormData(checkForm).get('revisor') === null) {
+      el<HTMLInputElement>(`input[name="revisor"][value="${answered ? 'ja' : 'nei'}"]`).checked = true;
+    }
+  }
+
+  function renderReview(current: SkattemeldingYear): void {
+    const latest = current.filings[0];
+    // Sendes bare der det kan sendes: en installasjon uten innsending skal ikke
+    // tilby «Send inn» under en tekst som sier at det ikke er satt opp.
+    const canSend = mayWrite() && government.available && current.submission_available;
+    const ready = canSend ? sendable(current.filings) : null;
+    const refused = latest !== undefined && latest.status === 'avvist';
+    show(el('#review'), ready !== null || refused);
+    show(el('#changed'), latest?.status === 'validert' && latest.matches_books === false);
+    const shown = ready ?? (refused ? latest : null);
+    if (shown === null) return;
+
+    const errors = shown.veiledninger.filter((v) => v.is_error);
+    const advice = shown.veiledninger.filter((v) => !v.is_error);
+    const textOf = (v: { text: string | null; type: string }): HTMLLIElement => {
+      const item = document.createElement('li');
+      item.textContent = v.text ?? v.type;
+      return item;
+    };
+    const split = splitAvvik(shown.avvik);
+    el('#review-errors').replaceChildren(
+      ...errors.map(textOf),
+      ...split.other.map((a) => {
+        const item = document.createElement('li');
+        item.textContent =
+          `${a.type}${a.path ? ` (${a.path})` : ''}` +
+          (a.received !== null || a.computed !== null
+            ? `: sendt ${a.received ?? 'ingenting'}, Skatteetaten kom til ${a.computed ?? 'ingenting'}`
+            : '');
+        return item;
+      }),
+    );
+    show(el('#review-errors'), errors.length + split.other.length > 0);
+    el('#review-advice').replaceChildren(...advice.map(textOf));
+    show(el('#review-advice'), advice.length > 0);
+    show(el('#review-derived'), split.derived > 0);
+    el('#review-derived').textContent =
+      `Skatteetaten fylte inn ${split.derived} verdier selv, som summer og resultater. ` +
+      'Det er som det skal være: Myntos sender aldri det Skatteetaten regner ut.';
+
+    const verdict = el('#review-verdict');
+    if (refused) {
+      verdict.textContent =
+        'Skatteetaten ville avvist skattemeldingen' +
+        (shown.reasons.length > 0 ? ` (${shown.reasons.join(', ')})` : '') +
+        '. Rett det kontrollen peker på, og kontroller på nytt.';
+      show(el('#review-tax'), false);
+      show(el('#review-revisor'), false);
+      show(el('#review-send'), false);
+      return;
+    }
+    verdict.textContent = 'Skatteetaten fant ingenting som stopper skattemeldingen.';
+    show(el('#review-tax'), shown.beregnet_skatt !== null);
+    if (shown.beregnet_skatt !== null) {
+      el('#review-tax').textContent = `Skatteetaten har regnet ut skatten til ${kroner(shown.beregnet_skatt)}.`;
+    }
+    show(el('#review-revisor'), shown.has_auditor);
+    show(el('#review-send'), true);
+    el('#confirm-text').textContent =
+      `Jeg har gått gjennom skattemeldingen og vil sende den inn for ${company.name} ` +
+      `(${orgnummer(company.orgnr)}), inntektsåret ${shown.year}` +
+      (shown.forhaandsfastsetting ? ' som forhåndsfastsetting' : '') +
+      `: skattemessig resultat ${kroner(shown.skattemessig_resultat)}` +
+      (shown.likvidasjonsvederlag != null
+        ? `, utbetalt til aksjonærene ${kroner(String(shown.likvidasjonsvederlag))}`
+        : '') +
+      '.';
+    confirmBox.checked = false;
+    submitButton.disabled = true;
+    submitButton.dataset.filing = String(shown.id);
+    submitButton.dataset.figure = shown.skattemessig_resultat;
+  }
+
+  function renderHistory(current: SkattemeldingYear): void {
+    const list = el<HTMLOListElement>('#filings');
+    list.replaceChildren();
+    for (const filing of current.filings) {
+      const item = document.createElement('li');
+      const head = document.createElement('div');
+      head.className = 'filing-head';
+      const figure = document.createElement('strong');
+      figure.textContent = `Skattemessig resultat ${kroner(filing.skattemessig_resultat)}`;
+      head.append(badge(STATUS_LABELS[filing.status], STATUS_TONES[filing.status]), figure);
+      item.append(head);
+
+      const meta = document.createElement('p');
+      meta.className = 'filing-meta muted';
+      const parts = [`Kontrollert ${dateTime(filing.validated_at)}`];
+      if (filing.forhaandsfastsetting) parts.unshift('Forhåndsfastsetting');
+      if (filing.likvidasjonsvederlag != null) {
+        parts.push(`utbetalt til aksjonærene ${kroner(String(filing.likvidasjonsvederlag))}`);
+      }
+      if (filing.beregnet_skatt !== null) parts.push(`beregnet skatt ${kroner(filing.beregnet_skatt)}`);
+      if (filing.submitted_at !== null) {
+        parts.push(
+          `sendt ${dateTime(filing.submitted_at)}` +
+            (filing.submitted_by_name !== null ? ` av ${filing.submitted_by_name}` : ''),
+        );
+      }
+      meta.textContent = parts.join(', ');
+      item.append(meta);
+
+      if (filing.outcome !== null) {
+        const outcome = document.createElement('p');
+        outcome.className = 'filing-meta';
+        outcome.textContent =
+          `Svar fra Skatteetaten: ${filing.outcome}` + (filing.outcome_text ? `. ${filing.outcome_text}` : '');
+        item.append(outcome);
+      }
+      if (filing.error !== null) {
+        const error = document.createElement('p');
+        error.className = 'filing-meta';
+        error.textContent =
+          'Innsendingen stoppet underveis. Sjekk i Altinn om skattemeldingen ligger der før du prøver ' +
+          `igjen. Feilen: ${filing.error}`;
+        item.append(error);
+      }
+
+      const links = document.createElement('div');
+      links.className = 'filing-links';
+      for (const [type, text] of DOCUMENTS) {
+        const a = link(skattemeldingDocumentUrl(company.id, filing.id, type), text);
+        a.className = 'btn-link';
+        links.append(a);
+      }
+      for (const stored of filing.documents) {
+        const a = link(
+          skattemeldingDocumentUrl(company.id, filing.id, stored.data_type),
+          stored.data_type === 'tilbakemelding' ? 'Svaret fra Skatteetaten' : stored.filename,
+        );
+        a.className = 'btn-link';
+        links.append(a);
+      }
+      if (filing.viewer_url !== null) {
+        const viewer = link(filing.viewer_url, 'Åpne hos Skatteetaten');
+        viewer.className = 'btn-link';
+        viewer.target = '_blank';
+        viewer.rel = 'noopener';
+        links.append(viewer);
+      }
+      if (isFiled(filing.status) && filing.status !== 'mottatt' && mayWrite()) {
+        if (government.logged_in) {
+          const fetch = document.createElement('button');
+          fetch.type = 'button';
+          fetch.className = 'btn-link';
+          fetch.textContent = 'Hent svar fra Skatteetaten';
+          fetch.addEventListener('click', () => {
+            fetch.disabled = true;
+            void fetchSkattemeldingAnswer(company.id, filing.id)
+              .then(async (updated) => {
+                setStatus(
+                  actionStatus,
+                  updated.status === 'mottatt'
+                    ? 'Svaret fra Skatteetaten er lagret.'
+                    : updated.status === 'hos_revisor'
+                      ? 'Skattemeldingen venter fortsatt på at revisoren bekrefter den.'
+                      : 'Skatteetaten har ikke svart ennå. Prøv igjen senere.',
+                  'ok',
+                );
+                await refresh();
+              })
+              .catch((error: unknown) => {
+                setStatus(actionStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet svaret.');
+                fetch.disabled = false;
+              });
+          });
+          links.append(fetch);
+        } else if (government.available) {
+          const login = link(
+            governmentLoginStartUrl(`/skattemelding/#${filing.year}`),
+            'Logg inn med ID-porten for å hente svaret',
+          );
+          login.className = 'btn-link';
+          links.append(login);
+        }
+      }
+      item.append(links);
+      list.append(item);
+    }
+    show(el('#history'), current.filings.length > 0);
+  }
+
+  function render(current: SkattemeldingYear): void {
+    view = current;
+    year = current.year;
+    el('#year').textContent = String(current.year);
+    el<HTMLButtonElement>('#year-prev').disabled = !current.supported_years.includes(current.year - 1);
+    el<HTMLButtonElement>('#year-next').disabled = !current.supported_years.includes(current.year + 1);
+    renderFindings(current);
+    renderFigures(current);
+    renderPosts(current);
+    renderActions(current);
+    renderReview(current);
+    renderHistory(current);
+  }
+
+  async function refresh(): Promise<void> {
+    render(await getSkattemeldingYear(company.id, year ?? undefined));
+  }
+
+  checkForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (view === null) return;
+    const answer = new FormData(checkForm).get('ytelser');
+    if (answer !== 'ja' && answer !== 'nei') {
+      setStatus(actionStatus, 'Svar på spørsmålet først.');
+      return;
+    }
+    const current = view;
+    const extra: FinalYearAnswers = {};
+    if (current.forhaandsfastsetting) {
+      const payout = payoutKroner(el<HTMLInputElement>('#payout').value);
+      if (payout === null) {
+        setStatus(actionStatus, 'Skriv hva aksjonærene fikk utbetalt, i hele kroner. Fikk de ingenting, skriv 0.');
+        return;
+      }
+      extra.likvidasjonsvederlag = payout;
+    }
+    if (current.revisor_unknown) {
+      const revisor = new FormData(checkForm).get('revisor');
+      if (revisor !== 'ja' && revisor !== 'nei') {
+        setStatus(actionStatus, 'Svar på om selskapet hadde revisor.');
+        return;
+      }
+      extra.revisor = revisor === 'ja';
+    }
+    checkButton.disabled = true;
+    setStatus(
+      actionStatus,
+      current.forhaandsfastsetting
+        ? 'Ber Skatteetaten gjøre klar skattemeldingen og sender den til kontroll. Det kan ta et halvt minutt …'
+        : 'Henter skattemeldingen fra Skatteetaten og sender den til kontroll …',
+      'ok',
+    );
+    void checkSkattemelding(company.id, current.year, answer === 'ja', extra)
+      .then(async () => {
+        setStatus(actionStatus, '');
+        await refresh();
+        el('#review').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      })
+      .catch((error: unknown) => {
+        setStatus(actionStatus, error instanceof ApiError ? error.message : 'Kontrollen feilet.');
+      })
+      .finally(() => {
+        checkButton.disabled = false;
+      });
+  });
+
+  confirmBox.addEventListener('change', () => {
+    submitButton.disabled = !confirmBox.checked;
+  });
+
+  submitButton.addEventListener('click', () => {
+    if (!confirmBox.checked) return;
+    const filingId = Number(submitButton.dataset.filing);
+    const figure = submitButton.dataset.figure ?? '';
+    submitButton.disabled = true;
+    confirmBox.disabled = true;
+    setStatus(submitStatus, 'Sender inn …', 'ok');
+    void submitSkattemelding(company.id, filingId, figure)
+      .then(async (filing) => {
+        setStatus(
+          submitStatus,
+          filing.status === 'mottatt'
+            ? 'Skattemeldingen er sendt, og svaret fra Skatteetaten er lagret.'
+            : filing.status === 'hos_revisor'
+              ? 'Skattemeldingen er sendt. Nå må revisoren bekrefte den i Skatteetatens løsning.'
+              : 'Skattemeldingen er sendt. Svaret fra Skatteetaten kommer litt senere.',
+          'ok',
+        );
+        await refresh();
+      })
+      .catch(async (error: unknown) => {
+        setStatus(submitStatus, error instanceof ApiError ? error.message : 'Innsendingen feilet.');
+        // Backend vet hvor langt den kom; året hentes på nytt så skjermen viser det.
+        await refresh().catch(() => undefined);
+      })
+      .finally(() => {
+        confirmBox.disabled = false;
+      });
+  });
+
+  function changeYear(step: number): void {
+    if (year === null) return;
+    year += step;
+    history.replaceState(null, '', `/skattemelding/#${year}`);
+    setStatus(actionStatus, '');
+    setStatus(submitStatus, '');
+    void refresh().catch((error: unknown) => {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet året.');
+    });
+  }
+
+  el('#year-prev').addEventListener('click', () => changeYear(-1));
+  el('#year-next').addEventListener('click', () => changeYear(1));
+
+  window.addEventListener('hashchange', () => {
+    const wanted = yearFromHash(window.location.hash);
+    if (wanted === null || wanted === year) return;
+    year = wanted;
+    void refresh().catch((error: unknown) => {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet året.');
+    });
+  });
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      const current = currentCompany(companies);
+      if (current === undefined) return;
+      company = current;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      // Stille ved feil: statusen bestemmer bare hvilke knapper som tilbys.
+      government = await getGovernmentLoginStatus().catch(() => government);
+      year = yearFromHash(window.location.hash);
+      await refresh();
+      el('#loading').hidden = true;
+      el('#content').hidden = false;
+    } catch (error: unknown) {
+      el('#loading').hidden = true;
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet skattemeldingen.');
+    }
+  });
+</script>

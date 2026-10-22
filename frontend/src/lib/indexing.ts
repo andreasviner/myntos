@@ -32,9 +32,11 @@ export const PUBLIC_PAGES: readonly string[] = [
   '/bankpriser/',
   '/ki/',
   '/kom-i-gang/',
+  '/sammenlign/',
   '/personvern/',
   '/vilkar/',
   '/ansvar/',
+  '/tilbakemelding/',
   // Kept although there is nothing to read on them: "myntos logg inn" is
   // something people type into a search box, and the answer should be the
   // page itself rather than the front page.
@@ -44,10 +46,11 @@ export const PUBLIC_PAGES: readonly string[] = [
 
 /**
  * Sections where every page is public. The moving guides are built from
- * data/flytting.ts, one per program, so naming each one here would be a second
- * list to keep in step with the first.
+ * data/flytting.ts and the comparisons from data/sammenligning.ts, one per
+ * program, so naming each one here would be a second list to keep in step with
+ * the first.
  */
-const PUBLIC_SECTIONS: readonly string[] = ['/kom-i-gang/'];
+const PUBLIC_SECTIONS: readonly string[] = ['/kom-i-gang/', '/sammenlign/'];
 
 /** Whether the page at this path belongs in the sitemap and the index. */
 export function isIndexable(pathname: string): boolean {

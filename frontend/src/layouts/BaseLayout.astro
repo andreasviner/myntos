@@ -107,15 +107,16 @@ const structuredData = {
       countriesSupported: 'NO',
       // English deliberately: this description exists for reviewers and
       // aggregators, not for the Norwegian customers the page itself serves.
-      // Answer engines quote it too, which is why it says what is not done yet:
-      // an assistant that tells somebody Myntos files their VAT return today is
-      // repeating our words, and they would be wrong.
+      // Answer engines quote it too, which is why it names what is not built:
+      // an assistant that tells somebody Myntos runs their payroll is repeating
+      // our words, and they would be wrong. The same list closes /funksjoner/.
       description:
-        'Myntos is free bookkeeping software for Norwegian companies, with public source code. It records incoming and outgoing payments with their receipts, issues invoices with their EHF e-invoice files, calculates value-added tax, and produces the VAT return and SAF-T Financial export for the Norwegian Tax Administration. It is in beta: filing through Altinn is being built.',
+        'Myntos is free bookkeeping software for Norwegian companies, and will stay free, with public source code. It records payments with their receipts, issues invoices with their EHF e-invoice files, calculates value-added tax and makes the VAT return for each period, files an aksjeselskap’s tax return (skattemelding with næringsspesifikasjon) through Altinn, reconciles bank statements and exports SAF-T Financial. Not built yet: payroll and the a-melding, the annual accounts to the Register of Company Accounts, the shareholder register return, the næringsspesifikasjon of a sole proprietorship, recording a customer’s payment against an invoice, and sending e-invoices over Peppol.',
       featureList: [
         'Double-entry bookkeeping with a receipt archive',
         'Sales invoices checked against bokføringsforskriften § 5-1, with the EHF file made at issue',
         'VAT codes with date-dependent rates and the MVA-melding per period',
+        'Tax return (skattemelding with næringsspesifikasjon) for an aksjeselskap, checked by Skatteetaten and filed through Altinn',
         'SAF-T Financial export (v1.30 and v1.40)',
         'Bank statement import (camt.053) and reconciliation',
         'Opening balance, year-end closing and fixed-asset register',
@@ -123,6 +124,8 @@ const structuredData = {
         'Several users per company, with roles',
         'An HTTP API that AI assistants can use with a key the company issues',
       ],
+      // The terms the code is published under, as /funksjoner/ and /vilkar/ state them.
+      license: 'https://www.elastic.co/licensing/elastic-license',
       // /priser/ in one line: there is no price list and no paid tier.
       isAccessibleForFree: true,
       offers: {
@@ -178,7 +181,7 @@ const features = [
   {
     href: '/funksjoner/#samarbeid',
     title: 'Flere brukere',
-    blurb: 'Organisasjon, roller og invitasjoner.',
+    blurb: 'Tilgang per selskap, med roller og invitasjoner.',
   },
   {
     href: '/funksjoner/#ki-agenter',
@@ -402,8 +405,10 @@ const gettingStarted = [
               </div>
             </div>
 
+            {/* Bankpriser står ikke her: den sammenligner bankenes priser, ikke
+                noe ved Myntos, og en fane i toppen sier at den er like viktig
+                som Priser. Den nås fra /priser/ og fra bunnteksten. */}
             <a class="nav-link" href="/priser/">Priser</a>
-            <a class="nav-link" href="/bankpriser/">Bankpriser</a>
             {/* Egen fane, ikke et avsnitt i personvernerklæringen: et
                 regnskapsprogram som sender bilag til en modell bør si det der
                 folk ser etter det, ikke der de leter. */}
@@ -670,8 +675,10 @@ const gettingStarted = [
             <a href="/kom-i-gang/">Flytt regnskapet hit</a>
             <a href="/kom-i-gang/fiken/">Flytte fra Fiken</a>
             <a href="/kom-i-gang/tripletex/">Flytte fra Tripletex</a>
+            <a href="/sammenlign/">Sammenlign med Fiken og Tripletex</a>
             <a href="/bankpriser/">Bankpriser for bedrift</a>
             <a href="/funksjoner/#apen-kildekode">Offentlig kildekode</a>
+            <a href="/tilbakemelding/">Meld feil eller ønsker</a>
           </nav>
           <nav class="footer-col" aria-label="Juridisk">
             <h2>Juridisk</h2>
@@ -688,14 +695,12 @@ const gettingStarted = [
             as the site's name, which is not what the service is called.
           */}
           <p class="meta">
-            Myntos er en tjeneste fra Lindeman Technologies. © 2026. Kildekoden er offentlig
-            tilgjengelig.
+            Myntos er en tjeneste fra Lindeman Technologies. © 2026.
+            <a href="https://github.com/andreasviner/myntos" rel="noopener">Kildekoden er offentlig</a>.
           </p>
-          {/* The full disclaimer lives on /ansvar; one line is enough here. */}
-          <p class="meta">
-            Myntos er i beta og leveres uten garanti.
-            <a href="/ansvar/">Ansvar og vilkår</a>.
-          </p>
+          {/* Her sto «Myntos er i beta og leveres uten garanti» på hver side til
+              2026-10-22. Ansvarsfraskrivelsen står under Juridisk over, og der
+              er den lest av dem som leter etter den. */}
           {/*
             The site is Norwegian; this is the one English page, for readers who
             need to assess what the application does without reading Norwegian.
@@ -1841,7 +1846,11 @@ const gettingStarted = [
     margin-bottom: 0.35rem;
   }
 
-  .field-hint {
+  /* Two selectors, because a hint is usually a <span> inside the label, and
+     `.field > span` above (the label's own text, bold) outranks a bare class:
+     every hint on the site was bold until 2026-10-21. */
+  .field-hint,
+  .field > .field-hint {
     display: block;
     font-weight: 400;
     font-size: 0.85rem;
@@ -1855,6 +1864,7 @@ const gettingStarted = [
   input[type='date'],
   input[type='number'],
   input[type='file'],
+  input[type='search'],
   select,
   textarea {
     width: 100%;

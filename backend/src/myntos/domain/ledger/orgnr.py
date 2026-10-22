@@ -24,7 +24,10 @@ def validate_orgnr(orgnr: str) -> str:
     such an input is invalid rather than a special case.
     """
     digits = orgnr.replace(" ", "")
-    if len(digits) != 9 or not digits.isdigit():
+    # ASCII as well as digits: isdigit() also takes "٩" and "³", and the first
+    # passed the check as a different string from the same number, so a second
+    # company could be made on an orgnr that already had one.
+    if len(digits) != 9 or not digits.isascii() or not digits.isdigit():
         raise InvalidOrgnrError("organisasjonsnummer må være ni siffer")
     total = sum(int(digit) * weight for digit, weight in zip(digits[:8], _WEIGHTS, strict=True))
     remainder = total % 11

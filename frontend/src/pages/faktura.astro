@@ -931,6 +931,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   import { currentCompany, loadCompanies } from '../lib/company';
   import { el, setStatus, show } from '../lib/dom';
   import { isoDate, kontonummer, kroner, todayIso } from '../lib/format';
+  import { standing } from '../lib/register';
   import { can, loadSession, redirectToLogin } from '../lib/session';
 
   const pageStatus = el<HTMLParagraphElement>('#page-status');
@@ -1428,8 +1429,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     );
     // Not a refusal, since invoicing a bankrupt estate is legitimate and often
     // necessary, but not something to discover after the document is issued.
-    if (unit.bankrupt) parts.push('registrert konkurs');
-    if (unit.under_liquidation) parts.push('under avvikling');
+    // A deleted buyer comes first: there is nobody left to pay.
+    parts.push(...standing(unit));
     return parts.join(' · ');
   }
 

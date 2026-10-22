@@ -3,33 +3,36 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
 /**
  * The anchors here are linked directly from the Funksjoner menu in
- * BaseLayout. Keep the ids in sync with that list.
+ * BaseLayout, and from the front page. Keep the ids in sync with both.
  *
- * `status` is deliberately part of the content rather than a footnote: half of
- * this is built and half is not, and a features page that hides which is which
- * is the kind of thing that makes people distrust the half that works.
+ * Hvert avsnitt hadde et merke, «Virker i dag» eller «Under arbeid». Da alle
+ * sto som «Virker i dag», sa merket ingenting lenger (se «A mark that is on
+ * every row is not a mark» i docs/frontend-conventions.md), og siden leste som
+ * en statusrapport. Det som ikke er bygget, står nå samlet i `notYet` nederst,
+ * konkret og uten unnskyldning, og avsnittene over beskriver bare det som virker
+ * i produksjon. Et avsnitt kommer ikke opp hit før det gjør det.
  */
 const sections = [
   {
     id: 'kontantstrom',
     kicker: 'Føring',
     title: 'Kontantstrøm og bilag',
-    status: 'virker' as const,
-    body: 'Registrer inn- og utbetalinger fra bruttobeløpet. Myntos splitter i netto og merverdiavgift, fører det som en balansert postering med dobbel bokføring, og legger PDF-en ved som bilag. Arkivet er append-only, og det finnes ingen slettevei, fordi oppbevaringsplikten ikke har noen.',
+    body: 'Registrer inn- og utbetalinger fra bruttobeløpet. Myntos splitter i netto og merverdiavgift, fører det som en balansert postering med dobbel bokføring, og legger dokumentet ved som bilag. Last opp en PDF eller et bilde av kvitteringen, så fyller Myntos ut skjemaet: beløp og mva leses fra selve dokumentet, og Løynd, en norsk KI-tjeneste, foreslår hva det gjelder. Arkivet er append-only, og det finnes ingen slettevei, fordi oppbevaringsplikten ikke har noen.',
     points: [
       'Typen bestemmer konto og mva-kode, med antakelsen skrevet ut',
+      'Ingenting føres før du har sett over og bekreftet forslaget',
       'Rettelser skjer med motpostering, aldri ved å endre historikk',
-      'PDF lagres med SHA-256 og generert lagringsnøkkel',
+      'PDF-er og bilder lagres uendret, med SHA-256-sjekksum',
     ],
   },
   {
     id: 'faktura',
     kicker: 'Salg',
     title: 'Faktura og e-faktura',
-    status: 'virker' as const,
     body: 'Fakturaen kontrolleres mot bokføringsforskriften § 5-1 før den utstedes, og får først da et nummer. Et utkast som slettes etterlater ingen luke i serien. Utstedelsen bokfører fordringen og utgående mva, fryser EHF-filen og legger en lesbar PDF i bilagsarkivet. En utstedt faktura kan bare rettes med kreditnota, slik § 5-2-7 krever.',
     points: [
       'Kontrollen sier hvilken paragraf som mangler noe, ikke bare at noe mangler',
+      'Kjøperen hentes fra Enhetsregisteret på organisasjonsnummeret, og KID tildeles ved utstedelse',
       'EHF/Peppol BIS Billing 3.0, formatet kravet fra 1. januar 2027 gjelder',
       'Avgiftspliktig, avgiftsfritt og unntatt salg summeres hver for seg (§ 5-1-5)',
     ],
@@ -37,20 +40,57 @@ const sections = [
   {
     id: 'mva',
     kicker: 'Avgift',
-    title: 'Merverdiavgift',
-    status: 'virker' as const,
-    body: 'Mva-kodene er knyttet til standard SAF-T-koder og har datostyrte satser, ikke én sats per kode. Det høres pedantisk ut helt til en sats endres midt i året, slik vann og avløp gikk fra 25 til 15 prosent 1. juli 2025 på samme kode som mat.',
+    title: 'Merverdiavgift og mva-melding',
+    body: 'Mva-kodene er knyttet til standard SAF-T-koder og har datostyrte satser, ikke én sats per kode. Det høres pedantisk ut helt til en sats endres midt i året, slik vann og avløp gikk fra 25 til 15 prosent 1. juli 2025 på samme kode som mat. Mva-meldingen for hver termin bygges fra det som er ført, og Skatteetaten kontrollerer den før du sender.',
     points: [
       'Satsen kopieres ned på den førte linjen, så historikk ikke kan skrives om',
+      'Uttak, tap på krav, justering og tilbakeføring føres på en egen side',
+      'Meldingen kan også lastes ned som XML og lastes opp i Skatteetatens portal',
       'Beløp regnes i eksakte desimaler; flyttall kommer aldri nær et kronebeløp',
-      'Koder som aldri skal rapporteres er merket i kodeverket',
+    ],
+  },
+  {
+    id: 'skattemelding',
+    kicker: 'Innlevering',
+    title: 'Skattemelding og næringsspesifikasjon',
+    // For et aksjeselskap: bygget, kontrollert og sendt hele veien i
+    // Skatteetatens testmiljø 22. oktober 2026, og slått på i produksjon samme
+    // dag (de tre innstillingene i docs/integrations/skatteetaten.md, «Filing
+    // from Myntos»). Enkeltpersonforetaket står i `notYet`.
+    body: 'For et aksjeselskap bygger Myntos næringsspesifikasjonen og skattemeldingen fra et avsluttet regnskapsår, lar Skatteetaten kontrollere dem og sender dem gjennom Altinn. Selve innsendingen krever at et menneske logger inn med ID-porten og bekrefter det skattemessige resultatet. Det er Skatteetatens krav, og et vi ikke prøver å gå rundt.',
+    points: [
+      'Skatteetaten kontrollerer og regner ut skatten før du sender, og det som sendes er nøyaktig det som ble kontrollert',
+      'Det som ble sendt og svaret fra Skatteetaten lagres med året',
+      'Innsendingen koster det samme som resten av Myntos: ingenting',
+    ],
+  },
+  {
+    id: 'bank',
+    kicker: 'Bank',
+    title: 'Bankavstemming',
+    body: 'Les inn kontoutskriften fra banken som en camt.053-fil, slik nettbanken gir den. Hver bevegelse kobles til bilaget som fører den, så du ser med en gang om regnskapet stemmer med banken, og det som mangler, fører du rett fra avstemmingen.',
+    points: [
+      'Kontoutskriften kontrolleres mot sin egen utgående saldo før den leses inn',
+      'En bevegelse som alt er lest inn, blir ikke lest inn to ganger',
+      'Kontoutskriftene arkiveres',
+    ],
+    link: { href: '/bankpriser/', text: 'Hva bankene tar for nettbank og regnskapskobling' },
+  },
+  {
+    id: 'arsoppgjor',
+    kicker: 'Årsoppgjør',
+    title: 'Inngående balanse, årsavslutning og anlegg',
+    body: 'Begynner du midt i et selskaps liv, føres inngående balanse som ett bilag, skrevet inn eller lest fra en saldobalanse. Når året er over, avslutter Myntos det for et aksjeselskap eller et enkeltpersonforetak, med skatt og disponering, og låser det. Driftsmidler føres i et anleggsregister med saldoavskrivning etter skattereglene.',
+    points: [
+      'Resultatregnskap og balanse for hvert år, også årene som er hentet fra et annet program',
+      'Et avsluttet år åpnes bare igjen med en begrunnelse, som lagres',
+      'Avskrivningssatsene er årets, og saldoen regnes ut fra det som er ført',
     ],
   },
   {
     id: 'saft',
     kicker: 'Lovkrav',
     title: 'SAF-T-eksport',
-    status: 'virker' as const,
     body: 'SAF-T Financial er ikke en periodisk innlevering, men filen Skatteetaten ber om ved bokettersyn. Datamodellen i Myntos er formet etter den fra første linje, så eksporten er en projeksjon av regnskapet og ikke en oversettelse i etterkant. Filen lages bare når kontrollen ikke finner noe som ville stoppet den hos revisor.',
     points: [
       'Kontoplan med næringsspesifikasjon per regnskapsår, kontrollert mot Skatteetatens liste',
@@ -59,41 +99,39 @@ const sections = [
     ],
   },
   {
-    id: 'skattemelding',
-    kicker: 'Innlevering',
-    title: 'Skattemelding og næringsspesifikasjon',
-    status: 'underveis' as const,
-    body: 'Næringsspesifikasjonen bygges fra hovedboken og leveres gjennom Altinn. Selve innsendingen krever at et menneske logger inn med ID-porten og godkjenner. Det er Skatteetatens krav, og et vi ikke prøver å gå rundt.',
+    id: 'flytting',
+    kicker: 'Flytting',
+    title: 'Hent regnskapet fra et annet program',
+    body: 'Alle norske regnskapsprogrammer kan gi deg regnskapet som SAF-T. Last opp én fil per regnskapsår, så henter Myntos kontoene, kundene og leverandørene, inngående balanse fra det første året og bilagene for hvert år, med bilagsnumrene fra det gamle programmet. Filene leses på serveren, så du kan lukke siden mens det pågår.',
     points: [
-      'Henting, validering og opplasting kan skje maskinelt',
-      'Siste steg er alltid en gjennomgang du selv bekrefter',
-      'Kvittering og valideringsresultat lagres med periodens bilag',
+      'Du ser hva som blir ført, før noe føres',
+      'Så mange tidligere år du vil, ikke bare det siste',
+      'PDF-ene bak bilagene er ikke i SAF-T. Fra Tripletex legger Myntos dem på bilagene fra Tripletex-utskriften, og guidene sier hva du bør laste ned før du sier opp',
     ],
+    link: { href: '/kom-i-gang/', text: 'Guider for Fiken, Tripletex, PowerOffice Go og Conta' },
   },
   {
     id: 'samarbeid',
     kicker: 'Tilgang',
     title: 'Flere brukere og roller',
-    status: 'virker' as const,
-    body: 'Kontoen din hører til en organisasjon, ikke omvendt. Kollegaer inviteres inn i den samme organisasjonen med en rolle, og en regnskapsfører kan føre flere selskaper under ett tak.',
+    body: 'Tilgang gis per selskap. En kollega eller en regnskapsfører inviteres inn i ett regnskap med en rolle, og ser ingenting av de andre selskapene på kontoen. En regnskapsfører kan ha alle klientene sine på én konto og bytte mellom dem fra hvilken som helst side.',
     points: [
       'Roller: eier, administrator, medlem og leser',
       'Invitasjoner er engangslenker, lagret hashet',
-      'Et selskap i en annen organisasjon finnes ikke for deg',
+      'Et regnskap du ikke er invitert inn i, finnes ikke for deg',
     ],
   },
   {
     id: 'ki-agenter',
     kicker: 'API',
     title: 'Din egen KI-assistent, og dine egne programmer',
-    // Underveis og ikke «virker»: å koble til virker, men assistenten har bare
-    // beskrivelsen av hver adresse å gå etter, ikke en ferdig oppskrift for hver
-    // oppgave. Se docs/agents-and-api.md, «Gaps».
-    status: 'underveis' as const,
+    // Å koble til, lese og føre virker, og hver adresse har en oppskrift (en
+    // skill) som testene krever. Det som mangler, som OAuth og MCP i stedet for
+    // en innlimt nøkkel, står i docs/agents-and-api.md, «Gaps».
     body: 'Alt programmet gjør, er et API, og nettsiden er bare den første som bruker det. Et selskap kan slå på nøkler, og da kan ChatGPT, Claude, en modell du kjører selv eller et program dere har laget, lese og føre i regnskapet med din tilgang. Myntos sender ingenting til modellen; assistenten henter selv, og modellen du velger avgjør hvor opplysningene havner.',
     points: [
       'Nøkkelen du limer inn i samtalen virker bare én gang, så kopien der er ufarlig',
-      'Ingen nøkkel kan sende noe til Skatteetaten, flytte penger eller endre kontonummer',
+      'Alt nøkkelen vil sende til Skatteetaten, venter på at du godkjenner det, og ingen nøkkel kan flytte penger eller endre kontonummer',
       'Bilag ført av assistenten står med navnet ditt og nøkkelens',
     ],
   },
@@ -101,31 +139,65 @@ const sections = [
     id: 'apen-kildekode',
     kicker: 'Innsyn',
     title: 'Offentlig kildekode',
-    status: 'virker' as const,
-    body: 'Reglene er offentlige: bokføringsloven sier hva som må lagres, Skatteetaten publiserer formatene, og MVA-meldingen er en åpen spesifikasjon. Da bør programmet som oversetter mellom deg og staten også være til å ettergå. Begrunnelsen for hvert valg ligger i koden, ved siden av koden.',
+    body: 'Reglene er offentlige: bokføringsloven sier hva som må lagres, Skatteetaten publiserer formatene, og MVA-meldingen er en åpen spesifikasjon. Da bør programmet som oversetter mellom deg og staten også være til å ettergå. Begrunnelsen for hvert valg ligger i koden, ved siden av koden. Vil du kjøre Myntos på egen server, kan du det; da har du selv ansvaret for drift, sikkerhetskopier og oppdateringer, og for at regnskapet oppbevares så lenge loven krever.',
     points: [
       'Hele programmet er offentlig tilgjengelig',
-      'Du kan kjøre det selv om du heller vil det',
+      'Lisensen er Elastic License 2.0: du kan kjøre og endre koden selv, men ikke tilby Myntos som tjeneste til andre',
       'Ingenting skjer med tallene dine som ikke kan leses',
     ],
+    link: { href: 'https://github.com/andreasviner/myntos', text: 'Kildekoden på GitHub' },
   },
 ];
 
-const label = { virker: 'Virker i dag', underveis: 'Under arbeid' };
+/*
+  Det som ikke er bygget, for den som skal flytte et helt regnskap hit og må vite
+  det på forhånd. Kort og konkret: hva som mangler, og hva det betyr i praksis.
+  Den samme lista står i beskrivelsen av programmet i BaseLayout og i
+  «About Myntos» i docs/agents/llms.txt, fordi søkemotorer og KI-assistenter
+  gjentar den, og de tre må si det samme. Når noe blir bygget, flyttes det opp
+  i `sections`, alle tre steder.
+*/
+const notYet = [
+  {
+    title: 'Lønn og a-melding',
+    text: 'Myntos kjører ikke lønn. Betaler selskapet ut lønn, også til eieren, sendes a-meldingen fra et lønnsprogram.',
+  },
+  {
+    title: 'Årsregnskapet og aksjonærregisteroppgaven',
+    text: 'Resultatregnskapet og balansen står i Myntos, men årsregnskapet til Regnskapsregisteret og aksjonærregisteroppgaven sendes ikke herfra ennå. Aksjonærregisteroppgaven kan siden juni 2026 bare sendes fra et regnskapsprogram, ikke i Altinn.',
+  },
+  {
+    title: 'Næringsspesifikasjon for enkeltpersonforetak',
+    text: 'Et enkeltpersonforetak kan føre regnskapet og avslutte året i Myntos, men næringsspesifikasjonen følger eierens egen skattemelding og lages ikke her ennå.',
+  },
+  {
+    // Bankavstemmingen sier det samme på linjen: «Innbetaling på faktura føres
+    // ikke herfra ennå» (docs/integrations/bank.md).
+    title: 'Innbetaling mot faktura',
+    text: 'At en kunde har betalt fakturaen, kan ikke registreres mot den ennå, så kundefordringen står åpen i regnskapet.',
+  },
+  {
+    title: 'Sending av e-faktura',
+    text: 'EHF-filen lages for hver faktura, men Myntos sender den ikke gjennom Peppol ennå.',
+  },
+  {
+    title: 'Kobling direkte mot banken',
+    text: 'Kontoutskriften lastes opp som fil. Myntos henter den ikke fra banken selv.',
+  },
+];
 ---
 
 <BaseLayout
-  title="Funksjoner: bilag, faktura, mva og SAF-T | Myntos"
-  description="Hva Myntos gjør i dag og hva som er under arbeid: bilag og kontantstrøm, faktura og EHF, merverdiavgift, SAF-T-eksport, skattemelding, roller og offentlig kildekode."
+  title="Funksjoner: bilag, faktura, mva og skattemelding | Myntos"
+  description="Hva Myntos gjør: bilag lest av KI, faktura med EHF, mva-melding, skattemelding for AS, bankavstemming, SAF-T inn og ut, og roller. Og det som ikke er bygget ennå."
   width="wide"
 >
   <div class="head">
     <p class="pill">Funksjoner</p>
-    <h1>Alt bygget rundt norske krav</h1>
+    <h1>Bygget rundt norske regler</h1>
     <p class="lead">
-      Myntos er i beta, og siden nedenfor sier hva som virker i dag og hva som er under arbeid.
-      Det er lettere å stole på den halvparten som er ferdig når den andre halvparten ikke later
-      som noe annet.
+      Alt Myntos gjør, del for del, og lovkravet bak hvert valg. Nederst står det som ikke er i
+      Myntos ennå, så du vet det før du flytter regnskapet hit.
     </p>
   </div>
 
@@ -135,9 +207,6 @@ const label = { virker: 'Virker i dag', underveis: 'Under arbeid' };
         <section class="feature-block" id={section.id}>
           <div class="feature-meta">
             <p class="kicker">{section.kicker}</p>
-            <span class="state" data-state={section.status}>
-              {label[section.status]}
-            </span>
           </div>
           <div class="feature-body">
             <h2>{section.title}</h2>
@@ -147,19 +216,50 @@ const label = { virker: 'Virker i dag', underveis: 'Under arbeid' };
                 <li>{point}</li>
               ))}
             </ul>
+            {section.link && (
+              <p class="feature-link">
+                <a href={section.link.href}>{section.link.text}</a>
+              </p>
+            )}
           </div>
         </section>
       ))
     }
   </div>
 
+  <section class="card not-yet" id="ikke-enna" aria-labelledby="ikke-enna-tittel">
+    <h2 class="card-title" id="ikke-enna-tittel">Det Myntos ikke gjør ennå</h2>
+    <p class="card-hint">
+      Dette gjøres fortsatt i et annet program eller rett i Altinn. Når noe av det kommer, er det med
+      i prisen, som alt annet.
+    </p>
+    <ul>
+      {
+        notYet.map((item) => (
+          <li>
+            <strong>{item.title}.</strong> {item.text}
+          </li>
+        ))
+      }
+    </ul>
+  </section>
+
   <div class="cta card">
     <div>
-      <h2 class="cta-title">Prøv det som finnes</h2>
-      <p class="card-hint">Gratis, uten betalingsopplysninger, og du kan ta dataene ut igjen.</p>
+      <h2 class="cta-title">Kom i gang</h2>
+      <p class="card-hint">
+        Gratis for alltid, uten betalingsopplysninger, og du kan ta dataene ut igjen når du vil.
+      </p>
     </div>
     <a class="btn btn-primary btn-large" href="/registrer/">Opprett konto</a>
   </div>
+
+  {/* Siden over er det vi har valgt å bygge. Det som mangler for den som leser
+      den, får vi bare vite om noen sier fra. */}
+  <p class="missing">
+    Mangler noe du trenger, eller virker noe ikke som det står her?
+    <a href="/tilbakemelding/">Si fra</a>, uten å logge inn. Vi lagrer ikke hvem du er.
+  </p>
 </BaseLayout>
 
 <style>
@@ -194,19 +294,6 @@ const label = { virker: 'Virker i dag', underveis: 'Under arbeid' };
     font-weight: 700;
     color: var(--faint);
   }
-  .state {
-    font-size: 0.76rem;
-    font-weight: 650;
-    padding: 0.2rem 0.6rem;
-    border-radius: var(--radius-pill);
-    border: 1px solid var(--border-strong);
-    color: var(--muted);
-  }
-  .state[data-state='virker'] {
-    border-color: var(--accent-line);
-    background: var(--accent-soft);
-    color: var(--accent);
-  }
   .feature-body h2 {
     margin-top: 0;
   }
@@ -237,6 +324,24 @@ const label = { virker: 'Virker i dag', underveis: 'Under arbeid' };
     border-bottom: 2px solid var(--accent);
     transform: rotate(-45deg);
   }
+  .feature-link {
+    margin: 1rem 0 0;
+    font-size: 0.94rem;
+  }
+  .not-yet {
+    margin-top: 1rem;
+    border-left: 3px solid var(--border-strong);
+  }
+  .not-yet ul {
+    margin: 1rem 0 0;
+    padding-left: 1.2rem;
+    display: grid;
+    gap: 0.55rem;
+    max-width: 48rem;
+  }
+  .not-yet li {
+    font-size: 0.94rem;
+  }
   .cta {
     display: flex;
     flex-wrap: wrap;
@@ -250,6 +355,11 @@ const label = { virker: 'Virker i dag', underveis: 'Under arbeid' };
   .cta-title {
     margin: 0 0 0.2rem;
     font-size: 1.3rem;
+  }
+  .missing {
+    margin: 1.25rem 0 0;
+    color: var(--muted);
+    font-size: 0.95rem;
   }
 
   @media (width < 46rem) {

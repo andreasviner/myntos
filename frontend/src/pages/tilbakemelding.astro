@@ -1,0 +1,529 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+{/* Tilbakemelding: feil, forbedringer og ønsker, fra hvem som helst, uten navn.
+
+    Siden spør ikke hvem du er, og API-et bak den gjør det heller ikke: ruten
+    leser ikke innloggingen som sendes med, tabellen har ingen kolonne for
+    konto, selskap eller IP-adresse, og forespørselen står ikke i serverens
+    tilgangslogg. Se docs/feedback.md.
+
+    Det betyr at vi ikke kan finne igjen en tilbakemelding for noen. Derfor
+    får avsenderen én lenke med en referanse, vist én gang, og den er den eneste
+    veien tilbake: til svaret vårt, og til å trekke den tilbake. Siden sier det
+    rett ut, fordi en referanse ingen forsto at de måtte ta vare på, er en
+    tilbakemelding ingen kan følge.
+
+    Listen nederst er det vi har lest og valgt å vise, med vår egen beskrivelse.
+    Avsenderens tekst publiseres aldri: folk skriver det de ser på, og i et
+    regnskapsprogram er det ofte noens regnskap.
+
+    Skjemaet kan åpnes ferdig utfylt med #type=…&tekst=…&side=… (lib/feedback.ts),
+    slik at en KI som hjelper noen uten nøkkel kan skrive meldingen og gi
+    personen en lenke. Personen leser og trykker selv. */}
+
+<BaseLayout
+  title="Tilbakemelding: meld feil og ønsker | Myntos"
+  description="Meld feil, foreslå forbedringer og ønsk deg funksjoner i Myntos, uten å logge inn. Vi lagrer ikke hvem du er."
+  width="wide"
+>
+  <div class="head">
+    <p class="pill">Tilbakemelding</p>
+    <h1>Si fra om feil, forbedringer og ønsker</h1>
+    <p class="lead">
+      Det meste som blir bedre i Myntos, blir det fordi noen sa fra. Du trenger ikke være logget
+      inn, og vi lagrer ikke hvem du er.
+    </p>
+  </div>
+
+  <div class="columns">
+    <div class="main-column">
+      {/* Først, fordi den som åpner lenken sin kom for å se den, ikke for å skrive
+          en ny. Skjult når adressen ikke har noen referanse. */}
+      <section class="card" id="item-card" aria-labelledby="item-title" hidden>
+        <h2 class="card-title" id="item-title">Din tilbakemelding</h2>
+        <p class="status" id="item-status" hidden></p>
+        <div id="item" hidden>
+          <dl class="facts">
+            <div><dt>Type</dt><dd id="item-kind"></dd></div>
+            <div><dt>Sendt</dt><dd id="item-date"></dd></div>
+            <div><dt>Status</dt><dd id="item-state"></dd></div>
+          </dl>
+          <p class="quote" id="item-text"></p>
+          <div id="item-reply-block" hidden>
+            <h3 class="reply-title">Svar fra Myntos</h3>
+            <p class="quote" id="item-reply"></p>
+          </div>
+          <p class="card-hint" id="item-published" hidden>
+            Den står på listen «Dette har andre meldt», med vår egen beskrivelse.
+          </p>
+          <button class="btn btn-ghost btn-small" type="button" id="withdraw">Trekk tilbake</button>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="send-title">
+        <h2 class="card-title" id="send-title">Send tilbakemelding</h2>
+        <p class="status" id="form-status" hidden></p>
+
+        <form id="feedback-form" novalidate>
+          <div class="kinds" role="radiogroup" aria-label="Hva gjelder det?">
+            <label>
+              <input type="radio" name="kind" value="bug" checked />
+              <span><strong>Feil</strong><small>Noe virker ikke som det skal</small></span>
+            </label>
+            <label>
+              <input type="radio" name="kind" value="improvement" />
+              <span><strong>Forbedring</strong><small>Noe virker, men kunne vært bedre</small></span>
+            </label>
+            <label>
+              <input type="radio" name="kind" value="request" />
+              <span><strong>Ønske</strong><small>Noe Myntos ikke gjør ennå</small></span>
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Hva skjedde, eller hva ønsker du deg?</span>
+            <textarea name="text" rows="7" maxlength="5000" required></textarea>
+            <span class="field-hint">
+              Skriv hva du trykket på og hva du ventet skulle skje. Vi kan ikke spørre deg om mer
+              etterpå, så ta med det som trengs. Ikke skriv navn, beløp eller annet fra regnskapet.
+            </span>
+          </label>
+
+          <label class="field">
+            <span>Hvilken side gjaldt det? (valgfritt)</span>
+            <input type="text" name="page" maxlength="300" placeholder="/faktura/" />
+          </label>
+
+          <button class="btn btn-primary" type="submit" id="send">Send tilbakemelding</button>
+        </form>
+
+        {/* Erstatter skjemaet når det er sendt, så ingen sender det samme to ganger i
+            tro på at det første trykket ikke virket. */}
+        <div id="sent" hidden>
+          <p class="status" data-tone="ok">Takk! Tilbakemeldingen er sendt.</p>
+          <p>
+            Dette er lenken til den. Ta vare på den: med den kan du se svaret vårt, eller trekke
+            tilbake det du skrev. Vi vet ikke hvem du er, så vi kan ikke finne den igjen for deg.
+          </p>
+          <p class="link-line"><a id="sent-link" href="/tilbakemelding/"></a></p>
+          <div class="actions">
+            <button class="btn btn-ghost btn-small" type="button" id="copy-link">Kopier lenken</button>
+            <button class="btn-link" type="button" id="send-another">Send en til</button>
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <aside class="side-column">
+      <section class="card">
+        <h2 class="card-title">Hva vi lagrer</h2>
+        <ul class="plain">
+          <li>Teksten, typen og siden du skrev inn</li>
+          <li>Når den kom, og om den kom fra en person eller en KI-agent</li>
+        </ul>
+        <h2 class="card-title second">Hva vi ikke lagrer</h2>
+        <ul class="plain">
+          <li>Hvem du er, selv om du er logget inn</li>
+          <li>Selskapet du jobber i</li>
+          <li>IP-adressen din eller nettleseren din</li>
+        </ul>
+        <p class="card-hint">
+          Bare den som drifter Myntos leser teksten. Mer i <a href="/personvern/#tilbakemelding"
+            >personvernerklæringen</a
+          >.
+        </p>
+      </section>
+      <p class="note">
+        Bruker du en KI-assistent, kan den sende tilbakemelding selv, uten nøkkel og uten å logge
+        inn. Den finner fremgangsmåten i <a href="/llms.txt">llms.txt</a>.
+      </p>
+    </aside>
+  </div>
+
+  <section class="listing" aria-labelledby="list-title">
+    <h2 id="list-title">Dette har andre meldt</h2>
+    <p class="card-hint">
+      Det vi har lest og valgt å vise, med vår egen beskrivelse og ikke avsenderens tekst. Står det
+      du tenkte på her allerede, er svaret der også.
+    </p>
+    <p class="status" id="list-status" hidden></p>
+    <ul class="published" id="published"></ul>
+    <p class="card-hint" id="list-empty" hidden>Ingenting er publisert ennå.</p>
+  </section>
+</BaseLayout>
+
+<style>
+  .head {
+    max-width: 44rem;
+    padding: 2rem 0 1rem;
+  }
+  .columns {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 20rem;
+    gap: 1.5rem;
+    align-items: start;
+  }
+  .kinds {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.5rem;
+    margin-bottom: 1.1rem;
+  }
+  .kinds input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .kinds span {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    height: 100%;
+    padding: 0.6rem 0.7rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-small);
+    cursor: pointer;
+  }
+  .kinds small {
+    color: var(--muted);
+    font-size: 0.82rem;
+    line-height: 1.35;
+  }
+  .kinds input:checked + span {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .kinds input:checked + span strong {
+    color: var(--accent);
+  }
+  .kinds input:focus-visible + span {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .link-line {
+    overflow-wrap: anywhere;
+    font-size: 0.92rem;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem;
+  }
+  .facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.75rem;
+    margin: 0 0 1rem;
+  }
+  .facts dt {
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+  .facts dd {
+    margin: 0;
+    font-weight: 600;
+  }
+  .quote {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    padding: 0.75rem 0.9rem;
+    margin: 0 0 1rem;
+  }
+  .reply-title {
+    font-size: 0.95rem;
+    margin: 0 0 0.4rem;
+  }
+  .plain {
+    margin: 0 0 0.75rem;
+    padding-left: 1.1rem;
+    font-size: 0.93rem;
+  }
+  .plain li + li {
+    margin-top: 0.25rem;
+  }
+  .second {
+    margin-top: 1rem;
+  }
+  .listing {
+    margin-top: 2.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+  }
+  .published {
+    list-style: none;
+    padding: 0;
+    margin: 1.25rem 0 0;
+    display: grid;
+    gap: 0.75rem;
+  }
+  /* Radene bygges av skriptet, og en sides <style> når ikke det skriptet lager
+     (docs/frontend-conventions.md). Forankret i listen, som står i markeringen. */
+  .published :global(li) {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.9rem 1.1rem;
+    background: var(--surface);
+  }
+  .published :global(.entry-head) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.4rem 0.8rem;
+  }
+  .published :global(.entry-kind),
+  .published :global(.entry-state) {
+    font-size: 0.76rem;
+    font-weight: 650;
+    padding: 0.15rem 0.55rem;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--border-strong);
+    color: var(--muted);
+  }
+  .published :global(.entry-state[data-status='done']) {
+    border-color: var(--accent-line);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .published :global(.entry-summary) {
+    margin: 0.45rem 0 0;
+    font-weight: 600;
+  }
+  .published :global(.entry-reply) {
+    margin: 0.35rem 0 0;
+    color: var(--muted);
+    white-space: pre-wrap;
+  }
+  .published :global(.entry-date) {
+    margin-left: auto;
+    font-size: 0.82rem;
+    color: var(--faint);
+  }
+
+  @media (width < 52rem) {
+    .columns {
+      grid-template-columns: 1fr;
+    }
+  }
+  @media (width < 34rem) {
+    .kinds {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    getFeedback,
+    listPublishedFeedback,
+    sendFeedback,
+    withdrawFeedback,
+    type FeedbackItem,
+    type PublishedFeedback,
+  } from '../lib/api';
+  import { el, setStatus, show } from '../lib/dom';
+  import {
+    KIND_LABELS,
+    STATUS_LABELS,
+    pageFromReferrer,
+    prefillFromFragment,
+    type FeedbackKind,
+  } from '../lib/feedback';
+  import { isoDate } from '../lib/format';
+  import { forgetFragment } from '../lib/links';
+
+  const form = el<HTMLFormElement>('#feedback-form');
+  const formStatus = el<HTMLParagraphElement>('#form-status');
+  const sendButton = el<HTMLButtonElement>('#send');
+  const text = el<HTMLTextAreaElement>('textarea[name="text"]', form);
+  const page = el<HTMLInputElement>('input[name="page"]', form);
+  const sent = el('#sent');
+  const sentLink = el<HTMLAnchorElement>('#sent-link');
+
+  const itemCard = el('#item-card');
+  const itemStatus = el<HTMLParagraphElement>('#item-status');
+  const item = el('#item');
+
+  const listStatus = el<HTMLParagraphElement>('#list-status');
+  const published = el<HTMLUListElement>('#published');
+  const listEmpty = el('#list-empty');
+
+  function chosenKind(): FeedbackKind {
+    const checked = form.querySelector<HTMLInputElement>('input[name="kind"]:checked');
+    return (checked?.value ?? 'bug') as FeedbackKind;
+  }
+
+  function choose(kind: FeedbackKind): void {
+    const radio = form.querySelector<HTMLInputElement>(`input[name="kind"][value="${kind}"]`);
+    if (radio !== null) radio.checked = true;
+  }
+
+  // Dato for et tidspunkt fra API-et, uten klokkeslett: når den kom, ikke hvilket minutt.
+  const dayOf = (moment: string): string => isoDate(moment.slice(0, 10));
+
+  // --- Skjemaet ---------------------------------------------------------------------
+
+  const prefill = prefillFromFragment(window.location.hash);
+  if (prefill.kind !== null) choose(prefill.kind);
+  if (prefill.text !== null) text.value = prefill.text;
+  page.value = prefill.page ?? pageFromReferrer(document.referrer, window.location.origin) ?? '';
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const message = text.value.trim();
+    if (message.length < 10) {
+      setStatus(formStatus, 'Skriv litt mer, minst 10 tegn, så vi forstår hva det gjelder.');
+      return;
+    }
+    sendButton.disabled = true;
+    sendButton.textContent = 'Sender …';
+    setStatus(formStatus, '');
+    void sendFeedback({ kind: chosenKind(), text: message, page: page.value.trim() || null })
+      .then((answer) => {
+        sentLink.href = answer.url;
+        sentLink.textContent = answer.url;
+        show(form, false);
+        show(sent, true);
+        // Lenken i adressefeltet i stedet for det utfylte skjemaet: et nytt
+        // trykk på «Last inn på nytt» viser da tilbakemeldingen, og sender den
+        // ikke en gang til.
+        try {
+          window.history.replaceState(null, '', `#ref=${answer.reference}`);
+        } catch {
+          // Lenken står på siden uansett.
+        }
+      })
+      .catch((error: unknown) => {
+        setStatus(
+          formStatus,
+          error instanceof ApiError
+            ? error.message
+            : 'Vi fikk ikke sendt tilbakemeldingen. Prøv en gang til.',
+        );
+      })
+      .finally(() => {
+        sendButton.disabled = false;
+        sendButton.textContent = 'Send tilbakemelding';
+      });
+  });
+
+  el<HTMLButtonElement>('#copy-link').addEventListener('click', () => {
+    void navigator.clipboard.writeText(sentLink.href).then(
+      () => setStatus(formStatus, 'Lenken er kopiert.', 'ok'),
+      // Utklippstavlen kan være sperret; lenken står der og kan markeres.
+      () => window.getSelection()?.selectAllChildren(sentLink),
+    );
+  });
+
+  el<HTMLButtonElement>('#send-another').addEventListener('click', () => {
+    form.reset();
+    page.value = '';
+    setStatus(formStatus, '');
+    show(sent, false);
+    show(form, true);
+    forgetFragment();
+    text.focus();
+  });
+
+  // --- Én tilbakemelding, med referansen ----------------------------------------------
+
+  function drawItem(found: FeedbackItem): void {
+    el('#item-kind').textContent = KIND_LABELS[found.kind];
+    el('#item-date').textContent = dayOf(found.created_at);
+    el('#item-state').textContent = STATUS_LABELS[found.status];
+    el('#item-text').textContent = found.text;
+    el('#item-reply').textContent = found.reply ?? '';
+    show(el('#item-reply-block'), found.reply !== null);
+    show(el('#item-published'), found.published);
+    show(item, true);
+  }
+
+  function openItem(reference: string): void {
+    show(itemCard, true);
+    setStatus(itemStatus, 'Henter …', 'ok');
+    void getFeedback(reference)
+      .then((found) => {
+        setStatus(itemStatus, '');
+        drawItem(found);
+      })
+      .catch((error: unknown) => {
+        show(item, false);
+        setStatus(
+          itemStatus,
+          error instanceof ApiError ? error.message : 'Vi fikk ikke hentet tilbakemeldingen.',
+        );
+      });
+
+    el<HTMLButtonElement>('#withdraw').onclick = () => {
+      if (!window.confirm('Trekke tilbake tilbakemeldingen? Den slettes, og kan ikke hentes igjen.')) {
+        return;
+      }
+      void withdrawFeedback(reference)
+        .then(() => {
+          show(item, false);
+          setStatus(itemStatus, 'Trukket tilbake. Den er slettet hos oss.', 'ok');
+          forgetFragment();
+          loadList();
+        })
+        .catch((error: unknown) => {
+          setStatus(
+            itemStatus,
+            error instanceof ApiError ? error.message : 'Vi fikk ikke trukket den tilbake.',
+          );
+        });
+    };
+  }
+
+  if (prefill.reference !== null) openItem(prefill.reference);
+
+  // --- Det som er publisert -------------------------------------------------------------
+
+  function entry(found: PublishedFeedback): HTMLLIElement {
+    const row = document.createElement('li');
+    const head = document.createElement('div');
+    head.className = 'entry-head';
+    const kind = document.createElement('span');
+    kind.className = 'entry-kind';
+    kind.textContent = KIND_LABELS[found.kind];
+    const state = document.createElement('span');
+    state.className = 'entry-state';
+    state.dataset.status = found.status;
+    state.textContent = STATUS_LABELS[found.status];
+    const date = document.createElement('span');
+    date.className = 'entry-date';
+    date.textContent = `Meldt ${isoDate(found.received_on)}`;
+    head.append(kind, state, date);
+    const summary = document.createElement('p');
+    summary.className = 'entry-summary';
+    summary.textContent = found.summary;
+    row.append(head, summary);
+    if (found.reply !== null) {
+      const reply = document.createElement('p');
+      reply.className = 'entry-reply';
+      reply.textContent = found.reply;
+      row.append(reply);
+    }
+    return row;
+  }
+
+  function loadList(): void {
+    void listPublishedFeedback()
+      .then((items) => {
+        setStatus(listStatus, '');
+        published.replaceChildren(...items.map(entry));
+        show(listEmpty, items.length === 0);
+      })
+      .catch(() => {
+        setStatus(listStatus, 'Vi fikk ikke hentet listen akkurat nå.');
+      });
+  }
+
+  loadList();
+</script>

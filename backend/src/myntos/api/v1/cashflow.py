@@ -80,6 +80,7 @@ from myntos.domain.ledger import service as ledger_service
 from myntos.domain.ledger.cashflow import (
     CASH_FLOW_TYPES,
     CashFlowDirection,
+    get_type,
     types_for,
 )
 from myntos.domain.ledger.chart import (
@@ -1559,23 +1560,24 @@ async def _settle(
     if model_fields:
         reading = merged
         suggestion = await asyncio.to_thread(propose, reading, model_fields)
-    # The model's runner-up stands in when its first choice cannot be right for
-    # the amount, and nothing does when neither can: then the parser's own
-    # reading, if it had one, is what is left.
-    chosen = next(
-        (
-            choice
-            for choice in (category.chosen, category.alternative)
-            if choice is not None
-            and interpretation.model_may_propose(choice.code, suggestion.gross_amount)
-        ),
-        None,
+    # The model's first choice, as it comes out at the amount the bilag prints
+    # (a durable thing under the driftsmiddel threshold is an expense, see
+    # interpretation.at_amount). The runner-up stands in only when there is no
+    # first choice; with neither, the parser's own reading is what is left.
+    first = category.chosen or category.alternative
+    chosen = (
+        interpretation.at_amount(first.code, suggestion.gross_amount) if first is not None else None
+    )
+    runner_up = (
+        interpretation.at_amount(category.alternative.code, suggestion.gross_amount)
+        if category.alternative is not None
+        else None
     )
     if chosen is not None:
         interpretation.apply_type(
             suggestion,
             reading=reading,
-            type_code=chosen.code,
+            type_code=chosen,
             source=interpretation.FieldSource.MODEL,
         )
     extraction.apply_description(suggestion, model_reading, item_text=reading.item_text)
@@ -1673,12 +1675,14 @@ async def _settle(
         # runner-up to a choice that lost to our own keyword reading is a doubt
         # about a proposal nobody is looking at, and asking about it would be
         # asking the user to arbitrate between two things we did not propose.
+        # Nor when both come to the same category at this amount: under the
+        # threshold «driftsmiddel or inventar?» is one answer asked twice.
         alternative=(
-            category.alternative
+            get_type(runner_up)
             if category.in_doubt
-            and chosen is category.chosen
-            and category.alternative is not None
-            and interpretation.model_may_propose(category.alternative.code, suggestion.gross_amount)
+            and first is category.chosen
+            and runner_up is not None
+            and runner_up != chosen
             else None
         ),
         has_note=has_note,

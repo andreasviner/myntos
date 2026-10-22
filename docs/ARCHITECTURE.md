@@ -117,31 +117,35 @@ may be confirmed. It is the same evidence a submission later rests on, which is
 the point: the confirmation is not a second, weaker check of our own invention.
 
 Three columns record it (`verified_at`, `verified_by_user_id`,
-`altinn_party_id`) and one index enforces it:
+`altinn_party_id`).
 
-```sql
-CREATE UNIQUE INDEX uq_company_verified_orgnr ON company (orgnr)
-  WHERE verified_at IS NOT NULL
-```
+**More than one set of books may be confirmed for an orgnr, and never without a
+warning.** Until 2026-10-22 a unique index allowed one confirmed claim per orgnr
+across the installation, and the second account to confirm was refused even
+when Altinn, through that person's own login, said they may act for the
+company. The owner changed that: a person Altinn lets file for a company must
+not be stopped from doing it from Myntos by somebody else's books, often books
+they cannot even name. So the rule became a question (migration
+`c3e7a1f95d20`). The first attempt on an orgnr another account has confirmed is
+refused with 409 `company_already_claimed`; the page asks «Er du sikker på at
+du vil fortsette?», and «Ja» sends `even_if_claimed`, which confirms these
+books too. Altinn is asked either way: the yes waives the warning about other
+books, never the rights.
 
-**One confirmed claim per orgnr across the installation, and unconfirmed rows
-left alone.** Both halves are load-bearing and they pull in opposite directions.
-Without the exclusivity, "this company already has a regnskap registered" could
-never be said, and two organizations would each believe they were the ones
-filing. Without the permissiveness, a regnskapsfører could not keep books for a
-client whose own confirmation sits elsewhere — which is most clients. The domain
-checks the rule first and answers with prose (`CompanyAlreadyClaimedError` →
-409 `company_already_claimed`); the index is what makes two confirmations
-racing produce one winner rather than two.
+The warning is the part that is load-bearing. Two confirmed sets of books can
+both file the MVA-melding and the skattemelding, and Skatteetaten takes the
+later filing as a correction of the earlier one. Nobody should be in that
+position without knowing the other books exist, so the question is asked
+every time and an API caller has to send the yes explicitly.
 
-The refusal names the two ways forward — ask an administrator there for access,
-or keep unconfirmed books of your own — and deliberately does **not** name the
-organization holding the claim, which the caller is not a member of. For the
-same reason `GET /skatt/altinn/authorized-parties` marks each party `claimed`
-rather than saying by whom: it answers only for orgnrs Altinn has already said
-the caller may act for, so the flag discloses nothing they could not learn by
-trying, and it puts the conflict where the choice is made instead of after a
-save that fails.
+The warning, and the «Registrert av en annen» mark on the Altinn list
+(`GET /skatt/altinn/authorized-parties`, field `claimed`), deliberately do
+**not** name the organization holding the other claim, which the caller is not
+a member of: they answer only for orgnrs Altinn has already said the caller may
+act for, so the flag discloses nothing they could not learn by trying. The
+other way forward the message names, asking an administrator there for access,
+is still usually the better one; a regnskapsfører keeping their own copy of a
+client's books can also simply leave them unconfirmed.
 
 Nothing is gated on it. An unconfirmed company books, invoices and reports
 exactly like a confirmed one — bookkeeping does not wait for BankID on a Sunday
@@ -369,7 +373,14 @@ as somebody else's address and a message from our domain must not route a
 stranger's reply to it. Accepting an invitation is not gated: the token in hand
 is the proof, and the address match is already required. Squatting an address
 by signing up as it is answered by the reset flow: the real owner receives the
-reset link, and completing it ends the squatter's sessions and password. **Not
+reset link, and completing it ends the squatter's sessions, password and keys,
+and on an account never confirmed also every linked provider, since a Google or
+Microsoft login is matched on its own subject and would let the squatter
+straight back in. A Google or Microsoft login that vouches for the address does
+the same when it lands on an unconfirmed account
+(`service.sign_in_with_provider`, `ProviderSignIn.reclaimed`): stamping the
+address confirmed and keeping the squatter's password would have handed them
+every set of books the owner was later invited to. **Not
 for a BankID signup**, which a reset never reaches: an address squatted that way
 stays squatted until a release for unconfirmed addresses exists (a gap,
 [integrations/bankid.md](integrations/bankid.md#gaps)).
@@ -404,6 +415,15 @@ the transport itself inside the EEA; the bytes are identical either way.
 One OIDC implementation (`auth/oidc/client.py`), several providers as data
 (`auth/oidc/providers.py`): authorization-code flow with PKCE, `state` and
 `nonce` in an `oauth_login_attempt` row, and full ID-token verification.
+The `state` is also bound to the browser that started the flow: `start` sets
+a short-lived httpOnly cookie on the API holding its digest
+(`api/deps.py` `bind_flow`), and a callback without it is refused
+(`innlogging_annen_nettleser`). A single-use, unguessable state is no defence
+when the attacker is the one who started the flow and stopped short of the
+callback: opened in somebody else's browser, that link signed them into the
+attacker's account, and what they then typed, uploaded or proved with
+ID-porten belonged to it. The ID-porten flow carries the same cookie, and its
+callback also requires the session to be the account that started it.
 `/auth/{provider}/start` and `/auth/{provider}/callback` are generic, and
 `/auth/providers` lists only what this deployment has credentials for — so a
 button can never lead to a 503. Adding a provider needs no migration:
@@ -806,7 +826,7 @@ numbered per year. Three rules carry the weight:
   needs a reason too. The register neither lists nor reverses these vouchers;
   `/bilag/` lists them, and the summary and bank matching count them.
 
-**Årsavslutning.** At most two vouchers in the `AVS` journal on 31 December: the
+**Årsavslutning.** At most two vouchers in the `AVS` journal on the year's last day: the
 **tax cost** an AS states (8300/2500; Myntos does not compute tax or deferred
 tax, and says so when an AS with a profit states none), and the
 **disposition**, read off `company.organisation_form`:
@@ -844,11 +864,26 @@ supplier invoice into the wrong year.
 Accounts 2000, 2080, 2500, 8300, 8800, 8960 and 8990 joined the seed chart for
 this, and migration `c3f9a2d71e58` backfills them with the year log table.
 
+**A dissolved company's last year ends on its last day** (`company.wound_up_on`,
+migration `60bbbdaf279d`), set with `POST …/arsavslutning/opplosning`
+(`domain/arsoppgjor/winding_up.py`). Every other year is a calendar year. The
+last one has its `end_date` moved to the day, so it can be closed the day after
+instead of in January, and so the SAF-T file and the næringsspesifikasjon
+report the period the company existed; `ensure_financial_year` refuses a later
+year and, given the voucher's date, a later day; closing it opens nothing
+after it; and its skattemelding is a forhåndsfastsetting
+(docs/integrations/skatteetaten.md). The day is the person's to state, because
+Enhetsregisteret's deletion is usually weeks after the last payout, and it is
+refused only where the books contradict it (anything dated after it). Undone,
+logged, while the year is open and nothing has been filed on it.
+
 ## Work done after the answer
 
 Since 2026-10-13 one feature does its work after its request has answered: the
 previous program's SAF-T files, uploaded once into `saft_import`, are read and
 posted by `myntos.saft.jobs` in FastAPI's `BackgroundTasks`, and the page polls.
+Since 2026-10-22 the old program's printout of its vouchers with attachments
+goes the same way, on the same table.
 A year of vouchers was otherwise a tab that had to stay open through a long
 upload, a read, a hundred small requests and a second and third upload of the
 same file. The rules that hold it, so the next feature that needs the same
@@ -869,6 +904,11 @@ does not invent another:
   thrown away or after 14 days: the store is append-only on purpose
   (bokføringsloven § 13), and a working copy that must go again does not belong
   in it.
+- **One exception to "the preview is the posting, rolled back"**: the old
+  program's printout of the vouchers (`purpose` `vedlegg`, since 2026-10-22),
+  whose post writes to the document store, which cannot roll back. Its review
+  and its post both run `saft.documents.plan`, the review writes nothing, and
+  the post goes ahead only while the plan is the one the review showed.
 
 ## Frontend
 
@@ -879,7 +919,11 @@ a login.
 
 The front page is two pages in one file. What ships in the HTML is the
 signed-out one: that is what a search engine indexes and what a visitor without
-JavaScript sees. `data-auth` on `<html>` decides which half is displayed, and it
+JavaScript sees. The signed-in overview is in a `<template>` and is put into the
+page only once somebody is signed in; until 2026-10-22 it shipped beside the
+pitch, hidden by CSS, and a crawler that reads text rather than CSS saw two h1s
+and «Henter oversikten …» (docs/frontend-conventions.md, «What search engines
+and AI assistants see»). `data-auth` on `<html>` decides which half is displayed, and it
 starts at `"ut"`. To avoid a returning user seeing the marketing page flash
 before their dashboard, an inline script in `<head>` reads a **hint** from
 `localStorage` before first paint. The hint is not a credential and grants
@@ -923,13 +967,14 @@ everywhere is no easier to find than one present where you are.
 | `/bank/` | Bank reconciliation: upload a camt.053 file, see each movement next to the voucher that books it, confirm a suggested voucher or post a new one from the line through the register's own path. Matching is a link and never edits a voucher. Reached from the note under the overview's figures. See [integrations/bank.md](integrations/bank.md) |
 | `/inngaende-balanse/` | The opening balance of books brought from another system: saldobalanse CSV or typed lines, open items per customer and supplier, the backend's review, then one voucher; correction is reversal plus replacement. Reached from the overview's note. See [§ Where the books start](#where-the-books-start-and-where-each-year-ends) |
 | `/manuelt-bilag/` | Manual vouchers for one year: accounts with debit and credit, a written reason, optional documents, the backend's review, then one voucher in the `MANUELT` journal; «Rett» (reversal plus replacement) and «Reverser» with a reason on each. Reached from the overview's note, `/arsavslutning/` and `/bilag/`. See [§ Where the books start](#where-the-books-start-and-where-each-year-ends) |
-| `/tidligere-program/` | «Hent regnskapet fra et annet program»: the old program's SAF-T files, one per year, uploaded once and read and posted on the server (see [§ Work done after the answer](#work-done-after-the-answer)); the review in tiles and folded lists; the parallel run's comparison. Reached from the overview (a card while the books are empty, and the note), `/inngaende-balanse/` and the move guides |
-| `/bilag/` | The bilagsjournal: every posted voucher of a year from every journal, with its lines; narrowed to an account, its movements and balance (1920: the bank's ins and outs). Reached from «Se alle bilag →» on the overview and from a finished import |
+| `/tidligere-program/` | «Hent regnskapet fra et annet program»: the old program's SAF-T files, one per year, uploaded once and read and posted on the server (see [§ Work done after the answer](#work-done-after-the-answer)); the review in tiles and folded lists; «Programmet du kommer fra», which adds what one program has (`lib/programs.ts`); with Tripletex chosen, «Vedlegg fra Tripletex», Tripletex's printout of the vouchers with attachments, each voucher's pages put on the voucher with its number ([integrations/saf-t.md](integrations/saf-t.md)); the parallel run's comparison. Reached from the overview (a card while the books are empty, and the note), `/inngaende-balanse/` and the move guides (with `?fra=` naming the guide's program) |
+| `/bilag/` | The bilagsjournal: every posted voucher of a year from every journal, newest first, with its lines and its documents in the bilag archive; narrowed to an account, its movements and balance (1920: the bank's ins and outs), or to the vouchers with a document («Bare bilag med dokument»). Reached from «Se alle bilag →» on the overview and from a finished import |
 | `/regnskap/` | Resultatregnskap and balanse for every year side by side, newest first, grouped by NS 4102 class, each line opening to its accounts and each amount to `/bilag/` (`domain/ledger/report.py`). Reached from «Regnskapet år for år» on the overview, which also says where the books stop once a VAT deadline has passed with nothing posted since (`positions_as_of` on the summary) |
 | `/arsavslutning/` | One financial year's result, tax (AS) and disposition, shown line by line before a confirmed close; reopening with a reason and the log of both. Reached from the overview's note |
+| `/skattemelding/` | An aksjeselskap's skattemelding and næringsspesifikasjon for a closed year: what stops it (each with a link to where it is fixed), the taxable result and the formue as Skatteetaten will compute them, every post with its accounts; the one question only the person can answer, Skatteetaten's check, a confirmation step before filing, the answer afterwards. Reached from the overview's note and from a closed year on `/arsavslutning/`. See [integrations/skatteetaten.md](integrations/skatteetaten.md#filing-from-myntos-built-2026-10-22) |
 | `/parter/` | Customers and suppliers (SAF-T `Party`) for the active company: the register a counterparty is picked from. Reached from `/faktura/` and the register's entry form, not from the menu |
 | `/ki/` | Where KI is used in Myntos and who runs the model, public; signed in, also the switch (`Company.ki_enabled`) that turns it off for one set of books, naming the company it applies to. See [§ KI](#ki-anywhere-in-the-product-one-provider-only) |
-| `/godkjenning/` | What keys for agents and programs asked to do and that waits for the key's person: approve (runs the stored request as the key), decline with a reason the agent reads, or go to the MVA page for a request to file. Decided ones below. In the top menu only while the company has keys switched on, with a count of what waits. See [agents-and-api.md](agents-and-api.md) rule 13 |
+| `/godkjenning/` | What keys for agents and programs asked to do and that waits for the key's person: approve (runs the stored request as the key), decline with a reason the agent reads, or go to the MVA or Skattemelding page for a request to file. A request that sends something out of Myntos (`key_send`: a check or a filing with Skatteetaten) always lands here, and the card asks for the person's ID-porten login before «Godkjenn» when it goes with it. Decided ones below. In the top menu only while the company has keys switched on, with a count of what waits. See [agents-and-api.md](agents-and-api.md) rule 13 |
 | `/nytt-selskap/` | Setting up books for another company: orgnr (or Altinn's list of companies the person may act for), then the books, then inviting colleagues. Reached from «Legg til selskap» in the company menu, and only for an account holder with `organization:manage` |
 | `/logg-inn/`, `/registrer/` | Password sign-in, and one button per provider the deployment has configured (Google, Microsoft, BankID); a provider without credentials has no button. `/registrer/` starts a BankID flow with `intent=signup` |
 | `/fullfor-registrering/` | The second step of a BankID signup: the name BankID gave, and the address the person types. Token in the fragment. An address that has an account is refused, with the way to link BankID instead |
@@ -938,6 +983,7 @@ everywhere is no easier to find than one present where you are.
 | `/slett-selskap/` | Deleting the active company, for an owner: a SAF-T link for every year with entries, what will happen (deleted at once when nothing is entered, otherwise locked until the date bokføringsloven § 13 sets and purged the day after), the same proof as deleting the account, and two boxes. Reached from the red «Slett selskapet …» in the last section of `/organisasjon/`, owners only; a deleted company is opened again from «Slettede selskaper» on `/konto/`. See [gdpr.md § Deleting a company](gdpr.md#deleting-a-company) |
 | `/bekreft-epost/`, `/glemt-passord/`, `/nytt-passord/` | Address confirmation and password reset, from links in the fragment. The front page carries a notice (`components/VerifyEmailNotice.astro`) while the address is unconfirmed and the deployment sends mail. See [Credentials and sessions](#credentials-and-sessions) |
 | `/organisasjon/` | Everything about **one company**: its own details (the only place its bank accounts, VAT registration, Foretaksregisteret and the address are edited), its subscription, who may open it and who has been invited to it, the Altinn confirmation of who it belongs to, and everything Enhetsregisteret holds about it including the board and the revisor. The board list marks who can open the books and offers to invite whoever cannot: [register-access.md](register-access.md). No account is shown here: see [company-isolation.md](company-isolation.md#the-account-is-not-a-company) |
+| `/tilbakemelding/` | Bug reports, improvements and wishes from anybody, signed in or not, kept without a name: the form, the reference shown once, one item read back or withdrawn by its `#ref=`, and the list the operator chose to publish in its own words. Linked from the footer and from `/funksjoner/`. See [feedback.md](feedback.md) |
 | `/priser/`, `/bankpriser/`, `/funksjoner/`, `/about/`, `/kom-i-gang/` (and one guide per program under it), `/ansvar/`, `/personvern/`, `/vilkar/` | Marketing and legal pages, readable signed out: prices, a comparison of business banks, features, moving from another program, the disclaimer, the privacy policy and the terms. `/personvern/` and `/ki/` carry the public promise about KI ([§ KI](#ki-anywhere-in-the-product-one-provider-only)) |
 
 `/faktura/` is three cards and one of them at a time — the form, the review,
@@ -994,9 +1040,10 @@ Consequences for the code:
 | `api` | HTTP endpoints, versioned (`/api/v1`) | domain, core |
 | `core` | Settings (pydantic-settings, env-driven), security middleware, clock | — |
 | `auth` | Myntos login (passwords, tokens, sessions, Google/Microsoft/BankID OIDC), keys for agents and integrations (`agent_keys`), **and** Maskinporten + ID-porten token acquisition | core, domain.identity; `agent_keys` also reads two ledger models, because a key belongs to a company and its stamp goes on a voucher |
-| `domain` | Ledger (incl. the cash-flow register), bilag, faktura, bank (camt.053 import and matching), mva, årsoppgjør (opening balance, year-end closing), identity (accounts/organizations) — business logic | core, db; the `storage` protocol and keys, and one data type from `integrations.brreg` (below) |
+| `domain` | Ledger (incl. the cash-flow register), bilag, faktura, bank (camt.053 import and matching), mva, årsoppgjør (opening balance, year-end closing), identity (accounts/organizations), feedback (anonymous bug reports and wishes, and the operator's triage command) — business logic | core, db; the `storage` protocol and keys, and one data type from `integrations.brreg` (below) |
 | `integrations` | Skatteetaten/Altinn/Brreg/Løynd/Norges Bank clients (translate domain ⇄ external APIs) | auth, core |
 | `saft` | SAF-T Financial export: snapshot, writer, cross-reference check, vendored code lists | domain |
+| `skattemelding` | The skattemelding and næringsspesifikasjon: the year's XSD read for order and what Skatteetaten derives, the writer, the builder from plain figures, the envelope, vendored XSDs and code lists; and the one module that reads the books for it (`service`, through `saft.service`) and the filings (`models`) | domain, saft |
 | `db` | SQLAlchemy base/session; Alembic in `backend/migrations/` | core |
 | `storage` | Bilag document storage (local dev / R2 prod) | core |
 
@@ -1247,8 +1294,8 @@ typing narrows the list, the arrow lists everyone, and on posting the text is
 read back by `lib/counterparty.ts`. A registered name (case and spacing aside,
 never a prefix) is that party, and anything else becomes a new one. The other
 fault made it worse: answering the model's question in the description box
-reads the bilag again, and that read put every proposal back over whatever the
-user had changed. The page now keeps the set of fields the user has touched
+read the bilag again then, and that read put every proposal back over whatever
+the user had changed. The page now keeps the set of fields the user has touched
 since the bilag was chosen. A later read fills the others and leaves those
 alone, and the set is emptied when the bilag is.
 
@@ -1375,17 +1422,59 @@ whether money in from a private person is a deposit or a sale, which rate
 governs when a bilag prints two, and — the `utlegg` case — whether 25 278 kroner
 is one asset over the threshold or two under it.
 
-Each is answered where it is asked. They used to sit above the description box
-as cards of their own, with «Beskrivelse (valgfritt)» between them and the box,
-and the answer was meant to go in the box. Nothing said so. The report on
-2026-10-17 was a screenshot of exactly that, and the question: how do I answer
-the AI? So the questions and the box are now one framed block, and most
-questions carry their answers as buttons (`options`): «Innskudd fra eier» or
-«Et lån», «Alt på 25 %», one thing that lasts three years or several under
-30 000. The code that wrote the question knows what each answer means, so an
-answer that decides a field says which value (`type_code`, `tax_code`) and the
-page sets it on the press, marked «Ditt svar». A question with no buttons is
-answered in the description, and the amount in the amount field.
+Each is answered right under it, one at a time. They used to sit above the
+description box as cards of their own, with «Beskrivelse (valgfritt)» between
+them and the box, and the answer was meant to go in the box. Nothing said so.
+The report on 2026-10-17 was a screenshot of exactly that, and the question:
+how do I answer the AI? The first fix put the questions and the box in one
+frame, which answered the question and was still wrong: the description is the
+text the payment is filed under, so «la ut privat» went into the books as the
+bilag text, and the person wanted to send the model an answer, not write one
+into the ledger. So the questions have a frame of their own, show one at a time
+(«Spørsmål 1 av 2»), and each has its answer under it. Most carry their answers
+as buttons (`options`): «Innskudd fra eier» or «Et lån», «Alt på 25 %», one
+thing that lasts three years or several under 30 000. The code that wrote the
+question knows what each answer means, so an answer that decides a field says
+which value (`type_code`, `tax_code`) and the page sets it on the press, marked
+«Ditt svar». A question with no buttons gets a line to type the answer in, and
+so does one with buttons behind «Skriv et annet svar», because the buttons are
+the likely answers and not the only ones. The amount question's line fills the
+amount field and goes no further. «Hopp over» passes a question by, since one
+at a time would otherwise make the second unreachable without answering the
+first.
+
+**The questions are asked as a round, and the answers go together.** The
+questions on screen when the round starts are the round: «Neste» moves to the
+next without asking the model anything, and after the last («Send svar») every
+answer goes in one follow-up. Sending each answer as it was given was tried
+first, the same day, and failed both ways it could. Shown at once, the next
+question could vanish two seconds later under somebody typing an answer to it,
+because the model took «til selskapets drift», given to the first, as the
+answer to its own «privat eller til drift?» too. Shown only after the model
+replied, «Spørsmål 1 av 2» was followed by nothing, and a count that says two
+and shows one reads as broken. A proposal that arrives during a round (after
+an edit to the description) changes nothing in it; only the one that comes back
+after the round decides whether there is another, and its count goes on
+(«Spørsmål 3 av 3»).
+
+The description, edited by the person, still goes to the model as context, but
+it says so under the files and leaves the question box alone. It used to wait
+in the question box with «Oppdaterer forslaget med svaret ditt», and a bug made
+that worse: a read made with the person's own sentence did not record it as
+sent, so the first time focus left the box, for a click on the question, the
+same sentence went again and the question was replaced by the wait. To the
+person it looked like the box answering itself.
+
+**A durable purchase under the threshold is equipment, not «nothing».** The
+model calls two graphics cards for 25 278 kroner «Større anskaffelse
+(driftsmiddel)», which at that amount the law does not allow, and the guard
+that caught it threw the choice away. The form then asked «Hva ble kjøpt?»
+about a bilag whose description, by the same model, said «to grafikkort».
+Now the choice is moved to the category the law makes of it,
+«Verktøy og inventar», whose own note reads «Kjøp under beløpsgrensen»
+(`interpretation.at_amount`). And the category question, when it is still
+asked, asks only what the purchase is for once there is a description to say
+what it was.
 
 **A question is asked once.** The same report: the person had answered «la ut
 privat», and the question came back. Every question has a `key`, the page sends
@@ -1598,8 +1687,9 @@ buyer, not the company, not the ledger. The question does not need them.
   and only then are the rows and files deleted. Every company lookup that is
   not about deleted companies filters them out, in
   `ledger.service.get_company_for_user` and `list_companies`, and so do the
-  two orgnr indexes (`uq_company_open_orgnr`, `uq_company_verified_orgnr`),
-  so deleted books never stop the same orgnr being set up or confirmed. See
+  two orgnr indexes (`uq_company_open_orgnr`, `ix_company_verified_orgnr`),
+  so deleted books never stop the same orgnr being set up, and never trigger
+  the warning that somebody else has confirmed it. See
   [gdpr.md § Deleting a company](gdpr.md#deleting-a-company).
 - **Posted entries are immutable** — corrections are reversals
   (bokføringsloven traceability). That includes the opening balance and a
@@ -1695,8 +1785,14 @@ ordered to store in Norway after a compliance breach.
   rather than dangerous, since no token carries a scope nobody asked for
   ([integrations/maskinporten.md](integrations/maskinporten.md#scopes-to-put-on-the-maskinporten-client)).
 - **Transport/API hardening:** security headers middleware on every response
-  (`core/security.py`), API docs disabled in production, explicit CORS
-  allow-list, `Cache-Control: no-store` on API responses.
+  (`core/security.py`), explicit CORS allow-list, `Cache-Control: no-store` on
+  API responses. The OpenAPI document is served in production too, at
+  `/api/v1/openapi.json` without a credential (since 2026-10-21, not
+  deployed), because it is the reference agents and integrations build against
+  ([agents-and-api.md](agents-and-api.md) rule 11) and says nothing the public
+  source does not. The interactive `/docs` page stays off in production: it
+  loads its script from a CDN and sends requests from a form, which is a
+  development tool's job and not a reference's.
 - **Supply chain:** locked dependencies (uv.lock, pnpm-lock.yaml), Dependabot
   (uv ecosystem supported since 2025), GitHub Actions pinned to commit SHAs,
   secret scanning in CI.
@@ -1714,9 +1810,22 @@ ordered to store in Norway after a compliance breach.
   the OWASP 19 MiB floor); parameters live in the hash, so raising them
   re-hashes users on their next sign-in. Policy is length-only (at least
   `PASSWORD_MIN_LENGTH`, default 10, in `core/config.py`), and login failures
-  throttle per account. There is **no source-based rate limiting** in front of
+  throttle per account; a wrong current password on a change counts towards
+  the same lockout. Hashing runs on its own small thread pool
+  (`auth/passwords.py` `hashed`/`verified`), never on the event loop: at a
+  tenth of a second each, nine logins a second for made-up addresses held
+  every other request in the one process. Request bodies are capped before
+  anything reads them (`core/security.py` `BodySizeLimitMiddleware`: 2 MB
+  JSON, 64 MB for an upload, a SAF-T file's 200 MB on the routes that read
+  one), because FastAPI parses a body before it knows who sent it. There is
+  **no source-based rate limiting** in front of
   the API: `api.myntos.no` is this deployment's own machine behind Caddy, not
   Cloudflare, so no edge does it. If it is needed it belongs in Caddy, not in
-  the application. The one limit the application keeps is per key for agents
-  (agents-and-api.md rule 10), because only the application knows which key a
-  request carries.
+  the application. The application keeps two kinds of limit: per key for
+  agents (agents-and-api.md rule 10), because only the application knows which
+  key a request carries, and a cap on all anonymous feedback together
+  ([feedback.md](feedback.md)), counted from the table, because its senders
+  are deliberately nobody and the cap bounds what a flood can write rather
+  than who may write. The feedback routes are also the one place the
+  application keeps a request out of uvicorn's access log, which otherwise
+  records every client address Caddy forwards.

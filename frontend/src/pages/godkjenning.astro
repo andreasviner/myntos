@@ -15,9 +15,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     Det samme for en KI-assistent og for et skript noen har skrevet mot API-et:
     en nøkkel er en nøkkel, og siden kan ikke se forskjell på dem.
 
-    Å sende mva-meldingen kan ingen nøkkel. En agent kan be om det, og da står
-    det her med en knapp til MVA-siden, der personen sender selv med sin egen
-    ID-porten-innlogging. */}
+    Det en nøkkel sender ut av Myntos, som en kontroll eller en innsending til
+    Skatteetaten, står alltid her først, også fra en nøkkel som får bokføre
+    selv: ingenting forlater programmet uten at personen sier ja. Det går med
+    personens egen ID-porten-innlogging, så kortet ber om den før «Godkjenn»
+    når den mangler. En nøkkel som ikke får bokføre, kan bare be personen
+    sende selv, og da står det her med en knapp til MVA- eller
+    Skattemelding-siden. */}
 
 <BaseLayout
   title="Godkjenning | Myntos"
@@ -62,15 +66,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     approveRequest,
     declineRequest,
     fetchApprovalFile,
+    getGovernmentLoginStatus,
+    governmentLoginStartUrl,
     listApprovals,
     type Approval,
     type Company,
+    type GovernmentLoginStatus,
   } from '../lib/api';
   import {
     approvalHeading,
     approvalStateLabel,
-    isFinal,
+    consequence,
+    filingPage,
     isWaiting,
+    needsLogin,
     outcomeText,
     pageFor,
     requestFields,
@@ -82,6 +91,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
   const pageStatus = el<HTMLParagraphElement>('#page-status');
   let company: Company;
+  // Hentes bare når noe som venter går med ID-porten-innloggingen.
+  let government: Pick<GovernmentLoginStatus, 'available' | 'logged_in'> = {
+    available: false,
+    logged_in: false,
+  };
 
   function node<K extends keyof HTMLElementTagNameMap>(
     tag: K,
@@ -153,14 +167,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     );
     card.append(meta);
 
-    if (approval.kind === 'request' && isFinal(approval)) {
-      card.append(
-        node(
-          'p',
-          'endelig',
-          'Dette kan ikke angres når det er gjort, bare rettes med en ny postering.',
-        ),
-      );
+    const line = consequence(approval);
+    if (line !== null) card.append(node('p', 'endelig', line));
+    if (approval.target.length > 0) {
+      // Hva forespørselen gjelder, slik Myntos leser det i regnskapet. Foran
+      // agentens forklaring, fordi en tilbakeføring ikke har noen kropp: uten
+      // dette sto bilaget den gjelder bare i agentens egne ord.
+      const what = node('div', 'gjelder');
+      what.append(node('p', 'gjelder-hva', 'Gjelder'));
+      for (const text of approval.target) what.append(node('p', '', text));
+      card.append(what);
     }
     if (approval.note !== null) {
       // Agentens egne ord, og derfor merket som det: en agent leser tekst
@@ -188,29 +204,49 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     const actions = node('div', 'knapper');
 
     if (approval.kind === 'filing') {
-      const go = node('a', 'btn btn-primary', 'Gå til MVA-siden');
-      // Rett til terminen, og til riktig melding når selskapet leverer to.
-      const filing = approval.filing;
-      go.href =
-        filing === null
-          ? '/mva/'
-          : `/mva/#${filing.naering ? `${filing.naering}-` : ''}${filing.aar}-${filing.termin}`;
+      // Rett til terminen eller året, og til riktig melding når selskapet
+      // leverer to mva-meldinger.
+      const page = filingPage(approval.filing);
+      const go = node('a', 'btn btn-primary', page.label);
+      go.href = page.href;
       actions.append(go);
+    } else if (needsLogin(approval, government)) {
+      // Innloggingen kommer tilbake til dette kortet, og da er «Godkjenn» der.
+      const login = node('a', 'btn btn-primary', 'Logg inn med ID-porten');
+      login.href = governmentLoginStartUrl(`/godkjenning/#godkjenning-${approval.id}`);
+      actions.append(login);
     } else if (approval.is_own) {
       const approve = node('button', 'btn btn-primary', 'Godkjenn');
       approve.type = 'button';
       approve.addEventListener('click', () => {
         approve.disabled = true;
         approve.textContent = 'Utfører …';
-        void approveRequest(company.id, approval.id)
+        // Filene kortet viste. Agenten kan legge til en mens kortet står åpent,
+        // og ja-et gjelder det som sto på skjermen.
+        const shownFiles = approval.files.map((file) => file.id);
+        void approveRequest(company.id, approval.id, shownFiles)
           .then(async (done) => {
             setStatus(status, outcomeText(done), done.status === 'done' ? 'ok' : undefined);
             await refresh();
           })
-          .catch((error: unknown) => {
+          .catch(async (error: unknown) => {
             approve.disabled = false;
             approve.textContent = 'Godkjenn';
             setStatus(status, error instanceof ApiError ? error.message : 'Det ble ikke utført.');
+            // Innloggingen gikk ut mens siden sto åpen: kortet tilbyr den igjen.
+            if (error instanceof ApiError && error.code === 'id_porten_login_required') {
+              government = { ...government, logged_in: false };
+              await refresh();
+            }
+            // Det har kommet til en fil: kortet tegnes på nytt med den, og
+            // grunnen står på det nye kortet.
+            if (error instanceof ApiError && error.code === 'approval_changed') {
+              await refresh();
+              const fresh = document.getElementById(`godkjenning-${approval.id}`);
+              const freshStatus = fresh?.querySelector<HTMLParagraphElement>('p.status');
+              if (freshStatus) setStatus(freshStatus, error.message);
+              fresh?.scrollIntoView({ block: 'start' });
+            }
           });
       });
       actions.append(approve);
@@ -272,6 +308,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   async function refresh(): Promise<void> {
     const all = await listApprovals(company.id);
     const waiting = all.filter(isWaiting);
+    if (waiting.some((item) => item.needs_id_porten && item.is_own)) {
+      government = await getGovernmentLoginStatus().catch(() => government);
+    }
     const decided = all.filter((item) => !isWaiting(item));
     el('#venter').replaceChildren(...waiting.map(waitingCard));
     show(el('#ingen-venter'), waiting.length === 0);
@@ -352,6 +391,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   .liste :global(.endelig) {
     margin: 0 0 0.6rem;
     font-weight: 600;
+  }
+  .liste :global(.gjelder) {
+    margin: 0 0 0.8rem;
+    overflow-wrap: anywhere;
+  }
+  .liste :global(.gjelder p) {
+    margin: 0;
+  }
+  .liste :global(.gjelder-hva) {
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
   .liste :global(.notat) {
     margin: 0 0 0.8rem;

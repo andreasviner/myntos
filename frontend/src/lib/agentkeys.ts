@@ -145,6 +145,7 @@ const STOPPED_BECAUSE: Record<string, string> = {
   access_off: 'Stoppet: nøkler ble slått av',
   member_removed: 'Stoppet: personen har ikke tilgang lenger',
   password_reset: 'Stoppet: passordet ble tilbakestilt',
+  reclaimed: 'Stoppet: e-postadressen ble bekreftet av eieren',
   bankid: 'Stoppet: kontoen bruker BankID',
   account_deleted: 'Stoppet: kontoen er slettet',
   company_closed: 'Stoppet: selskapet ble slettet',

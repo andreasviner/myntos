@@ -19,7 +19,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
  * publiseres. Se docs/gdpr.md. Det samme gjelder avsnittet om nøkler for
  * KI-agenter (3e2), som er skrevet ut fra docs/agents-and-api.md regel 8.
  */
-const oppdatert = '11. oktober 2026';
+const oppdatert = '22. oktober 2026';
 
 const grunnlag = [
   {
@@ -53,6 +53,11 @@ const grunnlag = [
     basis: 'Avtale, GDPR art. 6(1)(b)',
   },
   {
+    formal: 'Lese tilbakemeldinger om feil, forbedringer og ønsker, og svare på dem',
+    data: 'Teksten, typen, siden og om den kom fra en person eller en KI-agent. Ikke hvem som sendte den',
+    basis: 'Berettiget interesse i å rette feil og gjøre programmet bedre, GDPR art. 6(1)(f)',
+  },
+  {
     formal: 'Behandle regnskapsdataene du legger inn',
     data: 'Bilag, føringer, kunder og leverandører',
     basis: 'Vi er databehandler her, se avsnitt 3d',
@@ -61,9 +66,12 @@ const grunnlag = [
 
 const underleverandorer = [
   {
+    // API-et er ikke her: det kjører på vår egen server i Norge (avsnitt 7,
+    // docs/ARCHITECTURE.md, «Deployment»). Raden sa «Workers-container» til
+    // 2026-10-22, to måneder etter at containeren var lagt ned.
     navn: 'Cloudflare',
-    rolle: 'Drift av nettsted, API og dokumentlager (R2)',
-    sted: 'EØS, der Workers-container og R2-bøtte er opprettet med jurisdiksjon «eu»',
+    rolle: 'Levering av nettstedet myntos.no, og dokumentlageret (R2) der bilagene ligger',
+    sted: 'Dokumentlageret i EØS, i en R2-bøtte opprettet med jurisdiksjon «eu». Nettstedet leveres fra Cloudflares globale nett',
   },
   {
     // Egen rad, fordi stedet er et annet: Cloudflare lover ikke at e-post
@@ -74,7 +82,7 @@ const underleverandorer = [
     sted: 'Cloudflares globale nett; ikke bundet til EØS',
   },
   {
-    navn: 'Løynd (Lindeman Technologies)',
+    navn: 'Løynd',
     rolle: 'KI-forslag: bilag du laster opp (selve filene: PDF-er til tekstuthenting, bilder leses av modellen), offentlige opplysninger om selskapet fra Enhetsregisteret, en frivillig setning du selv skriver om bilaget, og salgsbeskrivelsen du skriver i fakturaskjemaet. Kan slås helt av per selskap. Se avsnitt 3d2 og /ki',
     sted: 'Norge, med inferensservere på norsk jord og ingen lagring',
   },
@@ -392,12 +400,42 @@ const underleverandorer = [
     fordi den ser ut til å være misbrukt.
   </p>
 
+  {/* Avsnittet tilbakemeldingssiden lenker til. Det som står her, er det
+      tabellen feedback i backend/src/myntos/domain/feedback/models.py holder,
+      og det den ikke holder. Se docs/feedback.md. */}
+  <h3 id="tilbakemelding">e3. Tilbakemeldinger</h3>
+  <p>
+    Alle kan sende oss en feil, en forbedring eller et ønske på
+    <a href="/tilbakemelding/">tilbakemeldingssiden</a>, eller med en KI-agent gjennom API-et. Vi
+    lagrer teksten, typen du valgte, siden du skrev inn, tidspunktet, og om avsenderen sa at den var
+    en person eller en KI-agent. Vi lagrer <strong>ikke hvem som sendte den</strong>: ikke kontoen,
+    selv om du er logget inn, ikke selskapet, ikke IP-adressen og ikke nettleseren. Forespørselen
+    skrives heller ikke i serverens logg.
+  </p>
+  <p>
+    Derfor kan vi ikke finne en tilbakemelding igjen for deg. Når du sender den, får du en lenke med
+    en referanse, og med den kan du se svaret vårt og trekke tilbakemeldingen tilbake, som sletter
+    den. Referansen lagres bare som hash. Bare den som drifter Myntos leser teksten. Viser vi en
+    tilbakemelding offentlig, er det med vår egen beskrivelse, aldri med teksten du skrev.
+  </p>
+  <p>
+    Skriver du personopplysninger i teksten, for eksempel navnet ditt eller noe fra et regnskap,
+    blir de lagret som en del av den. Det er derfor skjemaet ber deg la være.
+  </p>
+
   <h3>f. Innlevering til Skatteetaten</h3>
   <p>
     Innlevering skjer med din egen pålogging via <strong>ID-porten</strong>, og innholdet i
     meldingen går til Skatteetaten og Altinn, som selv er behandlingsansvarlige for det de mottar.
     Vi ber aldri om, og lagrer aldri, passordet ditt til ID-porten eller BankID.
-    Funksjonen er under arbeid; se <a href="/funksjoner/">funksjonssiden</a> for status.
+  </p>
+  <p>
+    Med selskapets regnskap lagrer vi det som ble kontrollert og sendt (mva-meldingen eller
+    skattemeldingen med næringsspesifikasjonen), Skatteetatens svar, og hvem som sendte, med navnet
+    ID-porten oppga. Fødselsnummeret ditt lagrer vi ikke med innsendingen; Skatteetatens kvittering
+    navngir deg uansett. Dette er selskapets dokumentasjon av at innleveringen skjedde, og blir
+    stående med regnskapet også om kontoen din slettes. Hva som kan sendes herfra i dag, står på
+    <a href="/funksjoner/">funksjonssiden</a>.
   </p>
 
   <h2>4. Behandlingsgrunnlag</h2>
@@ -476,8 +514,9 @@ const underleverandorer = [
   <h2>7. Hvor dataene lagres</h2>
   <p>
     Databasen ligger i en EØS-region, og bilagsarkivet ligger i en R2-bøtte opprettet med
-    jurisdiksjon «eu», som teknisk holder objektene innenfor EØS. Backend-containeren kjører også
-    med EØS-jurisdiksjon. Dette er valgt fordi norske bokføringsregler stiller krav til hvor
+    jurisdiksjon «eu», som teknisk holder objektene innenfor EØS. API-et, programmet som tar imot
+    og behandler det du gjør i Myntos, kjører på vår egen server i Norge. Dette er valgt fordi
+    norske bokføringsregler stiller krav til hvor
     regnskapsmateriale kan oppbevares, ikke som en preferanse. Vi overfører ikke personopplysninger
     ut av EØS for egne formål.
   </p>
@@ -498,6 +537,11 @@ const underleverandorer = [
       <strong>API-nøkler:</strong> slutter å virke når de stoppes, etter et år, eller etter 30 dager
       uten bruk. Sletter du kontoen, stoppes nøklene dine og programnavnet fjernes. Har nøkkelen ført
       noe, blir navnet den fikk stående på det den førte, som navnet ditt.
+    </li>
+    <li>
+      <strong>Tilbakemeldinger:</strong> til du trekker dem tilbake, eller til ett år etter at vi
+      har markert dem som ferdige eller som noe vi ikke gjør. Det vi fortsatt arbeider med,
+      beholdes til vi er ferdige. Spam slettes når vi ser den.
     </li>
     <li>
       <strong>Øktopplysninger (IP og nettleser):</strong> beholdes en periode etter utlogging
@@ -524,8 +568,9 @@ const underleverandorer = [
     <li>Økt-, invitasjons- og API-nøkler lagres bare som SHA-256-hash.</li>
     <li>
       En API-nøkkel virker bare én gang før den byttes til kortlivede nøkler som fornyes, og en
-      gammel nøkkel som dukker opp igjen stopper hele nøkkelen. Ingen nøkkel kan sende noe til
-      Skatteetaten, flytte penger, endre kontonummer eller endre hvem som har tilgang.
+      gammel nøkkel som dukker opp igjen stopper hele nøkkelen. Alt en nøkkel vil sende ut av
+      Myntos, som en melding til Skatteetaten, venter på at personen godkjenner det, hver gang.
+      Ingen nøkkel kan flytte penger, endre kontonummer eller endre hvem som har tilgang.
     </li>
     <li>All trafikk går over HTTPS, og øktkapselen sendes bare over HTTPS.</li>
     <li>
@@ -577,8 +622,7 @@ const underleverandorer = [
 
   <p class="note">
     Se også <a href="/vilkar/">bruksvilkårene</a> og
-    <a href="/ansvar/">ansvarsfraskrivelsen</a>. Myntos er i beta, og programmet
-    leveres uten garanti.
+    <a href="/ansvar/">ansvarsfraskrivelsen</a>. Programmet leveres uten garanti.
   </p>
 </BaseLayout>
 

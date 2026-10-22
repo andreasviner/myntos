@@ -115,6 +115,23 @@ class Settings(BaseSettings):
     # those should be several requests.
     agent_approval_max_bytes: int = 30 * 1024 * 1024
 
+    # --- Feedback from anybody (docs/feedback.md) ---
+    # Everything that arrives in a rolling hour, from everybody together. The
+    # senders are anonymous, so there is nobody to count one at a time, and a
+    # limit per source address belongs at the edge rather than here (see
+    # ARCHITECTURE.md § Security model). This bounds what a flood can write.
+    feedback_max_per_hour: int = 60
+    # Items nobody has read yet. Past this, new feedback is refused until the
+    # operator has read some: a table nobody reads is not worth filling.
+    feedback_max_unread: int = 500
+    # Who is told that something arrived; unset, nobody is, and the operator
+    # reads the list on the machine. The mail never carries the text.
+    feedback_notify_to: str | None = None
+    # How long an item that is done or declined is kept before the daily job
+    # deletes it. Long enough to be asked about again, short enough that what
+    # strangers wrote is not kept for ever. Open items are kept until closed.
+    feedback_retention_days: int = 365
+
     # --- Outgoing email (optional; nothing below is required to run) ---
     #
     # Two transports, and a deployment picks one by configuring it. Left unset,

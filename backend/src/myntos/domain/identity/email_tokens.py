@@ -47,7 +47,7 @@ from datetime import timedelta
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from myntos.auth.passwords import hash_password, validate_password
+from myntos.auth.passwords import hashed, validate_password
 from myntos.auth.tokens import generate_token, hash_token
 from myntos.core.clock import as_utc, utc_now
 from myntos.core.config import get_settings
@@ -274,8 +274,15 @@ async def reset_password(db: AsyncSession, *, token: str, new_password: str) -> 
             "heller logge inn med e-post og passord, velg «Bytt til innlogging med e-post» "
             "under «Din konto»."
         )
-    user.password_hash = hash_password(new_password)
+    user.password_hash = await hashed(new_password)
     if user.email_verified_at is None:
+        # Until now nobody had shown the address was theirs, so any provider
+        # on the account was linked by whoever made it: a Microsoft login, say,
+        # whose unverified address was this one. A Google or Microsoft login is
+        # matched on its own subject and never on the address, so leaving it
+        # would let the squatter straight back in after the owner had taken
+        # the account back. The owner links their own again from «Din konto».
+        await db.execute(delete(UserIdentity).where(UserIdentity.user_id == user.id))
         user.email_verified_at = utc_now()
     user.failed_login_attempts = 0
     user.locked_until = None
@@ -334,7 +341,7 @@ async def complete_switch_to_email(db: AsyncSession, *, token: str, new_password
             UserIdentity.user_id == user.id, UserIdentity.provider == IdentityProvider.BANKID
         )
     )
-    user.password_hash = hash_password(new_password)
+    user.password_hash = await hashed(new_password)
     if user.email_verified_at is None:
         user.email_verified_at = utc_now()
     user.failed_login_attempts = 0

@@ -18,7 +18,7 @@ test:
 
 lint:
 	cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy src tests
-	cd frontend && pnpm check
+	cd frontend && pnpm check && pnpm build && pnpm check:seo
 
 format:
 	cd backend && uv run ruff check --fix . && uv run ruff format .

@@ -6,7 +6,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   title="Ansvarsfraskrivelse | Myntos"
   description="Vilkår og ansvarsfraskrivelse for bruk av Myntos."
 >
-  <main>
+  {/* En <div> og ikke en <main>: BaseLayout har sidens eneste main-landemerke. */}
+  <div>
     <h1>Ansvarsfraskrivelse og bruksvilkår</h1>
 
     <aside class="disclaimer" role="note" aria-label="Ansvarsfraskrivelse">
@@ -75,11 +76,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
     <h2>6. Lisens</h2>
     <p>
-      Kildekoden er offentlig tilgjengelig, men lisensen er proprietær, og den gir ingen rett til
-      å bruke, kopiere eller videredistribuere koden. Lisensen har sin egen ansvarsfraskrivelse
-      og ansvarsbegrensning (avsnitt 4 og 5). Ved motstrid om selve koden går lisensteksten foran.
+      Kildekoden er offentlig og lisensiert under
+      <a href="https://github.com/andreasviner/myntos/blob/main/LICENSE" rel="noopener">Elastic License 2.0</a>: du kan lese, kjøre, endre og drifte
+      den selv, men ikke tilby Myntos til andre som en driftet tjeneste. Lisensen har sin egen
+      ansvarsfraskrivelse og ansvarsbegrensning (avsnittet «No Liability»). Ved motstrid om selve
+      koden går lisensteksten foran.
     </p>
-  </main>
+  </div>
 </BaseLayout>
 
 <style>

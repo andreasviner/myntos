@@ -59,9 +59,10 @@ changes to their APIs and terms.
 
 ## 6. License
 
-The source code is proprietary — see [LICENSE](LICENSE), whose sections 4 and
-5 contain their own disclaimer of warranty and limitation of liability. In
-case of conflict regarding the code itself, the license text prevails.
+The source code is licensed under the Elastic License 2.0 — see
+[LICENSE](LICENSE), whose «No Liability» section contains its own disclaimer of
+warranty and limitation of liability. In case of conflict regarding the code
+itself, the license text prevails.
 
 ---
 

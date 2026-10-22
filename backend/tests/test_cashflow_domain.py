@@ -287,6 +287,8 @@ def test_valid_orgnr_is_accepted_and_normalised(orgnr: str) -> None:
         "9100000045",  # ten digits
         "91000000a",
         "",
+        "٩٧٤٧٦٠٦٧٣",  # 974760673 in Arabic-Indic digits: a second spelling of a real orgnr
+        "97476067³",  # isdigit() is true, int() is not
     ],
 )
 def test_invalid_orgnr_is_rejected(orgnr: str) -> None:

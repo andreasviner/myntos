@@ -50,8 +50,8 @@ to.
    explains it.
 4. «Alt registeret har om selskapet», below the table, opens everything else
    the register holds: business address, næringskode, when the company was
-   founded, share capital, registered purpose, and «Konkurs» or «Under
-   avvikling» if either applies.
+   founded, share capital, registered purpose, and «Slettet fra
+   Enhetsregisteret», «Konkurs» or «Under avvikling» if any applies.
 
 ## If something stops them
 

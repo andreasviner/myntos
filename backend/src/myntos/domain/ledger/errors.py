@@ -45,12 +45,13 @@ class CompanyOrgnrLockedError(LedgerError):
 class CompanyAlreadyClaimedError(LedgerError):
     """Somebody else has already confirmed ownership of this orgnr.
 
-    Raised only when confirming, never when creating: a second set of books for
-    the same client is legitimate (see :class:`~myntos.domain.ledger.models.Company`),
-    a second *confirmed* one is not. The message says what the person can
-    actually do about it — ask the organization that holds the claim, or keep
-    the unconfirmed books they just made — and deliberately does not name that
-    organization, which they have no membership in.
+    A question rather than a wall. Raised only when confirming, and only until
+    the person says they want to go on anyway (``even_if_claimed``): a second
+    confirmed set of books is allowed, but nobody should end up with one
+    without knowing the first exists, because both can file for the company.
+    The message says what the person can do about it, ask the organization
+    that holds the claim or confirm anyway, and deliberately does not name
+    that organization, which they have no membership in.
     """
 
 

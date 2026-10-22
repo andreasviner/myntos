@@ -50,4 +50,9 @@ describe('isIndexable', () => {
     expect(isIndexable('/kom-i-gang/fiken')).toBe(true);
     expect(isIndexable('/')).toBe(true);
   });
+
+  it('indexes every comparison with another program', () => {
+    expect(isIndexable('/sammenlign/')).toBe(true);
+    expect(isIndexable('/sammenlign/tripletex/')).toBe(true);
+  });
 });

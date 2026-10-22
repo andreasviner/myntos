@@ -66,6 +66,10 @@ class RegisteredUnitResponse(BaseModel):
     registered_in_foretaksregisteret_on: str | None
     registered_in_vat_register_on: str | None
     last_submitted_annual_accounts: str | None
+    # The day the register deleted the unit, as an ISO date; null for a live
+    # one. A deleted unit is answered rather than refused, with little more
+    # than its name and form: its last skattemelding is still owed.
+    deleted_on: str | None = None
     parent_orgnr: str | None
     in_group: bool
     employees: int | None
@@ -108,6 +112,14 @@ async def lookup_unit(orgnr: str, _user: CurrentUser) -> RegisteredUnitResponse:
     The check digit is verified here rather than left to the register, so a
     mistyped number comes back as "that is not a valid number" (422) instead of
     the far more confusing "no such company".
+
+    A unit the register has deleted is answered with ``deleted_on`` set and
+    little else besides its name and organisation form. Show it as deleted
+    («slettet»): it is not a company to invoice, but it may still be one to set
+    books up for, because a deleted aksjeselskap owes the skattemelding for its
+    last year. 404 ``unit_not_found`` for a number the register has never held;
+    410 ``unit_deleted`` when the register answers a deleted unit in its older
+    way, without a name.
     """
     unit = await brreg.lookup_unit(validate_orgnr(orgnr))
     # Spelled out as a mapping rather than field by field because the response

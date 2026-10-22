@@ -23,7 +23,7 @@ is its code.
 | --- | --- |
 | Email address, password hash, lockout counters, confirmation, reset and switch-to-e-mail links, and the record of each "you sign in with BankID" mail (`user_email_token`) | Posted vouchers (`gl_transaction`), with `created_by_user_id` |
 | Linked Google / Microsoft / BankID identities (`user_identity`), and unfinished links to one (`oauth_login_attempt.user_id`) | The bilag archive (`bilag_attachment`), with `uploaded_by_user_id` |
-| The ID-porten link and its fødselsnummer (`user_government_identity`) | MVA filings, with who validated and who submitted them, and who recorded a term as filed from another program or took that back (`mva_filing_elsewhere.withdrawn_by_user_id`) |
+| The ID-porten link and its fødselsnummer (`user_government_identity`) | MVA and skattemelding filings (`mva_filing`, `skattemelding_filing`), with who checked and who submitted them, and who recorded a term as filed from another program or took that back (`mva_filing_elsewhere.withdrawn_by_user_id`). A deleted company's stored answers from Skatteetaten (`skattemelding_filing_document`, like `mva_filing_document`) go with its books at the purge |
 | Government login attempts, which carry a pid and a sealed token | Who confirmed a company's ownership in Altinn (`company.verified_by_user_id`) |
 | Every session, with its IP address and user agent | Salgsdokumenter, parties, opening balances |
 | | Imported bank statements and who imported them (`bank_statement_file.uploaded_by_user_id`), and who confirmed a bank match (`bank_statement_line.matched_by_user_id`) |
@@ -115,6 +115,18 @@ User-Agent it sent) is what the Tilgang page shows so a person can tell their
 own agent from somebody else's. Coarse on screen like the session list, and
 cleared on erasure, since only the person could ask what it was.
 
+## Feedback is nobody's
+
+What anybody sends through `/tilbakemelding/` or `/api/v1/tilbakemeldinger`
+is stored without a name ([feedback.md](feedback.md)): `feedback` has no
+column that points at `app_user`, and the route never reads the session that
+came with the request. So erasing an account has nothing to delete there, and
+nothing there could be found by a person's name anyway. The sender's right to
+erasure is the reference they were given, which withdraws the item; a sender
+who lost it asks kontakt@myntos.no, and the operator deletes what they
+describe once it is found. Text a sender typed about themselves stays until
+then, or until the item is deleted a year after it was closed.
+
 ## When deletion is refused
 
 Never half-done. Erasure is refused, with a message naming each company and
@@ -132,8 +144,9 @@ needs:
 
 Books with **nothing entered and nobody else on them** are deleted with the
 account: there is nothing to keep, and leaving them would leave an unopenable
-company holding a confirmed claim on an orgnr (`uq_company_verified_orgnr`),
-which would stop its real owner setting up books.
+company holding a confirmed claim on an orgnr, which would greet its real
+owner with «Selskapet er allerede registrert» when they confirm their own
+books.
 
 Books with entries that nobody will take over have a third way out: the owner
 **deletes the company** first (below), and the refusal says so. Books already
@@ -181,7 +194,10 @@ So deleting a company is one of two things:
 and the last financial year with a voucher in it (`closure.retention_end`).
 This year because anything entered up to today belongs to a year no later than
 this one; the last voucher year because a voucher may be dated ahead. Financial
-years in Myntos are calendar years. The date is the date in Norway, not UTC:
+years in Myntos are calendar years, except a dissolved company's last, which
+ends on its last day (`company.wound_up_on`); keeping it to 31 December of that
+year's fifth year keeps it a little longer than the law asks, never shorter.
+The date is the date in Norway, not UTC:
 deleted at 00:30 on 1 January, a company has entered something in the new year.
 
 **Locked means**, all at once, in `closure.close_company`:
@@ -194,9 +210,10 @@ deleted at 00:30 on 1 January, a company has entered something in the new year.
   files, and `agent_access_enabled` is switched off;
 - uploaded SAF-T import files are emptied (they are a working copy, and the
   14-day sweep only runs when somebody reads the import);
-- the confirmed claim on the orgnr is released: `uq_company_verified_orgnr`
-  binds open companies only, so whoever runs the business next can confirm
-  it in their own books.
+- the confirmed claim on the orgnr stops counting: the warning that
+  somebody else has confirmed it (`ix_company_verified_orgnr`) asks about
+  open companies only, so whoever runs the business next confirms it in
+  their own books without being told about these.
 
 Refused while a SAF-T import is being read or posted into the books.
 
@@ -213,10 +230,10 @@ made-up number from a real one.
 «Slettede selskaper» card on `/konto/`) until the purge. Only the books come
 back; colleagues, keys and the agent switch do not. Refused, `reopen_blocked`,
 when new books for the same orgnr have been set up in the account since
-(delete those first), or somebody has confirmed the same orgnr in other books
-meanwhile: two open
-confirmed claims is what the index forbids, and which one is right is not
-Myntos's to decide. This is what makes locking rather than deleting worth it:
+(delete those first). Somebody having confirmed the same orgnr in other books
+meanwhile does not block it: more than one confirmed claim on an orgnr is
+allowed, and these books' own confirmation was made through Altinn like the
+other's. This is what makes locking rather than deleting worth it:
 SAF-T is the company's copy of the entries, but it carries no bilag, so a
 company that left Myntos and is asked for a receipt by a bokettersyn three
 years later gets it by opening the books again.

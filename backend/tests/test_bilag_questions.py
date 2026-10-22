@@ -96,6 +96,36 @@ def test_somebody_who_has_already_explained_is_not_asked_to_explain() -> None:
     assert not any("innskudd fra eier" in question.text for question in asked)
 
 
+def test_a_purchase_with_no_category_is_asked_what_it_was() -> None:
+    """With nothing written about it, both halves are missing."""
+    asked = compose(
+        suggestion(gross_amount=Decimal("499.00"), type_code=None),
+        InvoiceReading(),
+    )
+    category = next(q for q in asked if q.key == questions.CATEGORY)
+    assert category.text == "Hva ble kjøpt, og hva bruker selskapet det til?"
+
+
+def test_a_described_purchase_is_asked_only_what_it_is_for() -> None:
+    """«Hva ble kjøpt?» under «kjøpte skjermkort på finn» asks for the sentence
+    again. Whoever wrote the description, the model or the person, it says what
+    was bought; what the company uses it for is the half still missing."""
+    by_the_model = compose(
+        suggestion(
+            gross_amount=Decimal("25278.00"), type_code=None, description="Kjøp av to grafikkort"
+        ),
+        InvoiceReading(),
+    )
+    by_the_person = compose(
+        suggestion(gross_amount=Decimal("25278.00"), type_code=None),
+        InvoiceReading(),
+        has_note=True,
+    )
+    for asked in (by_the_model, by_the_person):
+        category = next(q for q in asked if q.key == questions.CATEGORY)
+        assert category.text == "Hva bruker selskapet dette til?"
+
+
 def test_two_vat_rates_are_asked_about_rather_than_resolved() -> None:
     """One entry carries one code. Which one is not ours to decide."""
     asked = compose(

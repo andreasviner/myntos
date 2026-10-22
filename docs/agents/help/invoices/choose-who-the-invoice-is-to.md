@@ -36,8 +36,9 @@ an address or an organisation number; a name alone is not enough.
    - For a business, type its nine-digit number in «Organisasjonsnummer». The
      page says «Slår opp i Enhetsregisteret …» and fills in «Navn»,
      «Adresse», «Postnummer» and «Poststed» from the register. The line under
-     the number shows the registered name and form, and says «registrert
-     konkurs» or «under avvikling» if that is the case.
+     the number shows the registered name and form, and says «slettet fra
+     Enhetsregisteret …», «registrert konkurs» or «under avvikling» if that is
+     the case. A deleted company no longer exists to pay the invoice.
    - For a private person, type «Navn», «Adresse», «Postnummer» and
      «Poststed», and untick «Kjøperen er bokføringspliktig
      (næringsdrivende)».

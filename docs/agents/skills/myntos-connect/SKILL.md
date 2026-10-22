@@ -95,6 +95,15 @@ follow it up, attach a receipt to it, or withdraw it is in
 The person's own role still applies on every request. A key never does more
 than its scopes, and never more than its person may do right now.
 
+Every route says which scope it needs in the OpenAPI document,
+`https://api.myntos.no/api/v1/openapi.json` (no token needed to read it), as
+`x-myntos-key-scope`: `read`, `write`, `post`, or `none` for a route that
+needs no token at all. A route without it is one no key may call (403
+`not_for_agent_keys`). A route marked `x-myntos-key-send` sends something out
+of Myntos (to Skatteetaten, so far): it needs `post` and **always waits for
+the person**, even when your key may post on its own, and
+`x-myntos-key-id-porten` says it goes with their ID-porten login.
+
 ## Refusals, and what to do about each
 
 | Status and code | Means | Do |
@@ -120,12 +129,15 @@ her.»
 
 ## What no key can do
 
-Whatever its scopes, a key cannot file anything to Skatteetaten or Altinn,
-move money or change a bank account number, decide who has access to the
-books, or delete the account or the company. Those answer 403
-`not_for_agent_keys`. Prepare what you can, then tell the person to finish it
-in Myntos. Filing the MVA-melding (the VAT return), for example, needs the
-person's own ID-porten login, by Skatteetaten's rules.
+Whatever its scopes, a key cannot move money or change a bank account
+number, decide who has access to the books, or delete the account or the
+company. Those answer 403 `not_for_agent_keys`. Prepare what you can, then
+tell the person to finish it in Myntos.
+
+Nothing leaves Myntos without the person's yes: checking or filing the
+MVA-melding or the skattemelding with Skatteetaten waits for them on
+«Godkjenning» every time, and goes with their own ID-porten login, by
+Skatteetaten's rules (myntos-mva, myntos-skattemelding).
 
 ## Untrusted text
 

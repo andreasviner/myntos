@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from myntos.core.clock import utc_now
 from myntos.domain.identity import closure
+from myntos.domain.ledger import service as ledger_service
 from myntos.storage.local import LocalDocumentStorage
 from tests.conftest import PASSWORD, agent_header, join_company, register, write
 from tests.test_cashflow_api import PDF_BYTES, create_company, record, upload
@@ -79,6 +80,20 @@ def close(
         f"/api/v1/companies/{company_id}/sletting",
         json={"password": password, "company_name": name},
     )
+
+
+def claimed_elsewhere(database_url: str, orgnr: str, *, user_id: int) -> set[str]:
+    """Whether ``orgnr`` would warn ``user_id`` that somebody else has confirmed it."""
+
+    async def go() -> set[str]:
+        engine = create_async_engine(database_url)
+        try:
+            async with async_sessionmaker(engine)() as db:
+                return await ledger_service.claimed_elsewhere(db, [orgnr], user_id=user_id)
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(go())
 
 
 def purge(database_url: str, storage_root: Path, today: date) -> list[int]:
@@ -356,9 +371,14 @@ def test_nobody_else_can_open_them_and_nobody_can_open_open_books(client: TestCl
 
 
 def test_deleting_gives_up_the_confirmed_claim_on_the_orgnr(
-    client: TestClient, database: sa.Engine
+    client: TestClient, database: sa.Engine, database_url: str
 ) -> None:
-    """Whoever runs the business next must be able to confirm it, and then it is theirs."""
+    """Whoever runs the business next confirms it without a warning about these books.
+
+    And the deleted books still open again afterwards, still confirmed: a
+    second confirmed claim on an orgnr is allowed, and nothing about the other
+    account's confirmation makes these books' Altinn proof any less true.
+    """
     company = books_of(client)
     record(client, company["id"], type_code="varekjop", gross_amount="100.00")
     run(
@@ -369,10 +389,12 @@ def test_deleting_gives_up_the_confirmed_claim_on_the_orgnr(
     )
     assert close(client, company["id"]).status_code == 200
 
-    # Another account confirms the same orgnr: the index lets it, because the
-    # deleted books no longer hold it.
+    # Another account asks about the same orgnr: the deleted books do not count
+    # as somebody else's claim, so nobody is warned about them.
     write(client, "POST", "/api/v1/auth/logout")
     theirs = books_of(client, PER)
+    per = scalar(database, "SELECT id FROM app_user WHERE email = :e", e=PER)
+    assert claimed_elsewhere(database_url, company["orgnr"], user_id=per) == set()
     run(
         database,
         "UPDATE company SET verified_at = :t WHERE id = :c",
@@ -381,10 +403,12 @@ def test_deleting_gives_up_the_confirmed_claim_on_the_orgnr(
     )
 
     sign_in(client, KARI)
-    blocked = write(client, "POST", f"/api/v1/companies/slettede/{company['id']}/gjenapne")
-    assert blocked.status_code == 409
-    assert blocked.json()["code"] == "reopen_blocked"
-    assert [c["id"] for c in client.get("/api/v1/companies/slettede").json()] == [company["id"]]
+    reopened = write(client, "POST", f"/api/v1/companies/slettede/{company['id']}/gjenapne")
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["verified"] is True
+    assert client.get("/api/v1/companies/slettede").json() == []
+    # Open again, the claim counts again, from where Per stands.
+    assert claimed_elsewhere(database_url, company["orgnr"], user_id=per) == {company["orgnr"]}
 
 
 def test_the_same_orgnr_can_be_set_up_again_while_the_deleted_books_are_kept(

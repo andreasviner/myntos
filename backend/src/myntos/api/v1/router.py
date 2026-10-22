@@ -16,6 +16,7 @@ from myntos.api.v1 import (
     dimensjoner,
     enhetsregisteret,
     faktura,
+    feedback,
     health,
     kontoplan,
     landbruk,
@@ -30,7 +31,9 @@ from myntos.api.v1 import (
     saft,
     saft_import,
     saft_innlesing,
+    saft_vedlegg,
     skatt,
+    skattemelding,
     sletting,
 )
 
@@ -48,9 +51,11 @@ api_router.include_router(faktura.router)
 api_router.include_router(enhetsregisteret.router)
 api_router.include_router(skatt.router)
 api_router.include_router(mva.router)
+api_router.include_router(skattemelding.router)
 api_router.include_router(saft.router)
 api_router.include_router(saft_import.router)
 api_router.include_router(saft_innlesing.router)
+api_router.include_router(saft_vedlegg.router)
 api_router.include_router(bilag.router)
 api_router.include_router(regnskap.router)
 api_router.include_router(account.router)
@@ -65,3 +70,4 @@ api_router.include_router(landbruk_arsoppgjor.router)
 api_router.include_router(mva_justering.router)
 api_router.include_router(agent.router)
 api_router.include_router(approvals.router)
+api_router.include_router(feedback.router)

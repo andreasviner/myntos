@@ -79,6 +79,19 @@ class FinancialYearNotFoundError(ArsoppgjorError):
     """The company keeps no such financial year in Myntos."""
 
 
+class WindingUpConflictError(ArsoppgjorError):
+    """The books cannot end on that day, or stop being ended, in the state they are in (409).
+
+    The year is closed, something is dated after the day, a later year exists,
+    the books already end on another day, or a forhåndsfastsetting has been
+    filed for the year. The message says which.
+    """
+
+
+class InvalidWindingUpDateError(ArsoppgjorError):
+    """The day itself cannot be a last day: in the future, or the year's first day (422)."""
+
+
 # --- The farm's count and private uttak (landbruk) -----------------------------------
 #
 # Two bases carry the status codes (myntos.api.errors), and each refusal is its

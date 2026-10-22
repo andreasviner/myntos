@@ -777,7 +777,9 @@ async def issue(
     if blocking:
         raise InvoiceNotCompliantError(blocking)
 
-    financial_year = await ledger_service.ensure_financial_year(db, company, issue_date.year)
+    financial_year = await ledger_service.ensure_financial_year(
+        db, company, issue_date.year, on=issue_date
+    )
     document.document_number = await _next_document_number(db, company)
     document.issue_date = issue_date
     document.issued_at = now or utc_now()
@@ -999,7 +1001,7 @@ async def _reverse_voucher(
     have been reported would restate an MVA-melding that was correct when filed.
     """
     original = await ledger_service.get_voucher(db, company=company, voucher_pk=original_pk)
-    financial_year = await ledger_service.ensure_financial_year(db, company, on.year)
+    financial_year = await ledger_service.ensure_financial_year(db, company, on.year, on=on)
     journal = await _sales_journal(db, company)
     reversal = posting.build_reversal(
         original,

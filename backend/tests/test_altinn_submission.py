@@ -31,6 +31,7 @@ from myntos.integrations.altinn.instances import (
     AltinnInstanceError,
     AppInstanceClient,
     InstanceRef,
+    content_disposition,
 )
 from myntos.integrations.altinn.tokens import (
     AltinnAuthError,
@@ -373,7 +374,7 @@ async def test_an_unnamed_upload_still_carries_content_disposition(
         content_type="text/xml",
     )
     _, _, _, disposition = altinn.uploads[-1]
-    assert disposition == ('attachment; filename="skattemeldingOgNaeringsspesifikasjon.xml"')
+    assert disposition == "attachment; filename=skattemeldingOgNaeringsspesifikasjon.xml"
 
 
 async def test_a_named_upload_keeps_the_name_it_was_given(altinn: StubAltinn) -> None:
@@ -391,7 +392,21 @@ async def test_a_named_upload_keeps_the_name_it_was_given(altinn: StubAltinn) ->
         filename="bilag-42.pdf",
     )
     _, _, _, disposition = altinn.uploads[-1]
-    assert disposition == 'attachment; filename="bilag-42.pdf"'
+    assert disposition == "attachment; filename=bilag-42.pdf"
+
+
+def test_a_bare_filename_unless_the_name_needs_quotes() -> None:
+    """Skatteetaten refuses ``filename="skattemelding.xml"`` for the envelope.
+
+    Its guide for the skattemelding app gives the header as
+    ``attachment; filename=skattemelding.xml`` and says the quoted form fails.
+    RFC 6266 allows the bare form only for token characters, so a name a
+    person gave a file keeps its quotes, escaped.
+    """
+    assert content_disposition("skattemelding.xml") == "attachment; filename=skattemelding.xml"
+    assert content_disposition('Kvittering "mars".pdf') == (
+        'attachment; filename="Kvittering \\"mars\\".pdf"'
+    )
 
 
 # --- Skattemelding ----------------------------------------------------------------
@@ -411,10 +426,12 @@ class StubSkatteetaten:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
         self.tokens: list[str | None] = []
+        self.content_types: list[str | None] = []
         self.status = httpx.codes.OK
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.calls.append((request.method, request.url.path))
+        self.content_types.append(request.headers.get("content-type"))
         authorization = request.headers.get("authorization", "")
         self.tokens.append(authorization.removeprefix("Bearer "))
         if self.status != httpx.codes.OK:
@@ -468,6 +485,19 @@ async def test_validation_keeps_the_whole_answer(skatteetaten: StubSkatteetaten)
     assert skatteetaten.calls[0][1] == f"/api/skattemelding/v2/valider/2025/{PID}"
 
 
+async def test_validation_is_sent_as_application_xml(skatteetaten: StubSkatteetaten) -> None:
+    """The opposite of the Altinn upload, and TT02 says so with a 415.
+
+    ``/valider`` answered 415 "Content-Type 'text/xml' is not supported" the
+    first time a skattemelding was validated live (2026-10-21), while the same
+    envelope is uploaded to Altinn as ``text/xml``.
+    """
+    await _skattemelding(StubTokenProvider()).validate(
+        inntektsaar=2025, identifier=PID, payload=b"<envelope/>"
+    )
+    assert skatteetaten.content_types == ["application/xml"]
+
+
 async def test_a_rejected_call_reports_the_status_and_the_body(
     skatteetaten: StubSkatteetaten,
 ) -> None:
@@ -481,10 +511,12 @@ async def test_the_envelope_is_uploaded_as_text_xml(altinn: StubAltinn) -> None:
     client = _skattemelding(StubTokenProvider())
     ref = InstanceRef.parse(INSTANCE_ID)
     await client.upload_envelope(ref, altinn_token="altinn-token", envelope=b"<envelope/>")
-    data_type, content_type, content, _ = altinn.uploads[0]
+    data_type, content_type, content, disposition = altinn.uploads[0]
     assert data_type == ENVELOPE_DATA_TYPE
     assert content_type == "text/xml"
     assert content == b"<envelope/>"
+    # The name Skatteetaten's guide gives it, bare: the quoted form is refused.
+    assert disposition == "attachment; filename=skattemelding.xml"
 
 
 async def test_the_income_year_travels_with_the_instance(altinn: StubAltinn) -> None:
@@ -513,6 +545,21 @@ async def test_the_income_year_travels_with_the_instance(altinn: StubAltinn) -> 
         )
     assert captured["dataValues"] == {"inntektsaar": "2025"}
     assert captured["instanceOwner"] == {"personNumber": PID}
+
+    # A company with a revisor: the step exists only on an instance made with it.
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            instances_module,
+            "_client",
+            lambda: httpx.AsyncClient(transport=httpx.MockTransport(recording)),
+        )
+        await client.create_instance(
+            altinn_token="altinn-token",
+            inntektsaar=2025,
+            organisation_number=ORGNR,
+            skal_bekreftes_av_revisor=True,
+        )
+    assert captured["dataValues"] == {"inntektsaar": "2025", "skalBekreftesAvRevisor": "true"}
 
 
 async def test_a_person_authenticated_call_goes_to_the_id_porten_host(
@@ -571,7 +618,7 @@ async def test_skattemelding_attachments_use_the_vedlegg_data_type(
     )
     data_type, _, _, disposition = altinn.uploads[0]
     assert data_type == ATTACHMENT_DATA_TYPE
-    assert disposition == 'attachment; filename="bilag.pdf"'
+    assert disposition == "attachment; filename=bilag.pdf"
 
 
 async def test_submitting_a_skattemelding_uses_the_person_s_token(
@@ -609,8 +656,10 @@ async def test_the_skattemelding_feedback_document_is_fetched_by_its_own_name(
     altinn.downloads["feedback-1"] = b"<svar/>"
 
     client = _skattemelding(StubTokenProvider())
-    document = await client.feedback(InstanceRef.parse(INSTANCE_ID), altinn_token="person-token")
-    assert document == b"<svar/>"
+    answer = await client.feedback(InstanceRef.parse(INSTANCE_ID), altinn_token="person-token")
+    assert answer.content == b"<svar/>"
+    assert answer.element is not None
+    assert answer.element.data_type == FEEDBACK_DATA_TYPE
 
 
 async def test_missing_skattemelding_feedback_is_none_rather_than_an_error(
@@ -622,9 +671,9 @@ async def test_missing_skattemelding_feedback_is_none_rather_than_an_error(
     polling for it should not have to catch an exception to discover that.
     """
     client = _skattemelding(StubTokenProvider())
-    assert (
-        await client.feedback(InstanceRef.parse(INSTANCE_ID), altinn_token="person-token") is None
-    )
+    answer = await client.feedback(InstanceRef.parse(INSTANCE_ID), altinn_token="person-token")
+    assert answer.content is None
+    assert answer.element is None
 
 
 # --- MVA-melding ------------------------------------------------------------------
@@ -691,7 +740,7 @@ async def test_the_envelope_is_filled_in_before_the_melding_goes_up(altinn: Stub
     assert altinn.replacements == [("envelope-1", "application/xml", b"<mvaMeldingInnsending/>")]
     assert [data_type for data_type, _, _, _ in altinn.uploads] == [MELDING_DATA_TYPE]
     # The vedlegg list in the envelope names this file, and Altinn compares.
-    assert 'filename="mva-melding.xml"' in (altinn.uploads[0][3] or "")
+    assert "filename=mva-melding.xml" in (altinn.uploads[0][3] or "")
     order = [call for call in altinn.calls if "/data" in call[1]]
     assert order[0][0] == "PUT"
     assert order[1][0] == "POST"

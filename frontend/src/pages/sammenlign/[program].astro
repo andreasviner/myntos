@@ -1,0 +1,361 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import {
+  lovkilder,
+  myntosFelles,
+  sammenligninger,
+  SJEKKET,
+  type Sammenligning,
+} from '../../data/sammenligning';
+
+/**
+ * Én side per program Myntos er sammenlignet med. Innholdet ligger i
+ * data/sammenligning.ts, som også bygger oversiktssiden, så de to kan ikke si
+ * forskjellige ting om samme program.
+ *
+ * Rekkefølgen på siden er rekkefølgen spørsmålene kommer i: hva koster det,
+ * hva mister jeg, hva får jeg, og passer det meg. Det programmet har som Myntos
+ * ikke har, står før det Myntos har som programmet ikke har, med vilje.
+ */
+export function getStaticPaths() {
+  return sammenligninger.map((s) => ({ params: { program: s.slug }, props: { s } }));
+}
+
+interface Props {
+  s: Sammenligning;
+}
+
+const { s } = Astro.props;
+const andre = sammenligninger.filter((other) => other.slug !== s.slug);
+const url = `https://myntos.no/sammenlign/${s.slug}/`;
+
+const sjekketNorsk = new Date(SJEKKET).toLocaleDateString('nb-NO', {
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+});
+
+/* Stien øverst, som strukturerte data, bygget av de samme navnene siden viser. */
+const schema = [
+  {
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Myntos', item: 'https://myntos.no/' },
+      { '@type': 'ListItem', position: 2, name: 'Sammenlign', item: 'https://myntos.no/sammenlign/' },
+      { '@type': 'ListItem', position: 3, name: `Myntos eller ${s.navn}?`, item: url },
+    ],
+  },
+];
+---
+
+<BaseLayout title={`${s.tittel} | Myntos`} description={s.beskrivelse} width="wide" schema={schema}>
+  <nav class="crumbs" aria-label="Brødsmuler">
+    <a href="/sammenlign/">Sammenlign</a>
+    <span aria-hidden="true">/</span>
+    <span>{s.navn}</span>
+  </nav>
+
+  <div class="head">
+    <h1>Myntos eller {s.navn}?</h1>
+    <p class="lead">{s.ingress}</p>
+  </div>
+
+  <h2 class="first">Hva det koster</h2>
+  <div class="card table-card">
+    <div class="table-scroll">
+      <table class="data compare">
+        <caption class="visually-hidden">Priser i Myntos og {s.navn}</caption>
+        <thead>
+          <tr>
+            <th scope="col"></th>
+            <th scope="col">Myntos</th>
+            <th scope="col">{s.navn}, eks. mva</th>
+          </tr>
+        </thead>
+        <tbody>
+          {
+            s.priser.map((rad) => (
+              <tr>
+                <th scope="row">{rad.hva}</th>
+                <td data-label="Myntos">{rad.myntos}</td>
+                <td data-label={`${s.navn}, eks. mva`}>{rad.dem}</td>
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <p class="sum">{s.regnestykke.dem}</p>
+  <p class="sum">{s.regnestykke.myntos}</p>
+
+  <div class="columns">
+    <section class="card" aria-labelledby="dem-foran">
+      <h2 class="card-title" id="dem-foran">Det {s.navn} har som Myntos ikke har ennå</h2>
+      <ul>
+        {s.demForan.map((punkt) => <li>{punkt}</li>)}
+      </ul>
+    </section>
+    <section class="card" aria-labelledby="myntos-annerledes">
+      <h2 class="card-title" id="myntos-annerledes">Det som er annerledes i Myntos</h2>
+      <ul class="ticks">
+        {[...myntosFelles, ...s.myntosAnnerledes].map((punkt) => <li>{punkt}</li>)}
+      </ul>
+    </section>
+  </div>
+
+  <h2>Hva passer for deg?</h2>
+  <div class="columns">
+    <div>
+      <h3>Myntos passer hvis</h3>
+      <ul>
+        {s.velgMyntos.map((punkt) => <li>{punkt}</li>)}
+      </ul>
+    </div>
+    <div>
+      <h3>{s.navn} passer bedre hvis</h3>
+      <ul>
+        {s.velgDem.map((punkt) => <li>{punkt}</li>)}
+      </ul>
+    </div>
+  </div>
+  <p class="muted">
+    Alt Myntos gjør, og det som ikke er bygget ennå, står på
+    <a href="/funksjoner/">funksjonssiden</a>.
+  </p>
+
+  <h2>Flytte fra {s.navn}</h2>
+  <p>
+    {s.navn} gir deg regnskapet som SAF-T-filer, én per år. Last dem opp i Myntos, så kommer
+    kontoene, kundene og leverandørene, inngående balanse og bilagene med, også for tidligere år.
+    <a href={s.flytteguide}>Se flytteguiden for {s.navn}</a>, med menyveiene og det du bør laste
+    ned før du sier opp.
+  </p>
+
+  <h2>Kilder</h2>
+  <p class="muted kilde-intro">
+    Prisene er hentet fra {s.navn} sine egne sider {sjekketNorsk}. Priser endrer seg, så sjekk
+    kildene før du bestemmer deg: de er alltid ferskere enn vi er.
+  </p>
+  <ul class="kilder">
+    {
+      [...s.kilder, ...lovkilder].map((kilde) => (
+        <li>
+          <a href={kilde.href} rel="noopener nofollow" target="_blank">
+            {kilde.tekst}
+          </a>
+        </li>
+      ))
+    }
+  </ul>
+
+  {
+    andre.length > 0 && (
+      <>
+        <h2>Andre sammenligninger</h2>
+        <div class="andre">
+          {andre.map((other) => (
+            <a class="chip" href={`/sammenlign/${other.slug}/`}>
+              Myntos eller {other.navn}?
+            </a>
+          ))}
+        </div>
+      </>
+    )
+  }
+
+  <div class="cta card">
+    <div>
+      <h2 class="cta-title">Prøv Myntos ved siden av {s.navn}</h2>
+      <p class="card-hint">
+        Gratis for alltid, uten betalingsopplysninger. Last opp SAF-T-filene fra {s.navn}, så ser
+        du ditt eget regnskap i Myntos før du sier opp noe.
+      </p>
+    </div>
+    <a class="btn btn-primary btn-large" href="/registrer/">Opprett konto</a>
+  </div>
+</BaseLayout>
+
+<style>
+  .crumbs {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.86rem;
+    color: var(--faint);
+    padding-top: 0.5rem;
+  }
+  .crumbs a {
+    color: var(--muted);
+    text-decoration: none;
+  }
+  .crumbs a:hover {
+    color: var(--fg-strong);
+  }
+  .head {
+    max-width: 44rem;
+    padding: 1rem 0 0.5rem;
+  }
+  h2 {
+    margin-top: 2.6rem;
+  }
+  h2.first {
+    margin-top: 1.5rem;
+  }
+  .table-card {
+    padding: 0.25rem 0.5rem;
+  }
+  /* Radoverskriften er spørsmålet, de to cellene svaret: venstre kolonne leses
+     først og skal ikke krympe til ett ord per linje på en smal skjerm. */
+  .compare th[scope='row'] {
+    font-weight: 650;
+    color: var(--fg-strong);
+    min-width: 9rem;
+    /* Tabellens egen overskriftsstil er store bokstaver; ti rader med det er
+       tyngre å lese enn spørsmålene fortjener. */
+    text-transform: none;
+    letter-spacing: normal;
+    font-size: 0.92rem;
+  }
+  .compare td {
+    min-width: 10rem;
+  }
+  /* På en telefon får tre kolonner ikke plass, og en tabell som må rulles
+     sidelengs skjuler nettopp kolonnen med det andre programmet. Hver rad blir
+     da en blokk: spørsmålet, og under det de to svarene med navn på. */
+  @media (width < 40rem) {
+    .compare thead {
+      display: none;
+    }
+    .compare,
+    .compare tbody,
+    .compare tr,
+    .compare th,
+    .compare td {
+      display: block;
+      min-width: 0;
+    }
+    .compare tr {
+      padding: 0.75rem 0.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .compare tbody tr:last-child {
+      border-bottom: 0;
+    }
+    .compare th[scope='row'],
+    .compare td {
+      padding: 0;
+      border: 0;
+    }
+    .compare td {
+      margin-top: 0.4rem;
+    }
+    .compare td::before {
+      content: attr(data-label);
+      display: block;
+      color: var(--muted);
+      font-size: 0.75rem;
+      font-weight: 650;
+    }
+  }
+  .sum {
+    max-width: 48rem;
+    color: var(--muted);
+    margin: 0.9rem 0 0;
+  }
+  .columns {
+    display: grid;
+    gap: 1.25rem 2.5rem;
+    grid-template-columns: repeat(auto-fit, minmax(min(22rem, 100%), 1fr));
+    align-items: start;
+    margin-top: 2rem;
+  }
+  /* `.card + .card` gir det andre kortet en toppmarg som skyver det ned i rutenettet. */
+  .columns > .card {
+    margin-top: 0;
+  }
+  .columns .card-title {
+    margin-top: 0;
+  }
+  .columns ul {
+    padding-left: 1.2rem;
+    margin: 0.8rem 0 0;
+    display: grid;
+    gap: 0.45rem;
+  }
+  .columns ul.ticks {
+    list-style: none;
+    padding: 0;
+  }
+  .ticks li {
+    position: relative;
+    padding-left: 1.6rem;
+  }
+  .ticks li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.55em;
+    width: 0.7rem;
+    height: 0.38rem;
+    border-left: 2px solid var(--accent);
+    border-bottom: 2px solid var(--accent);
+    transform: rotate(-45deg);
+  }
+  .columns h3 {
+    margin: 0;
+  }
+  .kilde-intro {
+    max-width: 44rem;
+  }
+  .kilder {
+    padding-left: 1.1rem;
+    margin: 0.8rem 0 0;
+  }
+  .kilder li {
+    margin-bottom: 0.4rem;
+  }
+  .andre {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.4rem 0.85rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-pill);
+    background: var(--surface);
+    color: var(--fg);
+    font-size: 0.92rem;
+    text-decoration: none;
+  }
+  .chip:hover {
+    border-color: var(--accent-line);
+    color: var(--accent);
+  }
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .cta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.25rem;
+    margin-top: 3rem;
+    background: linear-gradient(140deg, var(--accent-soft), var(--surface) 60%);
+    border-color: var(--accent-line);
+  }
+  .cta-title {
+    margin: 0 0 0.2rem;
+    font-size: 1.3rem;
+  }
+</style>

@@ -16,17 +16,18 @@ what it does.
 > you submit to Skatteetaten or any other authority. Read
 > [DISCLAIMER.md](DISCLAIMER.md) before using the software.
 
-> **Status: beta.** Accounts, organizations, customers and suppliers, the
-> cash-flow register with its bilag archive, invoicing, bank import, the
-> opening balance and year-end, and the SAF-T export work end to end. The
-> government integrations authenticate and read: Maskinporten and ID-porten
-> tokens, the Altinn exchange, fetching a skattemelding, and creating an
-> Altinn 3 instance are all verified against Skatteetaten's test environment.
-> Skatteetaten's MVA validation answered a melding Myntos built in TT02 on
-> 2026-10-10, and its only finding was about TT02's test data. The ID-porten
-> company confirmation runs in production. **Nothing has been submitted**:
-> the books can be kept here, but keep another way to file MVA and the
-> skattemelding until Myntos has filed one for real. See
+> **Status.** Accounts, companies and per-company access, customers and
+> suppliers, the cash-flow register with its bilag archive, invoicing with EHF,
+> bank import, the opening balance and year-end, the MVA-melding, SAF-T import
+> and export, and an aksjeselskap's skattemelding with næringsspesifikasjon
+> work end to end. The skattemelding has been filed through Altinn in
+> Skatteetaten's test environment (2026-10-22) and is switched on in
+> production. The MVA-melding is checked by Skatteetaten's validation and can
+> be uploaded as XML in Skatteetaten's portal; filing it directly from Myntos
+> is built but not yet proven. Not built: payroll and the a-melding, the
+> årsregnskap to Regnskapsregisteret, the aksjonærregisteroppgave, an
+> enkeltpersonforetak's næringsspesifikasjon, recording a customer's payment
+> against an invoice, and sending EHF over Peppol. See
 > [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Features
@@ -48,7 +49,7 @@ what it does.
 | Document storage | Local filesystem for development, Cloudflare R2 (`jurisdiction=eu`) for production | Working |
 | MVA-håndtering | VAT calculation on the standard SAF-T mva codes, the MVA-melding per period at `/mva/`, uttak, tap på krav, justering and tilbakeføring at `/mva-justeringer/`, and the melding as XML for upload by hand. Skatteetaten's validation answered it in TT02 on 2026-10-10; filing through Altinn is built and not yet proven. See [docs/integrations/mva.md](docs/integrations/mva.md) | Working |
 | SAF-T Financial export | Required by law (bokføringsforskriften) for electronic bookkeeping. v1.30 and v1.40 at `/saft/`, behind a cross-reference check of our own. See [docs/integrations/saf-t.md](docs/integrations/saf-t.md) | Working |
-| Skattemelding + næringsspesifikasjon | Validate and submit via Skatteetaten's sluttbrukersystem APIs | Planned |
+| Skattemelding + næringsspesifikasjon | For an aksjeselskap: built from a closed year at `/skattemelding/`, checked by Skatteetaten, filed through Altinn on the person's ID-porten login, and the answer kept with the year; a dissolved company's last year as a forhåndsfastsetting. Filed end to end in TT02. An enkeltpersonforetak's is not built. See [docs/integrations/skatteetaten.md](docs/integrations/skatteetaten.md) | Working (AS) |
 | Årsregnskap to Regnskapsregisteret | Machine filing via Brønnøysundregistrene's Altinn 3 apps (system fills, user signs with ID-porten) | Planned |
 | Maskinporten + ID-porten auth | The JWT grant, the ID-porten authorization-code flow, the Altinn token exchange and the Altinn 3 instance lifecycle are implemented, tested against stubs, and verified live in TT02 (docs/ROADMAP.md, phase 0b). Maskinporten covers retrieval APIs; **submission legally requires an ID-porten login** (Skatteetaten policy, 2026), which is why `submit` takes a person's token as a required argument. The first thing that login buys before any submission: after logging in, the company-setup form lists the companies Altinn says you may report for, so a regnskapsfører picks clients from a list instead of typing an organisasjonsnummer per client. Clients are registered with Digdir in test and in production — see [docs/integrations/maskinporten.md](docs/integrations/maskinporten.md) | Working |
 
@@ -161,20 +162,27 @@ Two Norwegian legal requirements shape the architecture:
 ## Contributing
 
 Bug reports and discussion are welcome. Code contributions need a signed CLA or
-copyright assignment first, because the licence is proprietary and could not
-cover code somebody else holds the copyright to. See
+copyright assignment first, because the licensor must hold the rights to
+everything it licenses, and code somebody else holds the copyright to could not
+be licensed on the terms below. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for that, the development setup and the
 conventions used in this codebase.
 
 ## License
 
-**Source-available, not open source.** The code is public so anyone can read,
-audit and learn from it, but the license is proprietary — copyright © 2026
-Andreas Lindeman, all rights reserved (see [LICENSE](LICENSE)). No right to
-use, copy, modify or redistribute is granted, and cloning the repository does
-not convey one.
+**Source-available under the [Elastic License 2.0](LICENSE), not open
+source.** Copyright © 2026 Andreas Lindeman. In short, and the license text
+decides:
 
-This is settled (2026-10-10). Myntos is offered as a paid hosted service, and
-an open-source license would let anyone run the same service from the same
-code; see [docs/ROADMAP.md](docs/ROADMAP.md). Please don't describe Myntos as
-open source — it isn't.
+- You may read, run, modify and self-host Myntos, for your own books or your
+  company's, free of charge and without any agreement with us.
+- You may not offer Myntos to others as a hosted or managed service.
+- You must keep the license and copyright notices, and mark copies you change.
+- The license grants no rights to the name or the logo.
+
+Decided 2026-10-22, replacing the proprietary license of 2026-10-10, so that
+the self-hosting the website promises is actually granted. Myntos itself is
+offered as a hosted service, free for good
+([myntos.no/priser](https://myntos.no/priser/)); see
+[docs/ROADMAP.md](docs/ROADMAP.md). The Elastic License is not OSI-approved,
+so please don't describe Myntos as open source — it isn't.

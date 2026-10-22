@@ -291,6 +291,48 @@ def _enk_disposition(result: Decimal, private: Decimal) -> list[PlannedLine]:
     return lines
 
 
+def _kr(amount: Decimal) -> str:
+    whole, _, cents = f"{amount:,.2f}".partition(".")
+    return f"{whole.replace(',', ' ')},{cents}"
+
+
+async def _final_year_findings(
+    db: AsyncSession, company: Company, year: int, last_day: date
+) -> list[Finding]:
+    """What the review says about a wound-up company's last year.
+
+    A merknad, not a feil, about anything still owned or owed: a company that
+    has been dissolved has paid its debts and handed what was left to its
+    shareholders (aksjeloven §§ 16-7 to 16-10), so a balance left on an asset
+    or a debt is usually the payout not booked yet. Usually, not always, which
+    is why it does not stop the closing: the books say what happened, and it
+    is not Myntos's to invent the entry that would make them tidy.
+    """
+    findings = [
+        merknad(
+            "siste_regnskapsaar",
+            f"Selskapet er oppløst, og regnskapet slutter {last_day:%d.%m.%Y}. Dette er "
+            "selskapets siste regnskapsår: ingen nye år åpnes etter at det er avsluttet.",
+        )
+    ]
+    left = {
+        number: net
+        for number, net in (await _net_by_account(db, company, up_to=year)).items()
+        if net != ZERO and (number[0] == "1" or (number[0] == "2" and number[:2] != "20"))
+    }
+    if left:
+        listed = ", ".join(f"{number} ({_kr(net)})" for number, net in sorted(left.items()))
+        findings.append(
+            merknad(
+                "saldo_ved_opplosning",
+                "Et oppløst selskap skal ikke eie eller skylde noe. Disse kontoene har fortsatt "
+                f"saldo: {listed}. Er det utbetalingen til aksjonærene eller et siste oppgjør "
+                "som mangler, før det før du avslutter året.",
+            )
+        )
+    return findings
+
+
 async def plan_closing(
     db: AsyncSession, *, company: Company, year: int, today: date, tax: Decimal = ZERO
 ) -> ClosingPlan:
@@ -309,6 +351,8 @@ async def plan_closing(
                 "avsluttes etter at det er over, ellers låses det mens det fortsatt skjer ting.",
             )
         )
+    if company.wound_up_on is not None and company.wound_up_on.year == year:
+        findings += await _final_year_findings(db, company, year, company.wound_up_on)
     earlier_open = await db.scalar(
         select(func.min(FinancialYear.year)).where(
             FinancialYear.company_id == company.id,
@@ -647,7 +691,9 @@ async def close_year(
     # The next year opens now rather than on its first posting, so the
     # opening balance SAF-T derives for it has a year to belong to, and so
     # "what comes after 2026" has an answer on the page that just closed it.
-    await ledger_service.ensure_financial_year(db, company, year + 1)
+    # A wound-up company's last year has nothing after it.
+    if company.wound_up_on is None or year < company.wound_up_on.year:
+        await ledger_service.ensure_financial_year(db, company, year + 1)
     return plan, posted
 
 
