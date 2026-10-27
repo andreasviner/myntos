@@ -70,6 +70,9 @@ import { PROGRAMS } from '../lib/programs';
           Dra filene hit, eller trykk for å velge. XML eller ZIP, en fil for hvert år, fra 1. januar.
         </span>
       </label>
+      {/* Bare for programmet som har en samlet eksport med SAF-T-filene i
+          (Fiken). En slik ZIP leses uansett hva som er valgt (lib/programs.ts). */}
+      <p class="card-hint" id="program-export" hidden></p>
       <ul class="chosen" id="chosen" hidden></ul>
       <details class="more">
         <summary>Flere valg</summary>
@@ -103,6 +106,28 @@ import { PROGRAMS } from '../lib/programs';
       :global() under, forankret i #import-card. */}
   <section class="card" id="import-card" hidden aria-live="polite">
     <div id="import-body"></div>
+  </section>
+
+  {/* Filene fra det gamle programmets komplette eksport (Fiken), tatt vare på
+      da regnskapet ble ført. De ligger ikke på bilagene: eksporten sier ikke
+      hvilket bilag hvert dokument hører til, og det som legges i
+      bilagsarkivet, blir der (backend saft/archive.py). */}
+  <section class="card" id="kept-card" hidden>
+    <h2 class="card-title">Dokumenter fra eksporten</h2>
+    <p class="card-hint">
+      Kvitteringene, fakturaene og de andre filene i eksporten fra det gamle programmet, med mappen
+      de lå i. De ligger ikke på bilagene, fordi eksporten ikke sier hvilket bilag hvert dokument
+      hører til, men de er tatt vare på i Myntos sammen med regnskapet.
+    </p>
+    <label class="field kept-search">
+      <span>Søk i mapper og filnavn</span>
+      <input type="search" id="kept-search" maxlength="200" />
+    </label>
+    <ul class="chosen kept" id="kept-list"></ul>
+    <p class="card-hint" id="kept-count"></p>
+    <div class="actions">
+      <button type="button" class="btn btn-ghost" id="kept-more" hidden>Vis flere</button>
+    </div>
   </section>
 
   {/* Dokumentene bak bilagene. SAF-T-filen har dem ikke, men Tripletex kan
@@ -345,6 +370,14 @@ import { PROGRAMS } from '../lib/programs';
   .fineprint {
     margin-top: 1rem;
     font-size: 0.85rem;
+  }
+  .kept-search {
+    max-width: 26rem;
+  }
+  /* Stiene kommer fra eksporten og kan være lange uten et mellomrom å bryte på. */
+  .kept :global(.path) {
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   /* Framdriften. Også brukt av det skriptet bygger i #import-card og #docs-card. */
@@ -642,7 +675,9 @@ import { PROGRAMS } from '../lib/programs';
     getSaftImport,
     getOpeningState,
     getMvaOverview,
+    importedDocumentUrl,
     listDocumentImports,
+    listImportedDocuments,
     listSaftImports,
     markMvaFiledElsewhere,
     postSaftImport,
@@ -651,8 +686,11 @@ import { PROGRAMS } from '../lib/programs';
     type Company,
     type DocumentImport,
     type DocumentReview,
+    type ImportedDocument,
+    type ImportedDocumentPage,
     type MvaPeriodRow,
     type PrintedVoucher,
+    type SaftArchive,
     type SaftComparisonReview,
     type SaftImport,
     type SaftImportFinding,
@@ -662,24 +700,32 @@ import { PROGRAMS } from '../lib/programs';
   import { el, setStatus, show } from '../lib/dom';
   import { fileSize, isoDate, kroner, orgnummer, todayIso } from '../lib/format';
   import {
+    archiveLine,
     currentComparison,
     currentImport,
     defaultFiledOn,
+    documentsIn,
     isWorking,
+    keepingDocuments,
     postLabel,
     postedSummary,
+    skipReason,
     summary,
     termsToConfirm,
     yearsToClose,
   } from '../lib/saftimport';
   import {
     documentsNote,
+    exportNote,
     guideLink,
     initialProgram,
     programBySlug,
+    programFromImport,
     showsPrintouts,
+    switchedNote,
     type Program,
   } from '../lib/programs';
+  import { classify, place, type UploadBox } from '../lib/uploadkind';
   import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
   import {
     archiveLabel,
@@ -702,6 +748,7 @@ import { PROGRAMS } from '../lib/programs';
   const fileInput = el<HTMLInputElement>('#upload-files');
   const docsBody = el<HTMLDivElement>('#docs-body');
   const programSelect = el<HTMLSelectElement>('#program');
+  const keptSearch = el<HTMLInputElement>('#kept-search');
 
   let company: Company;
   let chosen: File[] = [];
@@ -711,7 +758,14 @@ import { PROGRAMS } from '../lib/programs';
   let docsChosen: File[] = [];
   let docsJob: DocumentImport | null = null;
   let program: Program | null = null;
+  // Innlesingen siden sist rettet programvalget etter, så valget bare rettes en gang.
+  let correctedFor: number | null = null;
   let timer: number | undefined;
+  let kept: ImportedDocument[] = [];
+  let keptTotal = 0;
+  // Det siste søket vinner: et tregt svar på et eldre søk skal ikke tegne over det.
+  let keptAsked = 0;
+  let keptTimer: number | undefined;
 
   // --- Små byggeklosser -------------------------------------------------------
 
@@ -815,13 +869,21 @@ import { PROGRAMS } from '../lib/programs';
 
   function renderWorking(job: SaftImport): void {
     const posting = job.status === 'posting';
-    importBody.append(node('h2', posting ? 'Myntos fører regnskapet' : 'Myntos leser filene', 'card-title'));
+    const documents = keepingDocuments(job);
+    importBody.append(
+      node(
+        'h2',
+        documents ? 'Myntos tar vare på dokumentene' : posting ? 'Myntos fører regnskapet' : 'Myntos leser filene',
+        'card-title',
+      ),
+    );
     importBody.append(node('p', job.step ?? 'Venter …', 'card-hint'));
     const progress = node('div', undefined, 'progress');
     const bar = node('div', undefined, 'bar');
     const fill = node('span');
-    // Filene leses ett om gangen; føringen er én operasjon uten delsteg å telle.
-    const known = !posting && job.total > 0;
+    // Filene leses ett om gangen, og dokumentene i eksporten tas vare på ett om
+    // gangen; føringen av regnskapet er én operasjon uten delsteg å telle.
+    const known = (!posting || documents) && job.total > 0;
     bar.dataset.indeterminate = String(!known);
     if (known) fill.style.width = `${Math.max(8, Math.round((job.done / job.total) * 100))}%`;
     bar.append(fill);
@@ -947,6 +1009,7 @@ import { PROGRAMS } from '../lib/programs';
       adds.append(...tiles);
       importBody.append(adds);
     }
+    importBody.append(...archivesSection(review.archives));
     findings(importBody, review.findings);
 
     const confirm = node('div', undefined, 'confirm');
@@ -956,6 +1019,16 @@ import { PROGRAMS } from '../lib/programs';
           'p',
           'Alt føres samlet, og bilagene kan ikke endres etterpå. Rettelser gjøres i det gamle ' +
             'programmet.',
+          'card-hint',
+        ),
+      );
+    } else if (documentsIn(review) > 0) {
+      confirm.append(
+        node(
+          'p',
+          'Bilagene er hentet fra før, så bare dokumentene tas vare på. Det som tas vare på, kan ' +
+            'ikke slettes: bokføringsloven krever at dokumentasjonen oppbevares i fem år etter ' +
+            'regnskapsåret.',
           'card-hint',
         ),
       );
@@ -987,11 +1060,70 @@ import { PROGRAMS } from '../lib/programs';
     importBody.append(confirm);
   }
 
-  function renderPosted(result: SaftMoveReview): void {
-    importBody.append(node('h2', 'Regnskapet er hentet', 'card-title'));
-    const done = node('p', postedSummary(result), 'status');
-    done.dataset.tone = 'ok';
-    importBody.append(done);
+  /** Dokumentene i eksporten: hvor mange, i hvilke mapper, og det som ikke blir med. */
+  function archivesSection(archives: SaftArchive[]): HTMLElement[] {
+    if (archives.length === 0) return [];
+    const parts: HTMLElement[] = [node('h3', 'Dokumentene i eksporten')];
+    for (const archive of archives) {
+      parts.push(node('p', archiveLine(archive)));
+      const tiles = [
+        addTile(
+          archive.documents,
+          'dokumenter tas vare på',
+          archive.folders.map((folder) => [
+            folder.name === '' ? 'Øverst i eksporten' : folder.name,
+            `${folder.documents.toLocaleString('nb-NO')} ${folder.documents === 1 ? 'dokument' : 'dokumenter'}`,
+          ]),
+        ),
+        addTile(
+          archive.skipped_count,
+          archive.skipped_count === 1 ? 'fil tas ikke vare på' : 'filer tas ikke vare på',
+          archive.skipped.map((file) => [file.path, skipReason(file.reason)]),
+        ),
+      ].filter((tile): tile is HTMLDetailsElement => tile !== null);
+      if (tiles.length > 0) {
+        const adds = node('div', undefined, 'adds');
+        adds.append(...tiles);
+        parts.push(adds);
+      }
+    }
+    parts.push(
+      node(
+        'p',
+        'Dokumentene legges ikke på bilagene, fordi eksporten ikke sier hvilket bilag hvert av dem ' +
+          'hører til. De tas vare på med mappen de lå i, og du finner dem under «Dokumenter fra ' +
+          'eksporten» på denne siden.',
+        'card-hint',
+      ),
+    );
+    return parts;
+  }
+
+  function renderPosted(job: SaftImport, result: SaftMoveReview): void {
+    importBody.append(
+      node('h2', result.postable ? 'Regnskapet er hentet' : 'Dokumentene fra eksporten', 'card-title'),
+    );
+    const said = postedSummary(result);
+    if (said !== '') {
+      const done = node('p', said, 'status');
+      done.dataset.tone = 'ok';
+      importBody.append(done);
+    }
+    if (job.error_code === 'documents_not_kept') {
+      // Regnskapet er ført; det som står igjen, er resten av dokumentene, og
+      // filene er beholdt til det er gjort (backend saft/jobs.py).
+      const stopped = node('p', job.error ?? 'Ikke alle dokumentene ble tatt vare på.', 'status');
+      stopped.dataset.tone = 'error';
+      importBody.append(stopped);
+      if (job.may_post) {
+        const again = node('div', undefined, 'links');
+        again.append(
+          button('Ta vare på resten av dokumentene', 'btn btn-primary', () => void startPosting(job)),
+        );
+        importBody.append(again);
+      }
+    }
+    if (!result.postable) return;
     importBody.append(
       node(
         'p',
@@ -1187,7 +1319,7 @@ import { PROGRAMS } from '../lib/programs';
       renderReview(job, job.review);
       stepper('review');
     } else if (job.status === 'posted' && job.result !== null) {
-      renderPosted(job.result);
+      renderPosted(job, job.result);
       stepper('done');
     }
   }
@@ -1397,10 +1529,61 @@ import { PROGRAMS } from '../lib/programs';
     }
   }
 
+  // --- Dokumentene fra eksporten -------------------------------------------------
+
+  async function loadKept(more = false): Promise<void> {
+    if (!canInCompany(company, 'ledger:read')) return;
+    keptAsked += 1;
+    const asked = keptAsked;
+    const sok = keptSearch.value.trim();
+    let page: ImportedDocumentPage;
+    try {
+      page = await listImportedDocuments(company.id, { sok, fra: more ? kept.length : 0 });
+    } catch {
+      // Et oppslag ved siden av innlesingen: neste søk eller neste besøk spør igjen.
+      return;
+    }
+    if (asked !== keptAsked) return;
+    kept = more ? [...kept, ...page.documents] : page.documents;
+    keptTotal = page.total_count;
+    renderKept(sok);
+  }
+
+  function renderKept(sok: string): void {
+    // Kortet står når det er noe i det, og blir stående under et søk uten treff.
+    show(el('#kept-card'), keptTotal > 0 || sok !== '');
+    el('#kept-list').replaceChildren(
+      ...kept.map((item) => {
+        const row = node('li');
+        // Stien er tekst fra eksporten, og vises som tekst.
+        const name = node('span', item.path, 'path');
+        name.append(node('span', fileSize(item.byte_size), 'size'));
+        row.append(name, link(importedDocumentUrl(company.id, item.id), 'Last ned', 'btn btn-ghost btn-small'));
+        return row;
+      }),
+    );
+    el('#kept-count').textContent =
+      keptTotal === 0
+        ? 'Ingen dokumenter passer søket.'
+        : kept.length < keptTotal
+          ? `Viser ${kept.length.toLocaleString('nb-NO')} av ${keptTotal.toLocaleString('nb-NO')}.`
+          : `${keptTotal.toLocaleString('nb-NO')} ${keptTotal === 1 ? 'dokument' : 'dokumenter'}.`;
+    show(el('#kept-more'), kept.length < keptTotal);
+  }
+
+  keptSearch.addEventListener('input', () => {
+    window.clearTimeout(keptTimer);
+    keptTimer = window.setTimeout(() => void loadKept(), 250);
+  });
+  el<HTMLButtonElement>('#kept-more').addEventListener('click', () => void loadKept(true));
+
   // --- Programmet ---------------------------------------------------------------
 
   function renderProgram(): void {
     programSelect.value = program?.slug ?? '';
+    const note = exportNote(program);
+    el('#program-export').textContent = note ?? '';
+    show(el('#program-export'), note !== null);
     show(el('#program-about'), program !== null);
     if (program !== null) {
       el('#program-documents').textContent = documentsNote(program);
@@ -1412,15 +1595,30 @@ import { PROGRAMS } from '../lib/programs';
     renderDocs();
   }
 
-  programSelect.addEventListener('change', () => {
-    program = programBySlug(programSelect.value);
+  function choose(next: Program | null): void {
+    program = next;
     // I adressen også, så en omlasting viser det samme valget.
     const url = new URL(window.location.href);
     if (program === null) url.searchParams.delete('fra');
     else url.searchParams.set('fra', program.slug);
     window.history.replaceState(window.history.state, '', url);
     renderProgram();
-  });
+  }
+
+  programSelect.addEventListener('change', () => choose(programBySlug(programSelect.value)));
+
+  /**
+   * Retter programvalget etter det filene sier, når de er lest: Fiken-eksporten
+   * lastet opp med Tripletex valgt skal ikke vise kortet for Tripletex-utskriften.
+   */
+  function correctProgram(job: SaftImport | null): void {
+    if (job === null || job.status === 'reading' || job.id === correctedFor) return;
+    correctedFor = job.id;
+    const found = programFromImport(job);
+    if (found === null || found.slug === program?.slug) return;
+    choose(found);
+    setStatus(pageStatus, switchedNote(found), 'ok');
+  }
 
   // --- Sammenligningen ---------------------------------------------------------
 
@@ -1562,11 +1760,17 @@ import { PROGRAMS } from '../lib/programs';
       ])
         .then(([fresh, freshDocs]) => {
           for (const job of fresh) {
-            if (job.purpose === 'import') importJob = job;
-            else compareJob = job;
+            if (job.purpose === 'import') {
+              // Dokumentene i eksporten er tatt vare på når føringen er ferdig.
+              if (importJob?.status === 'posting' && job.status !== 'posting') void loadKept();
+              importJob = job;
+            } else {
+              compareJob = job;
+            }
             history = [job, ...history.filter((item) => item.id !== job.id)];
           }
           if (freshDocs !== null) docsJob = freshDocs;
+          correctProgram(importJob);
           renderImport();
           renderComparison();
           renderHistory();
@@ -1601,18 +1805,41 @@ import { PROGRAMS } from '../lib/programs';
     show(list, chosen.length > 0);
   }
 
-  function addFiles(files: FileList | null): void {
-    if (files === null) return;
-    const known = new Set(chosen.map((file) => `${file.name}:${file.size}`));
+  /**
+   * Legger filene der de hører hjemme, uansett hvor de ble sluppet: en
+   * SAF-T-fil til SAF-T-filene, en utskrift av bilag til kortet for den, og
+   * resten ingen steder, med en setning om hva den er (lib/uploadkind.ts).
+   * Sier filene hvilket program de er fra, følger valget over med.
+   */
+  async function addFiles(files: File[], droppedOn: UploadBox): Promise<void> {
+    if (files.length === 0) return;
+    const notes: string[] = [];
+    let refused = false;
+    const add = (list: File[], file: File): void => {
+      if (!list.some((known) => known.name === file.name && known.size === file.size)) list.push(file);
+    };
     for (const file of files) {
-      if (!known.has(`${file.name}:${file.size}`)) chosen.push(file);
+      const placed = place(file.name, await classify(file), droppedOn, program);
+      if (placed.program !== null) {
+        choose(placed.program);
+        notes.push(switchedNote(placed.program));
+      }
+      if (placed.box === 'saft') add(chosen, file);
+      else if (placed.box === 'printout') add(docsChosen, file);
+      else refused = true;
+      if (placed.note !== null) notes.push(placed.note);
     }
     renderChosen();
+    renderDocsChosen();
+    const status = droppedOn === 'saft' ? uploadStatus : el<HTMLParagraphElement>('#docs-status');
+    setStatus(status, notes.join(' '), refused ? 'error' : 'ok');
   }
 
   fileInput.addEventListener('change', () => {
-    addFiles(fileInput.files);
+    // Kopiert før feltet tømmes: filene leses etterpå.
+    const files = Array.from(fileInput.files ?? []);
     fileInput.value = '';
+    void addFiles(files, 'saft');
   });
   const dropzone = el<HTMLLabelElement>('#dropzone');
   dropzone.addEventListener('dragover', (event) => {
@@ -1623,7 +1850,7 @@ import { PROGRAMS } from '../lib/programs';
   dropzone.addEventListener('drop', (event) => {
     event.preventDefault();
     delete dropzone.dataset.over;
-    addFiles(event.dataTransfer?.files ?? null);
+    void addFiles(Array.from(event.dataTransfer?.files ?? []), 'saft');
   });
 
   el<HTMLFormElement>('#upload-form').addEventListener('submit', (event) => {
@@ -1691,19 +1918,11 @@ import { PROGRAMS } from '../lib/programs';
     show(list, docsChosen.length > 0);
   }
 
-  function addPrintouts(files: FileList | null): void {
-    if (files === null) return;
-    const known = new Set(docsChosen.map((file) => `${file.name}:${file.size}`));
-    for (const file of files) {
-      if (!known.has(`${file.name}:${file.size}`)) docsChosen.push(file);
-    }
-    renderDocsChosen();
-  }
-
   const docsInput = el<HTMLInputElement>('#docs-files');
   docsInput.addEventListener('change', () => {
-    addPrintouts(docsInput.files);
+    const files = Array.from(docsInput.files ?? []);
     docsInput.value = '';
+    void addFiles(files, 'printout');
   });
   const docsDropzone = el<HTMLLabelElement>('#docs-dropzone');
   docsDropzone.addEventListener('dragover', (event) => {
@@ -1714,7 +1933,7 @@ import { PROGRAMS } from '../lib/programs';
   docsDropzone.addEventListener('drop', (event) => {
     event.preventDefault();
     delete docsDropzone.dataset.over;
-    addPrintouts(event.dataTransfer?.files ?? null);
+    void addFiles(Array.from(event.dataTransfer?.files ?? []), 'printout');
   });
 
   el<HTMLFormElement>('#docs-form').addEventListener('submit', (event) => {
@@ -1755,7 +1974,7 @@ import { PROGRAMS } from '../lib/programs';
       });
   });
 
-  el<HTMLFormElement>('#compare-form').addEventListener('submit', (event) => {
+  el<HTMLFormElement>('#compare-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const file = el<HTMLInputElement>('#compare-file').files?.[0];
     if (file === undefined) {
@@ -1765,6 +1984,12 @@ import { PROGRAMS } from '../lib/programs';
     const submit = el<HTMLButtonElement>('#compare-button');
     submit.disabled = true;
     setStatus(compareStatus, '');
+    const placed = place(file.name, await classify(file), 'saft', program);
+    if (placed.box !== 'saft') {
+      setStatus(compareStatus, placed.note ?? 'Velg en ny SAF-T-fil fra det gamle programmet.');
+      submit.disabled = false;
+      return;
+    }
     compareBody.replaceChildren(node('p', 'Laster opp …', 'card-hint'));
     uploadSaftFiles(
       company.id,
@@ -1801,10 +2026,15 @@ import { PROGRAMS } from '../lib/programs';
       printouts,
       imports: history,
     });
+    // Det som er lest fra før, er alt med i valget over (initialProgram), og et
+    // valg personen har gjort siden, skal stå. En innlesing som leses nå,
+    // retter valget når den er lest.
+    correctedFor = importJob !== null && !isWorking(importJob) ? importJob.id : null;
     renderImport();
     renderComparison();
     renderHistory();
     renderProgram();
+    void loadKept();
     show(el('#program-pick'), true);
     // Spurt der kortene tegnes: å hente er å føre, å sammenligne er bare å lese.
     show(el('#compare-card'), canInCompany(company, 'ledger:read'));

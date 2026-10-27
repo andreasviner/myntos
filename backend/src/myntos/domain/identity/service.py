@@ -989,9 +989,9 @@ async def resend_invitation(
     now = utc_now()
     invitation.token_hash = hash_token(token)
     invitation.expires_at = now + timedelta(days=get_settings().invitation_lifetime_days)
-    # Whoever pressed the button owns the message that goes out, and its
-    # Reply-To. Leaving the original inviter on it would send a puzzled reply to
-    # somebody who did nothing today.
+    # Whoever pressed the button owns the message that goes out, and the
+    # address it names to ask. Leaving the original inviter on it would send a
+    # puzzled question to somebody who did nothing today.
     invitation.invited_by_user_id = actor.user_id
     await db.flush()
     return invitation, token

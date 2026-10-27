@@ -9,9 +9,12 @@ skill: myntos-faktura
 
 Above the invoice lines there is a box where the person writes what they sold
 in a sentence, and Myntos's own KI sets the lines up: description, quantity,
-unit, price and VAT rate. It only fills in the form. Nothing is saved or
-issued until the person has checked the lines and issued the invoice
-themselves, as with lines they typed.
+unit, price and VAT rate. It is the second of the two KI boxes on the page:
+the one at the top of the form fills in the buyer and the rest from the
+customer's e-mail, which rarely says what was sold, and this one does the
+lines alone. It only fills in the form. Nothing is saved or issued until the
+person has checked the lines and issued the invoice themselves, as with lines
+they typed.
 
 ## They might ask
 
@@ -52,8 +55,12 @@ themselves, as with lines they typed.
 
 ## Good to know
 
-- The description goes to Løynd, Myntos's own model, which runs in Norway.
-  What it sees is explained on the «KI» page (`https://myntos.no/ki/`).
+- The description goes to Løynd, the model Myntos uses, which runs in
+  Norway. What it sees is explained on the «KI» page
+  (`https://myntos.no/ki/`).
+- A sentence that also names the buyer or the delivery date can go in the box
+  at the top instead, which fills in those as well:
+  [Let KI fill in the invoice from the customer's e-mail](https://myntos.no/llms/help/invoices/fill-in-an-invoice-with-ki.md).
 - Prices on invoice lines are always without VAT. The VAT is added at the
   bottom.
 - A company outside the VAT register only gets lines with «Ikke
@@ -63,6 +70,7 @@ themselves, as with lines they typed.
 
 ## Related
 
+- [Let KI fill in the invoice from the customer's e-mail](https://myntos.no/llms/help/invoices/fill-in-an-invoice-with-ki.md)
 - [Choose the VAT rate on a line](https://myntos.no/llms/help/invoices/choose-the-vat-rate-on-a-line.md)
 - [Copy the lines from a previous invoice](https://myntos.no/llms/help/invoices/copy-lines-from-a-previous-invoice.md)
 - An agent with a key can ask for the same proposal through the API:

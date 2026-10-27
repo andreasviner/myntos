@@ -42,9 +42,8 @@ def _mod11_remainder(base: str) -> int:
 
 def test_every_generated_kid_validates() -> None:
     for number in [*range(1, 500), 9999, 100000, 999999, 1234567]:
-        for customer in (None, "10000", "10042", "99999"):
-            generated = kid.preview_for_next(number, customer_number=customer)
-            assert kid.is_valid(generated), generated
+        generated = kid.preview_for_next(number)
+        assert kid.is_valid(generated), generated
 
 
 def test_a_wrong_check_digit_is_caught() -> None:
@@ -71,60 +70,51 @@ def test_what_is_not_a_kid_at_all(bad: str) -> None:
 # --- Building -----------------------------------------------------------------------
 
 
-def test_the_kid_is_customer_then_invoice_then_check_digit() -> None:
-    """The ordinary Norwegian structure, and the reason both fields are fixed."""
-    built = kid.for_document_number("137", customer_number="10042")
+def test_the_kid_is_the_invoice_number_then_its_check_digit() -> None:
+    built = kid.for_document_number("137")
 
-    assert built == "100420001370"
-    assert built[:5] == "10042"  # kundenummer
-    assert built[5:11] == "000137"  # fakturanummer
-    assert built[-1] == kid.mod10_check_digit(built[:-1])
+    assert built == "1370"
+    assert built[:-1] == "137"
+    assert built[-1] == kid.mod10_check_digit("137")
 
 
-def test_the_two_numbers_can_be_read_back_out() -> None:
-    """Which is what an OCR-file importer will do with it."""
-    built = kid.for_document_number("137", customer_number="10042")
-    assert kid.split(built) == ("10042", "000137")
+@pytest.mark.parametrize(
+    ("number", "expected"),
+    [("1", "18"), ("18", "182"), ("1042", "10421"), ("100000", "1000009")],
+)
+def test_the_kid_has_no_zeros_in_front(number: str, expected: str) -> None:
+    """Read off a paper invoice and typed into a bank: nine zeros were miscounted."""
+    built = kid.for_document_number(number)
+
+    assert built == expected
+    assert not built.startswith("0")
 
 
-@pytest.mark.parametrize("reference", ["0000018", "100420001371", "abcdefghijkl"])
-def test_what_cannot_be_read_back(reference: str) -> None:
-    """Wrong length, wrong check digit, not digits — a KID from another system."""
-    assert kid.split(reference) is None
+def test_the_buyer_does_not_change_the_kid() -> None:
+    """The invoice number already names the buyer, so the preview is the same for anyone."""
+    assert kid.preview_for_next(7) == kid.for_document_number("7")
 
 
-def test_a_buyer_who_is_not_a_registered_customer_gets_zeros() -> None:
-    """Zeros rather than a shorter KID: the width is what the bank agreed."""
-    built = kid.for_document_number("1")
+def test_a_number_from_another_system_keeps_its_digits() -> None:
+    """A series brought over may read "F-01042"; the digits are still the invoice."""
+    built = kid.for_document_number("F-01042")
 
-    assert built[: kid.CUSTOMER_LENGTH] == "00000"
-    assert len(built) == kid.LENGTH
-
-
-def test_a_customer_number_from_another_system_keeps_its_digits() -> None:
-    """An accountant migrating in may number customers "K-1042"."""
-    built = kid.for_document_number("7", customer_number="K-1042")
-
-    assert built[: kid.CUSTOMER_LENGTH] == "01042"
+    assert built == kid.for_document_number("1042")
     assert kid.is_valid(built)
 
 
-def test_the_width_never_changes() -> None:
-    """A reference that grows between invoice 9 and 10 is one the bank rejects."""
-    widths = {
-        len(kid.preview_for_next(n, customer_number=c))
-        for n in (1, 9, 10, 999, 1000, 999999)
-        for c in (None, "1", "10000", "99999")
-    }
-    assert widths == {kid.LENGTH}
+def test_the_shortest_kid_is_still_one_a_bank_takes() -> None:
+    """Two digits is the floor on the payer's side, and invoice 1 is exactly that."""
+    assert len(kid.for_document_number("1")) == 2
+    assert kid.is_valid(kid.for_document_number("1"))
 
 
 def test_a_kid_never_outgrows_the_field() -> None:
-    built = kid.for_document_number("9" * 40, customer_number="9" * 40)
+    built = kid.for_document_number("9" * 40)
     assert len(built) <= kid.MAX_LENGTH
 
 
-def test_consecutive_invoices_to_one_customer_stay_distinct() -> None:
+def test_consecutive_invoices_stay_distinct() -> None:
     """The property that matters: no two invoices may share a KID."""
-    built = {kid.for_document_number(str(n), customer_number="10042") for n in range(1, 2000)}
-    assert len(built) == 1999
+    built = {kid.for_document_number(str(n)) for n in range(1, 20000)}
+    assert len(built) == 19999

@@ -1106,13 +1106,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   const inviterKnapp = el<HTMLButtonElement>('#inviter');
 
   /**
-   * One line per invitation sent, saying what actually happened.
+   * En linje per invitasjon, med det som faktisk skjedde, og lenken under.
    *
-   * The link is shown only when the email did not go out. When it did, the
-   * inviter has nothing to do with the link and printing it anyway would invite
-   * them to send a second copy of a message already in the recipient's inbox.
-   * When it did not, the link is the entire way forward, so it gets a field and
-   * a copy button rather than a sentence.
+   * Lenken sto bare der når e-posten ikke gikk, fordi en sendt e-post så ut
+   * til å ligge i innboksen allerede. Det gjorde den ikke: Cloudflare svarer
+   * «i kø» før søppelpostfilteret har lest meldingen, og i oktober 2026
+   * avviste det tre invitasjoner som siden hadde meldt «sendt». Lenken vises
+   * bare denne gangen, så den står der alltid, med felt og kopiknapp.
    */
   function tegnInvitasjon(invitation: Invitation): void {
     const row = document.createElement('li');
@@ -1127,12 +1127,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     answer.dataset.tone = invitation.email_sent === true ? 'ok' : 'nøytral';
     answer.textContent =
       invitation.email_sent === true
-        ? 'E-post sendt'
+        ? 'E-post sendt. Kommer den ikke fram, send lenken selv:'
         : 'Vi fikk ikke sendt e-posten. Send lenken selv:';
     top.append(address, answer);
     row.append(top);
 
-    if (invitation.email_sent !== true && invitation.invite_url !== null) {
+    if (invitation.invite_url !== null) {
       const copyRow = document.createElement('div');
       copyRow.className = 'oppsett-kopirad';
       const field = document.createElement('input');

@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from myntos import __version__
-from myntos.api.deps import get_document_storage
+from myntos.api.deps import get_document_storage, get_working_files
 from myntos.api.errors import (
     approval_held_handler,
     domain_error_handler,
@@ -36,8 +36,9 @@ from myntos.domain.identity import closure
 from myntos.domain.identity.errors import IdentityError
 from myntos.domain.ledger.errors import LedgerError
 from myntos.integrations.brreg import BrregError
-from myntos.saft import jobs, reader
+from myntos.saft import intake, jobs, reader
 from myntos.storage.base import DocumentStorage
+from myntos.storage.working import WorkingStore
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +46,16 @@ _PURGE_FIRST_DELAY = 5 * 60
 _PURGE_INTERVAL = 24 * 60 * 60
 
 _MIB = 1024 * 1024
-# The routes that read the previous program's files, the one upload bigger than
-# a few bilag: its SAF-T files, and Tripletex's printout of the vouchers with
-# their attachments (saft/vedlegg), which is about as large for a year.
+# The import of the previous program's books, which takes Fiken's complete
+# export as it downloads (saft/intake.py), and reads its body only once it
+# knows who is sending it (api/v1/saft_innlesing.py). First, so the wider
+# pattern below does not claim it.
+_IMPORT_UPLOAD_PATH = re.compile(r"^/api/v1/companies/\d+/saft/innlesing$")
+# The other routes that read the previous program's files, the one upload
+# bigger than a few bilag: a SAF-T file read in the request, and Tripletex's
+# printout of the vouchers with their attachments (saft/vedlegg), which is
+# about as large for a year. FastAPI reads these bodies before it knows who
+# sent them, so their ceiling stays at what Altinn takes in one attachment.
 _SAFT_UPLOAD_PATHS = re.compile(r"^/api/v1/companies/\d+/(saft/|inngaende-balanse/saft$)")
 
 # Where production answers, named in the published document so that a client
@@ -105,19 +113,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # its store the one the old program's documents are put in.
     sessions = app.dependency_overrides.get(get_import_sessions, get_import_sessions)
     storage = app.dependency_overrides.get(get_document_storage, get_document_storage)
-    jobs.resume_in_background(sessions, storage)
-    purging = asyncio.get_running_loop().create_task(_purge_daily(sessions, storage))
+    working = app.dependency_overrides.get(get_working_files, get_working_files)
+    jobs.resume_in_background(sessions, storage, working)
+    purging = asyncio.get_running_loop().create_task(_purge_daily(sessions, storage, working))
     yield
     purging.cancel()
 
 
 async def _purge_daily(
-    sessions: Callable[[], jobs.Sessions], storage: Callable[[], DocumentStorage]
+    sessions: Callable[[], jobs.Sessions],
+    storage: Callable[[], DocumentStorage],
+    working: Callable[[], WorkingStore],
 ) -> None:
     """Delete, once a day, deleted companies whose retention has run out.
 
     And feedback that was closed longer ago than ``feedback_retention_days``
-    (docs/feedback.md), for the same reason: what decides it ships with it.
+    (docs/feedback.md), and the uploaded SAF-T files and printouts nothing
+    needs any more (``jobs.sweep``), for the same reason: what decides it ships
+    with it.
 
     In the process rather than on a systemd timer, so that it is deployed with
     the code that decides what it deletes and cannot be forgotten on a rebuilt
@@ -146,12 +159,42 @@ async def _purge_daily(
                 await db.commit()
         except Exception:  # as above: tomorrow again, and the loop goes on
             logger.exception("Could not purge closed feedback")
+        try:
+            if swept := await jobs.sweep(sessions(), working()):
+                logger.info("Deleted %d working copies of uploads nothing needs", swept)
+        except Exception:  # as above; the bucket's lifecycle rule is the backstop
+            logger.exception("Could not sweep the working copies of uploads")
         await asyncio.sleep(_PURGE_INTERVAL)
+
+
+def _log_our_own(level: str) -> None:
+    """Hand the ``myntos`` loggers' records to stderr, at ``LOG_LEVEL``.
+
+    uvicorn configures its own loggers and nobody else's, so everything below
+    WARNING that Myntos itself logged went nowhere: Python's last-resort handler
+    prints warnings and drops the rest. Among what it dropped was the line
+    saying an invitation had been handed to Cloudflare, with the id Cloudflare's
+    analytics are searched by, which is the line 2026-10-23 needed and did not
+    have. systemd puts stderr in the journal.
+
+    Once, however many times ``create_app`` runs, and still propagating, so a
+    test's ``caplog`` sees the same records. Every INFO line under ``myntos``
+    was written to leave the user's content out (a prompt, a filename, an
+    address), which is what makes turning them on safe; keep it so.
+    """
+    package = logging.getLogger("myntos")
+    package.setLevel(level.upper())
+    if not any(getattr(handler, "_myntos_own", False) for handler in package.handlers):
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        handler._myntos_own = True  # type: ignore[attr-defined]
+        package.addHandler(handler)
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
     production = settings.environment == "production"
+    _log_our_own(settings.log_level)
 
     app = FastAPI(
         title="Myntos API",
@@ -192,8 +235,10 @@ def create_app() -> FastAPI:
         BodySizeLimitMiddleware,
         body=2 * _MIB,
         upload=64 * _MIB,
-        large_upload=reader.MAX_UPLOAD_BYTES + _MIB,
-        large_upload_paths=_SAFT_UPLOAD_PATHS,
+        large_uploads=(
+            (_IMPORT_UPLOAD_PATH, intake.MAX_UPLOAD_BYTES),
+            (_SAFT_UPLOAD_PATHS, reader.MAX_UPLOAD_BYTES),
+        ),
     )
     app.add_middleware(
         CORSMiddleware,

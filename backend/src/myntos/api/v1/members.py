@@ -82,13 +82,15 @@ class InvitationResponse(BaseModel):
     # never again — only the token's hash is stored. Myntos emails it to the
     # invitee when mail is configured; the link comes back either way, because
     # a deployment without mail still has to be able to invite somebody, and
-    # because a message that bounced is one the inviter may want to pass on
+    # because a message that was refused is one the inviter may want to pass on
     # themselves.
     invite_url: str | None = None
-    # Whether the invitation was actually emailed. Three-valued in effect: True
-    # for sent, False for tried and failed or never configured, and null when
-    # this response is not about a fresh invitation (the listing), where nobody
-    # is waiting to hear.
+    # Whether the mail service took the message. Three-valued in effect: True
+    # for handed over, False for tried and failed or never configured, and null
+    # when this response is not about a fresh invitation (the listing), where
+    # nobody is waiting to hear. True is not "arrived": Cloudflare answers
+    # before its spam filter has run, and refused three invitations that way in
+    # October 2026 (myntos.core.mail, "Accepted is not delivered").
     email_sent: bool | None = None
 
 
@@ -216,10 +218,13 @@ async def invite_member(
     """Invite an email address to these books, at the given role.
 
     This is how a set of books ends up being kept by more than one person. The
-    invitation is emailed to the address, and the response says whether that
-    succeeded and carries the acceptance link exactly once, so an inviter whose
-    deployment sends no mail — or whose message bounced — can still pass the
-    link on.
+    invitation is emailed to the address, and the response carries the
+    acceptance link exactly once, so the inviter can pass it on if the mail
+    does not arrive. ``email_sent`` says whether the mail service took the
+    message: false is certain (no mail on this deployment, or a refusal), but
+    true only means handed over, because the service may still refuse it as
+    spam afterwards and nothing in this response can know. Keep the link until
+    the person has it.
 
     The send happens inline rather than in a background task. It takes a second
     against a working relay, and the alternative is an interface that claims a
@@ -262,7 +267,8 @@ async def resend_invitation(
     one is live.
 
     200 rather than 201: nothing is created. The response carries the new link
-    exactly once, on the same terms as the original.
+    exactly once, and ``email_sent`` means what it does when inviting: false is
+    certain, true is handed over, not arrived.
     """
     invitation, token = await service.resend_invitation(
         db,
@@ -306,12 +312,12 @@ async def _post_invitation(
             invite_url=_invite_url(token),
             expires_at=as_utc(invitation.expires_at),
             inviter_name=sender.full_name,
-            # Reply-To, so an invitee who is unsure the message is genuine
-            # answers the colleague who sent it rather than a mailbox nobody
-            # reads. Only once the sender has confirmed that address: anybody
-            # can sign up as somebody else's address, and a message from our
-            # domain must not route a stranger's reply to an address nobody has
-            # shown is theirs. Unconfirmed, the reply goes to MAIL_REPLY_TO.
+            # Named in the text, so an invitee who is unsure the message is
+            # genuine has the colleague who sent it to ask. Only once the
+            # sender has confirmed that address: anybody can sign up as
+            # somebody else's address, and a message from our domain must not
+            # send a stranger's questions to an address nobody has shown is
+            # theirs. Never a Reply-To; see invitation_mail for why.
             inviter_email=sender.email if sender.email_verified else None,
             recipient_name=invitation.full_name,
             resent=resent,

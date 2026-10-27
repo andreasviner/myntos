@@ -14,14 +14,30 @@ by the time the upload's answer is in hand.
 
 from __future__ import annotations
 
-from datetime import date
+import asyncio
+import gzip
+import os
+import time
+import zipfile
+from collections.abc import AsyncIterator
+from datetime import date, timedelta
 from decimal import Decimal
+from io import BytesIO
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import update
 
+from myntos.api.deps import get_document_storage, get_working_files
+from myntos.api.v1.saft_innlesing import get_import_sessions
+from myntos.core.clock import utc_now
+from myntos.saft import jobs
+from myntos.saft.models import SaftImport
+from myntos.storage.base import StorageError
+from myntos.storage.working import LocalWorkingStore
 from tests.conftest import join_company, write
-from tests.test_arsoppgjor_api import LAST_YEAR, _books, _close
+from tests.test_arsoppgjor_api import LAST_YEAR, _books, _close, _company
 from tests.test_cashflow_api import record
 from tests.test_saft_import import ACCOUNTS, ORGNR, saft_file
 from tests.test_saft_voucher_import import EXTRA_ACCOUNTS, _opening, year_file
@@ -461,3 +477,431 @@ def test_a_member_cannot_add_avdelinger_so_cannot_post_them(client: TestClient) 
     assert refused.status_code == 422
     assert "administrator" in refused.json()["detail"]
     assert client.get(f"/api/v1/companies/{company['id']}/dimensjoner").json() == []
+
+
+# --- What was uploaded, and where it is kept ----------------------------------------------
+
+EHF = (
+    b'<?xml version="1.0" encoding="UTF-8"?><Invoice xmlns="urn:oasis:names:specification:'
+    b'ubl:schema:xsd:Invoice-2"><ID>12</ID></Invoice>'
+)
+CAMT = (
+    b'<?xml version="1.0"?><Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02">'
+    b"<BkToCstmrStmt/></Document>"
+)
+
+
+def _zip(*members: tuple[str, bytes]) -> bytes:
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, content in members:
+            archive.writestr(name, content)
+    return buffer.getvalue()
+
+
+def _store(client: TestClient) -> LocalWorkingStore:
+    store: LocalWorkingStore = client.app.dependency_overrides[get_working_files]()  # type: ignore[attr-defined]
+    return store
+
+
+def _kept(client: TestClient) -> list[bytes]:
+    """Every working copy in the store: a SAF-T file decompressed, an export as it came."""
+    store = _store(client)
+    stored = [asyncio.run(store.load(item.key)) for item in asyncio.run(store.listing())]
+    return [gzip.decompress(item) if item[:2] == b"\x1f\x8b" else item for item in stored]
+
+
+def _refused(client: TestClient, company_id: int, name: str, content: bytes) -> dict[str, Any]:
+    response = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company_id}/saft/innlesing",
+        files=[("files", (name, content, "application/octet-stream"))],
+    )
+    assert response.status_code == 422, response.text
+    body: dict[str, Any] = response.json()
+    return body
+
+
+KVITTERING = "%PDF-1.7 kvittering fra Felleskjøpet".encode()
+REGNEARK = b"PK\x03\x04 regneark"
+
+
+def _export() -> bytes:
+    """Fiken's complete export as far as it can be guessed: the years, the documents, the rest."""
+    return _zip(
+        (f"fiken-komplett-gard/SAF-T/saft-gard-{EARLIER}.xml", earlier_file()),
+        (f"fiken-komplett-gard/SAF-T/saft-gard-{LAST_YEAR}.xml", unfinished_year_file()),
+        ("fiken-komplett-gard/Bilag/2025/kvittering-17.pdf", KVITTERING),
+        ("fiken-komplett-gard/Fakturaer/faktura-12.xml", EHF),
+        ("fiken-komplett-gard/Excel/fiken-regnskap-gard.xlsx", REGNEARK),
+        # What a Mac leaves in a ZIP it made: not a document.
+        ("__MACOSX/fiken-komplett-gard/._kvittering-17.pdf", b"\x00\x05\x16\x07"),
+        ("fiken-komplett-gard/.DS_Store", b"\x00\x00\x00\x01Bud1"),
+    )
+
+
+def _documents(client: TestClient, company_id: int, **params: Any) -> dict[str, Any]:
+    response = client.get(f"/api/v1/companies/{company_id}/saft/dokumenter", params=params)
+    assert response.status_code == 200, response.text
+    body: dict[str, Any] = response.json()
+    return body
+
+
+def test_fikens_complete_export_comes_over_with_its_documents(client: TestClient) -> None:
+    """Uploaded as it downloads: the years are read, and every document is kept on the post."""
+    company = _books(client)
+    export = _export()
+    uploaded = _upload(client, company["id"], ("fiken-komplett-gard.zip", export))
+    read = _get(client, company["id"], uploaded["id"])
+    assert read["status"] == "ready", read
+    assert [(f["filename"], f["kind"]) for f in read["files"]] == [
+        (f"saft-gard-{EARLIER}.xml", "read"),
+        (f"saft-gard-{LAST_YEAR}.xml", "read"),
+        ("fiken-komplett-gard.zip", "export"),
+    ]
+    assert [f["year"] for f in read["files"]] == [EARLIER, LAST_YEAR, None]
+    review = read["review"]
+    assert review["postable"] is True, review["findings"]
+    # The two SAF-T files as they were in the export, and the export whole.
+    assert sorted(_kept(client)) == sorted([earlier_file(), unfinished_year_file(), export])
+    [archive] = review["archives"]
+    assert archive["file_name"] == "fiken-komplett-gard.zip"
+    # Everything but what the Mac left: the SAF-T files are the books'
+    # documentation before Myntos as much as the receipts are.
+    assert archive["documents"] == 5
+    assert archive["skipped_count"] == 0
+    assert archive["kept"] is None
+    # The folder every file is in says nothing; the ones inside it do.
+    assert {f["name"]: f["documents"] for f in archive["folders"]} == {
+        "SAF-T": 2,
+        "Bilag": 1,
+        "Fakturaer": 1,
+        "Excel": 1,
+    }
+    assert _documents(client, company["id"])["total_count"] == 0, "nothing before the yes"
+
+    assert _post(client, company["id"], read["id"]).status_code == 202
+    done = _get(client, company["id"], read["id"])
+    assert done["status"] == "posted", done
+    assert done["error"] is None
+    assert done["result"]["archives"][0]["kept"] == 5
+    assert done["result"]["archives"][0]["already_kept"] == 0
+    assert done["files_kept"] is False
+    assert _kept(client) == []
+
+    listed = _documents(client, company["id"])
+    assert listed["total_count"] == 5
+    assert [d["path"] for d in listed["documents"]] == sorted(
+        [
+            "fiken-komplett-gard/Bilag/2025/kvittering-17.pdf",
+            "fiken-komplett-gard/Excel/fiken-regnskap-gard.xlsx",
+            "fiken-komplett-gard/Fakturaer/faktura-12.xml",
+            f"fiken-komplett-gard/SAF-T/saft-gard-{EARLIER}.xml",
+            f"fiken-komplett-gard/SAF-T/saft-gard-{LAST_YEAR}.xml",
+        ]
+    )
+    types = {d["filename"]: d["content_type"] for d in listed["documents"]}
+    # By what the bytes are, never by the name the export gave them.
+    assert types["kvittering-17.pdf"] == "application/pdf"
+    assert types["faktura-12.xml"] == "application/xml"
+    assert types["fiken-regnskap-gard.xlsx"] == "application/octet-stream"
+    found = _documents(client, company["id"], sok="KVITTERING")
+    assert [d["filename"] for d in found["documents"]] == ["kvittering-17.pdf"]
+    assert _documents(client, company["id"], sok="%")["total_count"] == 0
+
+    document = found["documents"][0]
+    url = f"/api/v1/companies/{company['id']}/saft/dokumenter/{document['id']}"
+    downloaded = client.get(url)
+    assert downloaded.status_code == 200
+    assert downloaded.content == KVITTERING
+    assert downloaded.headers["content-type"] == "application/pdf"
+    assert downloaded.headers["content-disposition"] == 'attachment; filename="kvittering-17.pdf"'
+
+
+def test_another_companys_documents_are_not_found(client: TestClient) -> None:
+    company = _books(client)
+    uploaded = _upload(client, company["id"], ("fiken-komplett-gard.zip", _export()))
+    _post(client, company["id"], uploaded["id"])
+    document = _documents(client, company["id"])["documents"][0]
+
+    # The same person's other books: the wall is between companies, not people.
+    other_id = _company(
+        client, company["organization_id"], orgnr="915933149", name="Annen Gard AS"
+    )["id"]
+    assert _documents(client, other_id)["total_count"] == 0
+    missing = client.get(f"/api/v1/companies/{other_id}/saft/dokumenter/{document['id']}")
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "imported_document_not_found"
+
+
+def test_the_export_again_keeps_its_documents_alone_and_none_twice(client: TestClient) -> None:
+    """Books brought over before the documents were kept: the export again, for its documents."""
+    company = _books(client)
+    first = _upload(
+        client,
+        company["id"],
+        (f"{EARLIER}.xml", earlier_file()),
+        (f"{LAST_YEAR}.xml", unfinished_year_file()),
+    )
+    assert _post(client, company["id"], first["id"]).status_code == 202
+    assert _get(client, company["id"], first["id"])["status"] == "posted"
+
+    again = _upload(client, company["id"], ("fiken-komplett-gard.zip", _export()))
+    read = _get(client, company["id"], again["id"])
+    assert read["status"] == "ready", read
+    assert read["review"]["postable"] is False, "the years are in the books already"
+    assert read["review"]["archives"][0]["documents"] == 5
+    assert read["may_post"] is True
+    assert _post(client, company["id"], again["id"]).status_code == 202
+    done = _get(client, company["id"], again["id"])
+    assert done["status"] == "posted", done
+    assert done["result"]["vouchers"] == 0
+    assert done["result"]["archives"][0]["kept"] == 5
+
+    # And once more: the same files at the same places are there already.
+    third = _upload(client, company["id"], ("fiken-komplett-gard.zip", _export()))
+    _post(client, company["id"], third["id"])
+    result = _get(client, company["id"], third["id"])["result"]["archives"][0]
+    assert (result["kept"], result["already_kept"]) == (0, 5)
+    assert _documents(client, company["id"])["total_count"] == 5
+
+
+def test_a_comparison_keeps_no_export(client: TestClient) -> None:
+    company = _books(client)
+    one = _zip(
+        (f"saft-gard-{LAST_YEAR}.xml", unfinished_year_file()),
+        ("Bilag/kvittering-17.pdf", KVITTERING),
+    )
+    uploaded = _upload(client, company["id"], ("fiken-komplett-gard.zip", one), compare=True)
+    assert [f["kind"] for f in uploaded["files"]] == ["read"]
+
+
+class _Flaky:
+    """The document store, failing after ``works`` saves, as R2 does on a bad afternoon."""
+
+    def __init__(self, store: Any, works: int) -> None:
+        self._store = store
+        self.works = works
+
+    async def save(self, *, content: bytes, filename: str, content_type: str) -> str:
+        if self.works <= 0:
+            raise StorageError("R2 svarte 503")
+        self.works -= 1
+        key: str = await self._store.save(
+            content=content, filename=filename, content_type=content_type
+        )
+        return key
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._store, name)
+
+
+def test_documents_the_store_did_not_take_are_kept_on_the_next_post(client: TestClient) -> None:
+    company = _books(client)
+    storage = client.app.dependency_overrides[get_document_storage]()  # type: ignore[attr-defined]
+    flaky = _Flaky(storage, works=2)
+    client.app.dependency_overrides[get_document_storage] = lambda: flaky  # type: ignore[attr-defined]
+    uploaded = _upload(client, company["id"], ("fiken-komplett-gard.zip", _export()))
+    assert _post(client, company["id"], uploaded["id"]).status_code == 202
+    stopped = _get(client, company["id"], uploaded["id"])
+    assert stopped["status"] == "posted"
+    assert stopped["error_code"] == "documents_not_kept"
+    assert stopped["error"].startswith("Regnskapet er ført, men ikke alle dokumentene")
+    # The books are in, the files wait for the rest, and the person may try again.
+    assert stopped["result"]["vouchers"] > 0
+    assert stopped["files_kept"] is True
+    assert stopped["may_post"] is True
+    assert _documents(client, company["id"])["total_count"] == 2
+
+    flaky.works = 100
+    assert _post(client, company["id"], uploaded["id"]).status_code == 202
+    done = _get(client, company["id"], uploaded["id"])
+    assert done["status"] == "posted", done
+    assert done["error_code"] is None
+    kept = done["result"]["archives"][0]
+    assert (kept["kept"], kept["already_kept"]) == (3, 2)
+    assert done["files_kept"] is False
+    assert _documents(client, company["id"])["total_count"] == 5
+    vouchers = client.get(
+        f"/api/v1/companies/{company['id']}/bilag", params={"aar": LAST_YEAR, "journal": "IMPORT"}
+    ).json()["total_count"]
+    assert vouchers == stopped["result"]["years"][-1]["vouchers"], "the books went in once"
+
+
+def test_a_restart_after_the_books_keeps_the_documents_and_posts_nothing(
+    client: TestClient,
+) -> None:
+    """Stopped between the books' commit and the documents: the restart keeps only the documents."""
+    company = _books(client)
+    uploaded = _upload(client, company["id"], ("fiken-komplett-gard.zip", _export()))
+    review = _get(client, company["id"], uploaded["id"])["review"]
+    sessions = client.app.dependency_overrides[get_import_sessions]()  # type: ignore[attr-defined]
+    storage = client.app.dependency_overrides[get_document_storage]()  # type: ignore[attr-defined]
+
+    async def stopped_after_the_books() -> None:
+        # What _post_books leaves in its own transaction, as a restart finds it.
+        async with sessions() as db:
+            await db.execute(
+                update(SaftImport)
+                .where(SaftImport.id == uploaded["id"])
+                .values(status="posting", result=review, posted_at=utc_now())
+            )
+            await db.commit()
+        await jobs.resume(sessions, storage, _store(client))
+
+    asyncio.run(stopped_after_the_books())
+    done = _get(client, company["id"], uploaded["id"])
+    assert done["status"] == "posted", done
+    assert done["result"]["archives"][0]["kept"] == 5
+    imported = client.get(
+        f"/api/v1/companies/{company['id']}/bilag", params={"aar": LAST_YEAR, "journal": "IMPORT"}
+    ).json()["total_count"]
+    assert imported == 0, "the books were not posted a second time"
+
+
+def test_a_printout_sent_as_a_saft_file_is_told_where_it_goes(client: TestClient) -> None:
+    company = _books(client)
+    body = _refused(client, company["id"], "Bilag september.pdf", b"%PDF-1.7 utskrift")
+    assert body["code"] == "printout_not_saft"
+    assert "Vedlegg fra Tripletex" in body["detail"]
+    assert _kept(client) == []
+
+
+@pytest.mark.parametrize(
+    ("name", "content", "says"),
+    [
+        pytest.param("konto.xml", CAMT, "kontoutskrift", id="a bank statement"),
+        pytest.param("faktura.xml", EHF, "EHF-faktura", id="an invoice"),
+        pytest.param("notat.txt", b"Saldobalanse 2025", "ikke en SAF-T-fil", id="not XML"),
+        pytest.param(
+            "fiken-regnskap-gard-2025.xlsx",
+            _zip(("[Content_Types].xml", b"<Types/>"), ("xl/workbook.xml", b"<workbook/>")),
+            "regneark",
+            id="a spreadsheet",
+        ),
+        pytest.param(
+            "fiken-bilag-gard.zip",
+            _zip(("Bilag/1.pdf", b"%PDF-1.7"), ("Bilag/2.jpg", b"jpeg")),
+            "Komplett eksport",
+            id="Fiken's documents alone",
+        ),
+    ],
+)
+def test_what_is_not_a_saft_file_is_told_what_it_is(
+    client: TestClient, name: str, content: bytes, says: str
+) -> None:
+    company = _books(client)
+    body = _refused(client, company["id"], name, content)
+    assert body["code"] == "invalid_saft_file"
+    assert says in body["detail"]
+    assert _kept(client) == []
+
+
+def test_a_file_delivered_in_parts_is_refused_before_it_is_kept(client: TestClient) -> None:
+    company = _books(client)
+    parts = _zip(("saft_1_2.xml", earlier_file()), ("saft_2_2.xml", earlier_file()))
+    body = _refused(client, company["id"], "saft.zip", parts)
+    assert "delt i 2 deler" in body["detail"]
+    assert _kept(client) == []
+
+
+def test_more_years_than_a_move_takes_are_counted_before_anything_is_unpacked(
+    client: TestClient,
+) -> None:
+    company = _books(client)
+    many = _zip(*[(f"saft-{index:02d}.xml", earlier_file()) for index in range(11)])
+    body = _refused(client, company["id"], "mange.zip", many)
+    assert "høyst 10" in body["detail"]
+    assert _kept(client) == []
+
+
+def test_the_one_file_routes_tell_the_years_of_a_complete_export_apart(
+    client: TestClient,
+) -> None:
+    """``…/saft/bilag/kontroll`` reads one year: the export's two are named, not miscounted."""
+    company = _books(client)
+    export = _zip(
+        (f"saft-gard-{EARLIER}.xml", earlier_file()),
+        (f"saft-gard-{LAST_YEAR}.xml", year_file()),
+        ("faktura-12.xml", EHF),
+    )
+    url = f"/api/v1/companies/{company['id']}/saft/bilag/kontroll"
+    several = write(client, "POST", url, files={"file": ("fiken-komplett.zip", export)})
+    assert several.status_code == 422, several.text
+    assert "har 2 SAF-T-filer" in several.json()["detail"]
+    printout = write(client, "POST", url, files={"file": ("Bilag.pdf", b"%PDF-1.7")})
+    assert printout.json()["code"] == "printout_not_saft"
+    # One SAF-T file among documents is read as the one it is.
+    one = _zip((f"saft-gard-{LAST_YEAR}.xml", year_file()), ("faktura-12.xml", EHF))
+    read = write(client, "POST", url, files={"file": ("saft.zip", one)})
+    assert read.status_code == 200, read.text
+
+
+def _age(client: TestClient, import_id: int, days: int) -> None:
+    """Make an import and its stored files ``days`` old."""
+    sessions = client.app.dependency_overrides[get_import_sessions]()  # type: ignore[attr-defined]
+
+    async def backdate() -> None:
+        async with sessions() as db:
+            await db.execute(
+                update(SaftImport)
+                .where(SaftImport.id == import_id)
+                .values(created_at=utc_now() - timedelta(days=days))
+            )
+            await db.commit()
+
+    asyncio.run(backdate())
+    then = time.time() - days * 86400
+    for item in asyncio.run(_store(client).listing()):
+        os.utime(_store(client)._path(item.key), (then, then))
+
+
+def _sweep(client: TestClient) -> int:
+    sessions = client.app.dependency_overrides[get_import_sessions]()  # type: ignore[attr-defined]
+    return asyncio.run(jobs.sweep(sessions, _store(client)))
+
+
+def test_the_files_go_fourteen_days_after_the_upload(client: TestClient) -> None:
+    company = _books(client)
+    uploaded = _upload(client, company["id"], (f"{EARLIER}.xml", earlier_file()))
+    assert _get(client, company["id"], uploaded["id"])["files_kept"] is True
+    _age(client, uploaded["id"], 13)
+    assert _sweep(client) == 0
+    assert len(_kept(client)) == 1
+
+    # Nobody looks at it again, and the daily sweep lets go of it all the same.
+    _age(client, uploaded["id"], 15)
+    assert _sweep(client) == 1
+    assert _kept(client) == []
+    assert _get(client, company["id"], uploaded["id"])["files_kept"] is False
+    refused = _post(client, company["id"], uploaded["id"])
+    assert refused.status_code == 422
+
+
+def test_a_file_no_import_names_is_deleted_once_it_is_an_hour_old(client: TestClient) -> None:
+    """An upload whose client left halfway, or a delete that failed."""
+    store = _store(client)
+
+    async def orphan() -> str:
+        async def piece() -> AsyncIterator[bytes]:
+            yield b"halvveis"
+
+        return (await store.save(piece())).key
+
+    key = asyncio.run(orphan())
+    # Younger than an hour, it may be an upload whose row is not committed yet.
+    assert _sweep(client) == 0
+    then = time.time() - 2 * 3600
+    os.utime(store._path(key), (then, then))
+    assert _sweep(client) == 1
+    assert asyncio.run(store.listing()) == []
+
+
+def test_throwing_an_import_away_deletes_its_files(client: TestClient) -> None:
+    company = _books(client)
+    uploaded = _upload(client, company["id"], (f"{EARLIER}.xml", earlier_file()))
+    assert len(_kept(client)) == 1
+    url = f"/api/v1/companies/{company['id']}/saft/innlesing/{uploaded['id']}"
+    assert write(client, "DELETE", url).status_code == 204
+    assert _kept(client) == []

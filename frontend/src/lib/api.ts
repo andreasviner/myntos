@@ -1117,12 +1117,14 @@ export interface Invitation {
   /** Only ever populated on the response that created it, since the token is stored hashed. */
   invite_url: string | null;
   /**
-   * Whether Myntos emailed the invitation.
+   * Whether the mail service took the invitation.
    *
    * False covers both a deployment with no mail configured and a message the
    * relay refused; either way the invitation exists and the link is the way
-   * round it. Null on the listing, which is not about a fresh invitation and
-   * where nobody is waiting to hear.
+   * round it. True is not "arrived": Cloudflare answers before its spam filter
+   * runs, which is why the pages show the link whatever this says. Null on the
+   * listing, which is not about a fresh invitation and where nobody is waiting
+   * to hear.
    */
   email_sent: boolean | null;
 }
@@ -2221,7 +2223,7 @@ export interface FakturaCatalogue {
    * button that always fails.
    */
   ai_available: boolean;
-  /** The longest description `draftFakturaLines` accepts. */
+  /** The longest text `draftFaktura` and `draftFakturaLines` accept. */
   ai_max_chars: number;
 }
 
@@ -2367,13 +2369,45 @@ export interface LineDraft {
   warnings: string[];
 }
 
+/**
+ * How a proposal found the registered customer it names: by organisasjonsnummer,
+ * by the whole name, or by part of a name that fits that customer and no other.
+ */
+export type PartyMatch = 'orgnr' | 'navn' | 'delvis';
+
+/**
+ * A proposed invoice, named field for field as a draft takes it.
+ *
+ * Every field the pasted text did not state is null: nothing is filled in by
+ * guess. `party_id` is a registered customer of this company, chosen by the
+ * backend against its own register and not by the model; the `buyer_*` fields
+ * are what the text says either way.
+ */
+export interface FakturaDraft {
+  party_id: number | null;
+  party_match: PartyMatch | null;
+  buyer_name: string | null;
+  buyer_orgnr: string | null;
+  buyer_address_line: string | null;
+  buyer_postal_code: string | null;
+  buyer_city: string | null;
+  /** True for an orgnr in the text or on the matched customer; null proves nothing. */
+  buyer_is_business: boolean | null;
+  /** Where the text asks for the invoice to be sent. Not on the invoice. */
+  invoice_email: string | null;
+  delivery_date: string | null;
+  delivery_place: string | null;
+  due_date: string | null;
+  buyer_reference: string | null;
+  lines: DraftedLine[];
+  warnings: string[];
+}
+
 /** The number and KID the next issued invoice would get. Reserves nothing. */
 export interface NextNumber {
   document_number: string;
-  /** kundenummer + fakturanummer + kontrollsiffer. */
+  /** The invoice number and a check digit, the same whoever it is to. */
   payment_reference: string;
-  /** The customer number in it, or null when the buyer is not a registered customer. */
-  customer_number: string | null;
 }
 
 /**
@@ -2381,18 +2415,9 @@ export interface NextNumber {
  *
  * A preview and not a reservation: an invoice issued in between moves the
  * series on, so the interface labels it rather than presenting it as settled.
- *
- * `partyId` is the customer the invoice is going to, and the KID carries their
- * customer number, so the preview changes when the customer does.
  */
-export const getNextFakturaNumber = (
-  companyId: number,
-  partyId?: number | null,
-): Promise<NextNumber> =>
-  request<NextNumber>(
-    `/api/v1/companies/${companyId}/faktura/neste-nummer` +
-      (partyId === undefined || partyId === null ? '' : `?party_id=${partyId}`),
-  );
+export const getNextFakturaNumber = (companyId: number): Promise<NextNumber> =>
+  request<NextNumber>(`/api/v1/companies/${companyId}/faktura/neste-nummer`);
 
 export const getFakturaCatalogue = (): Promise<FakturaCatalogue> =>
   request<FakturaCatalogue>('/api/v1/faktura/katalog');
@@ -2405,6 +2430,10 @@ export const getFakturaCatalogue = (): Promise<FakturaCatalogue> =>
  */
 export const draftFakturaLines = (companyId: number, text: string): Promise<LineDraft> =>
   json<LineDraft>(`/api/v1/companies/${companyId}/faktura/linjeforslag`, 'POST', { text });
+
+/** A proposed buyer, terms and lines for a pasted text. Stores nothing. */
+export const draftFaktura = (companyId: number, text: string): Promise<FakturaDraft> =>
+  json<FakturaDraft>(`/api/v1/companies/${companyId}/faktura/forslag`, 'POST', { text });
 
 export const listFaktura = (companyId: number, limit = 100): Promise<Faktura[]> =>
   request<Faktura[]>(`/api/v1/companies/${companyId}/faktura?limit=${limit}`);
@@ -3499,6 +3528,27 @@ export interface SaftMoveReview {
   parties_to_add: SaftPartyToAdd[];
   dimensions_to_add: SaftDimensionToAdd[];
   findings: SaftImportFinding[];
+  /** The old program's complete exports in the upload, whose documents are kept on the yes. */
+  archives: SaftArchive[];
+}
+
+/**
+ * What keeping one export's documents does: every file in it, in the document
+ * store, under the path it had in the export and on no voucher
+ * (backend `saft/archive.py`).
+ */
+export interface SaftArchive {
+  file_name: string;
+  documents: number;
+  bytes: number;
+  /** The export's folders by how many files each holds, for showing only. */
+  folders: { name: string; documents: number }[];
+  /** Up to 50 of the files not kept; `skipped_count` is all of them. */
+  skipped: { path: string; reason: 'encrypted' | 'too_large' | 'too_many' | 'broken' }[];
+  skipped_count: number;
+  /** Null until the documents are kept. */
+  kept: number | null;
+  already_kept: number | null;
 }
 
 export type SaftComparisonReview = Omit<SaftComparison, 'company_id' | 'findings'> & {
@@ -3521,7 +3571,8 @@ export interface SaftImport {
   total: number;
   running: boolean;
   files_kept: boolean;
-  files: { filename: string; size: number; year: number | null }[];
+  /** `export`: an old program's complete export, kept whole for its documents. */
+  files: { filename: string; size: number; year: number | null; kind: 'read' | 'export' }[];
   review: SaftMoveReview | SaftComparisonReview | null;
   result: SaftMoveReview | null;
   error: string | null;
@@ -3620,6 +3671,43 @@ export const postSaftImport = (companyId: number, importId: number): Promise<Saf
 
 export const discardSaftImport = (companyId: number, importId: number): Promise<void> =>
   request<void>(`${importPath(companyId)}/${importId}`, { method: 'DELETE' });
+
+/** A file kept from an old program's complete export: on no voucher, under its path there. */
+export interface ImportedDocument {
+  id: number;
+  /** Where it was in the export. Written by whoever made the ZIP: text to show, nothing more. */
+  path: string;
+  filename: string;
+  content_type: string;
+  byte_size: number;
+  export_name: string;
+  software: string | null;
+  kept_at: string;
+  import_id: number | null;
+}
+
+export interface ImportedDocumentPage {
+  company_id: number;
+  total_count: number;
+  offset: number;
+  documents: ImportedDocument[];
+}
+
+/** The kept documents, by path, a page of 100 at a time; `sok` looks in the path. */
+export function listImportedDocuments(
+  companyId: number,
+  options: { sok?: string; fra?: number } = {},
+): Promise<ImportedDocumentPage> {
+  const query = new URLSearchParams();
+  if (options.sok) query.set('sok', options.sok);
+  if (options.fra) query.set('fra', String(options.fra));
+  const text = query.toString();
+  return request<ImportedDocumentPage>(`${saftPath(companyId)}/dokumenter${text ? `?${text}` : ''}`);
+}
+
+/** A plain link, like `documentUrl`: the server answers it as a download. */
+export const importedDocumentUrl = (companyId: number, documentId: number): string =>
+  `${API_BASE_URL}${saftPath(companyId)}/dokumenter/${documentId}`;
 
 // --- The documents behind the vouchers, from the old program's printout ---------------
 //

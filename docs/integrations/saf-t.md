@@ -392,13 +392,14 @@ is what each became:
 
 | Route | Key | Does |
 | --- | --- | --- |
-| `POST …/saft/innlesing` | `KEY_PREVIEW`, `ledger:write` (`ledger:read` with `sammenlign=true`) | Upload one file per year, or one to compare; 202, read in the background |
+| `POST …/saft/innlesing` | `KEY_PREVIEW`, `ledger:write` (`ledger:read` with `sammenlign=true`) | Upload one file per year, or a ZIP with them (Fiken's complete export), 2 GB in all; or one to compare; 202, read in the background |
 | `GET …/saft/innlesing`, `GET …/saft/innlesing/{import_id}` | `KEY_READ` | The imports, their progress, the review, the result |
 | `POST …/saft/innlesing/{import_id}/foring` | `key_post`, `ledger:write` (+ `ledger:chart` when accounts are added) | Post it, all or nothing; 202 |
 | `DELETE …/saft/innlesing/{import_id}` | `key_write` | Throw away one not posted |
+| `GET …/saft/dokumenter`, `GET …/saft/dokumenter/{document_id}` | `KEY_READ`, `ledger:read` | The documents kept from an old program's complete export, by path with `sok`; one as a download |
 
 The upload is a preview for a key: it changes nothing in the books, and holding
-a 200 MB file for approval would not fit the approval's 30 MB anyway. The post
+a 2 GB upload for approval would not fit the approval's 30 MB anyway. The post
 that waits for approval is a request with no body.
 
 **The opening balance.** Posted from the earliest file when none stands; kept
@@ -441,6 +442,104 @@ sale and Tripletex's year-end and the running year cut at February, brought
 over in one go, closed, compared, and listed. Not yet run on the farm's real
 files: `regnaskaps_tests/saft_pilot.py` drives the single-file routes and needs
 a variant for the import.
+
+### Fiken's complete export, and files kept outside the database (built 2026-10-27)
+
+The first person to try Myntos from Fiken uploaded «regnskapet mitt fra Fiken»,
+350 MB, and was told it was over the limit of 201 MB; another company of theirs
+was nearly 600 MB. That was almost certainly Fiken's complete export
+(`fiken-komplett-<firma>.zip`, «Excel og SAF-T i en ZIP-fil» for every year,
+beside every document in the books), and the reader would have refused it for
+its contents too: more than one XML. Three things changed.
+
+- **A ZIP is opened for every SAF-T file in it** (`saft/intake.py`,
+  `reader.saft_members`): each `.xml` whose document element is `AuditFile`,
+  found by content because Fiken publishes neither its folders nor its file
+  names, and an EHF invoice is XML too. Each becomes a file of the import, one
+  per year. A file in parts is refused here as the reader refuses it.
+- **Those are kept in a store of their own** (`storage/working.py`: a
+  second R2 bucket, `R2_WORKING_BUCKET`, EU jurisdiction), as gzip-compressed
+  XML, written in 16 MB parts and parsed as it downloads
+  (`reader.read_entries_xml`). A ZIP with more in it than its SAF-T files is
+  kept there whole as well, for its documents (below). The database column the files were in (`saft_import_file.content`) is read for
+  rows from before and goes in a later migration. Deleted once posted, thrown
+  away, or 14 days after the upload; `jobs.sweep`, from the daily loop in
+  `main.py`, deletes whatever no row points at, and the bucket's lifecycle
+  rule is the backstop.
+- **2 GB on this route only**, read by the route itself after the membership
+  check (FastAPI would otherwise spool it for anybody first), and named «2 GB»
+  in the 413. The one-file routes and the printouts keep 200 MB.
+
+**Wrong files are told what they are.** Before anything is kept, an upload
+that is not a SAF-T file is refused with what it is instead
+(`reader.refuse_unless_saft`, `reader.without_saft`): a printout
+(`printout_not_saft`, «goes under «Vedlegg fra Tripletex»»), a camt bank
+statement, an EHF invoice, a spreadsheet, a ZIP of documents with no SAF-T
+file (with Fiken's own names for what does have them). A SAF-T file sent to the
+printout route answers `saft_not_printout`. The one-file routes name the years
+in a ZIP with several instead of «nøyaktig én». The page sorts files before
+any of this (`lib/uploadkind.ts`): a printout dropped on the SAF-T box moves
+to «Vedlegg fra Tripletex», a SAF-T file the other way, and a file whose
+header (or name, for Fiken's export) names another program than the one chosen
+changes the choice, as an import read since does.
+
+**What did not change: one year is at most 300 000 voucher lines.** Measured
+through the routes on SQLite, 30 000 lines (10 000 vouchers) took 16.5 s to
+read and review and 17.3 s to post, with the process 355 MB larger at its
+peak. The review is the posting rolled back, so a year is posted twice, all of
+it in memory and in one transaction: 300 000 lines is about three minutes and
+3.5 GB each time, and a million would want the move to post in batches, which
+it does not. A year past the line cap is refused with «Ta ut SAF-T-filen for
+en kortere periode», which Fiken can do (`saft-<firma>.xml` for a chosen
+period).
+
+### The documents in the complete export, kept on no voucher (built 2026-10-27)
+
+The first version told the person to keep the export themselves, five years,
+and they asked why Myntos did not. Fiken publishes the export's file names but
+not how a PDF in it is tied to a voucher: its «Postering» is the voucher and
+its «Vedlegg»/«bilagsnummer» the attachment, and only a real export will say
+which of them a file or folder name carries. The bilag archive is append-only,
+so a document put on the wrong voucher is there for good, under a voucher an
+auditor then believes it documents. So the documents are **kept, but on no
+voucher** (`saft/archive.py`, table `imported_document`):
+
+- **The ZIP is kept whole** beside the SAF-T files taken out of it
+  (`saft_import_file.kind` `export`, `intake._keep_saft`), when it holds
+  anything else (`archive.has_documents`; what an operating system leaves,
+  `__MACOSX/`, `.DS_Store`, is not a document). Not for a comparison.
+- **The review counts them** (`review.archives`): files, bytes, the export's
+  folders, and what will not be kept and why (locked with a password, over
+  100 MB, past 50 000 files or 8 GB unpacked). Read from the ZIP's central
+  directory alone, after `move.apply` has checked the SAF-T files are this
+  company's, so another company's export never gets this far. The ZIP is read
+  from R2 in 8 MB ranges (`WorkingStore.open_seekable`): the box's `/tmp` is
+  tmpfs, so spooling 600 MB there is spooling it to memory.
+- **On the yes, after the books**, every file is copied into the document
+  store (`DocumentStorage.save`, the bilag bucket) with its path in the
+  export, its SHA-256 and the type its bytes are (`sniff_content_type`, else
+  XML by its start, else `application/octet-stream`; never by the name, since
+  it is served back with that type). A path is text: UTF-8 when the ZIP wrote
+  it as such without saying so, `\` as `/`, no `..`, printable characters only.
+- **Kept once.** The same path with the same bytes is skipped, so sending an
+  export twice adds nothing, and a second post after a stop carries on.
+- **The books are not posted twice.** `posted_at` and `result` are set in the
+  books' own transaction, so a restart while the documents are copied resumes
+  with the documents (`jobs.post`). A store that stops answering leaves the
+  import `posted` with `error_code` `documents_not_kept`, the rows kept so far
+  committed and the files kept; posting it again keeps the rest.
+- **Books already brought over** can have their export's documents kept:
+  uploaded again, the review has nothing to post and the archives, and the
+  post (`jobs.postable`) keeps the documents alone. A `feil` stops it, as it
+  would the books.
+- **Found, not filed.** `GET …/saft/dokumenter` lists them by path, with a
+  substring search on it; `GET …/saft/dokumenter/{document_id}` downloads one
+  as an attachment, whatever it is. No route deletes one. They go with the
+  company at the purge (`closure._stored_keys`).
+
+**Not built: matching them to the vouchers.** Once a real export has shown how
+Fiken names them, the rows here carry the path and the bytes, so the documents
+can be put on their vouchers from the store with nothing uploaded again.
 
 ## The documents behind the vouchers, from Tripletex's printout (built 2026-10-22)
 

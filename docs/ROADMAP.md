@@ -211,8 +211,9 @@ registration and access, which cannot be done from a repository.
 - [x] Email delivery (Cloudflare Email Service): address confirmation,
       invitation mails, password reset, each link single-use and hashed. Reset
       never reveals whether an address has an account. Unconfirmed accounts
-      keep every right they had; they only lose Reply-To on invitations they
-      send — `domain/identity/account_mail.py`, migration `c5e8a17d3f42`
+      keep every right they had; only their address is left out of the
+      invitations they send — `domain/identity/account_mail.py`, migration
+      `c5e8a17d3f42`
 - [ ] Pre-hijack defence: a verified Google/Microsoft login landing on an
       unconfirmed password account with the same address should clear the
       password and end its sessions. Deferred because it also hits today's

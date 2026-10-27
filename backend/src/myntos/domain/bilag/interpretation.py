@@ -1444,12 +1444,13 @@ def _invoice_number(lines: list[str]) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _orgnrs(text: str) -> tuple[str, ...]:
+def orgnrs_in(text: str) -> tuple[str, ...]:
     """Every organisasjonsnummer in the text, deduplicated, order preserved.
 
     The mod-11 check digit is what makes this usable at all: nine digits also
     turn up in reference and phone numbers, and only about one in eleven of those
-    passes.
+    passes. Public because the invoice form reads a buyer's number out of a
+    pasted e-mail the same way (myntos.domain.faktura.drafting).
     """
     found: list[str] = []
     for match in _ORGNR_RE.finditer(text):
@@ -1988,7 +1989,7 @@ def read(
         items = {found for group in groups if (found := _item_text(group))}
         if len(items) > 1:
             item_text = None
-    orgnrs = _orgnrs(text)
+    orgnrs = orgnrs_in(text)
     low = text.lower()
     printed_seller = _seller_name(lines, _seller_orgnr(orgnrs, own_orgnr), guess=has_letterhead)
     seller_name = _a_name(printed_seller or named_by_title)

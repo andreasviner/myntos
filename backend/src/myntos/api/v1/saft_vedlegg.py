@@ -36,14 +36,14 @@ from myntos.api.deps import (
     CurrentUser,
     DbSession,
     Storage,
+    Working,
     key_post,
     key_write,
 )
 from myntos.api.v1.saft_innlesing import ImportFindingResponse, ImportSessions
 from myntos.domain.identity.access import Permission, has_permission, require_permission
-from myntos.saft import jobs, printout
+from myntos.saft import intake, jobs
 from myntos.saft.documents import Action
-from myntos.saft.errors import InvalidPrintoutError
 from myntos.saft.models import ImportPurpose, ImportStatus, SaftImport
 
 router = APIRouter(tags=["saft"])
@@ -201,6 +201,7 @@ async def upload_printouts(
     db: DbSession,
     user: CurrentUser,
     sessions: ImportSessions,
+    working: Working,
     background: BackgroundTasks,
     files: Annotated[list[UploadFile], File()],
 ) -> DocumentImportResponse:
@@ -240,26 +241,23 @@ async def upload_printouts(
     away, or for 14 days. Needs ``ledger:write``.
     """
     require_permission(context.membership.role, Permission.LEDGER_WRITE)
-    uploads: list[jobs.Upload] = []
-    for upload in files:
-        if upload.size is not None and upload.size > printout.MAX_UPLOAD_BYTES:
-            raise InvalidPrintoutError(
-                f"«{upload.filename}» er større enn 200 MB. Skriv ut en kortere periode om gangen"
-            )
-        content = await upload.read(printout.MAX_UPLOAD_BYTES + 1)
-        uploads.append(jobs.Upload(filename=upload.filename or "", content=content))
-    job = await jobs.create(
-        db,
-        company=context.company,
-        purpose=ImportPurpose.VEDLEGG,
-        uploads=uploads,
-        til=None,
-        user_id=user.id,
-        key_id=context.agent_key.id if context.agent_key is not None else None,
-    )
-    # Committed before the answer, so the work below finds the row it reads.
-    await db.commit()
-    background.add_task(jobs.read_documents, sessions, job.id)
+    kept = await intake.keep_printouts(working, files)
+    try:
+        job = await jobs.create(
+            db,
+            company=context.company,
+            purpose=ImportPurpose.VEDLEGG,
+            files=kept,
+            til=None,
+            user_id=user.id,
+            key_id=context.agent_key.id if context.agent_key is not None else None,
+        )
+        # Committed before the answer, so the work below finds the row it reads.
+        await db.commit()
+    except Exception:
+        await jobs.forget(working, [file.key for file in kept])
+        raise
+    background.add_task(jobs.read_documents, sessions, working, job.id)
     return await _response(db, context, job)
 
 
@@ -318,6 +316,7 @@ async def archive_printouts(
     user: CurrentUser,
     sessions: ImportSessions,
     storage: Storage,
+    working: Working,
     background: BackgroundTasks,
 ) -> DocumentImportResponse:
     """Put the documents the review showed in the bilag archive. Cannot be undone. Answers 202.
@@ -354,7 +353,7 @@ async def archive_printouts(
         purposes=_PURPOSES,
     )
     await db.commit()
-    background.add_task(jobs.post_documents, sessions, job.id, storage)
+    background.add_task(jobs.post_documents, sessions, working, job.id, storage)
     return await _response(db, context, job)
 
 
@@ -365,7 +364,9 @@ async def archive_printouts(
         "forkaste en opplasting av utskrifter fra det gamle regnskapsprogrammet"
     ),
 )
-async def discard_printouts(import_id: int, context: CurrentCompany, db: DbSession) -> Response:
+async def discard_printouts(
+    import_id: int, context: CurrentCompany, db: DbSession, working: Working
+) -> Response:
     """Throw away an upload of printouts whose documents are not archived, with its files.
 
     For a printout uploaded by mistake, or one whose review showed the wrong
@@ -374,5 +375,7 @@ async def discard_printouts(import_id: int, context: CurrentCompany, db: DbSessi
     record of what was brought in. Needs ``ledger:write``.
     """
     require_permission(context.membership.role, Permission.LEDGER_WRITE)
-    await jobs.discard(db, company=context.company, import_pk=import_id, purposes=_PURPOSES)
+    keys = await jobs.discard(db, company=context.company, import_pk=import_id, purposes=_PURPOSES)
+    await db.commit()
+    await jobs.forget(working, keys)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

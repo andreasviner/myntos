@@ -11,12 +11,14 @@ between a draft and a lawful invoice *before* the user commits. Issuing checks t
 same rules and refuses; the difference is that this one is safe to call on every
 keystroke and answers with the list rather than an error.
 
-``POST /faktura/linjeforslag`` is the one route here that talks to a model. It
-stores nothing and posts nothing: it turns a sentence about a sale into proposed
-lines the user then edits, saves and issues by hand like any other. It answers
-200 with an empty list when no model is configured or none answers, because a
-form that cannot be filled in by hand when the model is down would be a worse
-trade than never asking.
+``POST /faktura/forslag`` and ``POST /faktura/linjeforslag`` are the two routes
+here that talk to a model. They store nothing and post nothing: the first turns
+whatever the seller pastes, a sentence about the sale or the customer's e-mail
+with their invoice details, into a proposed buyer, terms and lines; the second
+asks for the lines alone. The user then edits, saves and issues the result by
+hand like anything typed. Both answer 200 with nothing proposed when no model is
+configured or none answers, because a form that cannot be filled in by hand
+when the model is down would be a worse trade than never asking.
 
 The two download routes serve the two documents this produces. ``/ehf`` is the
 e-invoice — the legally required format for a sale to another bokføringspliktig
@@ -28,6 +30,7 @@ independently of this endpoint.
 from datetime import date
 from decimal import Decimal
 from typing import Annotated
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query, Response, status
 from pydantic import BaseModel, Field
@@ -61,9 +64,12 @@ from myntos.domain.faktura.totals import totals
 from myntos.domain.identity.access import Permission, require_permission
 from myntos.domain.ledger import parties as party_service
 from myntos.domain.ledger.chart import TAX_CODES_BY_CODE
+from myntos.domain.ledger.models import Company, PartyType
 from myntos.integrations import loynd
 
 router = APIRouter(tags=["faktura"])
+
+_OSLO = ZoneInfo("Europe/Oslo")
 
 
 # --- Catalogue ---------------------------------------------------------------------
@@ -98,8 +104,8 @@ class FakturaCatalogueResponse(BaseModel):
     # form can leave the box out entirely rather than offer a button that always
     # fails — a deployment without LOYND_KEY has opted out, not broken.
     ai_available: bool
-    # The longest description /linjeforslag accepts, so the textarea and the
-    # endpoint cannot disagree about it.
+    # The longest text /forslag and /linjeforslag accept, so the textareas and
+    # the endpoints cannot disagree about it.
     ai_max_chars: int
 
 
@@ -295,13 +301,11 @@ class NextNumberResponse(BaseModel):
 
     document_number: str
     payment_reference: str
-    # The customer number that went into it, so the form can explain the KID's
-    # first five digits rather than leave them looking like padding.
-    customer_number: str | None
 
 
-class LineDraftRequest(BaseModel):
-    """A sale described in the seller's own words."""
+class DraftRequest(BaseModel):
+    """What the seller pasted or wrote: a sentence about the sale, the customer's
+    e-mail with their invoice details, or both."""
 
     text: str = Field(min_length=1, max_length=drafting.MAX_REQUEST_CHARS)
 
@@ -326,6 +330,63 @@ class LineDraftResponse(BaseModel):
 
     lines: list[DraftedLineResponse]
     warnings: list[str]
+
+
+class FakturaDraftResponse(BaseModel):
+    """A proposed invoice, named field for field as :class:`CreateFakturaRequest`.
+
+    Every field the text did not state is null; nothing is filled in by guess.
+    ``party_id`` is a registered customer of this company, chosen by this
+    endpoint and not by the model, and ``party_match`` says on what: ``orgnr``,
+    ``navn`` (the whole name) or ``delvis`` (a part of the name that fits this
+    customer and no other, which ``warnings`` then says out loud). The
+    ``buyer_*`` fields are what the text says about the buyer either way; a
+    draft with ``party_id`` takes the customer's own details and ignores them.
+
+    ``buyer_is_business`` is true when the text carries an organisasjonsnummer
+    or the matched customer has one, and null otherwise: an orgnr proves a
+    business, and its absence proves nothing.
+
+    ``invoice_email`` is where the text asks for the invoice to be sent. The
+    invoice has no field for it and Myntos sends nothing yet, so it is for the
+    person, who sends the PDF there.
+    """
+
+    party_id: int | None
+    party_match: drafting.MatchKind | None
+    buyer_name: str | None
+    buyer_orgnr: str | None
+    buyer_address_line: str | None
+    buyer_postal_code: str | None
+    buyer_city: str | None
+    buyer_is_business: bool | None
+    invoice_email: str | None
+    delivery_date: date | None
+    delivery_place: str | None
+    due_date: date | None
+    buyer_reference: str | None
+    lines: list[DraftedLineResponse]
+    warnings: list[str]
+
+    @classmethod
+    def nothing(cls, warning: str) -> "FakturaDraftResponse":
+        return cls(
+            party_id=None,
+            party_match=None,
+            buyer_name=None,
+            buyer_orgnr=None,
+            buyer_address_line=None,
+            buyer_postal_code=None,
+            buyer_city=None,
+            buyer_is_business=None,
+            invoice_email=None,
+            delivery_date=None,
+            delivery_place=None,
+            due_date=None,
+            buyer_reference=None,
+            lines=[],
+            warnings=[warning],
+        )
 
 
 # --- Mapping ------------------------------------------------------------------------
@@ -439,8 +500,8 @@ async def catalogue(user: CurrentUser) -> FakturaCatalogueResponse:
         default_payment_term_days=DEFAULT_PAYMENT_TERM_DAYS,
         e_invoice_mandatory_from=compliance.E_INVOICE_MANDATORY_FROM,
         # A deployment-level fact only: this endpoint has no company, and the
-        # company's own KI switch is checked where it matters, in draft_lines
-        # below. The page consults both before showing the box.
+        # company's own KI switch is checked where it matters, in the two
+        # drafting routes below. The page consults both before showing the boxes.
         ai_available=loynd.is_configured(),
         ai_max_chars=drafting.MAX_REQUEST_CHARS,
     )
@@ -521,11 +582,7 @@ async def create_faktura(
 
 
 @router.get("/companies/{company_id}/faktura/neste-nummer", openapi_extra=KEY_READ)
-async def next_number(
-    context: CurrentCompany,
-    db: DbSession,
-    party_id: Annotated[int | None, Query()] = None,
-) -> NextNumberResponse:
+async def next_number(context: CurrentCompany, db: DbSession) -> NextNumberResponse:
     """The number and KID the next issued invoice would get.
 
     Registered **before** ``/faktura/{document_id}``, and that is load-bearing
@@ -533,10 +590,9 @@ async def next_number(
     then validated as an ``int``, so a route declared after it would answer 422
     for this URL instead of running.
 
-    ``party_id`` is the customer the invoice is going to, because the KID carries
-    their customer number as well as the invoice number — so the preview changes
-    when the customer does. Omitted for a buyer typed straight onto the document,
-    which is the case that gets zeros in that field.
+    The KID is the invoice number and a check digit, so it is the same whoever
+    the invoice goes to. This route used to take ``party_id``, when the KID
+    carried a customer number too; a ``party_id`` sent now is ignored.
 
     It reserves nothing. Nothing is taken from the number series and nothing is
     written, so an invoice issued between this call and the next issue moves the
@@ -546,25 +602,156 @@ async def next_number(
     what an auditor reads as a deleted invoice.
     """
     require_permission(context.membership.role, Permission.LEDGER_READ)
-    customer_number: str | None = None
-    if party_id is not None:
-        # Scoped to the company by get_party, so another tenant's id is simply
-        # not found rather than quietly ending up in someone's payment reference.
-        party = await party_service.get_party(db, company=context.company, party_pk=party_id)
-        customer_number = party.party_id
     upcoming = await faktura_service.peek_next_number(db, company=context.company)
     return NextNumberResponse(
         document_number=str(upcoming),
-        payment_reference=kid.preview_for_next(upcoming, customer_number=customer_number),
-        customer_number=customer_number,
+        payment_reference=kid.preview_for_next(upcoming),
+    )
+
+
+# Said where the company has switched KI off, or the deployment has no model.
+# Turning KI off for a set of books has to cover every place it is used, or it is
+# a setting that means one thing on one page and something else on another.
+_KI_OFF = "KI er slått av for dette selskapet, så fakturaen må fylles ut for hånd."
+_NO_MODEL = "Denne installasjonen har ikke satt opp Løynd, så fakturaen må fylles ut for hånd."
+_NO_ANSWER = "Vi fikk ikke svar fra Løynd nå. Fyll ut selv, eller prøv igjen."
+
+
+def _oslo_today() -> date:
+    """Today in Norway, which is the day «i går» and «30 dager» are counted from."""
+    return utc_now().astimezone(_OSLO).date()
+
+
+async def _proposal(text: str, company: Company) -> drafting.InvoiceProposal:
+    """Ask the model about ``text`` for this company, or raise loynd.LoyndError."""
+    # A company outside Merverdiavgiftsregisteret may not charge output VAT
+    # (merverdiavgiftsloven § 15-14), so the taxable options are not on the menu
+    # at all. Making the wrong answer unavailable beats catching it afterwards.
+    allowed = None if company.vat_registered else ("0",)
+    return await drafting.draft_invoice(
+        text,
+        ask=loynd.complete,
+        today=_oslo_today(),
+        allowed_tax_codes=allowed,
+        seller_orgnr=company.orgnr,
+        seller_name=company.name,
+    )
+
+
+def _lines(proposal: drafting.InvoiceProposal) -> list[DraftedLineResponse]:
+    return [
+        DraftedLineResponse(
+            description=line.description,
+            quantity=line.quantity,
+            unit_code=line.unit_code,
+            unit_price=line.unit_price,
+            tax_code=line.tax_code,
+        )
+        for line in proposal.lines
+    ]
+
+
+@router.post("/companies/{company_id}/faktura/forslag", openapi_extra=KEY_PREVIEW)
+async def draft_faktura(
+    payload: DraftRequest, context: CurrentCompany, db: DbSession
+) -> FakturaDraftResponse:
+    """Turn a pasted text into a proposed invoice: buyer, terms and lines.
+
+    The text is what the seller has: a sentence about the sale («10 timer
+    rådgivning til Bygg AS levert 14. oktober, 1 500 kroner timen»), the e-mail
+    in which the customer sent their invoice details (name, invoice address,
+    organisasjonsnummer, what to mark the invoice with), or both. An e-mail with
+    no sale in it is answered with the buyer and no lines, which is a normal
+    answer and not a failure.
+
+    Nothing in the answer is made up: every name, address, reference and place
+    is kept only if the same words are in the text, a date only if the text
+    names it, and the organisasjonsnummer is read out of the text by its check
+    digit rather than by the model. Which registered customer it is, is decided
+    here against this company's own customer register, which the model never
+    sees.
+
+    Stores nothing and posts nothing. The answer is named field for field as
+    ``POST …/faktura`` takes a draft, so it can go straight into one once the
+    person has looked at it; the model's answer never reaches the ledger without
+    passing through a person and through § 5-1.
+
+    ``LEDGER_WRITE`` rather than read: nothing changes here, but this is a step
+    in writing an invoice, and a viewer has nothing to draft.
+    """
+    require_permission(context.membership.role, Permission.LEDGER_WRITE)
+    if not context.company.ki_enabled:
+        return FakturaDraftResponse.nothing(_KI_OFF)
+    if not loynd.is_configured():
+        return FakturaDraftResponse.nothing(_NO_MODEL)
+    try:
+        proposal = await _proposal(payload.text, context.company)
+    except loynd.LoyndError:
+        # Not an error for the user: the form is untouched and still theirs to
+        # fill in. See myntos.integrations.loynd — every call is optional.
+        return FakturaDraftResponse.nothing(_NO_ANSWER)
+
+    header = proposal.header
+    warnings = list(proposal.header_warnings)
+    # Scoped to the company by list_parties: a customer of another set of books
+    # is not a candidate, however well its name fits.
+    customers = await party_service.list_parties(
+        db, company=context.company, party_type=PartyType.KUNDE
+    )
+    party, how, said = drafting.match_customer(
+        customers, name=header.buyer_name, orgnr=header.buyer_orgnr
+    )
+    warnings.extend(said)
+    if party is not None:
+        moved = drafting.differs_from(
+            header, address_line=party.address_line, postal_code=party.postal_code
+        )
+        if moved is not None:
+            warnings.append(moved)
+
+    if proposal.lines:
+        warnings.extend(proposal.warnings)
+    elif header.is_empty() and party is None:
+        warnings.append(
+            "Vi fant verken kjøper eller fakturalinjer i teksten. Lim inn kundens "
+            "fakturaopplysninger eller skriv hva som ble solgt, eller fyll ut selv."
+        )
+    else:
+        warnings.append("Teksten sier ikke hva som er solgt, så fakturaen har ingen linjer ennå.")
+
+    business: bool | None = None
+    if party is not None:
+        business = party.orgnr is not None
+    elif header.buyer_orgnr is not None:
+        business = True
+
+    return FakturaDraftResponse(
+        party_id=party.id if party is not None else None,
+        party_match=how,
+        buyer_name=header.buyer_name,
+        buyer_orgnr=header.buyer_orgnr,
+        buyer_address_line=header.buyer_address_line,
+        buyer_postal_code=header.buyer_postal_code,
+        buyer_city=header.buyer_city,
+        buyer_is_business=business,
+        invoice_email=header.invoice_email,
+        delivery_date=header.delivery_date,
+        delivery_place=header.delivery_place,
+        due_date=header.due_date,
+        buyer_reference=header.buyer_reference,
+        lines=_lines(proposal),
+        warnings=warnings,
     )
 
 
 @router.post("/companies/{company_id}/faktura/linjeforslag", openapi_extra=KEY_PREVIEW)
-async def draft_faktura_lines(
-    payload: LineDraftRequest, context: CurrentCompany
-) -> LineDraftResponse:
-    """Turn a description of a sale into proposed invoice lines.
+async def draft_faktura_lines(payload: DraftRequest, context: CurrentCompany) -> LineDraftResponse:
+    """Turn a description of a sale into proposed invoice lines, and nothing else.
+
+    The lines of ``POST …/faktura/forslag`` without the buyer and the terms, for
+    a form whose buyer is already filled in. The page's box under «Linjer» uses
+    it; so can an agent that knows the customer and only wants the lines laid
+    out.
 
     Registered above the ``/{document_id}`` routes so the literal segment is the
     obvious reading of the path. Nothing depends on the order — those are GET and
@@ -573,16 +760,12 @@ async def draft_faktura_lines(
 
     Stores nothing and posts nothing. The proposal goes into the form, where the
     user edits it, saves it as a draft and issues it exactly as they would a line
-    they typed — the model's answer never reaches the ledger without passing
-    through a person and through § 5-1.
+    they typed.
 
     ``LEDGER_WRITE`` rather than read: nothing changes here, but this is a step
     in writing an invoice, and a viewer has nothing to draft.
     """
     require_permission(context.membership.role, Permission.LEDGER_WRITE)
-    # The company's own switch first, then the deployment's key. Turning KI off
-    # for a set of books has to cover both places it is used, or it is a setting
-    # that means one thing on one page and something else on another.
     if not context.company.ki_enabled:
         return LineDraftResponse(
             lines=[],
@@ -595,36 +778,14 @@ async def draft_faktura_lines(
                 "Denne installasjonen har ikke satt opp Løynd, så linjene må skrives for hånd."
             ],
         )
-
-    # A company outside Merverdiavgiftsregisteret may not charge output VAT
-    # (merverdiavgiftsloven § 15-14), so the taxable options are not on the menu
-    # at all. Making the wrong answer unavailable beats catching it afterwards.
-    allowed = None if context.company.vat_registered else ("0",)
     try:
-        proposal = await drafting.draft_lines(
-            payload.text, ask=loynd.complete, allowed_tax_codes=allowed
-        )
+        proposal = await _proposal(payload.text, context.company)
     except loynd.LoyndError:
-        # Not an error for the user: the form is untouched and still theirs to
-        # fill in. See myntos.integrations.loynd — every call is optional.
         return LineDraftResponse(
             lines=[],
             warnings=["Vi fikk ikke svar fra Løynd nå. Skriv linjene selv, eller prøv igjen."],
         )
-
-    return LineDraftResponse(
-        lines=[
-            DraftedLineResponse(
-                description=line.description,
-                quantity=line.quantity,
-                unit_code=line.unit_code,
-                unit_price=line.unit_price,
-                tax_code=line.tax_code,
-            )
-            for line in proposal.lines
-        ],
-        warnings=proposal.warnings,
-    )
+    return LineDraftResponse(lines=_lines(proposal), warnings=proposal.warnings)
 
 
 @router.get("/companies/{company_id}/faktura/{document_id}", openapi_extra=KEY_READ)

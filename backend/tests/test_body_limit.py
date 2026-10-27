@@ -78,5 +78,43 @@ def test_an_upload_has_room_for_a_few_bilag_but_not_more(client: TestClient) -> 
     assert printout.status_code == 401
 
 
+def test_the_import_takes_a_complete_export_but_only_from_someone_it_knows(
+    client: TestClient,
+) -> None:
+    """2 GB on the import of several years, which reads its own body after the login check.
+
+    Fiken's complete export was 350 MB, and the 201 MB a person was shown on
+    2026-10-27 was the SAF-T routes' ceiling with its room for the form. Here
+    a body past that, from nobody, is answered 401 without being read, and the
+    other SAF-T routes, which FastAPI reads for, keep their 200 MB.
+    """
+    boundary = "grense"
+    head = (
+        f'--{boundary}\r\nContent-Disposition: form-data; name="files"; filename="x.zip"\r\n'
+        "Content-Type: application/zip\r\n\r\n"
+    ).encode()
+    tail = f"\r\n--{boundary}--\r\n".encode()
+    headers = {"Content-Type": f"multipart/form-data; boundary={boundary}", "Origin": TEST_ORIGIN}
+
+    def body() -> Iterator[bytes]:
+        yield head
+        yield from _chunks(210 * MIB)
+        yield tail
+
+    importing = client.post("/api/v1/companies/1/saft/innlesing", content=body(), headers=headers)
+    printout = client.post("/api/v1/companies/1/saft/vedlegg", content=body(), headers=headers)
+    assert importing.status_code == 401
+    assert printout.status_code == 413
+    assert printout.json()["detail"] == "forespørselen er større enn 200 MB"
+
+    declared = client.post(
+        "/api/v1/companies/1/saft/innlesing",
+        content=head + tail,
+        headers={**headers, "Content-Length": str(3 * 1024 * MIB)},
+    )
+    assert declared.status_code == 413
+    assert declared.json()["detail"] == "forespørselen er større enn 2 GB"
+
+
 def test_an_ordinary_request_is_untouched(client: TestClient) -> None:
     assert client.get("/api/v1/health").status_code == 200

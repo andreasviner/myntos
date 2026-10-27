@@ -14,11 +14,14 @@ import {
   OTHER,
   PROGRAMS,
   documentsNote,
+  exportNote,
   guideLink,
   initialProgram,
   programBySlug,
+  programFromImport,
   programFromSoftware,
   showsPrintouts,
+  switchedNote,
 } from './programs';
 
 function year(software: string | null): SaftImportYear {
@@ -55,6 +58,7 @@ function imported(software: string | null, overrides: Partial<SaftImport> = {}):
     parties_to_add: [],
     dimensions_to_add: [],
     findings: [],
+    archives: [],
   } as SaftMoveReview;
   return {
     company_id: 8,
@@ -174,9 +178,9 @@ describe('the list', () => {
 });
 
 describe('the words under the dropdown', () => {
-  it('sends Tripletex to the card, and the rest to their own archive', () => {
+  it('sends Tripletex to the card, Fiken to its export, and the rest to their own archive', () => {
     expect(documentsNote(programBySlug('tripletex')!)).toContain('«Vedlegg fra Tripletex»');
-    expect(documentsNote(programBySlug('fiken')!)).toContain('bilagsarkivet fra Fiken');
+    expect(documentsNote(programBySlug('fiken')!)).toContain('den komplette eksporten fra Fiken');
     expect(documentsNote(programBySlug(OTHER)!)).toContain('bilagsarkivet fra det gamle programmet');
   });
 
@@ -186,5 +190,29 @@ describe('the words under the dropdown', () => {
       text: 'Slik tar du SAF-T-filene ut av Fiken',
     });
     expect(guideLink(programBySlug('xledger')!).href).toBe(`/kom-i-gang/${OTHER}/`);
+  });
+});
+
+describe('Fiken’s complete export', () => {
+  it('is mentioned under the upload for Fiken and for no other program', () => {
+    expect(exportNote(programBySlug('fiken'))).toContain('den komplette eksporten (fiken-komplett-….zip)');
+    // Kept since 2026-10-27: the line used to tell the person to keep the export themselves.
+    expect(exportNote(programBySlug('fiken'))).toContain('tar Myntos vare på');
+    expect(exportNote(programBySlug('fiken'))).not.toContain('ta vare på eksporten selv');
+    for (const program of PROGRAMS.filter((p) => p.slug !== 'fiken')) {
+      expect(exportNote(program)).toBeNull();
+    }
+    expect(exportNote(null)).toBeNull();
+  });
+});
+
+describe('the files correcting the choice', () => {
+  it('reads the program from an import once its files are read', () => {
+    expect(programFromImport(imported('Fiken AS'))?.slug).toBe('fiken');
+    expect(programFromImport(imported(null))).toBeNull();
+    expect(programFromImport(imported('Fiken AS', { purpose: 'sammenligning' }))).toBeNull();
+    expect(switchedNote(programBySlug('fiken')!)).toBe(
+      'Filene er fra Fiken, så Fiken er valgt som programmet du kommer fra.',
+    );
   });
 });

@@ -239,10 +239,14 @@ def test_an_unconfirmed_account_is_locked_out_of_nothing(
     assert invited.status_code == 201, invited.text
 
 
-def test_an_invitation_from_an_unconfirmed_address_carries_no_reply_to(
+def test_an_invitation_from_an_unconfirmed_address_does_not_name_it(
     client: TestClient, outbox: RecordingMailer
 ) -> None:
-    """A reply must not be routed to an address nobody has shown is theirs."""
+    """A question must not be sent to an address nobody has shown is theirs.
+
+    And never as a Reply-To, confirmed or not: that is the header every refused
+    invitation in October 2026 carried (invitation_mail's module docstring).
+    """
     owner = register(client)
     confirmation = _token_in(outbox.only.text, "/bekreft-epost/")
     company = write(
@@ -260,11 +264,13 @@ def test_an_invitation_from_an_unconfirmed_address_carries_no_reply_to(
     url = f"/api/v1/companies/{company['id']}/invitations"
     write(client, "POST", url, json={"email": "ola@example.no", "role": "member"})
     assert outbox.only.reply_to is None
+    assert "kari@example.no" not in outbox.only.text
 
     write(client, "POST", "/api/v1/auth/email/verify", json={"token": confirmation})
     outbox.sent.clear()
     write(client, "POST", url, json={"email": "per@example.no", "role": "member"})
-    assert outbox.only.reply_to == "kari@example.no"
+    assert outbox.only.reply_to is None
+    assert "på kari@example.no" in outbox.only.text
 
 
 # --- Resetting a password ---------------------------------------------------------

@@ -1238,7 +1238,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   } from '../lib/questions';
   import { fileSize, isoDate, kroner, todayIso } from '../lib/format';
   import { settleLimited } from '../lib/parallel';
-  import { can, loadSession, redirectToLogin } from '../lib/session';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
 
   /**
    * What the file dialogs offer. One string, because the entry form and the
@@ -3867,7 +3867,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       catalogue = await getCompanyCatalogue(company.id);
 
       el('#company-name').textContent = company.name;
-      mayWrite = can(session, company.organization_id, 'ledger:write');
+      // Spurt om selskapet, ikke om kontoen som eier det. Tilgang er en rad per
+      // person per selskap, så en kollega invitert til bare dette selskapet har
+      // ingen rolle i kontoen, og fikk «Du har lesetilgang» som «Eier»
+      // (2026-10-23).
+      mayWrite = canInCompany(company, 'ledger:write');
       show(el('#form-card'), mayWrite);
       show(el('#readonly'), !mayWrite);
 

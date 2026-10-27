@@ -9,9 +9,8 @@ skill: myntos-faktura
 
 The buyer on an invoice is either a customer already registered under
 «Kunder og leverandører», or a buyer typed straight onto the invoice. Both are
-fine. A customer who comes back belongs in the register: it saves typing, and
-their customer number goes into the KID. A one-off private customer does not
-need to be registered. Whichever it is, the law wants the buyer identified by
+fine. A customer who comes back belongs in the register: it saves typing. A
+one-off private customer does not need to be registered. Whichever it is, the law wants the buyer identified by
 an address or an organisation number; a name alone is not enough.
 
 ## They might ask
@@ -29,7 +28,9 @@ an address or an organisation number; a name alone is not enough.
 ## Steps
 
 1. Open «Faktura» in the top menu (`https://myntos.no/faktura/`) and find
-   «Kjøper» at the top of the form.
+   «Kjøper» in the form. If the customer sent their invoice details by
+   e-mail, paste it into the box above it instead, and KI fills in the buyer:
+   [Let KI fill in the invoice from the customer's e-mail](https://myntos.no/llms/help/invoices/fill-in-an-invoice-with-ki.md).
 2. **A registered customer:** choose them in «Kunde». The line under it shows
    the orgnr and address Myntos has for them.
 3. **Anyone else:** leave «Kunde» at «Skriv inn kjøperen selv».

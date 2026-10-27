@@ -70,7 +70,7 @@ from myntos.domain.identity.models import (
 from myntos.domain.ledger import service as ledger_service
 from myntos.domain.ledger.errors import CompanyNotFoundError
 from myntos.domain.ledger.models import Company
-from myntos.storage import DocumentStorage, get_storage
+from myntos.storage import DocumentStorage, WorkingStore, get_storage, get_working_store
 
 # Methods that cannot change server state, and so need no CSRF defence.
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
@@ -549,6 +549,14 @@ def get_document_storage() -> DocumentStorage:
 
 
 Storage = Annotated[DocumentStorage, Depends(get_document_storage)]
+
+
+def get_working_files() -> WorkingStore:
+    """Where uploads a job reads and then deletes are kept, as a dependency for the same reason."""
+    return get_working_store()
+
+
+Working = Annotated[WorkingStore, Depends(get_working_files)]
 
 
 def set_session_cookie(response: Response, token: str) -> None:

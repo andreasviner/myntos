@@ -36,35 +36,41 @@ send the invoice to the customer; the person downloads it and sends it.
 1. Open «Faktura» in the top menu (`https://myntos.no/faktura/`). The form
    «Ny faktura» fills the width of the page, and the list «Fakturaer» is
    below it.
-2. Under «Kjøper», pick the customer in «Kunde», or leave it at «Skriv inn
+2. If the customer sent their invoice details by e-mail, paste it into «Lim
+   inn fakturaopplysningene fra kunden, eller beskriv salget» at the top of the
+   form and press «Fyll ut fakturaen»; KI fills in the buyer and the rest, and
+   marks what it filled in «KI»:
+   [Let KI fill in the invoice from the customer's e-mail](https://myntos.no/llms/help/invoices/fill-in-an-invoice-with-ki.md).
+   Then check each step below as usual.
+3. Under «Kjøper», pick the customer in «Kunde», or leave it at «Skriv inn
    kjøperen selv» and fill in «Organisasjonsnummer», «Navn», «Adresse»,
    «Postnummer» and «Poststed». Untick «Kjøperen er bokføringspliktig
    (næringsdrivende)» if the buyer is a private person.
-3. Under «Levering og betaling», check «Leveringsdato» (today is filled in),
+4. Under «Levering og betaling», check «Leveringsdato» (today is filled in),
    «Forfallsdato» (14 days ahead is filled in) and «Leveringssted» (the
    company's own town is filled in). Fill in «Deres referanse» if the customer
    gave one; public sector customers require it.
-4. Under «Linjer», describe each thing sold, one row per line under the
+5. Under «Linjer», describe each thing sold, one row per line under the
    headings «Beskrivelse», «Antall», «Enhet», «Pris», «Mva» and «Rabatt %»:
    what it is («Hva er solgt?»), how many, the unit, the price **without
    VAT**, the VAT rate and any discount. «Beløp» at the end of the row is the
    line's sum before VAT. On a phone each line is a box with the same labels
    over its fields. «Legg til linje» adds another line, «Fjern» removes one. The sums «Sum eks.
    mva», «Merverdiavgift» and «Å betale» update as they type.
-5. Press «Se over fakturaen». The draft is saved and the review opens. It
+6. Press «Se over fakturaen». The draft is saved and the review opens. It
    shows what the customer will receive («Kjøper», «Levert», «Forfall», «Å
    betale», «Betales til», «KID» and the rest) and anything still missing.
    Beside it (below it on a narrow screen) the draft is shown as a PDF, exactly
    as it will look, marked as a draft, with no download needed. «Last ned
    utkastet som PDF» saves the same file. On a phone that cannot show a PDF
    inside the page, that link is the way to see it.
-6. If it says «… ting må rettes først», press «Tilbake og endre», fix what is
+7. If it says «… ting må rettes først», press «Tilbake og endre», fix what is
    listed, and press «Se over fakturaen» again:
    [Fix an invoice that cannot be issued](https://myntos.no/llms/help/invoices/fix-an-invoice-that-cannot-be-issued.md).
-7. When nothing blocks it, read it through and press «Utsted fakturaen». This
+8. When nothing blocks it, read it through and press «Utsted fakturaen». This
    is the step that cannot be undone; there is no extra confirmation, because
    the review is the confirmation.
-8. The card «Faktura … er utstedt» shows the amount, due date and KID, and the
+9. The card «Faktura … er utstedt» shows the amount, due date and KID, and the
    issued invoice as a PDF beside them. Press
    «Last ned PDF» (and «Last ned EHF» for a business customer) and send the
    file to the customer:
@@ -97,6 +103,7 @@ send the invoice to the customer; the person downloads it and sends it.
 
 ## Related
 
+- [Let KI fill in the invoice from the customer's e-mail](https://myntos.no/llms/help/invoices/fill-in-an-invoice-with-ki.md)
 - [Let KI write the lines](https://myntos.no/llms/help/invoices/add-lines-with-ki.md)
 - [Copy the lines from a previous invoice](https://myntos.no/llms/help/invoices/copy-lines-from-a-previous-invoice.md)
 - [Choose the VAT rate on a line](https://myntos.no/llms/help/invoices/choose-the-vat-rate-on-a-line.md)

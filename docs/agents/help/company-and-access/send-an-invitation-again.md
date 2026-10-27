@@ -30,8 +30,11 @@ days. The previous link stops working, and the new e-mail says so.
 2. Under «Tilgang», find the card «Ventende invitasjoner». It lists «Hvem»,
    «Rolle», «Sendt av» and «Utløper» for each invitation.
 3. Press «Send på nytt» on the invitation's row.
-4. The page says «Invitasjonen er sendt på nytt til …», and «Utløper» moves 7
-   days ahead.
+4. The page says «Invitasjonen er sendt på nytt til …», shows the new link
+   with «Kopier», and «Utløper» moves 7 days ahead.
+5. If the first e-mail never arrived, this one may not either: press «Kopier»
+   and send the link some other way (a text message, a chat). It is shown only
+   this once.
 
 ## If something stops them
 
@@ -47,6 +50,8 @@ days. The previous link stops working, and the new e-mail says so.
   that is the wrong address, withdraw it and invite the right one.
 - The person who presses «Send på nytt» becomes the sender shown in the
   e-mail and under «Sendt av».
+- Myntos cannot see whether an e-mail arrives, only that the mail service took
+  it. «Invitasjonen er sendt på nytt til …» means that much.
 
 ## Related
 

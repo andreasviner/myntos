@@ -209,7 +209,12 @@ from myntos.saft.errors import (
     SaftYearNotFoundError,
     UnsupportedSaftVersionError,
 )
-from myntos.saft.jobs import ImportBusyError, ImportNotFoundError, ImportNotPostableError
+from myntos.saft.jobs import (
+    ImportBusyError,
+    ImportedDocumentNotFoundError,
+    ImportNotFoundError,
+    ImportNotPostableError,
+)
 from myntos.skattemelding.errors import (
     SkattemeldingAnswerRequiredError,
     SkattemeldingChangedError,
@@ -472,6 +477,7 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     # An import on the server: another company's is not found, like every
     # sub-resource; one being worked on is the state of things, not the request.
     ImportNotFoundError: status.HTTP_404_NOT_FOUND,
+    ImportedDocumentNotFoundError: status.HTTP_404_NOT_FOUND,
     ImportBusyError: status.HTTP_409_CONFLICT,
     ImportNotPostableError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     # --- Inngående balanse og årsavslutning ---

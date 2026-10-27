@@ -13,6 +13,10 @@ from collections.abc import Awaitable, Callable
 from fastapi import Request, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+#: Room on top of a per-path upload limit for the multipart framing: the
+#: boundaries and each part's headers, and the form's few small fields.
+_MULTIPART_ROOM = 1024 * 1024
+
 _SECURITY_HEADERS: dict[str, str] = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -44,10 +48,20 @@ class BodySizeLimitMiddleware:
     kept sending. One process serves every company, so that was everyone's
     outage, and Løynd's on the same box.
 
-    Three limits, each the largest thing its routes take with room to spare:
-    ``large_upload`` on the routes that read a SAF-T file, ``upload`` for any
-    other multipart body (a few bilag, or a key's held request), and ``body``
-    for the rest, which is JSON whose biggest is an opening balance.
+    The limits, each the largest thing its routes take: ``large_uploads``, a
+    multipart limit per path for the routes that read the previous program's
+    files (first match wins, and each gets :data:`_MULTIPART_ROOM` on top for
+    the parts' own headers, so a file of exactly the limit is let through),
+    ``upload`` for any other multipart body (a few bilag, or a key's held
+    request), and ``body`` for the rest, which is JSON whose biggest is an
+    opening balance.
+
+    A path whose limit is in the gigabytes must not let FastAPI read its body
+    for it: FastAPI would spool all of it before the route asked who sent it.
+    The SAF-T import (2 GB, for Fiken's complete export) reads its own body,
+    after the membership check; the person refused there sent nothing that was
+    kept. Its 413 says «2 GB» rather than the 201 MB a person was shown on
+    2026-10-27 and took for the limit, room included.
 
     A declared Content-Length is refused outright: the server never hands the
     app more than that. A body without one is counted as it arrives and cut off
@@ -61,32 +75,32 @@ class BodySizeLimitMiddleware:
         *,
         body: int,
         upload: int,
-        large_upload: int,
-        large_upload_paths: re.Pattern[str],
+        large_uploads: tuple[tuple[re.Pattern[str], int], ...],
     ) -> None:
         self.app = app
         self.body = body
         self.upload = upload
-        self.large_upload = large_upload
-        self.large_upload_paths = large_upload_paths
+        self.large_uploads = large_uploads
 
-    def _limit(self, scope: Scope) -> int:
+    def _limit(self, scope: Scope) -> tuple[int, int]:
+        """The most this request may send, and the limit to name in a refusal."""
         content_type = _header(scope, b"content-type") or ""
         if not content_type.lower().startswith("multipart/"):
-            return self.body
-        if self.large_upload_paths.match(scope["path"]):
-            return self.large_upload
-        return self.upload
+            return self.body, self.body
+        for paths, limit in self.large_uploads:
+            if paths.match(scope["path"]):
+                return limit + _MULTIPART_ROOM, limit
+        return self.upload, self.upload
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        limit = self._limit(scope)
+        limit, named = self._limit(scope)
         declared = _header(scope, b"content-length")
         if declared is not None:
             if not declared.isdigit() or int(declared) > limit:
-                await _too_large(send, limit)
+                await _too_large(send, named)
                 return
             await self.app(scope, receive, send)
             return
@@ -105,7 +119,7 @@ class BodySizeLimitMiddleware:
                 if received > limit:
                     refused = True
                     if not started:
-                        await _too_large(send, limit)
+                        await _too_large(send, named)
                     return {"type": "http.disconnect"}
             return message
 
@@ -126,10 +140,14 @@ def _header(scope: Scope, name: bytes) -> str | None:
     return None
 
 
+def _named(limit: int) -> str:
+    gigabytes, rest = divmod(limit, 1024**3)
+    return f"{gigabytes} GB" if gigabytes and not rest else f"{limit // 1024**2} MB"
+
+
 async def _too_large(send: Send, limit: int) -> None:
-    megabytes = limit // (1024 * 1024)
     body = json.dumps(
-        {"detail": f"forespørselen er større enn {megabytes} MB", "code": "request_too_large"},
+        {"detail": f"forespørselen er større enn {_named(limit)}", "code": "request_too_large"},
         ensure_ascii=False,
     ).encode()
     await send(

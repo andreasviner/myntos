@@ -10,9 +10,9 @@ skill: myntos-faktura
 A KID is the number the customer types into their bank together with the
 amount. It comes back with the payment and tells the seller which invoice was
 paid. Myntos makes one for every invoice by default, when the invoice is
-issued: the customer number (five digits, zeros for a buyer who is not a
-registered customer), the invoice number (six digits) and a check digit. Before
-issue the form shows what it will probably be.
+issued: the invoice number and a check digit, with no zeros in front. Invoice
+1 gets «18», invoice 42 gets «422». Before issue the form shows what it will
+probably be.
 
 ## They might ask
 
@@ -45,9 +45,13 @@ issue the form shows what it will probably be.
 
 ## Good to know
 
-- A KID only works with the bank if it matches the company's KID agreement
-  with that bank (length and check digit). Myntos makes the common shape:
-  twelve digits with a mod10 check digit.
+- Any bank takes a KID like this from the person paying: it checks only the
+  check digit (mod10). A company with an OCR agreement with its bank that
+  fixes the length of the KID types its own instead («Endre selv»).
+- An invoice issued earlier may have a longer KID with zeros in front, such
+  as «000000000018». It keeps it, and it still works.
+- The KID is the same whichever customer the invoice is to: the invoice
+  number already says who it is.
 - A credit note never gets a KID: nothing is paid on it.
 
 ## Related

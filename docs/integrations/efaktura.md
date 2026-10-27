@@ -133,31 +133,34 @@ counting.
 ### KID — and why it can only exist after numbering
 
 A KID is not a legal requirement; nothing in § 5-1 asks for one. It is what makes
-an incoming payment reconcilable, and it does that by carrying the two numbers
-that identify the payment:
+an incoming payment reconcilable, and it does that by carrying the number of the
+invoice it pays:
 
 ```
-  1 0 0 4 2   0 0 0 1 3 7   0
-  └───┬───┘   └────┬────┘   ┬
-  kundenummer  fakturanr   kontrollsiffer
-   (5 siffer)  (6 siffer)      (mod10)
+  1 3 7   0
+  └─┬─┘   ┬
+  fakturanr  kontrollsiffer
+              (mod10)
 ```
 
-Each part earns its place. The **customer number** is what makes the bank's OCR
-return file postable to the right kundereskontro — an invoice number identifies
-the invoice, but a payment that does not match it (a partial payment, two
-invoices settled in one transfer, a number typed off an old reminder) still has
-to land on a customer. The **invoice number** identifies the document. The
-**check digit** is what gets a mistyped KID rejected at the keyboard instead of
-reconciled against somebody else's invoice.
+The **invoice number** identifies the document, and through it the customer:
+the series is one per company and never reused, so a KID names exactly one
+invoice in the books. The **check digit** is what gets a mistyped KID rejected
+at the keyboard instead of reconciled against somebody else's invoice.
 
-Both leading fields are **fixed width, zero-padded**. A KID-avtale fixes the
-length, so a reference eleven digits long for customer 10000 and twelve for
-customer 100000 is one the OCR service rejects — and fixed widths are also what
-let `kid.split()` read the two numbers back out by position. An invoice to a
-buyer typed straight onto the document, rather than picked from the customer
-register, gets zeros in the customer field for the same reason: the width is the
-agreement.
+**No customer number and no zero-padding, since 2026-10-23.** The KID used to be
+a five-digit customer number and a six-digit invoice number, both zero-padded,
+so a typed-in buyer's first invoice read `000000000018`. People copy a KID off a
+paper invoice into their bank, and nobody counts nine zeros right. The customer
+number had been justified as what lands a mismatched payment (a partial payment,
+two invoices in one transfer, a number off an old reminder) on the right
+customer, but every one of those still carries some invoice's KID, and that
+invoice names its buyer. The fixed width had been justified by the KID-avtale,
+the bank's OCR agreement that fixes the length; Myntos does not model that
+agreement, and a seller who has one types their own KID (manual, below). Reading
+a KID back is a lookup of `payment_reference` on the issued documents, not a
+parse by position, so nothing needed the widths. Invoices issued before the
+change keep the KID they were issued with.
 
 The invoice number puts all of this downstream of § 5-1-3: a draft has no number,
 so a draft has no KID either. `myntos.domain.faktura.kid` builds it and
@@ -174,12 +177,10 @@ Three states, carried by two columns (`payment_reference`,
 | manual | `auto = false`, reference set | the seller's own, from their bank agreement |
 | none | `auto = false`, reference `NULL` | no KID on this invoice |
 
-`GET /faktura/neste-nummer?party_id=…` previews the number and KID the next
-issue would produce, so the form can show it. The customer is a parameter
-because they are half the KID — pick a different one and the preview changes. It
-**reserves nothing**: reserving on sight would let an abandoned draft take a
-number out of the series, which is the gap § 5-1-3 is about, so the interface
-labels what it shows as a preview.
+`GET /faktura/neste-nummer` previews the number and KID the next issue would
+produce, so the form can show it. It **reserves nothing**: reserving on sight
+would let an abandoned draft take a number out of the series, which is the gap
+§ 5-1-3 is about, so the interface labels what it shows as a preview.
 
 We generate **MOD10** (Luhn); `kid.is_valid` accepts MOD10 **or** MOD11, because
 which one applies is agreed between the seller and their bank and this system is
@@ -187,11 +188,10 @@ not told. A hand-typed KID failing both is an `advarsel`, never a refusal.
 
 A kreditnota gets no KID: it reverses a payment rather than asking for one.
 
-**Known gap:** the widths and the scheme are fixed by the seller's KID-avtale
-with their bank, and Myntos does not model that agreement —
-`kid.CUSTOMER_LENGTH` and `kid.INVOICE_LENGTH` are the two places to make
-configurable when it does. Until then, a seller whose bank agreed a different
-format types their own.
+**Known gap:** a KID-avtale (the bank's OCR agreement) may fix the length and
+the scheme, and Myntos does not model that agreement. When it does, the length
+belongs in `kid.build()`, padded from the agreement rather than always. Until
+then, a seller whose bank agreed a fixed format types their own.
 
 ### § 5-1-5 — separate presentation
 

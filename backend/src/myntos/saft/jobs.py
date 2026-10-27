@@ -6,10 +6,11 @@ that is a tab that must stay open through an upload, a read, a hundred small
 requests adding accounts and parties, a second upload, a second read and a
 third for the post. The report that this was slow is why this module exists.
 
-So a file is uploaded **once**, into a :class:`~myntos.saft.models.SaftImport`,
-and everything after happens here, in the background of the request that
-started it (FastAPI's ``BackgroundTasks``, which run after the answer has been
-sent):
+So a file is uploaded **once**, into a :class:`~myntos.saft.models.SaftImport`
+whose files are kept in the working store (:mod:`myntos.storage.working`, put
+there by :mod:`myntos.saft.intake`), and everything after happens here, in
+the background of the request that started it (FastAPI's ``BackgroundTasks``,
+which run after the answer has been sent):
 
 1. :func:`read` parses the files and runs the whole move
    (:func:`myntos.saft.move.apply`) in a transaction that is **rolled back**.
@@ -33,21 +34,35 @@ rolled back, because a file written to the document store stays written. Both
 run :func:`myntos.saft.documents.plan`, the review writes nothing, and the
 post goes ahead only while the plan is still the one the person saw.
 
+**The documents in the old program's export come after the books**
+(since 2026-10-27). An upload of Fiken's complete export keeps the ZIP whole
+beside its SAF-T files (``FileKind.EXPORT``); :func:`read` adds what is in it to
+the review (``archives``), and :func:`post`, once the books are committed,
+copies every file into the document store (:mod:`myntos.saft.archive`). The
+books are one transaction and the documents are hundreds of files, so the post
+marks itself as done with the books (``posted_at``, ``result``) **in the books'
+own transaction**: a restart after it keeps the documents and does not post
+again. An export whose books are already in Myntos (brought over before the
+documents were kept) may be posted for its documents alone. When the store
+fails halfway, the import is ``posted`` with ``documents_not_kept``, keeps its
+files, and posting it again keeps the rest.
+
 **One process.** Which imports are being worked on is kept in this process
 (:data:`_running`), as the agent keys' counters are, which is exact with the one
 uvicorn process this deployment runs. A restart (every deploy) stops the work
 in the middle; :func:`resume` runs at startup and starts it again. Nothing is
-lost by that: a read stores nothing until it is done, and a post is one
-transaction that either committed or did not.
+lost by that: a read stores nothing until it is done, a post is one
+transaction that either committed or did not, and the documents after it are
+kept once each however often they are started.
 """
 
 from __future__ import annotations
 
 import asyncio
+import gzip
 import logging
 import re
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from io import BytesIO
@@ -64,10 +79,11 @@ from myntos.domain.identity.access import Permission, has_permission
 from myntos.domain.identity.models import CompanyMembership
 from myntos.domain.ledger.errors import LedgerError
 from myntos.domain.ledger.models import Company
-from myntos.saft import compare, documents, move, printout, reader
+from myntos.saft import archive, compare, documents, intake, move, printout, reader
 from myntos.saft.errors import InvalidPrintoutError, InvalidSaftFileError, SaftImportError
 from myntos.saft.models import (
     SAFT_PURPOSES,
+    FileKind,
     ImportPurpose,
     ImportStatus,
     SaftImport,
@@ -75,7 +91,8 @@ from myntos.saft.models import (
 )
 from myntos.saft.printout import Printout
 from myntos.saft.reader import SaftEntries
-from myntos.storage.base import DocumentStorage
+from myntos.storage.base import DocumentStorage, ObjectNotFoundError, StorageError
+from myntos.storage.working import WorkingStore
 
 logger = logging.getLogger(__name__)
 
@@ -83,8 +100,15 @@ Sessions = async_sessionmaker[AsyncSession]
 
 #: How long uploaded files are kept when nothing is done with them. Long enough
 #: for an accountant to be asked and to answer; short enough that a file
-#: somebody forgot does not stay with us.
+#: somebody forgot does not stay with us. Counted from the upload, as the
+#: working store's own lifecycle rule counts (myntos.storage.working), so the
+#: two can never disagree about whether a file should still be there.
 FILE_LIFETIME = timedelta(days=14)
+
+#: How old an object no row points at must be before the sweep deletes it.
+#: A file is stored before the row that names it is committed, so a younger
+#: one may be an upload still under way.
+_ORPHAN_GRACE = timedelta(hours=1)
 
 #: The imports this process is working on now. See the module docstring.
 _running: set[int] = set()
@@ -94,15 +118,21 @@ _resumed: set[asyncio.Task[None]] = set()
 
 _ACTIVE = (ImportStatus.READING.value, ImportStatus.POSTING.value)
 
+#: The imports whose files are let go after FILE_LIFETIME: not being worked
+#: on, and either never posted or posted with documents still to keep.
+_SETTLED = (ImportStatus.READY.value, ImportStatus.FAILED.value, ImportStatus.POSTED.value)
 
-@dataclass(frozen=True)
-class Upload:
-    filename: str
-    content: bytes
+#: ``error_code`` of a posted import whose export's documents were not all
+#: kept. Posting it again keeps the rest.
+DOCUMENTS_NOT_KEPT = "documents_not_kept"
 
 
 class ImportNotFoundError(LedgerError):
     """No such import in these books (another company's is not found either)."""
+
+
+class ImportedDocumentNotFoundError(LedgerError):
+    """No document kept from an export in these books by that id (another company's neither)."""
 
 
 class ImportBusyError(LedgerError):
@@ -121,16 +151,16 @@ async def create(
     *,
     company: Company,
     purpose: ImportPurpose,
-    uploads: Sequence[Upload],
+    files: Sequence[intake.KeptFile],
     til: date | None,
     user_id: int | None,
     key_id: int | None,
 ) -> SaftImport:
-    """Store the uploaded files and mark the import as being read. Reads nothing yet."""
-    if purpose is ImportPurpose.VEDLEGG:
-        _check_printouts(uploads)
-    else:
-        _check_saft_files(purpose, uploads)
+    """Record the files ``intake`` stored and mark the import as being read. Reads nothing yet.
+
+    The files were checked as they were stored (:mod:`myntos.saft.intake`):
+    how many, how large, and that a ZIP had SAF-T files in it.
+    """
     job = SaftImport(
         company_id=company.id,
         purpose=purpose.value,
@@ -140,63 +170,22 @@ async def create(
         created_via_agent_key_id=key_id,
         step="Venter på å lese filene",
         done=0,
-        total=len(uploads),
+        total=len(files),
         files=[
             SaftImportFile(
                 position=index,
-                filename=(upload.filename or _default_name(purpose, index))[:255],
-                size=len(upload.content),
-                content=upload.content,
+                filename=file.filename[:255],
+                size=file.size,
+                storage_key=file.key,
+                kind=file.kind.value,
             )
-            for index, upload in enumerate(uploads)
+            for index, file in enumerate(files)
         ],
     )
     db.add(job)
     await db.flush()
     _running.add(job.id)
     return job
-
-
-def _default_name(purpose: ImportPurpose, index: int) -> str:
-    if purpose is ImportPurpose.VEDLEGG:
-        return f"utskrift-{index + 1}.pdf"
-    return f"saft-{index + 1}.xml"
-
-
-def _check_saft_files(purpose: ImportPurpose, uploads: Sequence[Upload]) -> None:
-    if not uploads:
-        raise InvalidSaftFileError("velg minst én SAF-T-fil")
-    if purpose is ImportPurpose.SAMMENLIGNING and len(uploads) != 1:
-        raise InvalidSaftFileError(
-            "sammenligningen leser én fil: den for året det gamle programmet fører nå"
-        )
-    if len(uploads) > move.MAX_FILES:
-        raise InvalidSaftFileError(f"Myntos leser høyst {move.MAX_FILES} filer, én per år")
-    for upload in uploads:
-        if len(upload.content) > reader.MAX_UPLOAD_BYTES:
-            raise InvalidSaftFileError(
-                f"«{upload.filename}» er større enn 200 MB, som er det største Altinn tar imot "
-                "av en SAF-T-fil"
-            )
-        if not upload.content:
-            raise InvalidSaftFileError(f"«{upload.filename}» er tom")
-
-
-def _check_printouts(uploads: Sequence[Upload]) -> None:
-    if not uploads:
-        raise InvalidPrintoutError("velg utskriften av bilagene først")
-    if len(uploads) > printout.MAX_FILES:
-        raise InvalidPrintoutError(
-            f"Myntos leser høyst {printout.MAX_FILES} utskrifter i samme opplasting. Last opp "
-            "resten etterpå"
-        )
-    for upload in uploads:
-        if len(upload.content) > printout.MAX_UPLOAD_BYTES:
-            raise InvalidPrintoutError(
-                f"«{upload.filename}» er større enn 200 MB. Skriv ut en kortere periode om gangen"
-            )
-        if not upload.content:
-            raise InvalidPrintoutError(f"«{upload.filename}» er tom")
 
 
 async def get(
@@ -248,24 +237,30 @@ async def list_for(
 
 
 async def _expire(db: AsyncSession, jobs: Sequence[SaftImport]) -> None:
-    """Empty the files of imports left untouched past :data:`FILE_LIFETIME`.
+    """Let go of the files of imports uploaded more than :data:`FILE_LIFETIME` ago.
 
-    Done when the imports are read rather than by a timer, as a waiting
-    approval's files are: the next person to look is the first one it matters to.
+    Done when the imports are read, as a waiting approval's files are: the next
+    person to look is the first one it matters to. The objects themselves are
+    deleted by :func:`sweep`, which also does this for imports nobody looks at.
     """
     cutoff = utc_now() - FILE_LIFETIME
-    stale = [
-        job.id
-        for job in jobs
-        if job.status in (ImportStatus.READY.value, ImportStatus.FAILED.value)
-        and _aware(job.updated_at) < cutoff
-    ]
+    stale = [job.id for job in jobs if job.status in _SETTLED and _aware(job.created_at) < cutoff]
     if stale:
-        await db.execute(
-            update(SaftImportFile)
-            .where(SaftImportFile.import_id.in_(stale), SaftImportFile.content.is_not(None))
-            .values(content=None)
-        )
+        await db.execute(_let_go(SaftImportFile.import_id.in_(stale)))
+
+
+def _let_go(*where: Any) -> Any:
+    """The update that empties files: neither the stored copy nor an old in-database one."""
+    return (
+        update(SaftImportFile)
+        .where(*where, _kept())
+        .values(content=None, storage_key=None)
+        .execution_options(synchronize_session=False)
+    )
+
+
+def _kept() -> Any:
+    return SaftImportFile.storage_key.is_not(None) | SaftImportFile.content.is_not(None)
 
 
 def _aware(value: datetime) -> datetime:
@@ -276,9 +271,7 @@ def _aware(value: datetime) -> datetime:
 async def files_kept(db: AsyncSession, job: SaftImport) -> bool:
     """Whether the uploaded files are still here to be read or posted from."""
     found = await db.scalar(
-        select(SaftImportFile.id).where(
-            SaftImportFile.import_id == job.id, SaftImportFile.content.is_not(None)
-        )
+        select(SaftImportFile.id).where(SaftImportFile.import_id == job.id, _kept()).limit(1)
     )
     return found is not None
 
@@ -287,25 +280,66 @@ def is_running(job: SaftImport) -> bool:
     return job.id in _running
 
 
+def documents_in(review: dict[str, Any] | None) -> int:
+    """How many files the review says the export's documents will keep."""
+    return sum(int(item.get("documents") or 0) for item in (review or {}).get("archives") or [])
+
+
+def postable(review: dict[str, Any] | None) -> bool:
+    """Whether the review may be posted: books to post, or only the export's documents to keep.
+
+    Documents alone when the books are already in Myntos (brought over before
+    the documents were kept) and nothing in the review stops it. A ``feil``
+    stops both: the documents are kept with the books they came with.
+    """
+    review = review or {}
+    if review.get("postable"):
+        return True
+    findings = review.get("findings") or []
+    return documents_in(review) > 0 and not any(item.get("severity") == "feil" for item in findings)
+
+
+def documents_left(job: SaftImport) -> bool:
+    """Whether a posted import still has documents to keep, posting it again."""
+    return job.status == ImportStatus.POSTED.value and job.error_code == DOCUMENTS_NOT_KEPT
+
+
 async def discard(
     db: AsyncSession,
     *,
     company: Company,
     import_pk: int,
     purposes: Sequence[ImportPurpose] = SAFT_PURPOSES,
-) -> None:
+) -> list[str]:
     """Throw an import away, files and all. Not one being worked on, and not a posted one.
 
     A posted import is the record of what was brought over and when; it stays,
-    without its files.
+    without its files. Returns the stored files' keys, for the caller to delete
+    once this is committed (:func:`forget`): deleted first, a failed commit
+    would leave an import whose files are gone.
     """
     job = await get(db, company=company, import_pk=import_pk, purposes=purposes)
     if job.status in _ACTIVE:
         raise ImportBusyError("innlesingen er i gang og kan ikke forkastes nå")
     if job.status == ImportStatus.POSTED.value:
         raise ImportBusyError("innlesingen er ført, og står som et spor av hva som ble hentet inn")
+    keys = await _keys(db, SaftImportFile.import_id == job.id)
     await db.delete(job)
     await db.flush()
+    return keys
+
+
+async def _keys(db: AsyncSession, *where: Any) -> list[str]:
+    return [
+        key
+        for key in await db.scalars(select(SaftImportFile.storage_key).where(*where))
+        if key is not None
+    ]
+
+
+async def forget(working: WorkingStore, keys: Sequence[str]) -> None:
+    """Delete stored files no row points at any more; what fails here, :func:`sweep` deletes."""
+    await intake.forget(working, keys)
 
 
 async def start_posting(
@@ -326,13 +360,26 @@ async def start_posting(
     job = await get(db, company=company, import_pk=import_pk, purposes=purposes)
     if job.purpose == ImportPurpose.SAMMENLIGNING.value:
         raise ImportNotPostableError("en sammenligning fører ingenting")
+    if documents_left(job):
+        # The books are posted; this keeps the documents the first try did not.
+        if not await files_kept(db, job):
+            raise ImportNotPostableError(
+                f"eksporten ble slettet etter {FILE_LIFETIME.days} dager. Last den opp på nytt "
+                "for å ta vare på resten av dokumentene"
+            )
+        return await _mark_posting(db, job, user_id=user_id, key_id=key_id)
     if job.status != ImportStatus.READY.value or job.review is None:
         raise ImportBusyError(
             "innlesingen er ikke klar til å føres"
             if job.status in _ACTIVE
             else "innlesingen kan ikke føres slik den står"
         )
-    if not job.review.get("postable"):
+    reviewed = (
+        postable(job.review)
+        if job.purpose == ImportPurpose.IMPORT.value
+        else bool(job.review.get("postable"))
+    )
+    if not reviewed:
         raise ImportNotPostableError(
             "gjennomgangen har funn som stopper føringen, eller ingenting nytt å føre"
         )
@@ -354,18 +401,28 @@ async def start_posting(
             f"filene ble slettet etter {FILE_LIFETIME.days} dager uten at noe ble ført. Last "
             "dem opp på nytt"
         )
+    return await _mark_posting(db, job, user_id=user_id, key_id=key_id)
+
+
+async def _mark_posting(
+    db: AsyncSession, job: SaftImport, *, user_id: int, key_id: int | None
+) -> SaftImport:
     other = await db.scalar(
         select(SaftImport.id).where(
-            SaftImport.company_id == company.id,
+            SaftImport.company_id == job.company_id,
             SaftImport.status == ImportStatus.POSTING.value,
             SaftImport.id != job.id,
         )
     )
     if other is not None:
         raise ImportBusyError("en annen innlesing føres akkurat nå. Vent til den er ferdig")
+    review = job.review or {}
+    if job.posted_at is None:
+        # Who posted the books. Keeping the rest of the documents afterwards
+        # does not make somebody else that person.
+        job.posted_by_user_id = user_id
+        job.posted_via_agent_key_id = key_id
     job.status = ImportStatus.POSTING.value
-    job.posted_by_user_id = user_id
-    job.posted_via_agent_key_id = key_id
     job.error = None
     job.error_code = None
     job.step = "Venter på å føre"
@@ -373,7 +430,7 @@ async def start_posting(
     job.total = (
         len(job.files)
         if job.purpose == ImportPurpose.VEDLEGG.value
-        else len(job.review.get("years", [])) + 1
+        else len(review.get("years", [])) + 1
     )
     job.updated_at = utc_now()
     await db.flush()
@@ -384,14 +441,15 @@ async def start_posting(
 # --- The work ------------------------------------------------------------------------
 
 
-async def _progress(sessions: Sessions, import_pk: int, step: str, done: int) -> None:
+async def _progress(
+    sessions: Sessions, import_pk: int, step: str, done: int, total: int | None = None
+) -> None:
     """Say how far the work has come, in a transaction of its own so the page sees it now."""
+    values: dict[str, Any] = {"step": step, "done": done, "updated_at": utc_now()}
+    if total is not None:
+        values["total"] = total
     async with sessions() as db:
-        await db.execute(
-            update(SaftImport)
-            .where(SaftImport.id == import_pk)
-            .values(step=step, done=done, updated_at=utc_now())
-        )
+        await db.execute(update(SaftImport).where(SaftImport.id == import_pk).values(**values))
         await db.commit()
 
 
@@ -405,12 +463,12 @@ async def _finish(sessions: Sessions, import_pk: int, **values: Any) -> None:
         await db.commit()
 
 
-async def _empty_files(sessions: Sessions, import_pk: int) -> None:
+async def _empty_files(sessions: Sessions, working: WorkingStore, import_pk: int) -> None:
     async with sessions() as db:
-        await db.execute(
-            update(SaftImportFile).where(SaftImportFile.import_id == import_pk).values(content=None)
-        )
+        keys = await _keys(db, SaftImportFile.import_id == import_pk)
+        await db.execute(_let_go(SaftImportFile.import_id == import_pk))
         await db.commit()
+    await forget(working, keys)
 
 
 async def _company(db: AsyncSession, job: SaftImport) -> Company:
@@ -422,36 +480,71 @@ async def _company(db: AsyncSession, job: SaftImport) -> Company:
     return company
 
 
-async def _parse(sessions: Sessions, import_pk: int) -> list[move.SourceFile]:
-    """Every file of the import, read, one at a time so only one is in memory as bytes."""
+async def _files(
+    sessions: Sessions, import_pk: int, kind: FileKind = FileKind.READ
+) -> list[tuple[int, str, str | None]]:
+    """The import's files of ``kind`` in upload order: id, name and where the stored copy is."""
     async with sessions() as db:
-        files = list(
+        return list(
             (
                 await db.execute(
-                    select(SaftImportFile.id, SaftImportFile.filename)
-                    .where(SaftImportFile.import_id == import_pk)
+                    select(SaftImportFile.id, SaftImportFile.filename, SaftImportFile.storage_key)
+                    .where(SaftImportFile.import_id == import_pk, SaftImportFile.kind == kind.value)
                     .order_by(SaftImportFile.position)
                 )
             ).tuples()
         )
+
+
+def _gone() -> str:
+    return f"filene ble slettet etter {FILE_LIFETIME.days} dager. Last dem opp på nytt"
+
+
+async def _legacy_content(sessions: Sessions, file_pk: int) -> bytes | None:
+    """A file kept in the database, as uploads were before the working store."""
+    async with sessions() as db:
+        content: bytes | None = await db.scalar(
+            select(SaftImportFile.content).where(SaftImportFile.id == file_pk)
+        )
+        return content
+
+
+def _read_stored(working: WorkingStore, key: str) -> SaftEntries:
+    """Parse a stored SAF-T file while it downloads. Blocking: runs in a worker thread."""
+    with working.open(key) as raw, gzip.GzipFile(fileobj=raw) as xml:
+        try:
+            return reader.read_entries_xml(xml)
+        except (OSError, EOFError) as error:
+            # A copy we compressed ourselves that does not decompress was
+            # damaged on the way; the person can only upload it again.
+            raise InvalidSaftFileError(
+                "kopien av filen hos Myntos kan ikke leses. Last den opp på nytt"
+            ) from error
+
+
+async def _parse(
+    sessions: Sessions, working: WorkingStore, import_pk: int
+) -> list[move.SourceFile]:
+    """Every file of the import, read one at a time, each as it streams from the store."""
+    files = await _files(sessions, import_pk)
     parsed: list[move.SourceFile] = []
-    for index, (file_pk, filename) in enumerate(files):
+    for index, (file_pk, filename, key) in enumerate(files):
         await _progress(
             sessions, import_pk, f"Leser «{filename}» ({index + 1} av {len(files)})", index
         )
-        async with sessions() as db:
-            content = await db.scalar(
-                select(SaftImportFile.content).where(SaftImportFile.id == file_pk)
-            )
-        if content is None:
-            raise InvalidSaftFileError(
-                f"filene ble slettet etter {FILE_LIFETIME.days} dager. Last dem opp på nytt"
-            )
         try:
-            entries: SaftEntries = await run_in_threadpool(reader.read_entries, BytesIO(content))
+            if key is not None:
+                entries: SaftEntries = await run_in_threadpool(_read_stored, working, key)
+            else:
+                content = await _legacy_content(sessions, file_pk)
+                if content is None:
+                    raise InvalidSaftFileError(_gone())
+                entries = await run_in_threadpool(reader.read_entries, BytesIO(content))
+                del content
+        except ObjectNotFoundError as error:
+            raise InvalidSaftFileError(_gone()) from error
         except InvalidSaftFileError as error:
             raise InvalidSaftFileError(f"«{filename}»: {error}") from error
-        del content
         parsed.append(move.SourceFile(name=filename, entries=entries))
         async with sessions() as db:
             await db.execute(
@@ -471,7 +564,7 @@ async def _load(sessions: Sessions, import_pk: int) -> SaftImport | None:
         return job
 
 
-async def read(sessions: Sessions, import_pk: int) -> None:
+async def read(sessions: Sessions, working: WorkingStore, import_pk: int) -> None:
     """Read an import's files and store what they would do. Commits nothing to the books."""
     _running.add(import_pk)
     try:
@@ -479,7 +572,7 @@ async def read(sessions: Sessions, import_pk: int) -> None:
         if job is None:
             return
         try:
-            files = await _parse(sessions, import_pk)
+            files = await _parse(sessions, working, import_pk)
             await _progress(sessions, import_pk, "Går gjennom det som blir ført", len(files))
             async with sessions() as db:
                 company = await _company(db, job)
@@ -498,6 +591,11 @@ async def read(sessions: Sessions, import_pk: int) -> None:
                     )
                     review = move_review(report)
                 await db.rollback()
+            if job.purpose == ImportPurpose.IMPORT.value:
+                # After the move, which refuses another company's SAF-T files:
+                # an export's documents are kept only with books that are
+                # this company's.
+                review["archives"] = await _archives(sessions, working, import_pk)
         except (SaftImportError, LedgerError) as error:
             await _finish(
                 sessions,
@@ -531,128 +629,260 @@ async def read(sessions: Sessions, import_pk: int) -> None:
         )
         if job.purpose == ImportPurpose.SAMMENLIGNING.value:
             # Compared is done: there is nothing more to read the file for.
-            await _empty_files(sessions, import_pk)
+            await _empty_files(sessions, working, import_pk)
     finally:
         _running.discard(import_pk)
 
 
-async def post(sessions: Sessions, import_pk: int) -> None:
-    """Post a reviewed import, all of it or nothing."""
+async def _archives(
+    sessions: Sessions, working: WorkingStore, import_pk: int
+) -> list[dict[str, Any]]:
+    """What keeping each export's documents will do, read from the ZIP directories alone."""
+    found: list[dict[str, Any]] = []
+    for _, filename, key in await _files(sessions, import_pk, FileKind.EXPORT):
+        if key is None:
+            raise InvalidSaftFileError(_gone())
+        try:
+            found.append(await run_in_threadpool(archive.read_review, working, key, filename))
+        except ObjectNotFoundError as error:
+            raise InvalidSaftFileError(_gone()) from error
+    return found
+
+
+async def post(
+    sessions: Sessions, working: WorkingStore, import_pk: int, storage: DocumentStorage
+) -> None:
+    """Post a reviewed import, all of it or nothing, then keep the documents of its export."""
     _running.add(import_pk)
     try:
         job = await _load(sessions, import_pk)
         if job is None or job.status != ImportStatus.POSTING.value:
             return
-        try:
-            files = await _parse(sessions, import_pk)
-            await _progress(sessions, import_pk, "Fører regnskapet", len(files))
-            async with sessions() as db:
-                company = await _company(db, job)
-                may_chart = await _may(db, job, Permission.LEDGER_CHART)
-                if not await _may(db, job, Permission.LEDGER_WRITE):
-                    raise ImportNotPostableError(
-                        "den som ba om føringen, har ikke lenger tilgang til å føre i dette "
-                        "regnskapet"
-                    )
-                if job.posted_via_agent_key_id is not None:
-                    # No request is running, so the stamp a key's voucher carries
-                    # (docs/agents-and-api.md rule 6) is put on from here.
-                    db.info[agent_keys.AGENT_KEY_INFO] = job.posted_via_agent_key_id
-                report = await move.apply(
-                    db,
-                    company=company,
-                    files=files,
-                    til=job.til,
-                    created_by_user_id=job.posted_by_user_id,
-                    may_chart=may_chart,
+        # Set in the books' own transaction (_post_books): a restart after it
+        # carries on with the documents and does not post again.
+        if job.posted_at is None and not await _post_books(sessions, working, job):
+            return
+        await _keep_documents(sessions, working, storage, import_pk)
+    finally:
+        _running.discard(import_pk)
+
+
+async def _post_books(sessions: Sessions, working: WorkingStore, job: SaftImport) -> bool:
+    """The books, in one transaction that also marks the import as posted. False when stopped."""
+    import_pk = job.id
+    reviewed = job.review or {}
+    try:
+        files = await _parse(sessions, working, import_pk)
+        await _progress(sessions, import_pk, "Fører regnskapet", len(files))
+        async with sessions() as db:
+            company = await _company(db, job)
+            may_chart = await _may(db, job, Permission.LEDGER_CHART)
+            if not await _may(db, job, Permission.LEDGER_WRITE):
+                raise ImportNotPostableError(
+                    "den som ba om føringen, har ikke lenger tilgang til å føre i dette regnskapet"
                 )
-                review = move_review(report)
-                if not report.postable:
-                    await db.rollback()
-                    await _finish(
-                        sessions,
-                        import_pk,
-                        status=ImportStatus.READY.value,
-                        step=None,
-                        review=review,
-                        error="Ingenting ble ført: regnskapet har endret seg siden filene ble "
-                        "lest. Se over gjennomgangen på nytt.",
-                        error_code="review_changed",
-                    )
-                    return
-                await db.commit()
-        except (SaftImportError, LedgerError) as error:
-            await _finish(
-                sessions,
-                import_pk,
-                status=ImportStatus.READY.value,
-                step=None,
-                error="Ingenting ble ført: " + _sentence(str(error)),
-                error_code=_code(error),
+            if job.posted_via_agent_key_id is not None:
+                # No request is running, so the stamp a key's voucher carries
+                # (docs/agents-and-api.md rule 6) is put on from here.
+                db.info[agent_keys.AGENT_KEY_INFO] = job.posted_via_agent_key_id
+            report = await move.apply(
+                db,
+                company=company,
+                files=files,
+                til=job.til,
+                created_by_user_id=job.posted_by_user_id,
+                may_chart=may_chart,
             )
-            return
-        except Exception:
-            logger.exception("Føring av SAF-T-innlesing %s feilet", import_pk)
-            await _finish(
-                sessions,
-                import_pk,
-                status=ImportStatus.READY.value,
-                step=None,
-                error="Noe gikk galt hos oss, og ingenting ble ført. Prøv igjen, eller ta kontakt.",
-                error_code="internal_error",
+            review = move_review(report)
+            review["archives"] = reviewed.get("archives") or []
+            # What the person said yes to: the books (and the documents with
+            # them), or the documents alone. Anything else is not what they saw.
+            if report.blocking or report.postable != bool(reviewed.get("postable")):
+                await db.rollback()
+                await _finish(
+                    sessions,
+                    import_pk,
+                    status=ImportStatus.READY.value,
+                    step=None,
+                    review=review,
+                    error="Ingenting ble ført: regnskapet har endret seg siden filene ble "
+                    "lest. Se over gjennomgangen på nytt.",
+                    error_code="review_changed",
+                )
+                return False
+            if not report.postable:
+                # The documents alone: the move wrote nothing worth keeping.
+                await db.rollback()
+            await db.execute(
+                update(SaftImport)
+                .where(SaftImport.id == import_pk)
+                .values(result=review, posted_at=utc_now(), updated_at=utc_now())
             )
-            return
+            await db.commit()
+    except (SaftImportError, LedgerError) as error:
         await _finish(
             sessions,
             import_pk,
-            status=ImportStatus.POSTED.value,
+            status=ImportStatus.READY.value,
             step=None,
-            done=len(files),
-            result=review,
-            posted_at=utc_now(),
-            error=None,
-            error_code=None,
+            error="Ingenting ble ført: " + _sentence(str(error)),
+            error_code=_code(error),
         )
-        await _empty_files(sessions, import_pk)
-    finally:
-        _running.discard(import_pk)
+        return False
+    except Exception:
+        logger.exception("Føring av SAF-T-innlesing %s feilet", import_pk)
+        await _finish(
+            sessions,
+            import_pk,
+            status=ImportStatus.READY.value,
+            step=None,
+            error="Noe gikk galt hos oss, og ingenting ble ført. Prøv igjen, eller ta kontakt.",
+            error_code="internal_error",
+        )
+        return False
+    return True
+
+
+async def _keep_documents(
+    sessions: Sessions, working: WorkingStore, storage: DocumentStorage, import_pk: int
+) -> None:
+    """Copy the documents of the import's exports into the document store, then let the files go.
+
+    Called once the books are posted. Each document is kept once
+    (:func:`myntos.saft.archive.keep`), so a restart or a second try after a
+    failure carries on where it stopped.
+    """
+    job = await _load(sessions, import_pk)
+    if job is None:
+        return
+    result = dict(job.result or {})
+    years = result.get("years") or []
+    software = next((year["software"] for year in years if year.get("software")), None)
+    exports = await _files(sessions, import_pk, FileKind.EXPORT)
+    kept: list[dict[str, Any]] = []
+
+    try:
+        for _, filename, key in exports:
+            if key is None:
+                raise InvalidSaftFileError(_gone())
+
+            async def progress(done: int, total: int, name: str = filename) -> None:
+                await _progress(
+                    sessions,
+                    import_pk,
+                    f"Tar vare på dokumentene i «{name}» ({done} av {total})",
+                    done,
+                    total,
+                )
+
+            kept.append(
+                await archive.keep(
+                    sessions,
+                    storage,
+                    working,
+                    key=key,
+                    file_name=filename,
+                    company_id=job.company_id,
+                    import_pk=import_pk,
+                    software=software,
+                    user_id=job.posted_by_user_id,
+                    progress=progress,
+                )
+            )
+    except (StorageError, SaftImportError) as error:
+        logger.warning(
+            "Dokumentene i eksporten til innlesing %s ble ikke tatt vare på",
+            import_pk,
+            exc_info=True,
+        )
+        await _documents_stopped(sessions, import_pk, result, _documents_reason(error))
+        return
+    except Exception:
+        logger.exception(
+            "Dokumentene i eksporten til innlesing %s ble ikke tatt vare på", import_pk
+        )
+        await _documents_stopped(
+            sessions, import_pk, result, "Noe gikk galt hos oss. Prøv igjen, eller ta kontakt."
+        )
+        return
+    if exports:
+        result["archives"] = kept
+    await _finish(
+        sessions,
+        import_pk,
+        status=ImportStatus.POSTED.value,
+        step=None,
+        result=result,
+        error=None,
+        error_code=None,
+    )
+    await _empty_files(sessions, working, import_pk)
+
+
+def _documents_reason(error: Exception) -> str:
+    if isinstance(error, ObjectNotFoundError):
+        return _sentence(_gone())
+    if isinstance(error, StorageError):
+        return "Lageret for dokumenter svarte ikke. Prøv igjen om litt."
+    return _sentence(str(error))
+
+
+async def _documents_stopped(
+    sessions: Sessions, import_pk: int, result: dict[str, Any], reason: str
+) -> None:
+    """Posted, with documents left to keep: the files stay, and posting again keeps the rest."""
+    first = (
+        "Regnskapet er ført, men ikke alle dokumentene i eksporten ble tatt vare på"
+        if result.get("postable")
+        else "Ikke alle dokumentene i eksporten ble tatt vare på"
+    )
+    await _finish(
+        sessions,
+        import_pk,
+        status=ImportStatus.POSTED.value,
+        step=None,
+        result=result,
+        error=f"{first}. {reason} Det som er tatt vare på, blir ikke lagt inn to ganger.",
+        error_code=DOCUMENTS_NOT_KEPT,
+    )
 
 
 # --- The documents behind the vouchers ---------------------------------------------------
 
 
-async def _printouts(sessions: Sessions, import_pk: int) -> list[tuple[int, str, Printout]]:
+async def _printout_content(
+    sessions: Sessions, working: WorkingStore, file_pk: int, key: str | None
+) -> bytes:
+    """A printout's bytes, whole: pypdf reads a PDF from its end."""
+    try:
+        content = (
+            await working.load(key) if key is not None else await _legacy_content(sessions, file_pk)
+        )
+    except ObjectNotFoundError as error:
+        raise InvalidPrintoutError(_gone()) from error
+    if content is None:
+        raise InvalidPrintoutError(_gone())
+    return content
+
+
+async def _printouts(
+    sessions: Sessions, working: WorkingStore, import_pk: int
+) -> list[tuple[int, str, str | None, Printout]]:
     """Every printout of the upload, read, one at a time so only one is in memory as bytes.
 
     What is kept of each is the vouchers and their documents' digests, never the
     documents: :func:`post_documents` cuts them again file by file.
     """
-    async with sessions() as db:
-        files = list(
-            (
-                await db.execute(
-                    select(SaftImportFile.id, SaftImportFile.filename)
-                    .where(SaftImportFile.import_id == import_pk)
-                    .order_by(SaftImportFile.position)
-                )
-            ).tuples()
-        )
-    parsed: list[tuple[int, str, Printout]] = []
-    for index, (file_pk, filename) in enumerate(files):
+    files = await _files(sessions, import_pk)
+    parsed: list[tuple[int, str, str | None, Printout]] = []
+    for index, (file_pk, filename, key) in enumerate(files):
         await _progress(
             sessions, import_pk, f"Leser «{filename}» ({index + 1} av {len(files)})", index
         )
-        async with sessions() as db:
-            content = await db.scalar(
-                select(SaftImportFile.content).where(SaftImportFile.id == file_pk)
-            )
-        if content is None:
-            raise InvalidPrintoutError(
-                f"filene ble slettet etter {FILE_LIFETIME.days} dager. Last dem opp på nytt"
-            )
+        content = await _printout_content(sessions, working, file_pk, key)
         found = await run_in_threadpool(printout.read, content, name=filename)
         del content
-        parsed.append((file_pk, filename, found))
+        parsed.append((file_pk, filename, key, found))
     return parsed
 
 
@@ -667,7 +897,7 @@ def _reviewed(review: dict[str, Any] | None) -> frozenset[tuple[int, str]]:
     )
 
 
-async def read_documents(sessions: Sessions, import_pk: int) -> None:
+async def read_documents(sessions: Sessions, working: WorkingStore, import_pk: int) -> None:
     """Read an upload's printouts and store what putting them in the archive would do."""
     _running.add(import_pk)
     try:
@@ -675,12 +905,12 @@ async def read_documents(sessions: Sessions, import_pk: int) -> None:
         if job is None:
             return
         try:
-            files = await _printouts(sessions, import_pk)
+            files = await _printouts(sessions, working, import_pk)
             await _progress(sessions, import_pk, "Finner bilagene i Myntos", len(files))
             async with sessions() as db:
                 company = await _company(db, job)
                 planned = await documents.plan(
-                    db, company=company, printouts=[(name, read) for _, name, read in files]
+                    db, company=company, printouts=[(name, read) for _, name, _, read in files]
                 )
                 review = documents_review(planned)
         except (SaftImportError, LedgerError) as error:
@@ -719,7 +949,9 @@ async def read_documents(sessions: Sessions, import_pk: int) -> None:
         _running.discard(import_pk)
 
 
-async def post_documents(sessions: Sessions, import_pk: int, storage: DocumentStorage) -> None:
+async def post_documents(
+    sessions: Sessions, working: WorkingStore, import_pk: int, storage: DocumentStorage
+) -> None:
     """Put a reviewed upload's documents in the bilag archive, all of them or none.
 
     The plan is made again from the files and the books as they are now, and
@@ -735,7 +967,7 @@ async def post_documents(sessions: Sessions, import_pk: int, storage: DocumentSt
         if job is None or job.status != ImportStatus.POSTING.value:
             return
         try:
-            files = await _printouts(sessions, import_pk)
+            files = await _printouts(sessions, working, import_pk)
             await _progress(sessions, import_pk, "Legger dokumentene i bilagsarkivet", len(files))
             async with sessions() as db:
                 company = await _company(db, job)
@@ -744,7 +976,7 @@ async def post_documents(sessions: Sessions, import_pk: int, storage: DocumentSt
                         "den som ba om det, har ikke lenger tilgang til å føre i dette regnskapet"
                     )
                 planned = await documents.plan(
-                    db, company=company, printouts=[(name, read) for _, name, read in files]
+                    db, company=company, printouts=[(name, read) for _, name, _, read in files]
                 )
                 review = documents_review(planned)
                 if not planned.postable or planned.attachments() != _reviewed(job.review):
@@ -761,15 +993,8 @@ async def post_documents(sessions: Sessions, import_pk: int, storage: DocumentSt
                         error_code="review_changed",
                     )
                     return
-                for index, (file_pk, _, _) in enumerate(files):
-                    content = await db.scalar(
-                        select(SaftImportFile.content).where(SaftImportFile.id == file_pk)
-                    )
-                    if content is None:
-                        raise InvalidPrintoutError(
-                            f"filene ble slettet etter {FILE_LIFETIME.days} dager. Last dem opp "
-                            "på nytt"
-                        )
+                for index, (file_pk, _, key, _) in enumerate(files):
+                    content = await _printout_content(sessions, working, file_pk, key)
                     await documents.attach(
                         db,
                         storage,
@@ -814,7 +1039,7 @@ async def post_documents(sessions: Sessions, import_pk: int, storage: DocumentSt
             error=None,
             error_code=None,
         )
-        await _empty_files(sessions, import_pk)
+        await _empty_files(sessions, working, import_pk)
     finally:
         _running.discard(import_pk)
 
@@ -832,7 +1057,7 @@ async def _may(db: AsyncSession, job: SaftImport, permission: Permission) -> boo
     return role is not None and has_permission(role, permission)
 
 
-async def resume(sessions: Sessions, storage: DocumentStorage) -> None:
+async def resume(sessions: Sessions, storage: DocumentStorage, working: WorkingStore) -> None:
     """Start again whatever a restart stopped halfway. Called once, at startup."""
     async with sessions() as db:
         stopped = list(
@@ -850,29 +1075,69 @@ async def resume(sessions: Sessions, storage: DocumentStorage) -> None:
         reading = status == ImportStatus.READING.value
         if purpose == ImportPurpose.VEDLEGG.value:
             if reading:
-                await read_documents(sessions, import_pk)
+                await read_documents(sessions, working, import_pk)
             else:
-                await post_documents(sessions, import_pk, storage)
+                await post_documents(sessions, working, import_pk, storage)
         elif reading:
-            await read(sessions, import_pk)
+            await read(sessions, working, import_pk)
         else:
-            await post(sessions, import_pk)
+            await post(sessions, working, import_pk, storage)
 
 
 def resume_in_background(
-    factory: Callable[[], Sessions], storage: Callable[[], DocumentStorage]
+    factory: Callable[[], Sessions],
+    storage: Callable[[], DocumentStorage],
+    working: Callable[[], WorkingStore],
 ) -> None:
     """Schedule :func:`resume` without holding up startup."""
 
     async def run() -> None:
         try:
-            await resume(factory(), storage())
+            await resume(factory(), storage(), working())
         except Exception:
             logger.exception("Kunne ikke gjenoppta SAF-T-innlesinger etter omstart")
 
     task = asyncio.get_running_loop().create_task(run())
     _resumed.add(task)
     task.add_done_callback(_resumed.discard)
+
+
+async def sweep(sessions: Sessions, working: WorkingStore) -> int:
+    """Delete the stored files nothing needs any more. Once a day, from ``main._purge_daily``.
+
+    First the files of every import uploaded more than :data:`FILE_LIFETIME`
+    ago and not being worked on are let go, as :func:`_expire` does for the
+    imports somebody looks at; the rest nobody may look at again. Then every
+    object in the store that no row points at is deleted: those just let go, an
+    import thrown away whose delete failed, the files of books deleted from
+    Myntos (their rows went with the company, or were emptied by
+    ``closure.close_company``), and an upload whose client left halfway. One
+    younger than :data:`_ORPHAN_GRACE` is left alone: a file is stored before
+    the row naming it is committed. Returns how many objects were deleted.
+    """
+    cutoff = utc_now() - FILE_LIFETIME
+    async with sessions() as db:
+        settled = (
+            await db.execute(
+                select(SaftImport.id, SaftImport.created_at).where(
+                    SaftImport.status.in_(_SETTLED),
+                    SaftImport.id.in_(select(SaftImportFile.import_id).where(_kept())),
+                )
+            )
+        ).tuples()
+        stale = [import_pk for import_pk, created in settled if _aware(created) < cutoff]
+        if stale:
+            await db.execute(_let_go(SaftImportFile.import_id.in_(stale)))
+            await db.commit()
+        referenced = set(await _keys(db))
+    young = utc_now() - _ORPHAN_GRACE
+    orphans = [
+        item.key
+        for item in await working.listing()
+        if item.key not in referenced and item.modified < young
+    ]
+    await forget(working, orphans)
+    return len(orphans)
 
 
 # --- What is stored as the review ------------------------------------------------------
@@ -1105,25 +1370,31 @@ def comparison_review(result: compare.Comparison) -> dict[str, Any]:
 
 
 __all__ = [
+    "DOCUMENTS_NOT_KEPT",
     "FILE_LIFETIME",
     "ImportBusyError",
     "ImportNotFoundError",
     "ImportNotPostableError",
+    "ImportedDocumentNotFoundError",
     "Sessions",
-    "Upload",
     "comparison_review",
     "create",
     "discard",
+    "documents_in",
+    "documents_left",
     "documents_review",
+    "forget",
     "get",
     "is_running",
     "list_for",
     "move_review",
     "post",
     "post_documents",
+    "postable",
     "read",
     "read_documents",
     "resume",
     "resume_in_background",
     "start_posting",
+    "sweep",
 ]

@@ -9,7 +9,9 @@ and the response says honestly which happened.
 
 import email
 import email.policy
+import email.utils
 import json
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -32,6 +34,7 @@ from myntos.core.mail import (
 from myntos.domain.identity.access import Permission, permissions_for
 from myntos.domain.identity.invitation_mail import ROLE_WORDS, invitation_mail
 from myntos.domain.identity.models import OrganizationRole
+from myntos.main import create_app
 from tests.conftest import TEST_ORIGIN, RecordingMailer, register, write
 
 
@@ -124,9 +127,32 @@ def test_a_name_with_markup_in_it_is_escaped() -> None:
     assert "&lt;script&gt;" in mail.html
 
 
-def test_the_reply_goes_to_the_colleague_who_sent_it() -> None:
+def test_the_message_names_the_colleague_to_ask_but_not_as_reply_to() -> None:
+    """Somebody to ask whether it is genuine, in the text where a filter does not score it.
+
+    It was the Reply-To until every invitation carrying one was refused as spam
+    in October 2026: a Reply-To on another domain than From is the shape of a
+    phishing message (invitation_mail's module docstring).
+    """
     mail = _sample()
-    assert mail.reply_to == "kari@example.no"
+    assert mail.reply_to is None
+    assert "spørre Kari Nordmann på kari@example.no" in mail.text
+    assert mail.html is not None
+    assert "spørre Kari Nordmann på kari@example.no" in mail.html
+
+
+def test_an_unnamed_inviter_is_still_somebody_to_ask() -> None:
+    mail = _sample(inviter_name=None)
+    assert "spørre avsenderen på kari@example.no" in mail.text
+    assert "None" not in mail.text
+
+
+def test_without_a_confirmed_address_there_is_nobody_to_ask() -> None:
+    """The endpoint passes no address for an unconfirmed sender; the line goes with it."""
+    mail = _sample(inviter_email=None)
+    assert "usikker på om invitasjonen er ekte" not in mail.text
+    assert mail.html is not None
+    assert "usikker på om invitasjonen er ekte" not in mail.html
 
 
 def test_every_role_has_words() -> None:
@@ -165,7 +191,22 @@ def test_the_message_is_addressed_from_the_configured_sender() -> None:
     message = build_message(_sample(), _settings())
     assert message["From"] == "Myntos <ingen-svar@myntos.no>"
     assert message["To"] == "ola@example.no"
-    assert message["Reply-To"] == "kari@example.no"
+    assert message["Reply-To"] is None
+
+
+def test_the_message_carries_a_date_and_a_message_id() -> None:
+    """RFC 5322 requires both, and a spam filter scores their absence.
+
+    Neither was set until 2026-10-23, when Cloudflare's filter was refusing the
+    invitations at its threshold and passing the account mails one point under
+    it. The Message-ID is at the sender's own domain: a host name would put
+    this machine's in every message.
+    """
+    message = build_message(_sample(), _settings())
+    assert message["Date"] is not None
+    assert email.utils.parsedate_to_datetime(str(message["Date"])).tzinfo is not None
+    assert str(message["Message-ID"]).endswith("@myntos.no>")
+    assert build_message(_sample(), _settings())["Message-ID"] != message["Message-ID"]
 
 
 def test_the_message_carries_both_a_text_and_an_html_part() -> None:
@@ -297,7 +338,13 @@ def _readable(mime: str) -> tuple[dict[str, str], str, str]:
     both rendered parts do, and they are what "the same message" means here.
     """
     parsed = email.message_from_string(mime, policy=email.policy.default)
-    headers = {name: str(value) for name, value in parsed.items() if name != "Content-Type"}
+    # Nor the Date and Message-ID, which differ between two compositions by
+    # design: a Message-ID that repeated would not identify anything.
+    headers = {
+        name: str(value)
+        for name, value in parsed.items()
+        if name not in ("Content-Type", "Date", "Message-ID")
+    }
     plain = parsed.get_body(("plain",))
     html = parsed.get_body(("html",))
     assert plain is not None and html is not None
@@ -321,7 +368,7 @@ async def test_the_request_carries_the_message_smtp_would_have_sent(
     """The whole reason for using send_raw rather than the field-by-field endpoint.
 
     What goes on the wire is the MIME message build_message produced, so the
-    Subject, the Reply-To and both body parts are the ones asserted in the
+    Subject, the Message-ID and both body parts are the ones asserted in the
     section above rather than Cloudflare's rendering of a JSON object.
     """
     seen: list[httpx.Request] = []
@@ -344,9 +391,53 @@ async def test_the_request_carries_the_message_smtp_would_have_sent(
     expected = build_message(_sample(), _cloudflare_settings()).as_string()
     assert _readable(mime) == _readable(expected)
     headers, plain, _html = _readable(mime)
-    assert headers["Reply-To"] == "kari@example.no"
+    assert "Reply-To" not in headers
+    assert email.message_from_string(mime)["Message-ID"] is not None
     assert headers["From"] == "Myntos <no-reply@myntos.no>"
     assert "Fjord Regnskap AS" in plain
+
+
+async def test_a_send_is_logged_by_cloudflares_id_and_not_by_address(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The id is what Cloudflare's analytics are searched by when nothing arrived.
+
+    And "queued", not "sent": Cloudflare's spam filter runs after this answer,
+    which is how three invitations reported as sent were refused in October
+    2026. No address, because the journal is kept longer than an account is.
+    """
+
+    def queued(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "errors": [],
+                "result": {
+                    "message_id": "<abc123@myntos.no>",
+                    "delivered": [],
+                    "permanent_bounces": [],
+                    "queued": ["ola@example.no"],
+                },
+            },
+        )
+
+    with caplog.at_level(logging.INFO, logger="myntos.core.mail"):
+        delivery = await _cloudflare(monkeypatch, queued).send(_sample())
+
+    assert delivery.sent is True
+    assert "mail queued by Cloudflare: <abc123@myntos.no>" in caplog.text
+    assert "ola@example.no" not in caplog.text
+
+
+def test_the_apps_own_log_lines_reach_stderr_once() -> None:
+    """uvicorn configures its loggers and nobody else's, so ours went nowhere below WARNING."""
+    create_app()
+    create_app()
+    package = logging.getLogger("myntos")
+    ours = [handler for handler in package.handlers if getattr(handler, "_myntos_own", False)]
+    assert len(ours) == 1
+    assert package.isEnabledFor(logging.INFO)
 
 
 async def test_the_token_is_sent_as_a_bearer_and_not_in_the_body(

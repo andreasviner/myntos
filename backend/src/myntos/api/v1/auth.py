@@ -470,9 +470,9 @@ async def change_password(
 # existed, because every password account made before it is unconfirmed and
 # none of them may be locked out by a feature they never had the chance to use.
 # What it does not get is its address vouched for to somebody else: an
-# invitation from an unconfirmed account carries no Reply-To (see
-# myntos.api.v1.members), because a reply should never go to an address nobody
-# has shown is theirs.
+# invitation from an unconfirmed account does not name the inviter's address
+# (see myntos.api.v1.members), because a question should never go to an address
+# nobody has shown is theirs.
 
 
 @router.post("/email/verify", status_code=status.HTTP_204_NO_CONTENT)

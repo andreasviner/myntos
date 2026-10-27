@@ -22,6 +22,13 @@ export interface Program {
   /** Whether Myntos reads this program's printout of the vouchers with their attachments. */
   printout: boolean;
   /**
+   * The program's own export with every year's SAF-T file in one ZIP, and its
+   * file name, when there is one: the upload reads such a ZIP as it is
+   * (backend `saft/intake.py`). Said on the page only for that program; the
+   * ZIP is read whatever was chosen.
+   */
+  completeExport?: string;
+  /**
    * Lower case, looked for in the SAF-T header's SoftwareCompanyName
    * («Tripletex»). Left out where the name is shared: Visma's programs, and
    * the banks' and Uni Economy's, which are all Unimicro underneath.
@@ -38,7 +45,7 @@ export const PROGRAMS: readonly Program[] = [
   { slug: 'conta', name: 'Conta', guide: 'conta', printout: false, software: 'conta' },
   { slug: 'dnb-regnskap', name: 'DNB Regnskap', guide: OTHER, printout: false },
   { slug: 'duett', name: 'Duett', guide: OTHER, printout: false, software: 'duett' },
-  { slug: 'fiken', name: 'Fiken', guide: 'fiken', printout: false, software: 'fiken' },
+  { slug: 'fiken', name: 'Fiken', guide: 'fiken', printout: false, software: 'fiken', completeExport: 'fiken-komplett-….zip' },
   { slug: 'poweroffice-go', name: 'PowerOffice Go', guide: 'poweroffice-go', printout: false, software: 'poweroffice' },
   { slug: 'sparebank1-regnskap', name: 'SpareBank 1 Regnskap', guide: OTHER, printout: false },
   { slug: 'tripletex', name: 'Tripletex', guide: 'tripletex', printout: true, software: 'tripletex' },
@@ -83,14 +90,41 @@ export function initialProgram(options: {
   if (requested !== null) return requested;
   if (options.printouts.length > 0) return PROGRAMS.find((program) => program.printout) ?? null;
   for (const job of options.imports) {
-    if (job.purpose !== 'import') continue;
-    const review = job.result ?? (job.review?.kind === 'import' ? job.review : null);
-    for (const year of review?.years ?? []) {
-      const program = programFromSoftware(year.software);
-      if (program !== null) return program;
-    }
+    const program = programFromImport(job);
+    if (program !== null) return program;
   }
   return null;
+}
+
+/** The program an import's files say made them, once they are read. */
+export function programFromImport(job: SaftImport): Program | null {
+  if (job.purpose !== 'import') return null;
+  const review = job.result ?? (job.review?.kind === 'import' ? job.review : null);
+  for (const year of review?.years ?? []) {
+    const program = programFromSoftware(year.software);
+    if (program !== null) return program;
+  }
+  return null;
+}
+
+/** Said when the page changed the choice because the files named another program. */
+export function switchedNote(program: Program): string {
+  return `Filene er fra ${program.name}, så ${program.name} er valgt som programmet du kommer fra.`;
+}
+
+/**
+ * The line under the upload for a program whose complete export the upload
+ * reads as it is, or null. Fiken's: the person need not unpack it or pick the
+ * SAF-T files out, and the documents in it are kept with the books (since
+ * 2026-10-27; before, this line told them to keep the export themselves).
+ */
+export function exportNote(program: Program | null): string | null {
+  if (program?.completeExport === undefined) return null;
+  return (
+    `Fra ${program.name} kan du laste opp den komplette eksporten (${program.completeExport}) ` +
+    'slik den er. Myntos tar ut SAF-T-filen for hvert år, og når du fører, tar Myntos vare på ' +
+    'kvitteringene, fakturaene og resten av filene i den, med mappen de lå i.'
+  );
 }
 
 /**
@@ -126,6 +160,15 @@ export function documentsNote(program: Program): string {
     return (
       'Kvitteringene og fakturaene bak bilagene er ikke i SAF-T-filene. Dem henter du fra ' +
       `utskriften av bilagene i ${program.name}, i kortet «Vedlegg fra ${program.name}» under.`
+    );
+  }
+  if (program.completeExport !== undefined) {
+    // Kept, but on no voucher: the export does not say which voucher each
+    // document is behind (backend saft/archive.py).
+    return (
+      'Kvitteringene og fakturaene bak bilagene er ikke i SAF-T-filene, men de er i den komplette ' +
+      `eksporten fra ${program.name}. Laster du opp den, tar Myntos vare på dem med mappen de lå ` +
+      'i. De legges ikke på hvert sitt bilag.'
     );
   }
   return (

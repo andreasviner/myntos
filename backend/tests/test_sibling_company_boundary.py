@@ -45,6 +45,7 @@ from myntos.main import create_app
 from tests.conftest import (
     agent_header,
     assert_key_refused,
+    insert_imported_document,
     insert_mva_filing,
     insert_skattemelding_filing,
     is_send,
@@ -566,6 +567,22 @@ def _a_printout_upload(client: TestClient, company_id: int) -> tuple[int, Callab
     return import_id, readable
 
 
+def _a_kept_document(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """A receipt the sibling's Fiken export brought, kept on no voucher.
+
+    Downloading it through this company's URL would hand over the other
+    client's documents from before Myntos. Written straight in: a SAF-T export
+    posted for every case would test the import, not the wall.
+    """
+    document_id = insert_imported_document(client, company_id)
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/saft/dokumenter/{document_id}")
+        assert owner.status_code == 200, owner.text
+
+    return document_id, readable
+
+
 def _an_asset(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
     """A machine in the sibling's anleggsregister.
 
@@ -707,6 +724,9 @@ FACTORIES_BY_SECTION: dict[
     # The documents' uploads share the SAF-T imports' table and ``{import_id}``,
     # but each set of routes reads only its own kind.
     ("/saft/vedlegg/", "import_id"): _a_printout_upload,
+    # A document kept from an export is ``{document_id}`` too, in a table of its
+    # own: a bilag document's id would be refused as unknown and prove nothing.
+    ("/saft/dokumenter/", "document_id"): _a_kept_document,
 }
 
 
@@ -888,6 +908,7 @@ REQUESTS: dict[tuple[str, str], dict[str, Any]] = {
     ("GET", f"{_COMPANIES}/saft/vedlegg/{{import_id}}"): {},
     ("DELETE", f"{_COMPANIES}/saft/vedlegg/{{import_id}}"): {},
     ("POST", f"{_COMPANIES}/saft/vedlegg/{{import_id}}/arkivering"): {},
+    ("GET", f"{_COMPANIES}/saft/dokumenter/{{document_id}}"): {},
     ("PATCH", f"{_COMPANIES}/anlegg/{{asset_id}}"): {"json": {"description": "Rettet"}},
     ("DELETE", f"{_COMPANIES}/anlegg/{{asset_id}}"): {},
     ("POST", f"{_COMPANIES}/anlegg/{{asset_id}}/avgang"): {

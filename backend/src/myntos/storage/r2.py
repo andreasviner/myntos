@@ -45,6 +45,15 @@ def endpoint_for(account_id: str, jurisdiction: str | None) -> str:
     return f"https://{account_id}.{jurisdiction}.r2.cloudflarestorage.com"
 
 
+def host_header(endpoint: httpx.URL) -> str:
+    """The ``host`` an endpoint is signed with: the port only when it is not the scheme's own."""
+    port = endpoint.port
+    default = {"https": 443, "http": 80}.get(endpoint.scheme)
+    if port is None or port == default:
+        return endpoint.host
+    return f"{endpoint.host}:{port}"
+
+
 class R2DocumentStorage:
     """Stores documents as objects in one R2 bucket."""
 
@@ -66,11 +75,7 @@ class R2DocumentStorage:
 
     @property
     def _host(self) -> str:
-        port = self._endpoint.port
-        default = {"https": 443, "http": 80}.get(self._endpoint.scheme)
-        if port is None or port == default:
-            return self._endpoint.host
-        return f"{self._endpoint.host}:{port}"
+        return host_header(self._endpoint)
 
     def _object_path(self, key: str) -> str:
         """Path-style addressing: ``/bucket/key``, which R2 supports."""

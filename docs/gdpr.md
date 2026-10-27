@@ -32,7 +32,7 @@ is its code.
 | | Who chose an account's næringsspesifikasjon post (`account_grouping.chosen_by_user_id`) |
 | The tokens of every key the person made for an agent (`agent_token`), and the name of the program that last used each key (`agent_key.last_used_client`) | Each key the person made, stopped: its name, its company, its dates (`agent_key`), because a voucher registered through it says so (`gl_transaction.created_via_agent_key_id`) |
 | The files in requests those keys were still waiting to have approved (`agent_approval_file.content`) | The requests themselves, as a record of what was asked and decided (`agent_approval`, with `decided_by_user_id` SET NULL like every actor column) |
-| | SAF-T imports and who started and posted them (`saft_import`, actor columns SET NULL like every other: the vouchers it posted name their author themselves, so the row keeps no one's name). The uploaded files (`saft_import_file.content`) are the company's books, not the person's, and are emptied once posted, thrown away or 14 days old whatever happens to the person |
+| | SAF-T imports and who started and posted them (`saft_import`, actor columns SET NULL like every other: the vouchers it posted name their author themselves, so the row keeps no one's name). The uploaded files (in the working store, `saft_import_file.storage_key`) are the company's books, not the person's, and are deleted once posted, thrown away or 14 days after the upload whatever happens to the person. The documents in an old program's complete export (Fiken's), kept on the yes (`imported_document`, `kept_by_user_id` SET NULL), are the books' documentation like the bilag archive, and go with the company at the purge |
 | Every company and account membership | The person's **id and name**, on a tombstone row, when any of the above names them |
 | Invitations addressed to them, pending or accepted | Invitations they *sent* to somebody else |
 
@@ -208,8 +208,9 @@ deleted at 00:30 on 1 January, a company has entered something in the new year.
 - every membership but the owners' is deleted, pending invitations go, every
   key stops (`company_closed`) with its tokens, waiting approvals lose their
   files, and `agent_access_enabled` is switched off;
-- uploaded SAF-T import files are emptied (they are a working copy, and the
-  14-day sweep only runs when somebody reads the import);
+- uploaded SAF-T import files are let go of (they are a working copy); the
+  daily sweep (`saft.jobs.sweep`) deletes the stored objects, as it does
+  those of books deleted outright, whose rows went with the company;
 - the confirmed claim on the orgnr stops counting: the warning that
   somebody else has confirmed it (`ix_company_verified_orgnr`) asks about
   open companies only, so whoever runs the business next confirms it in
@@ -247,8 +248,8 @@ half of the duty, and the part Myntos cannot do for them.
 (`myntos.main._purge_daily`), so it is deployed with the code that decides
 what it deletes and cannot be forgotten on a rebuilt machine. For each
 company past its date it deletes the stored files first (bilag and their
-thumbnails, bank statements, MVA receipts: `DocumentStorage.delete`, which
-nothing else calls), then the rows, referrers first, because a few links
+thumbnails, bank statements, MVA receipts, the documents kept from an old
+program's export: `DocumentStorage.delete`, which nothing else calls), then the rows, referrers first, because a few links
 inside the books are RESTRICT on purpose and PostgreSQL checks those at once.
 One commit per company. Files before rows, because a failure halfway then
 leaves rows pointing at missing files in books past retention, which is

@@ -38,6 +38,7 @@ from myntos.api.deps import (
     KEY_SEND_EXTENSION,
     get_document_storage,
     get_mailer,
+    get_working_files,
 )
 from myntos.api.v1.saft_innlesing import get_import_sessions
 from myntos.auth import agent_keys
@@ -59,6 +60,7 @@ from myntos.main import create_app
 from myntos.saft import models as saft_models  # noqa: F401  (registers tables)
 from myntos.skattemelding import models as skattemelding_models  # noqa: F401  (registers tables)
 from myntos.storage.local import LocalDocumentStorage
+from myntos.storage.working import LocalWorkingStore
 
 # The frontend origin the tests pretend to be. Cookie-authenticated writes are
 # checked against the CORS allow-list, so the two have to agree.
@@ -287,6 +289,9 @@ def client(database_url: str, tmp_path: Path, outbox: RecordingMailer) -> Iterat
     # directory also means one test's PDFs cannot be read by another's.
     storage = LocalDocumentStorage(tmp_path / "bilag")
     app.dependency_overrides[get_document_storage] = lambda: storage
+    # Uploaded SAF-T files and printouts the same, in a directory of their own.
+    working = LocalWorkingStore(tmp_path / "working")
+    app.dependency_overrides[get_working_files] = lambda: working
     app.dependency_overrides[get_mailer] = lambda: outbox
     # The SAF-T import works after its request has answered, in sessions of its
     # own: they must open on this database too.
@@ -604,4 +609,49 @@ def insert_skattemelding_filing(
 
     portal = client.portal
     assert portal is not None, "insert_skattemelding_filing needs the client inside its with-block"
+    return portal.call(insert)
+
+
+def insert_imported_document(
+    client: TestClient, company_id: int, *, content: bytes = b"%PDF-1.7\n%%EOF\n"
+) -> int:
+    """A document kept from an old program's export, stored and recorded, and its id.
+
+    The bytes go to the app's own document store and the row through the app's
+    own session, as in ``insert_mva_filing``. For tests that need one to exist
+    without a SAF-T export posted to produce it, such as the company wall.
+    """
+    import hashlib
+
+    from myntos.saft.models import ImportedDocument
+
+    storage = client.app.dependency_overrides[get_document_storage]()  # type: ignore[attr-defined]
+    override = client.app.dependency_overrides[get_session]  # type: ignore[attr-defined]
+
+    async def insert() -> int:
+        key = await storage.save(
+            content=content, filename="kvittering.pdf", content_type="application/pdf"
+        )
+        sessions = override()
+        session = await sessions.__anext__()
+        document = ImportedDocument(
+            company_id=company_id,
+            software="Fiken AS",
+            export_name="fiken-komplett.zip",
+            path="Bilag/kvittering.pdf",
+            filename="kvittering.pdf",
+            content_type="application/pdf",
+            byte_size=len(content),
+            sha256=hashlib.sha256(content).hexdigest(),
+            storage_key=key,
+        )
+        session.add(document)
+        await session.flush()
+        document_id = int(document.id)
+        with contextlib.suppress(StopAsyncIteration):
+            await sessions.__anext__()
+        return document_id
+
+    portal = client.portal
+    assert portal is not None, "insert_imported_document needs the client inside its with-block"
     return portal.call(insert)

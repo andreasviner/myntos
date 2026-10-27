@@ -69,6 +69,19 @@ class InvalidPrintoutError(SaftImportError):
     """
 
 
+class PrintoutNotSaftError(InvalidSaftFileError):
+    """A PDF sent where a SAF-T file goes: most likely the printout, for ``…/saft/vedlegg``.
+
+    A code of its own, so a program can send it where it belongs instead of
+    reading «not valid XML» and giving up. The page sorts the two before
+    anything is sent; this is for what is sent without it.
+    """
+
+
+class SaftNotPrintoutError(InvalidPrintoutError):
+    """A SAF-T file sent where the printout goes: it belongs at ``…/saft/innlesing``."""
+
+
 class PrintoutWrongCompanyError(SaftImportError):
     """The printout is another company's vouchers.
 

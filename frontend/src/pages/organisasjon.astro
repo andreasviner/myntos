@@ -239,13 +239,21 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
               </div>
             </form>
 
-            {/* Bare når e-posten ikke gikk. Gikk den, har avsenderen ingenting
-                med lenken å gjøre, og å vise den likevel er å be dem sende en
-                kopi til av en melding som allerede ligger i innboksen. */}
+            {/* Etter hver invitasjon, også når e-posten gikk. Den var skjult da,
+                fordi en sendt e-post så ut til å ligge i innboksen allerede. Det
+                gjorde den ikke: Cloudflare svarer «i kø» før søppelpostfilteret
+                har lest meldingen, og i oktober 2026 avviste det tre
+                invitasjoner som siden hadde meldt «sendt». Lenken vises bare
+                denne gangen, så den som skjuler den, tar fra avsenderen den
+                eneste veien videre. */}
             <div class="org-lenke" id="invite-link-box" hidden>
-              <p class="card-hint">
+              <p class="card-hint" id="invite-link-ikke-sendt" hidden>
                 <strong>Vi fikk ikke sendt e-posten.</strong> Kopier lenken og send den selv. Den
                 vises bare denne ene gangen, for vi lagrer bare et hash av den.
+              </p>
+              <p class="card-hint" id="invite-link-sendt" hidden>
+                Vi kan ikke se om e-posten kommer fram. Kommer den ikke, kopierer du lenken og
+                sender den selv. Den vises bare denne ene gangen, for vi lagrer bare et hash av den.
               </p>
               <div class="org-kopirad">
                 <input type="text" id="invite-link" readonly />
@@ -3327,8 +3335,12 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
     const linkBox = el<HTMLDivElement>('#invite-link-box');
     const link = el<HTMLInputElement>('#invite-link');
     const sent = invitation.email_sent === true;
-    if (!sent && invitation.invite_url !== null) {
+    // Lenken uansett, se merknaden over #invite-link-box: «sendt» betyr levert
+    // til Cloudflare, ikke at den kom fram.
+    if (invitation.invite_url !== null) {
       link.value = invitation.invite_url;
+      show(el('#invite-link-ikke-sendt'), !sent);
+      show(el('#invite-link-sendt'), sent);
       show(el('#invite'), true);
       show(linkBox, true);
     } else {

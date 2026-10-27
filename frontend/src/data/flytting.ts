@@ -68,7 +68,7 @@ export const guider: Guide[] = [
       {
         tittel: 'Last ned komplett eksport',
         tekst:
-          'Den komplette eksporten er en ZIP med alle opplastede dokumenter, fakturaer, ordrer, tilbud og kreditnotaer, pluss Excel-oversikter per regnskapsår. Dette er kopien du faktisk kan slå opp i senere.',
+          'Den komplette eksporten er en ZIP med SAF-T-filen og Excel-oversikter for hvert regnskapsår, og alle opplastede dokumenter, fakturaer, ordrer, tilbud og kreditnotaer. Myntos leser den slik den er: last den opp under «Hent regnskapet fra et annet program», så tar Myntos ut SAF-T-filene, og når du fører, tar Myntos vare på dokumentene med mappen de lå i. De legges ikke på hvert sitt bilag, men du finner dem under «Dokumenter fra eksporten» på samme side.',
       },
       {
         tittel: 'Har du kjørt lønn, ta lønnsslippene også',

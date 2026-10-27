@@ -43,8 +43,6 @@ The number never changes, because entries in the books refer to it.
 
 - The page is not in the top menu; it is reached from «Faktura» and
   «Betaling», where customers and suppliers are used.
-- The customer number is the first five digits of the KID on that customer's
-  invoices.
 - The list belongs to one company. Each company in Myntos has its own.
 
 ## Related

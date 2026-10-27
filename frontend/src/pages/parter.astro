@@ -192,7 +192,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   } from '../lib/api';
   import { currentCompany, loadCompanies } from '../lib/company';
   import { el, setStatus, show } from '../lib/dom';
-  import { can, loadSession, redirectToLogin } from '../lib/session';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
 
   const pageStatus = el<HTMLParagraphElement>('#page-status');
   const formStatus = el<HTMLParagraphElement>('#form-status');
@@ -314,7 +314,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       // permission check all belong to the company that was showing.
 
       el('#company-name').textContent = company.name;
-      mayWrite = can(session, company.organization_id, 'ledger:write');
+      // Spurt om selskapet, ikke om kontoen som eier det. Tilgang er en rad per
+      // person per selskap, så en kollega invitert til bare dette selskapet har
+      // ingen rolle i kontoen, og fikk «Du har lesetilgang» som «Eier»
+      // (2026-10-23).
+      mayWrite = canInCompany(company, 'ledger:write');
       show(el('#form-card'), mayWrite);
       show(el('#readonly'), !mayWrite);
 

@@ -40,6 +40,15 @@ otherwise write their own recipients.
 request about a message that will never arrive. Reported as sent, a typo in an
 invited address would take the copy-this-link fallback away from the one inviter
 who needs it, so a bounce is reported as a failure to send.
+
+**Accepted is not delivered**, and nothing here can tell the two apart.
+Cloudflare answers almost every message with the address under ``queued`` and
+runs its spam filter afterwards. On 2026-10-13 and 2026-10-23 it refused three
+invitations that way, at exactly its threshold, after this module had reported
+each of them as sent, and the page told the inviter so and hid the link. So
+``Delivery.sent`` means "handed over", and the invitation pages show the link
+whatever it says. Whether a message actually arrived is in Cloudflare's own
+analytics (``emailSendingAdaptive``), under the id the success log line names.
 """
 
 from __future__ import annotations
@@ -52,6 +61,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from email.headerregistry import Address
 from email.message import EmailMessage
+from email.utils import formatdate, make_msgid
 from typing import Any, Protocol
 
 import httpx
@@ -90,8 +100,11 @@ class Mail:
     # is an alternative to it rather than the message itself.
     html: str | None = None
     # Set when a reply should reach a person rather than the sending mailbox.
-    # The inviter's own address, for an invitation: the recipient's first
-    # question is usually for them.
+    # Nothing sets it today. The invitation did, to the inviter's address, and
+    # stopped: a Reply-To on another domain than From is the shape of a
+    # phishing message, and the invitations that carried one in October 2026
+    # were the ones refused as spam (invitation_mail, which names the address
+    # in the text instead, says how strong that evidence is).
     reply_to: str | None = None
     # Pictures the HTML part refers to by ``cid:``. Ignored without an HTML
     # part, because there would be nothing to relate them to; a text-only
@@ -103,6 +116,9 @@ class Mail:
 class Delivery:
     """What happened to a message. Never raised, always returned."""
 
+    # Handed to the transport, which is not the same as arrived: see "Accepted
+    # is not delivered" above. False is certain; True is the best anybody knows
+    # at the moment the inviter is waiting.
     sent: bool
     # Why not, in prose meant for a log rather than for a recipient. None when
     # it was sent, and when it was not because nothing is configured, which is a
@@ -146,6 +162,14 @@ def build_message(mail: Mail, settings: Settings) -> EmailMessage:
     message["From"] = Address(_header_safe(settings.mail_from_name), local, domain)
     message["To"] = mail.to
     message["Subject"] = _header_safe(mail.subject)
+    # Both required of a message by RFC 5322, and both absent from everything
+    # Myntos sent until 2026-10-23. A message without them is one of the oldest
+    # things a spam filter scores, and Cloudflare's refuses at 5: the account
+    # mails were passing at 4 and the invitations being refused at 5. Cloudflare
+    # stamps its own Message-ID on what it delivers; this one is for the filter
+    # that reads the message before that, and for an SMTP relay that adds none.
+    message["Date"] = formatdate(usegmt=True)
+    message["Message-ID"] = make_msgid(domain=domain)
     reply_to = mail.reply_to or settings.mail_reply_to
     if reply_to is not None:
         message["Reply-To"] = _header_safe(reply_to)
@@ -231,7 +255,9 @@ class SmtpMailer:
             # invitation this message is about has already been made.
             logger.warning("could not send mail to %s: %s", mail.to, error)
             return Delivery(sent=False, error=str(error))
-        logger.info("sent mail to %s: %s", mail.to, message["Subject"])
+        # By Message-ID rather than by address, for the reason CloudflareMailer
+        # gives: the journal is kept longer than a person's account is.
+        logger.info("mail handed to the SMTP relay: %s", message["Message-ID"])
         return Delivery(sent=True)
 
     def _deliver(self, message: EmailMessage) -> None:
@@ -328,7 +354,17 @@ class CloudflareMailer:
         if problem is not None:
             logger.warning("could not send mail to %s: %s", mail.to, problem)
             return Delivery(sent=False, error=problem)
-        logger.info("sent mail to %s: %s", mail.to, message["Subject"])
+        # Cloudflare's id for the message, which is what its analytics are
+        # searched by when somebody says nothing arrived, and no address: the
+        # journal outlives an account's deletion, while Cloudflare keeps the
+        # address beside this id for 31 days. "queued" is the usual word, and it
+        # is not delivery (see "Accepted is not delivered" above).
+        # A dict by now: _cloudflare_problem refuses a body that is not one.
+        result = response.json().get("result")
+        if not isinstance(result, dict):
+            result = {}
+        outcome = "delivered" if mail.to in (result.get("delivered") or []) else "queued"
+        logger.info("mail %s by Cloudflare: %s", outcome, result.get("message_id"))
         return Delivery(sent=True)
 
 

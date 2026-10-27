@@ -64,6 +64,33 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
     <div class="card form-card" id="form-card">
       <h2 class="card-title" id="form-title">Ny faktura</h2>
+
+      {/* Det første i skjemaet, fordi det fyller ut resten. Det folk har når de
+          skal fakturere, er tekst: kundens e-post med fakturaopplysningene, eller
+          en setning om salget. En slik e-post har kjøper, adresse, orgnr og
+          referanse og ofte ingen linjer, så linjene har sin egen boks under
+          «Linjer». Bare når selskapet har KI på og installasjonen har en modell:
+          en knapp som alltid feiler, er verre enn ingen knapp. */}
+      <div class="assist" id="fill-card" hidden>
+        <label class="field">
+          <span>Lim inn fakturaopplysningene fra kunden, eller beskriv salget</span>
+          <textarea
+            id="fill-text"
+            rows="4"
+            placeholder="Faktura til Bygg AS for 10 timer rådgivning levert 14. oktober, 1 500 kroner timen. Deres ref: Ola Nordmann"
+          ></textarea>
+          <span class="field-hint">
+            Vi fyller inn det teksten sier, og bare det. Alt som fylles inn, merkes med KI.
+          </span>
+        </label>
+        <div class="assist-actions">
+          <button type="button" class="btn btn-ghost btn-small" id="fill-draft">
+            Fyll ut fakturaen
+          </button>
+        </div>
+        <p class="status" id="fill-status" hidden></p>
+      </div>
+
       <p class="status" id="form-status" hidden></p>
 
       {/* novalidate: hver mangel skal navngis av kontrollen i «se over», med
@@ -214,10 +241,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             uten merverdiavgift.
           </p>
 
-          <!--
-            Only rendered when the deployment has a model configured. A
-            button that always fails is worse than no button.
-          -->
+          {/* Den andre KI-boksen, for linjene alene. Kundens e-post sier hvem
+              fakturaen skal til, men sjelden hva som er solgt, så den som limte
+              den inn øverst beskriver salget her. Vises på samme vilkår som
+              boksen øverst. */}
           <div class="assist" id="ki-card" hidden>
             <label class="field">
               <span>Beskriv salget, så setter vi opp linjene</span>
@@ -524,6 +551,29 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   }
   .assist .status {
     margin-bottom: 0;
+  }
+  #fill-card {
+    margin-top: 0.4rem;
+  }
+  /* A field the box at the top filled in, until the person changes it. Tinted
+     like a proposed line, and marked «KI» after its label, because a value a
+     model wrote must not pass for one the person typed (/ki promises that). */
+  .field[data-source='ki'] > :is(input, select) {
+    background: var(--accent-soft);
+    border-color: var(--accent-line);
+  }
+  .field[data-source='ki'] > span:first-child::after {
+    content: 'KI';
+    margin-left: 0.4rem;
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 700;
+    color: var(--accent);
+    border: 1px solid var(--accent-line);
+    border-radius: 999px;
+    padding: 0 0.3rem;
+    vertical-align: 0.1em;
   }
   .line-actions {
     display: flex;
@@ -908,6 +958,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     createParty,
     creditFaktura,
     deleteFaktura,
+    draftFaktura,
     draftFakturaLines,
     fakturaEhfUrl,
     fakturaPdfUrl,
@@ -931,8 +982,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   import { currentCompany, loadCompanies } from '../lib/company';
   import { el, setStatus, show } from '../lib/dom';
   import { isoDate, kontonummer, kroner, todayIso } from '../lib/format';
+  import {
+    FILLABLE_FIELDS,
+    describeFill,
+    planFill,
+    type FillableField,
+    type FillPlan,
+    type FormState,
+  } from '../lib/invoice-proposal';
   import { standing } from '../lib/register';
-  import { can, loadSession, redirectToLogin } from '../lib/session';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
 
   const pageStatus = el<HTMLParagraphElement>('#page-status');
   const formStatus = el<HTMLParagraphElement>('#form-status');
@@ -975,10 +1034,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
    * words instead, which is better than showing a number that is not one.
    */
   let nextKid = '';
-  /** The customer number inside it, so the preview can be explained rather than read. */
-  let nextKidCustomer: string | null = null;
   /** True once the user has taken the KID over by hand. */
   let kidManual = false;
+  /**
+   * Det skjemaet selv satte i et felt: standardverdiene en ny faktura starter
+   * med, og det boksen øverst fylte inn. Et felt som fortsatt står slik, kan
+   * boksen fylle på nytt; alt annet har personen skrevet. Se
+   * lib/invoice-proposal.ts.
+   */
+  let untouched: Partial<Record<FillableField, string>> = {};
 
   // --- The line editor ---------------------------------------------------------
   //
@@ -1252,6 +1316,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     el('#form-title').textContent = 'Ny faktura';
     el<HTMLTextAreaElement>('#ki-text').value = '';
     setStatus(el('#ki-status'), '');
+    el<HTMLTextAreaElement>('#fill-text').value = '';
+    setStatus(el('#fill-status'), '');
+    clearKiMarks();
     orgnrHint.textContent = ORGNR_HINT;
     setDefaults();
     selectKonto(null);
@@ -1281,6 +1348,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       due.value = date.toISOString().slice(0, 10);
     }
     if (company.city !== null && company.city !== '') setField('delivery_place', company.city);
+    // Standardverdier og ikke svar, så en dato eller et sted den innlimte
+    // teksten nevner, kan ta plassen deres.
+    untouched = {
+      delivery_date: value(form, 'delivery_date'),
+      due_date: value(form, 'due_date'),
+      delivery_place: value(form, 'delivery_place'),
+    };
   }
 
   // --- KID -----------------------------------------------------------------------
@@ -1318,34 +1392,23 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     field.value = nextKid;
     if (nextKid === '') {
       hint.textContent =
-        'Settes automatisk når fakturaen utstedes: kundenummer, fakturanummer og kontrollsiffer.';
+        'Settes automatisk når fakturaen utstedes: fakturanummeret og et kontrollsiffer.';
       return;
     }
-    // Spelled out rather than left to look like padding, because the leading zeros are
-    // a customer number that is either theirs or absent, and which one it is
-    // matters when a payment has to be posted from the bank's OCR file.
+    // Fakturanummeret og et kontrollsiffer, uten nuller foran. Den var
+    // kundenummer og fakturanummer fylt ut med nuller, og 000000000018 skrives
+    // ikke riktig av den som leser den av en papirfaktura (2026-10-23).
     hint.textContent =
       `Settes når fakturaen utstedes. Blir ${nextKid} hvis ingen annen faktura ` +
-      'utstedes først: kundenummer, fakturanummer og kontrollsiffer.' +
-      (nextKidCustomer === null
-        ? ' De fem første sifrene er null fordi kjøperen ikke er en registrert kunde.'
-        : ` De fem første er kundenummeret ${nextKidCustomer}.`);
+      'utstedes først: fakturanummeret og et kontrollsiffer.';
   }
 
   /** Refresh the preview. Quiet on failure: the field explains itself in words. */
   async function refreshKidPreview(): Promise<void> {
     try {
-      // The customer number is half the KID, so the preview is asked for the
-      // customer currently selected rather than for the company alone.
-      const upcoming = await getNextFakturaNumber(
-        company.id,
-        partySelect.value === '' ? null : Number(partySelect.value),
-      );
-      nextKid = upcoming.payment_reference;
-      nextKidCustomer = upcoming.customer_number;
+      nextKid = (await getNextFakturaNumber(company.id)).payment_reference;
     } catch {
       nextKid = '';
-      nextKidCustomer = null;
     }
     renderKid();
   }
@@ -1636,9 +1699,112 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     }
   }
 
+  // --- Skjemaet fra en innlimt tekst ------------------------------------------------
+  //
+  // Boksen øverst: kundens e-post med fakturaopplysningene, eller en setning om
+  // salget, inn; kjøper, datoer, referanse og linjer ut. Hva som får skrives
+  // hvor, avgjøres i lib/invoice-proposal.ts, der regelen er testet: bare felt
+  // som står slik skjemaet satte dem, og kjøperen helt eller ikke i det hele
+  // tatt. Hvilken registrert kunde teksten mener, har backend avgjort mot
+  // selskapets eget kunderegister.
+
+  function markKi(name: string): void {
+    const field = form.querySelector(`[name="${name}"]`)?.closest<HTMLElement>('.field');
+    if (field !== null && field !== undefined) field.dataset.source = 'ki';
+  }
+
+  function unmarkKi(node: Element): void {
+    const field = node.closest<HTMLElement>('.field');
+    if (field?.dataset.source === 'ki') delete field.dataset.source;
+  }
+
+  function clearKiMarks(): void {
+    for (const field of form.querySelectorAll<HTMLElement>('.field[data-source="ki"]')) {
+      delete field.dataset.source;
+    }
+  }
+
+  function formState(): FormState {
+    const values = Object.fromEntries(
+      FILLABLE_FIELDS.map((name) => [name, value(form, name)]),
+    ) as Record<FillableField, string>;
+    return { partyId: partySelect.value, values, untouched };
+  }
+
+  function applyFill(plan: FillPlan): void {
+    if (plan.partyId !== null) {
+      partySelect.value = String(plan.partyId);
+      markKi('party_id');
+    }
+    const filled = Object.entries(plan.fields) as [FillableField, string][];
+    for (const [name, text] of filled) {
+      setField(name, text);
+      untouched[name] = text;
+    }
+    if (plan.business !== null) setChecked('buyer_is_business', plan.business);
+    // Slått opp i Enhetsregisteret som om nummeret var skrevet: registeret
+    // fyller bare felt som står tomme, og linjen under nummeret sier om
+    // kjøperen er slettet eller konkurs. Før merkingen, fordi skrivingen tar
+    // merket av feltet den skjer i.
+    if (plan.fields.buyer_orgnr !== undefined) {
+      form
+        .querySelector('[name="buyer_orgnr"]')
+        ?.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    for (const [name] of filled) markKi(name);
+    updateBuyerContext();
+  }
+
+  async function requestProposal(): Promise<void> {
+    const text = el<HTMLTextAreaElement>('#fill-text').value.trim();
+    const status = el('#fill-status');
+    const button = el<HTMLButtonElement>('#fill-draft');
+    if (text === '') {
+      setStatus(status, 'Lim inn e-posten fra kunden, eller skriv noen ord om salget.');
+      return;
+    }
+    button.disabled = true;
+    setStatus(status, 'Fyller ut fakturaen …', 'ok');
+    try {
+      const proposal = await draftFaktura(company.id, text);
+      const plan = planFill(proposal, formState(), parties);
+      applyFill(plan);
+      // Et skjema som alt har linjer, får de nye under, aldri i stedet.
+      if (proposal.lines.length > 0) {
+        if (linesAreBlank()) linesBox.replaceChildren();
+        for (const line of proposal.lines) addLine({ ...line, discount_percent: '0' }, 'ki');
+      }
+      recalculate();
+
+      const filledAny =
+        plan.partyId !== null || Object.keys(plan.fields).length > 0 || proposal.lines.length > 0;
+      const said = [
+        describeFill(plan, proposal.lines.length),
+        filledAny ? 'Kontroller alt som er merket KI. Det er du som utsteder fakturaen.' : '',
+        ...proposal.warnings,
+        filledAny && proposal.lines.length === 0
+          ? 'Beskriv salget under «Linjer», eller skriv linjene selv.'
+          : '',
+      ];
+      setStatus(status, said.filter((part) => part !== '').join(' '), filledAny ? 'ok' : undefined);
+    } catch (error: unknown) {
+      setStatus(
+        status,
+        error instanceof ApiError ? error.message : 'Vi fikk ikke fylt ut fakturaen.',
+      );
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   function loadIntoForm(document_: Faktura): void {
     editing = document_;
     registered = null;
+    // Det et lagret utkast sier, er utkastets, og boksen øverst fyller bare
+    // inn tomme felt i det.
+    untouched = {};
+    clearKiMarks();
+    setStatus(el('#fill-status'), '');
     orgnrHint.textContent = ORGNR_HINT;
     el('#form-title').textContent = 'Endre utkast';
     partySelect.value = document_.party_id === null ? '' : String(document_.party_id);
@@ -2050,8 +2216,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       partySelect.value = String(party.id);
       wanted.checked = false;
       updateBuyerContext();
-      // They now have a customer number, and the KID carries it.
-      await refreshKidPreview();
     } catch (error: unknown) {
       wanted.checked = false;
       partyNote.dataset.tone = 'warn';
@@ -2138,10 +2302,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         setStatus(el('#review-status'), '');
         await refresh();
         // Cleared, then the preview refreshed, then the result shown, in that
-        // order. The form clears the customer and the customer is half the KID,
-        // so refreshing first would leave the previous customer's number under
-        // an empty field; and resetForm() puts the form step on screen, which is
-        // what renderDone() has to come after.
+        // order. The issue moved the series on, so the preview has to be asked
+        // again; and resetForm() puts the form step on screen, which is what
+        // renderDone() has to come after.
         resetForm();
         await refreshKidPreview();
         renderDone(issued);
@@ -2182,6 +2345,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     if (kidManual) form.querySelector<HTMLInputElement>('[name="payment_reference"]')?.focus();
   });
   el('#ki-draft').addEventListener('click', () => void requestLines());
+  el('#fill-draft').addEventListener('click', () => void requestProposal());
+  // Et felt KI fylte inn, er personens straks det endres, og merket går med.
+  for (const kind of ['input', 'change']) {
+    form.addEventListener(kind, (event) => {
+      if (event.target instanceof Element) unmarkKi(event.target);
+    });
+  }
   partySelect.addEventListener('change', () => {
     // A customer with an organisasjonsnummer is bokføringspliktig, and that
     // answer decides whether the e-invoice requirement applies to the document.
@@ -2190,8 +2360,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     const party = selectedParty();
     if (party !== null) setChecked('buyer_is_business', party.orgnr !== null);
     updateBuyerContext();
-    // The KID carries their customer number, so it changes with them.
-    void refreshKidPreview();
   });
   form.querySelector('[name="reverse_charge"]')?.addEventListener('change', recalculate);
   wireBuyerLookup();
@@ -2223,13 +2391,18 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       parties = (await listParties(company.id)).filter((p) => p.party_type === 'kunde');
       for (const party of parties) addPartyOption(party);
       el<HTMLTextAreaElement>('#ki-text').maxLength = catalogue.ai_max_chars;
+      el<HTMLTextAreaElement>('#fill-text').maxLength = catalogue.ai_max_chars;
 
       el('#efaktura-note').textContent =
         `Fra ${isoDate(catalogue.e_invoice_mandatory_from)} skal salg til andre bokføringspliktige ` +
         'faktureres elektronisk (EHF/Peppol). Myntos lager EHF-filen for hver utstedte faktura. ' +
         'Selve forsendelsen krever et Peppol-aksesspunkt, som ennå ikke er koblet på.';
 
-      mayWrite = can(session, company.organization_id, 'ledger:write');
+      // Spurt om selskapet, ikke om kontoen som eier det. Tilgang er en rad per
+      // person per selskap, så en kollega invitert til bare dette selskapet har
+      // ingen rolle i kontoen, og fikk «Du har lesetilgang» som «Eier»
+      // (2026-10-23).
+      mayWrite = canInCompany(company, 'ledger:write');
       show(el('#readonly'), !mayWrite);
 
       // Both notices are only worth showing to someone who can act on them, and
@@ -2242,7 +2415,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       // The model is offered only where it can be used at all: a deployment
       // without a key has opted out, a company that turned KI off on /ki has
       // opted out for this set of books, and a viewer has nothing to draft.
-      show(el('#ki-card'), mayWrite && catalogue.ai_available && company.ki_enabled);
+      const kiOffered = mayWrite && catalogue.ai_available && company.ki_enabled;
+      show(el('#ki-card'), kiOffered);
+      show(el('#fill-card'), kiOffered);
 
       // The list first, so "copy the previous invoice" knows whether there is
       // one before the form is drawn.

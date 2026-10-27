@@ -400,6 +400,14 @@ class Settings(BaseSettings):
     # Full override of the S3 endpoint, for a self-hosted S3-compatible store or
     # a test double. Normally derived from the account id and jurisdiction.
     r2_endpoint_url: str | None = None
+    # --- Working copies: uploads a job reads and then deletes ---
+    # The previous program's SAF-T files and printouts, kept until the import is
+    # posted or thrown away and never more than 14 days. A bucket of their own,
+    # beside the bilag archive and with the same account, keys and
+    # jurisdiction, because the archive must never delete and these must
+    # (myntos.storage.working).
+    r2_working_bucket: str | None = None
+    local_working_path: Path = REPO_ROOT / "data" / "working"
 
     @property
     def maskinporten_key_file(self) -> Path | None:

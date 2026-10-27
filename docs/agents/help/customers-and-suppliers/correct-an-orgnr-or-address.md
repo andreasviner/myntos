@@ -34,8 +34,7 @@ For the invoice in front of them:
    Enhetsregisteret), or type «Navn», «Adresse», «Postnummer» and
    «Poststed».
 3. Carry on with «Se over fakturaen». The invoice is then not linked to the
-   registered customer, and its KID gets zeros where the customer number
-   goes.
+   registered customer.
 
 To correct the customer itself:
 

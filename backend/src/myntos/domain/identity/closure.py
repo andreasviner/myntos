@@ -72,7 +72,7 @@ from myntos.domain.identity.models import (
 from myntos.domain.ledger.errors import CompanyNotFoundError
 from myntos.domain.ledger.models import Company, Journal, Party, Transaction
 from myntos.domain.mva.models import MvaFiling, MvaFilingDocument
-from myntos.saft.models import ImportStatus, SaftImport, SaftImportFile
+from myntos.saft.models import ImportedDocument, ImportStatus, SaftImport, SaftImportFile
 from myntos.skattemelding.models import SkattemeldingFiling, SkattemeldingFilingDocument
 from myntos.storage.base import DocumentStorage
 from myntos.storage.keys import KEY_PATTERN, thumbnail_key
@@ -282,17 +282,19 @@ async def close_company(
             OrganizationInvitation.accepted_at.is_(None),
         )
     )
-    # The uploaded files of an import are a working copy, emptied after 14
-    # days when somebody next reads the import. Nobody will read it now.
+    # The uploaded files of an import are a working copy, let go of after 14
+    # days when somebody next reads the import. Nobody will read it now. The
+    # stored objects go with the next daily sweep (saft.jobs.sweep), which
+    # deletes whatever no row points at.
     await db.execute(
         update(SaftImportFile)
         .where(
             SaftImportFile.import_id.in_(
                 select(SaftImport.id).where(SaftImport.company_id == company.id)
             ),
-            SaftImportFile.content.is_not(None),
+            SaftImportFile.content.is_not(None) | SaftImportFile.storage_key.is_not(None),
         )
-        .values(content=None)
+        .values(content=None, storage_key=None)
     )
     await db.flush()
     return plan
@@ -396,6 +398,11 @@ async def _stored_keys(db: AsyncSession, company_id: int) -> list[str]:
         select(SkattemeldingFilingDocument.storage_key)
         .join(SkattemeldingFiling, SkattemeldingFiling.id == SkattemeldingFilingDocument.filing_id)
         .where(SkattemeldingFiling.company_id == company_id)
+    )
+    # The documents kept from the old program's export: the books'
+    # documentation from before Myntos, purged with the rest of it.
+    keys += await db.scalars(
+        select(ImportedDocument.storage_key).where(ImportedDocument.company_id == company_id)
     )
     # A thumbnail may or may not have been made; deleting one that was not is
     # nothing (DocumentStorage.delete).

@@ -8,14 +8,18 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type { MvaPeriodRow, SaftImport, SaftMoveReview } from './api';
+import type { MvaPeriodRow, SaftArchive, SaftImport, SaftMoveReview } from './api';
 import {
+  archiveLine,
   currentComparison,
   currentImport,
   defaultFiledOn,
   isWorking,
+  keepingDocuments,
+  keptSummary,
   postLabel,
   postedSummary,
+  skipReason,
   summary,
   termsToConfirm,
   yearsToClose,
@@ -52,6 +56,21 @@ function review(overrides: Partial<SaftMoveReview> = {}): SaftMoveReview {
     parties_to_add: [],
     dimensions_to_add: [],
     findings: [],
+    archives: [],
+    ...overrides,
+  };
+}
+
+function archive(overrides: Partial<SaftArchive> = {}): SaftArchive {
+  return {
+    file_name: 'fiken-komplett-gard.zip',
+    documents: 1204,
+    bytes: 512 * 1024 * 1024,
+    folders: [{ name: 'Bilag', documents: 1204 }],
+    skipped: [],
+    skipped_count: 0,
+    kept: null,
+    already_kept: null,
     ...overrides,
   };
 }
@@ -128,6 +147,43 @@ describe('the words about a review', () => {
 
   it('points at the earlier years that are whole, and not the running one', () => {
     expect(yearsToClose(review())).toEqual([2025]);
+  });
+});
+
+describe('the documents in an old program’s export', () => {
+  it('are on the button when they are all that is left, the books being in Myntos', () => {
+    const left = review({ postable: false, vouchers: 0, opening: null, archives: [archive()] });
+    expect(postLabel(left)).toBe('Ta vare på 1\u00a0204 dokumenter');
+    // With books to post, the button still says what is posted.
+    expect(postLabel(review({ archives: [archive()] }))).toBe('Før 600 bilag');
+  });
+
+  it('are counted in the review, and what is not kept says why', () => {
+    expect(archiveLine(archive())).toBe(
+      '«fiken-komplett-gard.zip» har 1\u00a0204 dokumenter (512.0 MB) som tas vare på i Myntos.',
+    );
+    expect(skipReason('encrypted')).toBe('låst med passord');
+    expect(skipReason('broken')).toBe('kunne ikke pakkes ut');
+  });
+
+  it('are summed up once kept, and not before', () => {
+    expect(keptSummary([archive()])).toBeNull();
+    expect(keptSummary([])).toBeNull();
+    expect(keptSummary([archive({ kept: 1200, already_kept: 4, skipped_count: 1 })])).toBe(
+      'Tok vare på 1\u00a0200 dokumenter fra eksporten. 4 dokumenter var tatt vare på fra før. ' +
+        '1 fil i eksporten ble ikke tatt vare på.',
+    );
+  });
+
+  it('are all a post of the documents alone says it did', () => {
+    const alone = review({ postable: false, vouchers: 0, archives: [archive({ kept: 3, already_kept: 0 })] });
+    expect(postedSummary(alone)).toBe('Tok vare på 3 dokumenter fra eksporten.');
+  });
+
+  it('are being kept once the books are posted, and only then has the bar a count', () => {
+    expect(keepingDocuments(job(1, { status: 'posting' }))).toBe(false);
+    expect(keepingDocuments(job(1, { status: 'posting', posted_at: '2026-10-27T10:00:00Z' }))).toBe(true);
+    expect(keepingDocuments(job(1, { status: 'posted', posted_at: '2026-10-27T10:00:00Z' }))).toBe(false);
   });
 });
 

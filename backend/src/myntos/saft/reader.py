@@ -28,7 +28,10 @@ entity that expands or reaches out.
 **A ZIP is opened, because that is how the file arrives.** Skatteetaten
 recommends delivering it zipped and Tripletex downloads it that way. One XML
 inside, or the first part of a file split in parts (``…_1_3.xml``); anything
-else is refused rather than guessed between.
+else is refused rather than guessed between. The import of several years
+(:mod:`myntos.saft.intake`) asks a different question of a ZIP, which SAF-T
+files it holds (:func:`saft_members`), because Fiken's complete export is one
+ZIP with a file per year and every document beside them.
 
 **Versions.** The element names this reads are the same from 1.10 to 1.40.
 Grouping (``GroupingCategory``/``GroupingCode``) exists from 1.30; an older
@@ -56,11 +59,11 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from typing import IO, BinaryIO, Literal
+from typing import IO, BinaryIO, Literal, Protocol
 from xml.etree import ElementTree as ET
 from xml.parsers import expat
 
-from myntos.saft.errors import InvalidSaftFileError
+from myntos.saft.errors import InvalidSaftFileError, PrintoutNotSaftError
 
 ZERO = Decimal("0.00")
 
@@ -88,6 +91,12 @@ MAX_LINES = 300_000
 _CHUNK = 1024 * 1024
 _ZIP_MAGIC = b"PK\x03\x04"
 _PART = re.compile(r"_1_\d+\.xml$", re.IGNORECASE)
+#: Skatteetaten names a file delivered in parts ``…_2_3.xml``, the second of
+#: three; ``_1_1`` is a file in one part, as Tripletex names every file.
+_PARTS = re.compile(r"_(\d+)_(\d+)\.xml$", re.IGNORECASE)
+#: How much of an XML file in a ZIP is read to see whether it is a SAF-T file.
+#: The document element comes after at most a declaration and a comment.
+_SNIFF_BYTES = 64 * 1024
 _DIGITS = re.compile(r"\D")
 
 PartyKind = Literal["kunde", "leverandor"]
@@ -254,6 +263,7 @@ def _xml_stream(upload: BinaryIO, *, whole: bool = False) -> IO[bytes]:
     head = upload.read(4)
     upload.seek(0)
     if head != _ZIP_MAGIC:
+        refuse_unless_saft(upload, "Filen")
         return upload
     try:
         archive = zipfile.ZipFile(upload)
@@ -261,21 +271,172 @@ def _xml_stream(upload: BinaryIO, *, whole: bool = False) -> IO[bytes]:
         raise InvalidSaftFileError("ZIP-filen kan ikke åpnes. Last den ned på nytt") from error
     names = [info.filename for info in archive.infolist() if info.filename.lower().endswith(".xml")]
     if len(names) > 1:
+        # Fiken's complete export, or any ZIP with documents beside the file:
+        # only the XML whose document element is AuditFile is a SAF-T file.
+        names = [
+            info.filename
+            for info in archive.infolist()
+            if info.filename in names and _saft(archive, info)
+        ]
+    if len(names) > 1:
         # A file too big for one part is delivered as several, each a whole
         # SAF-T document; the first one is the one with the master data.
         parts = [name for name in names if _PART.search(name)]
         if whole and parts:
             raise InvalidSaftFileError(
                 f"SAF-T-filen er delt i {len(names)} deler, og bilagene leses bare fra en fil "
-                "i én del. Ta ut filen for en kortere periode, for eksempel et halvår"
+                "som ikke er delt. Ta ut filen for en kortere periode, for eksempel et halvår"
             )
         names = parts or names
-    if len(names) != 1:
+    if not names:
+        raise InvalidSaftFileError(f"ZIP-filen {without_saft(archive)}")
+    if len(names) > 1:
         raise InvalidSaftFileError(
-            "ZIP-filen må inneholde nøyaktig én SAF-T-fil (XML). "
-            f"Denne har {len(names)}. Pakk ut og last opp den for riktig år"
+            f"ZIP-filen har {len(names)} SAF-T-filer, en for hvert år. Her leses en fil om gangen: "
+            "pakk ut og last opp den for riktig år, eller hent alle årene samlet under «Hent "
+            "regnskapet fra et annet program»"
         )
     return archive.open(names[0])
+
+
+def _saft(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> bool:
+    if info.flag_bits & 0x1:
+        # Locked: nothing can be read from it, so it is not taken for one.
+        return False
+    with archive.open(info) as member:
+        return _is_audit_file(member)
+
+
+def without_saft(archive: zipfile.ZipFile) -> str:
+    """Why a ZIP with no SAF-T file in it is not one, finishing a sentence about it.
+
+    Fiken alone offers four ZIPs and an Excel workbook (itself a ZIP) on the
+    page the SAF-T files are on, and the person picks one of the others.
+    """
+    names = [info.filename.lower() for info in archive.infolist()]
+    if "xl/workbook.xml" in names:
+        return "er et regneark, ikke en SAF-T-fil. Last opp SAF-T-filen (XML eller ZIP)"
+    if any(name.endswith((".pdf", ".jpg", ".jpeg", ".png")) for name in names):
+        return (
+            "har dokumenter, men ingen SAF-T-fil. Last opp SAF-T-filen for hvert år, eller en "
+            "eksport som har dem med"
+        )
+    return "har ingen SAF-T-fil i seg. Last opp SAF-T-filen for hvert år fra det gamle programmet"
+
+
+def refuse_unless_saft(upload: BinaryIO, name: str) -> None:
+    """Refuse a file that is not XML with ``AuditFile`` at the top, saying what it is instead.
+
+    From its first bytes, before anything is read or stored: a printout, a bank
+    statement or an invoice sent where a SAF-T file goes is told so by name,
+    and a printout with a code of its own (:class:`PrintoutNotSaftError`) so a
+    program can send it to the printout's route. ``name`` starts the sentence
+    («Filen», «2025.pdf»). Leaves the stream at the start.
+    """
+    head = upload.read(_SNIFF_BYTES)
+    upload.seek(0)
+    if head.startswith(b"%PDF"):
+        raise PrintoutNotSaftError(
+            f"{name} er en PDF, ikke en SAF-T-fil. Utskriften av bilagene fra Tripletex lastes "
+            "opp under «Vedlegg fra Tripletex»"
+        )
+    element = document_element(io.BytesIO(head))
+    if element is None:
+        raise InvalidSaftFileError(
+            f"{name} er ikke en SAF-T-fil. Last opp XML- eller ZIP-filen det gamle programmet "
+            "laget som SAF-T"
+        )
+    namespace, local = element
+    if local == "AuditFile":
+        return
+    if local == "Document" and "camt.05" in namespace:
+        raise InvalidSaftFileError(
+            f"{name} er en kontoutskrift fra banken (camt), ikke en SAF-T-fil"
+        )
+    if local in ("Invoice", "CreditNote"):
+        raise InvalidSaftFileError(f"{name} er en EHF-faktura, ikke en SAF-T-fil")
+    raise InvalidSaftFileError(
+        f"{name} er en XML-fil, men ikke en SAF-T-fil (den begynner med «{local}», ikke "
+        "«AuditFile»)"
+    )
+
+
+def saft_members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
+    """The SAF-T Financial files in a ZIP, found by what they are rather than what they are called.
+
+    Tripletex's ZIP holds one. Fiken's complete export («Komplett eksport»,
+    ``fiken-komplett-<firma>.zip``) holds one per year beside every document in
+    the books, and Fiken publishes neither its folders nor its file names. A
+    document can be XML too (an EHF invoice), so each ``.xml`` is opened and the
+    ones whose document element is ``AuditFile`` are taken, reading at most
+    :data:`_SNIFF_BYTES` of each. In name order.
+
+    A file delivered in parts (``…_2_3.xml``) is refused here, as
+    :func:`read_entries` refuses it: the vouchers are spread across the parts.
+    """
+    found: list[zipfile.ZipInfo] = []
+    for info in sorted(archive.infolist(), key=lambda item: item.filename):
+        name = info.filename
+        if info.is_dir() or not name.lower().endswith(".xml") or "__MACOSX/" in name:
+            continue
+        if info.flag_bits & 0x1:
+            raise InvalidSaftFileError(
+                f"«{name.rsplit('/', 1)[-1]}» i ZIP-filen er låst med passord. Last den ned uten "
+                "passord"
+            )
+        with archive.open(info) as member:
+            if not _is_audit_file(member):
+                continue
+        parts = _PARTS.search(name)
+        if parts and int(parts.group(2)) > 1:
+            raise InvalidSaftFileError(
+                f"SAF-T-filen er delt i {parts.group(2)} deler, og bilagene leses bare fra en fil "
+                "som ikke er delt. Ta ut filen for en kortere periode, for eksempel et halvår"
+            )
+        found.append(info)
+    return found
+
+
+class _FirstElementError(Exception):
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+def _is_audit_file(stream: Readable) -> bool:
+    """Whether the document element in ``stream`` is ``AuditFile``, from its first bytes."""
+    element = document_element(stream)
+    return element is not None and element[1] == "AuditFile"
+
+
+def document_element(stream: Readable) -> tuple[str, str] | None:
+    """The namespace and local name of the document element, from the first bytes of ``stream``.
+
+    None for what is not XML, or declares a DTD, which no file read here has.
+    """
+    parser = expat.ParserCreate(namespace_separator="}")
+    parser.SetParamEntityParsing(expat.XML_PARAM_ENTITY_PARSING_NEVER)
+    parser.StartDoctypeDeclHandler = _refuse
+    parser.EntityDeclHandler = _refuse
+    parser.ExternalEntityRefHandler = _refuse_external
+
+    def first(tag: str, _: dict[str, str]) -> None:
+        raise _FirstElementError(tag)
+
+    parser.StartElementHandler = first
+    try:
+        parser.Parse(stream.read(_SNIFF_BYTES), False)
+    except _FirstElementError as element:
+        namespace, _, local = element.name.rpartition("}")
+        return namespace, local
+    except (_DeclarationRefusedError, expat.ExpatError, zipfile.BadZipFile, EOFError):
+        return None
+    return None
+
+
+class Readable(Protocol):
+    """What the parser needs of a stream: bytes, read forward. A gzip stream is one."""
+
+    def read(self, size: int = -1, /) -> bytes: ...
 
 
 class _DeclarationRefusedError(Exception):
@@ -373,7 +534,7 @@ class _Reader:
             self.head.data(text)
 
 
-def _parse(stream: IO[bytes], reader: _Reader) -> ET.Element:
+def _parse(stream: Readable, reader: _Reader) -> ET.Element:
     """Run ``reader`` over ``stream`` and return the document's root."""
     parser = expat.ParserCreate(namespace_separator="}")
     parser.SetParamEntityParsing(expat.XML_PARAM_ENTITY_PARSING_NEVER)
@@ -771,6 +932,15 @@ def read_bytes(content: bytes) -> SaftBalances:
 
 def read_entries(upload: BinaryIO) -> SaftEntries:
     """The head and every voucher of a SAF-T Financial file, XML or zipped."""
+    return read_entries_xml(_xml_stream(upload, whole=True))
+
+
+def read_entries_xml(stream: Readable) -> SaftEntries:
+    """:func:`read_entries` for a stream that is the XML itself, read from the start.
+
+    Never seeks, so it parses a download from the store as it arrives
+    (:mod:`myntos.saft.jobs`) instead of after it has all been fetched.
+    """
     transactions: list[SourceTransaction] = []
     lines = 0
 
@@ -781,13 +951,13 @@ def read_entries(upload: BinaryIO) -> SaftEntries:
         if lines > MAX_LINES:
             raise InvalidSaftFileError(
                 f"filen har mer enn {MAX_LINES:,} bilagslinjer".replace(",", "\u00a0")
-                + ", som er flere enn Myntos henter i én omgang. Ta ut SAF-T-filen for en "
+                + ", som er flere enn Myntos henter på en gang. Ta ut SAF-T-filen for en "
                 "kortere periode"
             )
         transactions.append(voucher)
 
     reader = _Reader(take)
-    root = _parse(_xml_stream(upload, whole=True), reader)
+    root = _parse(stream, reader)
     balances = _balances(root)
     stated = reader.totals.get("NumberOfEntries")
     if stated is not None and stated.isdigit() and int(stated) != len(transactions):

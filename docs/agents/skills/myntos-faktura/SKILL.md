@@ -22,6 +22,7 @@ All paths are on `https://api.myntos.no`.
 
 - «send faktura til Ola for 10 timer konsulentarbeid»
 - «fakturer Bygg AS for tre dager à 9 000 kroner»
+- «her er fakturaopplysningene fra kunden» / «lag faktura ut fra denne e-posten»
 - «lag samme faktura som sist til Kari»
 - «hva står på fakturaen før jeg sender den?»
 - «utsted fakturaen»
@@ -60,7 +61,7 @@ All paths are on `https://api.myntos.no`.
 | kreditnota | Credit note: reverses an issued invoice in full |
 | utkast / utstedt | Draft / issued |
 | mva | Merverdiavgift, VAT |
-| KID | The payment reference the customer types in their bank. Myntos builds it at issue from the customer number, the invoice number and a check digit |
+| KID | The payment reference the customer types in their bank. Myntos builds it at issue from the invoice number and a check digit: invoice 1 gets «18», invoice 42 «422» |
 | kontonummer | The company's bank account number, printed on the invoice |
 | EHF | The Norwegian e-invoice format (XML, sent over the Peppol network). Required for invoices to businesses from 1 January 2027 |
 | bokføringspliktig | Obliged to keep books: any business, as opposed to a private person |
@@ -106,29 +107,51 @@ All paths are on `https://api.myntos.no`.
    `party_id` on the invoice: `party_id` in that list is the number people
    see («10003»), `id` is the one the API takes. If the customer is not there,
    either register them first (myntos-parter; a recurring customer belongs in
-   the register, and their customer number then goes into the KID), or type
-   the buyer onto the invoice (fine for a one-off private customer). For a
+   the register), or type the buyer onto the invoice (fine for a one-off
+   private customer). For a
    business, `GET /api/v1/enhetsregisteret/{orgnr}` gives the registered name
    and address (myntos-selskap); use those rather than typing from memory.
 
 4. **Optional: preview the number.**
-   `GET /api/v1/companies/{company_id}/faktura/neste-nummer?party_id={id}`
-   answers `document_number`, `payment_reference` (the KID it would get) and
-   `customer_number`. It reserves nothing: if another invoice is issued
-   first, the number moves on. Leave out `party_id` for a typed-in buyer, whose
-   KID gets zeros where the customer number goes. Say «trolig nummer 13», not
-   «nummer 13».
+   `GET /api/v1/companies/{company_id}/faktura/neste-nummer` answers
+   `document_number` and `payment_reference` (the KID it would get, the same
+   whoever the invoice is to). It reserves nothing: if another invoice is
+   issued first, the number moves on. Say «trolig nummer 13», not «nummer 13».
 
-5. **Optional: let Myntos propose the lines.** You can write the lines yourself
-   from what the person said. If they ask Myntos's own KI to do it,
-   `POST /api/v1/companies/{company_id}/faktura/linjeforslag` with
-   `{"text": "10 timer rådgivning i mars til 1 500 kroner timen"}`, at most
-   `ai_max_chars` (800) characters. It stores nothing, so it runs at once for
-   a key with `write`, even when your other writes wait for approval. The
-   answer is `lines`, each in exactly the shape step 6 takes, and `warnings`,
-   bokmål sentences to pass on. Empty `lines` with a warning means the company
-   has switched KI off, the installation has no model, or the model did not
-   answer: write the lines yourself. Proposed lines are a proposal; show them.
+5. **Optional: let Myntos fill it in.** You can write the draft yourself from
+   what the person said. If they paste the customer's e-mail with the invoice
+   details, or ask Myntos's own KI to do it,
+   `POST /api/v1/companies/{company_id}/faktura/forslag` with `{"text": "…"}`:
+   a sentence about the sale, the customer's e-mail, or both, at most
+   `ai_max_chars` (2 000) characters. It stores nothing, so it runs at once
+   for a key with `write`, even when your other writes wait for approval.
+
+   The answer is named field for field as the draft in step 6: `party_id`,
+   `buyer_name`, `buyer_orgnr`, `buyer_address_line`, `buyer_postal_code`,
+   `buyer_city`, `buyer_is_business`, `delivery_date`, `delivery_place`,
+   `due_date`, `buyer_reference` and `lines`. A field the text does not state
+   is `null`; leave it out of the draft, or ask. Nothing in it is made up:
+   names, addresses and references are only kept if the same words are in the
+   text, dates only if the text names that day, and the orgnr is read from the
+   text by its check digit. Three more fields are for you and the person, not
+   for the draft:
+   - `party_match`: how `party_id` was found among this company's customers,
+     `orgnr`, `navn` (the whole name) or `delvis` (part of the name, fitting
+     one customer only). For `delvis`, say which customer was chosen and let
+     the person confirm it.
+   - `invoice_email`: where the text asks for the invoice to be sent. Myntos
+     sends nothing yet, so tell the person to send the PDF there.
+   - `warnings`: bokmål sentences to pass on, such as two customers fitting a
+     name or a new invoice address for a registered customer.
+
+   An e-mail with no sale in it gives the buyer and no `lines`: write those
+   yourself, or ask for them with
+   `POST /api/v1/companies/{company_id}/faktura/linjeforslag`, which takes the
+   same `{"text": "10 timer rådgivning i mars til 1 500 kroner timen"}` and
+   answers `lines` and `warnings` alone. Empty answers from either, with a
+   warning, mean the company has switched KI off, the installation has no
+   model, or the model did not answer: fill it in yourself. A proposal is a
+   proposal; show it before you create the draft.
 
 6. **Create the draft.** `POST /api/v1/companies/{company_id}/faktura`.
    Needs `write`; may answer 202 `approval_pending` (myntos-godkjenning). The

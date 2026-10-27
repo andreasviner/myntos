@@ -54,7 +54,9 @@ taken out again.
    uploaded. The card «Vedlegg fra Tripletex» then shows below the SAF-T upload.
 3. In the card «Vedlegg fra Tripletex», drag the PDFs into the box
    «Utskrift av bilag med vedlegg», or press it to choose them. They are listed
-   with their size; «Fjern» takes one out.
+   with their size; «Fjern» takes one out. A PDF dropped on the SAF-T box above
+   is moved here, and «Tripletex» chosen, with a line saying so; a SAF-T file
+   dropped here is moved up to the SAF-T files.
 4. Press «Last opp og les utskriftene». Keep the page open until it says
    «Lastet opp. Myntos leser utskriftene nå.»
 5. «Myntos leser utskriftene» shows how far it has come. **They may close the
@@ -112,8 +114,11 @@ the archive.
 
 ## Good to know
 
-- Only Tripletex's printout is read. From Fiken, PowerOffice, Conta and other
-  programs the documents stay in that program's archive.
+- Only Tripletex's printout is read. Fiken's complete export has the
+  documents in it, and Myntos keeps them when the books are brought over
+  ([Find the documents from Fiken's complete export](https://myntos.no/llms/help/opening-balance-and-year-end/find-the-documents-from-fikens-export.md)).
+  From PowerOffice, Conta and other programs they stay in that program's
+  archive.
 - What lands in Myntos is what Tripletex printed: Tripletex's page with the
   postings first, then the attachments as printed. An EHF invoice is
   Tripletex's rendering of it, and a photographed receipt is the picture.

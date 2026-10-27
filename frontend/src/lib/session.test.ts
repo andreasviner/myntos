@@ -31,3 +31,30 @@ describe('safeNext', () => {
     expect(safeNext('/\r/evil.example/')).toBe('/');
   });
 });
+
+/**
+ * Every page's source, as Vite reads it (see indexing.test.ts for the same
+ * grep). `?raw` hands over the text without compiling the `.astro`.
+ */
+const pageSources = import.meta.glob<string>('../pages/**/*.astro', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+});
+
+describe('can', () => {
+  it('is asked only whether a company may be added to an account', () => {
+    // «Faktura», «Kontakter» and «Betaling» asked the account whether the caller
+    // could write in the books, and a colleague invited to one company holds no
+    // role in the account that owns it: an «Eier» was shown «Du har lesetilgang»
+    // on all three (2026-10-23). Anything about a set of books is canInCompany.
+    const calls = Object.entries(pageSources).flatMap(([file, source]) =>
+      [...source.matchAll(/\bcan\(\s*[^,]+,[^,]+,\s*'([^']+)'\s*\)/g)].map(
+        (match) => `${file}: ${match[1]}`,
+      ),
+    );
+    // If this ever finds nothing, the grep is broken, not the pages.
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.filter((call) => !call.endsWith(': organization:manage'))).toEqual([]);
+  });
+});

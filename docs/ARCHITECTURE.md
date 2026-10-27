@@ -11,6 +11,7 @@ flowchart LR
     subgraph Cloudflare
         FE[Astro frontend<br/>Workers + static assets]
         R2[(R2 bucket<br/>jurisdiction=eu<br/>bilag PDFs)]
+        R2W[(R2 bucket<br/>jurisdiction=eu<br/>uploads, ≤ 14 days)]
     end
     subgraph "Self-hosted, Norway"
         CADDY[Caddy<br/>TLS for api.myntos.no]
@@ -27,6 +28,7 @@ flowchart LR
     CADDY --> BE
     BE --> PG
     BE --> R2
+    BE --> R2W
     BE -->|JWT grant, m2m| MP
     FE -->|OIDC redirect| IDP
     FE -->|OIDC redirect| IDURA
@@ -368,9 +370,9 @@ invitation link does, so it never reaches a server log or a Referer.
 password account made before 2026-10-09 is unconfirmed, because nothing could
 confirm it, and the migration refuses to backfill a check that never happened.
 So confirmation gates exactly one thing: an invitation from an unconfirmed
-account is sent **without the inviter's Reply-To**, because anybody can sign up
-as somebody else's address and a message from our domain must not route a
-stranger's reply to it. Accepting an invitation is not gated: the token in hand
+account is sent **without naming the inviter's address**, because anybody can
+sign up as somebody else's address and a message from our domain must not send
+a stranger's questions to it. Accepting an invitation is not gated: the token in hand
 is the proof, and the address match is already required. Squatting an address
 by signing up as it is answered by the reset flow: the real owner receives the
 reset link, and completing it ends the squatter's sessions, password and keys,
@@ -394,10 +396,10 @@ Sending documentation makes no data-location commitment (unlike R2's
 recipient chose. So every message is written on the assumption that its full
 text is read outside the EEA:
 
-- **What it sees:** the recipient address, the subject, the body, the sender
-  and Reply-To. For an invitation that is the inviter's name, the company's
-  name, the role and the link; for the account mails, the person's first name
-  and the link.
+- **What it sees:** the recipient address, the subject, the body and the
+  sender. For an invitation that is the inviter's name and, once they have
+  confirmed it, their address, the company's name, the role and the link; for
+  the account mails, the person's first name and the link.
 - **What it never sees:** accounting data. No amounts, bilag, parties, MVA or
   SAF-T content is ever put in a message, and nothing may be added that would
   be. A company's name is public in Enhetsregisteret already.
@@ -409,6 +411,30 @@ text is read outside the EEA:
 
 SMTP through a relay in the EEA is the alternative for a deployment that wants
 the transport itself inside the EEA; the bytes are identical either way.
+
+**Handed over is not delivered.** Cloudflare answers a send with the address
+under `queued` and runs its spam filter afterwards, so "sent" in the API
+(`email_sent`) means the service took the message and nothing more. On
+2026-10-13 and 2026-10-23 it refused three invitations that way, each at
+exactly its threshold (5 of 5) while the account mails passed at 4; the page
+had said «Invitasjonen er sendt» and hidden the link, so nobody knew. Three
+things follow, all in `core/mail.py` and the invitation pages:
+
+- **The invitation pages always show the link**, whatever `email_sent` says.
+  It is shown once (only a hash is stored), and hiding it took the only way
+  forward from the one inviter who needed it.
+- **Every message carries `Date` and `Message-ID`**, which RFC 5322 requires
+  and none had, and **no invitation carries a Reply-To**: the inviter's
+  address on another domain than `From` is how a phishing message is built,
+  and the refused invitations were the messages that had one (three against
+  three: a correlation, not a proof). It is named in the text instead.
+- **Each send is logged with Cloudflare's message id** (`mail queued by
+  Cloudflare: <…>`) and no address. Whether a message arrived, and its spam
+  score, is in Cloudflare's GraphQL analytics, dataset `emailSendingAdaptive`
+  on the `myntos.no` zone, kept 31 days. The `CLOUDFLARE_EMAIL_TOKEN` cannot
+  read it; a token with zone analytics can. Cloudflare counts a refusal
+  against the account: above 3% of a week's mail it is "At Risk" and may be
+  paused, which would stop password resets too.
 
 ### Federated providers
 
@@ -900,10 +926,20 @@ does not invent another:
   preview made any other way can disagree with what is posted.
 - **Sessions of its own**, through a dependency (`get_import_sessions`) so the
   tests' database is the one used: the request's session is gone by then.
-- **Files in the database, not the document store**, emptied once posted,
-  thrown away or after 14 days: the store is append-only on purpose
-  (bokføringsloven § 13), and a working copy that must go again does not belong
-  in it.
+- **Files in a store of their own, never the document store**
+  (`storage/working.py`: a second R2 bucket, `R2_WORKING_BUCKET`), deleted
+  once posted, thrown away, or 14 days after the upload: the document store is
+  append-only on purpose (bokføringsloven § 13), and a working copy that must
+  go again does not belong in it. They were a column in the database until
+  2026-10-27, when Fiken's complete export (350 to 600 MB) showed what that
+  costs: a value near Postgres's 1 GB ceiling, Neon storage and restore
+  history, and the whole file twice through memory. Now they are written in
+  parts and read as they download. A ZIP's SAF-T files are kept
+  gzip-compressed (`saft/intake.py`), and an export with documents in it is
+  kept whole too, until its documents are copied into the document store on
+  the yes, on no voucher (`saft/archive.py`, docs/integrations/saf-t.md).
+  `jobs.sweep`, once a day, deletes whatever no row points at, and the
+  bucket's lifecycle rule (15 days) is the backstop for a sweep that never ran.
 - **One exception to "the preview is the posting, rolled back"**: the old
   program's printout of the vouchers (`purpose` `vedlegg`, since 2026-10-22),
   whose post writes to the document store, which cannot roll back. Its review
@@ -1614,14 +1650,26 @@ deducts 1 954 kroner when 333 were charged and none could be deducted. The
 proposal now says why the code is 0.
 
 The second use is `domain/faktura/drafting.py`, behind
-`POST /companies/{id}/faktura/linjeforslag`: a sentence describing a sale becomes
-invoice lines. The same rule holds in a different shape — the model **restates
-what the user already typed** and computes nothing. Quantity and unit price come
-out of the user's own sentence; every amount on the document is derived from them
-by `faktura/service.py` exactly as it would be for a hand-typed line. The VAT
-treatment is again a numbered menu, narrowed to the zero option when the company
-is outside Merverdiavgiftsregisteret, so a proposal that charges VAT unlawfully
-(mval. § 15-14) is not on offer rather than caught later.
+`POST /companies/{id}/faktura/forslag` and `…/linjeforslag`: what the seller
+pastes, a sentence about the sale or the customer's e-mail with their invoice
+details, becomes a proposed buyer, terms and lines (the second route asks for
+the lines alone). The same rule holds in a different shape — the model
+**restates what the user already typed** and computes nothing. Quantity and unit
+price come out of the user's own text; every amount on the document is derived
+from them by `faktura/service.py` exactly as it would be for a hand-typed line.
+The VAT treatment is again a numbered menu, narrowed to the zero option when the
+company is outside Merverdiavgiftsregisteret, so a proposal that charges VAT
+unlawfully (mval. § 15-14) is not on offer rather than caught later.
+
+The buyer and the terms are held to the text more strictly still, because a
+wrong customer on an issued invoice can only be undone by kreditnota: a name,
+an address, a reference or a place is kept only when the same words stand in
+what the model was shown, a date only when the text names its day and month,
+and the organisasjonsnummer and the address to send to are read by rule (the
+mod-11 digit, the `@`) rather than asked of the model. Which *registered*
+customer the text means is decided in `drafting.match_customer()` against the
+company's own register, which is never sent to the model; a match on part of a
+name is chosen only when it fits one customer, and is said out loud.
 
 The menu is worth copying for the next feature: a model that answers with a
 number from a list we wrote cannot invent an account, a rate or an amount, and a
@@ -1632,7 +1680,7 @@ guessing which field is missing.
 
 Four properties follow, and they are the reason for the shape:
 
-- **Layering holds.** `classify()` and `draft_lines()` each take an `ask`
+- **Layering holds.** `classify()` and `draft_invoice()` each take an `ask`
   callable, so the domain never imports the model's client (the only thing it
   takes from `integrations` is one data type, see
   [§ Backend layout](#backend-layout-backendsrcmyntos)); the endpoint passes
@@ -1744,7 +1792,10 @@ buyer, not the company, not the ledger. The question does not need them.
   reads anyway.
 - **Documents:** R2 bucket created with **`jurisdiction=eu`** (immutable
   after creation — create it right the first time; location *hints* are not
-  a compliance mechanism).
+  a compliance mechanism). Uploads a job reads and then deletes (the old
+  program's SAF-T files and printouts) go in a second bucket, also
+  `jurisdiction=eu`, standard storage class: Infrequent Access bills 30 days
+  for anything deleted sooner and charges for every read.
 
 ### Why EEA hosting is legal (and what the product must do about it)
 
@@ -1817,7 +1868,9 @@ ordered to store in Norway after a compliance breach.
   every other request in the one process. Request bodies are capped before
   anything reads them (`core/security.py` `BodySizeLimitMiddleware`: 2 MB
   JSON, 64 MB for an upload, a SAF-T file's 200 MB on the routes that read
-  one), because FastAPI parses a body before it knows who sent it. There is
+  one), because FastAPI parses a body before it knows who sent it. The one
+  larger, 2 GB on `…/saft/innlesing` for Fiken's complete export, reads its
+  own body after the membership check, so nobody unknown gets that far. There is
   **no source-based rate limiting** in front of
   the API: `api.myntos.no` is this deployment's own machine behind Caddy, not
   Cloudflare, so no edge does it. If it is needed it belongs in Caddy, not in

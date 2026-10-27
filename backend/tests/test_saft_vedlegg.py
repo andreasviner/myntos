@@ -14,6 +14,7 @@ read, and archived, by the time the answer is in hand.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from decimal import Decimal
 from io import BytesIO
@@ -23,13 +24,14 @@ import pytest
 from fastapi.testclient import TestClient
 from pypdf import PdfReader
 
+from myntos.api.deps import get_working_files
 from myntos.saft import printout
 from myntos.saft.errors import InvalidPrintoutError
 from tests.conftest import agent_header, join_company, write
 from tests.test_arsoppgjor_api import LAST_YEAR, _books
 from tests.test_cashflow_api import INVOICE_LINES, OTHER_ORGNR, text_pdf
 from tests.test_saft_import import ORGNR
-from tests.test_saft_innlesing import EARLIER, _both_years
+from tests.test_saft_innlesing import EARLIER, _both_years, earlier_file
 from tests.test_saft_innlesing import _get as _get_import
 from tests.test_saft_innlesing import _post as _post_import
 
@@ -418,18 +420,31 @@ def test_another_companys_printout_is_refused_whole(client: TestClient) -> None:
     assert read["review"] is None
 
 
-@pytest.mark.parametrize(
-    "content",
-    [
-        pytest.param(text_pdf(INVOICE_LINES), id="an ordinary invoice"),
-        pytest.param(b"Bilag nummer 1-2026", id="not a PDF"),
-    ],
-)
-def test_a_file_that_is_not_the_printout_is_refused(client: TestClient, content: bytes) -> None:
+def test_a_pdf_that_is_not_the_printout_is_refused(client: TestClient) -> None:
     company = _books_brought_over(client)
-    read = _uploaded(client, company["id"], ("faktura.pdf", content))
+    read = _uploaded(client, company["id"], ("faktura.pdf", text_pdf(INVOICE_LINES)))
     assert read["status"] == "failed"
     assert read["error_code"] == "invalid_printout"
+
+
+@pytest.mark.parametrize(
+    ("name", "content", "code"),
+    [
+        pytest.param("notat.pdf", b"Bilag nummer 1-2026", "invalid_printout", id="not a PDF"),
+        pytest.param("2025.xml", earlier_file(), "saft_not_printout", id="a SAF-T file"),
+        pytest.param("2025.zip", b"PK\x03\x04 zip", "saft_not_printout", id="a ZIP"),
+    ],
+)
+def test_what_is_not_a_pdf_is_refused_before_it_is_kept(
+    client: TestClient, name: str, content: bytes, code: str
+) -> None:
+    """A SAF-T file sent here is told where it goes, with a code a program can act on."""
+    company = _books(client)
+    response = _upload(client, company["id"], (name, content))
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == code
+    working = client.app.dependency_overrides[get_working_files]()  # type: ignore[attr-defined]
+    assert asyncio.run(working.listing()) == []
 
 
 def test_an_empty_file_is_refused_before_it_is_kept(client: TestClient) -> None:

@@ -79,8 +79,10 @@ corrected with a reversal and a new balance.
 | --- | --- | --- |
 | «filen er regnskapet til org.nr. … (…), ikke til …» | The file is another company's | Choose the right company at the top of the page, or export the file for this one |
 | «filen gjelder … til …. Inngående balanse i Myntos er per 1. januar …» | The file is for a year that says nothing about this opening balance | Export the file for the year named in the message, or the whole year before it |
-| «filen er ikke gyldig XML. …» or «filen er ikke en SAF-T Financial-fil» | Not a SAF-T file, or damaged | Download the SAF-T export again from the old program |
-| «ZIP-filen må inneholde nøyaktig én SAF-T-fil (XML). …» | The ZIP holds several files | Unpack it and upload the XML for the right year |
+| «filen er ikke gyldig XML. …» or «filen er ikke en SAF-T Financial-fil» | Damaged, or not a SAF-T file | Download the SAF-T export again from the old program |
+| «Filen er en PDF …», «… en kontoutskrift fra banken …», «… en EHF-faktura …» | Another kind of file, named by what it is | Upload the SAF-T file instead |
+| «ZIP-filen har … SAF-T-filer, en for hvert år. …» | A ZIP with several years in it, such as Fiken's complete export | Unpack it and upload the XML for the right year, or bring every year over at once on «Hent regnskapet fra et annet program»: [Bring your books over from the previous program's SAF-T files](https://myntos.no/llms/help/opening-balance-and-year-end/bring-your-books-over-from-saf-t-files.md) |
+| «ZIP-filen har ingen SAF-T-fil i seg …», «… er et regneark …» or «… har dokumenter, men ingen SAF-T-fil» | A ZIP or workbook without the SAF-T file | Upload the SAF-T file for the year |
 | The button «Legg til kontoer og parter» is greyed out, with «Bare en administrator eller eier kan legge til kontoer i kontoplanen.» | The person is «Medlem» | Ask an administrator or owner to do this step |
 
 ## Good to know

@@ -32,10 +32,10 @@ On the «Ferdig» step («Regnskapet for … er satt opp»):
    - «Administrator: kan også styre selskaper og medlemmer»
    - «Eier: kan alt, også abonnementet»
 
-   Each invitation gets a line: «E-post sendt», or «Vi fikk ikke sendt
-   e-posten. Send lenken selv:» with the link and «Kopier». The form empties,
-   ready for the next address. The invitation works only for the address
-   typed, for seven days.
+   Each invitation gets a line: «E-post sendt. Kommer den ikke fram, send
+   lenken selv:» or «Vi fikk ikke sendt e-posten. Send lenken selv:», with the
+   link and «Kopier» under it either way. The form empties, ready for the next
+   address. The invitation works only for the address typed, for seven days.
 2. Press «Åpne regnskapet» to go to the overview, or «Til organisasjonen» to
    the company's settings page.
 
@@ -59,6 +59,7 @@ Then, in roughly this order:
 | --- | --- | --- |
 | «Vi stoppet en forespørsel som gjaldt et annet selskap enn det du ser på. Last siden på nytt.» after «Send invitasjon» | The invitation form on this step can fail this way. Nothing was sent. | Invite from the company's settings page instead: press «Til organisasjonen», then «Inviter en kollega» under «Tilgang». See [Invite a colleague](https://myntos.no/llms/help/company-and-access/invite-a-colleague.md). |
 | «denne e-postadressen har allerede tilgang til selskapet» | That person is already in these books. | Nothing to do. |
+| The person says no e-mail came | Myntos sees only that the mail service took the message, not that it arrived. | Press «Kopier» on that line and send them the link yourself. Once the page is left, use «Send på nytt» on the company's settings page: [Send an invitation again](https://myntos.no/llms/help/company-and-access/send-an-invitation-again.md). |
 | «Vi fikk ikke sendt e-posten. Send lenken selv:» | The invitation exists, but the mail did not go out. | Press «Kopier» and send the link to that person yourself. It works only for the address typed. |
 
 ## Good to know

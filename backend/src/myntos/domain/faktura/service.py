@@ -789,14 +789,8 @@ async def issue(
     # the API layer because it has to be set before the EHF and the PDF are
     # rendered below — a payment reference the printed invoice does not show is
     # a payment nobody can reconcile.
-    #
-    # ``document.party`` is eagerly loaded by _document_query, so reading it here
-    # is not the lazy-relationship trap that _archive_pdf works around.
     if document.payment_reference_auto:
-        document.payment_reference = kid.for_document_number(
-            document.document_number,
-            customer_number=document.party.party_id if document.party is not None else None,
-        )
+        document.payment_reference = kid.for_document_number(document.document_number)
 
     computed = totals(document)
     journal = await _sales_journal(db, company)

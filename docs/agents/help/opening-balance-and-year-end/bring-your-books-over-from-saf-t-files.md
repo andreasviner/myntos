@@ -37,8 +37,10 @@ must keep.
   the chart of accounts does not have, only «Administrator» or «Eier» can post.
 - The SAF-T files from the old program: one per year, each from 1 January,
   the years one after another with none missing, every year but the last one
-  whole. ZIP or XML, at most 200 MB each, in one part. Where to find them in
-  each program:
+  whole. ZIP or XML, at most 2 GB in all, each not split in parts. From Fiken
+  the complete export (`fiken-komplett-….zip`) can be uploaded as it is: it has
+  the SAF-T file for every year in it, and Myntos keeps the documents in it
+  too. Where to find them in each program:
   [Move your books to Myntos](https://myntos.no/llms/help/getting-started/move-your-books-to-myntos.md).
 - Nothing registered in Myntos yet for the months the files cover. If there is,
   they choose a date before the first of those entries under «Flere valg» →
@@ -51,16 +53,21 @@ must keep.
    the move guides under «Kom i gang», or the link «Hent regnskapet fra et
    annet program» in the note at the bottom of «Oversikt». A move guide's
    «Hent regnskapet» opens it with that program chosen.
-2. Optionally, choose the program under «Programmet du kommer fra». It changes
-   nothing about the upload: it adds a link to the move guide for finding the
-   SAF-T files in that program, says what becomes of the documents behind the
-   vouchers, and for «Tripletex» shows the card for its printout further down
-   (step 11).
-   Myntos chooses it by itself once files are read whose header names the
-   program.
+2. Optionally, choose the program under «Programmet du kommer fra». It adds a
+   link to the move guide for finding the SAF-T files in that program, says
+   what becomes of the documents behind the vouchers, for «Tripletex» shows the
+   card for its printout further down (step 11), and for «Fiken» says under
+   the upload box that the complete export can be uploaded as it is. Myntos
+   chooses the program by itself when a file names it (the SAF-T header,
+   or Fiken's export by its name) and says so: «Filene er fra Fiken, så Fiken
+   er valgt som programmet du kommer fra.»
 3. In the card «Last opp SAF-T-filene», drag the files into the box «SAF-T-filer
    fra det gamle programmet», or press it to choose them. They are listed with
-   their size; «Fjern» takes one out.
+   their size; «Fjern» takes one out. A file in the wrong box is moved where it
+   belongs, with a line saying so: Tripletex's printout of the vouchers (a PDF)
+   goes to «Vedlegg fra Tripletex», and a SAF-T file dropped there comes up
+   here. A file that is neither (a spreadsheet, a bank statement, an invoice)
+   is left out, with a line saying what it is.
 4. Press «Last opp og les filene». A bar shows the upload; keep the page open
    until it says «Lastet opp. Myntos leser filene nå.»
 5. The card «Myntos leser filene» shows how far it has come («Leser «2025.zip»
@@ -76,10 +83,16 @@ must keep.
    - under «Legges til i Myntos», tiles with how many accounts, customers and
      suppliers, and avdelinger and products will be added. Each opens to a
      short list, with «Søk i listen» when it is long;
+   - for Fiken's complete export, «Dokumentene i eksporten»: how many files
+     will be kept and their size, a tile «dokumenter tas vare på» that opens
+     to the export's folders, and «filer tas ikke vare på» with the reason for
+     each (locked with a password, over 100 MB);
    - anything in red stops the post; «… merknader å lese» opens the notes.
 7. Press «Før … bilag» (it names the number). This cannot be undone. The card
-   shows «Myntos fører regnskapet» and may be closed again.
-8. «Regnskapet er hentet» says what was posted. From there: «Se bilagene»
+   shows «Myntos fører regnskapet», then for an export «Myntos tar vare på
+   dokumentene» with a count, and may be closed again.
+8. «Regnskapet er hentet» says what was posted, and for an export how many
+   documents were kept. From there: «Se bilagene»
    (the vouchers on «Bilag»), «Inn og ut av banken», and «Avslutt …» for an
    earlier year. Every year's result and balance sheet is on «Regnskapet år
    for år» on the overview.
@@ -99,6 +112,9 @@ must keep.
     fra Tripletex» further down the same page, shown when «Tripletex» is
     chosen under «Programmet du kommer fra»:
     [Bring the documents behind the vouchers over from Tripletex](https://myntos.no/llms/help/opening-balance-and-year-end/bring-the-documents-over-from-tripletex.md).
+    From Fiken's complete export they are kept already, under «Dokumenter fra
+    eksporten» on the same page:
+    [Find the documents from Fiken's complete export](https://myntos.no/llms/help/opening-balance-and-year-end/find-the-documents-from-fikens-export.md).
 
 «Forkast» throws away files read by mistake, before anything is posted.
 
@@ -128,10 +144,14 @@ must keep.
 | «filen er regnskapet til org.nr. …» | Another company's file | Choose the right company at the top, or export this company's |
 | «filen sier at den har … bilag, men Myntos fant …» | The download was cut short | Download the file again |
 | «SAF-T-filen er delt i … deler …» | The program split a large file | Export a shorter period |
+| «… har ingen SAF-T-fil i seg», «… er et regneark …», «… har dokumenter, men ingen SAF-T-fil» | A ZIP or workbook without the SAF-T files: from Fiken, «fiken-bilag-…», «fiken-dokumenter-…» or the Excel workbook | Upload the SAF-T file for each year, or Fiken's complete export |
+| «… er en PDF, ikke en SAF-T-fil» | A printout or a receipt sent as a SAF-T file | Tripletex's printout goes in «Vedlegg fra Tripletex»; from other programs the PDFs stay in the old program's archive |
+| «… har mer enn 300 000 bilagslinjer …» or «… er mer enn 1 GB XML …» | One year is more than Myntos reads from a file | Export a shorter period from the old program |
 | «Myntos har allerede … bilag fra … til … som ikke kom fra filen.» (in red) | Payments already registered in Myntos for those months | «Forkast», upload again with «Til og med» the day before the first of them |
 | «Ingenting ble ført: regnskapet har endret seg siden filene ble lest.» | Something was registered between reading and posting | Read the new review, and post again if it is right |
 | «Før …» is greyed out, with «Bare en administrator eller eier kan legge til kontoer …» | The person is «Medlem» and the files need new accounts | Ask an administrator or owner to post it |
 | «Regnskapsåret … er avsluttet i Myntos …» | A year in the files is closed in Myntos | Reopen it under «Årsavslutning», or leave its file out |
+| «Regnskapet er ført, men ikke alle dokumentene i eksporten ble tatt vare på. …» | The books are posted; storing the export's documents stopped halfway | Press «Ta vare på resten av dokumentene»; what is kept already is not kept twice |
 
 ## Good to know
 
@@ -144,14 +164,17 @@ must keep.
   brought over are skipped. «Tidligere innlesinger» lists what was posted, and
   when.
 - Myntos keeps the uploaded files only until they are posted or thrown away,
-  and at most 14 days. Keep them, and the old program's archive: they are the
-  documentation of those years.
+  and at most 14 days. From Fiken's complete export it keeps every document
+  for good once the books are posted, on no voucher. From other programs the
+  documents stay in the old program's archive; keep it, with the SAF-T files:
+  they are the documentation of those years.
 - An opening balance on its own, without vouchers, is entered on «Inngående
   balanse»:
   [Import the opening balance from a SAF-T file](https://myntos.no/llms/help/opening-balance-and-year-end/import-a-saf-t-file.md).
 
 ## Related
 
+- [Find the documents from Fiken's complete export](https://myntos.no/llms/help/opening-balance-and-year-end/find-the-documents-from-fikens-export.md)
 - [Bring the documents behind the vouchers over from Tripletex](https://myntos.no/llms/help/opening-balance-and-year-end/bring-the-documents-over-from-tripletex.md)
 - [Compare Myntos with the previous program](https://myntos.no/llms/help/opening-balance-and-year-end/compare-myntos-with-the-previous-program.md)
 - [See every voucher in the books](https://myntos.no/llms/help/vouchers/see-every-voucher.md)

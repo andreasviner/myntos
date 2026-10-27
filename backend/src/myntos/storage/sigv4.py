@@ -58,6 +58,20 @@ def canonical_path(path: str) -> str:
     return quote(path, safe="/~")
 
 
+def canonical_query(params: dict[str, str]) -> str:
+    """The query string in the form both signed and sent: sorted, every value encoded.
+
+    Multipart uploads and listing name their operation in the query
+    (``?uploads``, ``?partNumber=1&uploadId=…``, ``?list-type=2``), and S3
+    signs the query too. A parameter with no value is ``name=``. The same
+    string goes on the URL, so what is signed is byte for byte what is sent.
+    """
+    return "&".join(
+        f"{quote(name, safe='-_.~')}={quote(value, safe='-_.~')}"
+        for name, value in sorted(params.items())
+    )
+
+
 def canonical_request(
     *,
     method: str,

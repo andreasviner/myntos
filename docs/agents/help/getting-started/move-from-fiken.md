@@ -35,9 +35,15 @@ In Fiken, as the guide «Hent dataene ut av Fiken» describes:
    can be run as often as they like.
 2. **«Last ned SAF-T-eksporten».** Fiken makes one SAF-T file per financial
    year. Download one for every year kept in Fiken, not only the last.
-3. **«Last ned komplett eksport».** A ZIP with every uploaded document,
-   invoice, order, quote and credit note, plus Excel overviews per year. This
-   is the copy they can actually look things up in later.
+3. **«Last ned komplett eksport».** A ZIP with the SAF-T file and Excel
+   overviews for every year, and every uploaded document, invoice, order,
+   quote and credit note. Myntos reads it as it is: uploaded on «Hent
+   regnskapet fra et annet program», the SAF-T files are taken out of it, and
+   when the books are posted Myntos keeps every document in it with the
+   folder it was in. They are not put on the vouchers, but are found and
+   downloaded under «Dokumenter fra eksporten» on the same page:
+   [Bring your books over from the previous program's SAF-T files](https://myntos.no/llms/help/opening-balance-and-year-end/bring-your-books-over-from-saf-t-files.md),
+   [Find the documents from Fiken's complete export](https://myntos.no/llms/help/opening-balance-and-year-end/find-the-documents-from-fikens-export.md).
 4. **«Har du kjørt lønn, ta lønnsslippene også».** Payslips are exported
    separately and are not in SAF-T Regnskap.
 

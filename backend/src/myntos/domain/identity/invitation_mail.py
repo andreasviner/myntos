@@ -33,6 +33,18 @@ somewhere in the middle. The raw link was the worst of it and cannot be removed,
 because a client that strips the button has to leave something clickable: it
 sits at the end now, in the faintest grey the message uses, instead of in brand
 green halfway up.
+
+**The inviter's address is in the text, not in Reply-To.** A recipient unsure
+whether this is genuine needs somebody to ask, and the first version made that
+the Reply-To header. A Reply-To on another domain than From is how a phishing
+message is built, and spam filters score it as one. Every invitation that
+carried one in October 2026 was refused by Cloudflare at its threshold, while
+the account mails, identical in layout and without one, went through: three
+messages against three, a correlation and not a proof, and a test invitation
+whose Reply-To was the recipient's own address did arrive. The header was
+worth too little to keep on that evidence. Written in the text, the address
+still reaches the reader, and a reply to the message goes to the deployment's
+own ``MAIL_REPLY_TO`` like every other one.
 """
 
 from __future__ import annotations
@@ -119,6 +131,12 @@ def _detail_row(label: str, value: str, *, last: bool = False) -> str:
     )
 
 
+def _ask_clause(inviter: str | None, address: str) -> str:
+    """Whom to ask whether this is genuine, by name when there is one."""
+    who = "avsenderen" if inviter is None or inviter.strip() == "" else inviter.strip()
+    return f"Er du usikker på om invitasjonen er ekte, kan du spørre {who} på {address}."
+
+
 def _inviter_clause(inviter: str | None, company: str) -> str:
     """Who is asking, when we know, and an honest sentence when we do not."""
     if inviter is None or inviter.strip() == "":
@@ -140,9 +158,8 @@ def invitation_mail(
 ) -> Mail:
     """Compose the invitation.
 
-    ``inviter_email`` becomes the Reply-To. A recipient who is unsure whether
-    the invitation is genuine will answer the message, and the answer should
-    reach the colleague who sent it rather than a mailbox nobody reads.
+    ``inviter_email`` is named in the text as the address to ask, when the
+    inviter has confirmed it; never as the Reply-To (see the module docstring).
 
     ``recipient_name`` is the person the invitation was addressed to, when the
     inviter named one. ``resent`` says so in one line rather than letting a
@@ -152,6 +169,7 @@ def invitation_mail(
     opening = _inviter_clause(inviter_name, company)
     deadline = _norwegian_date(expires_at)
     greeting = _first_name(recipient_name)
+    ask = None if inviter_email is None else _ask_clause(inviter_name, inviter_email)
     # A resend is the same invitation with a new link, and saying so is what
     # keeps the second copy from reading as a duplicate somebody should worry
     # about. The old link stopped working when this one was made, which the
@@ -188,8 +206,9 @@ en når du følger lenken.
 Var dette uventet, trenger du ikke gjøre noe. Invitasjonen går ut av seg selv,
 og ingen får tilgang til noe før du takker ja.
 
-Hilsen Myntos
 """,
+            f"{ask}\n\n" if ask is not None else "",
+            "Hilsen Myntos\n",
         )
     )
 
@@ -204,6 +223,7 @@ Hilsen Myntos
     safe_company = html.escape(company)
     safe_greeting = None if greeting is None else html.escape(greeting)
     safe_reminder = None if reminder is None else html.escape(reminder)
+    safe_ask = None if ask is None else html.escape(ask)
 
     greeting_markup = (
         ""
@@ -221,6 +241,13 @@ Hilsen Myntos
             "border-left:3px solid #d99b28;border-radius:0 6px 6px 0;"
             f'font-size:0.88rem;color:#6b5324;">{safe_reminder}</p>'
         )
+    )
+    # In the reassurance's own voice and weight, directly under it: it is the
+    # same answer to the same worry, with somebody to ask added.
+    ask_markup = (
+        ""
+        if safe_ask is None
+        else f'<p style="margin:0 0 22px;font-size:0.85rem;color:{_QUIET};">{safe_ask}</p>'
     )
 
     # The two facts that decide whether the link is usable, as label and value
@@ -297,10 +324,12 @@ Hilsen Myntos
         Myntos er et norsk regnskapsprogram. Lenken gjelder bare deg, og krever en konto på
         denne e-postadressen. Har du ingen, oppretter du en når du følger lenken.
       </p>
-      <p style="margin:0 0 22px;font-size:0.85rem;color:{_QUIET};">
+      <p style="margin:0 0 {"10px" if safe_ask is not None else "22px"};font-size:0.85rem;
+                color:{_QUIET};">
         Var dette uventet, trenger du ikke gjøre noe. Invitasjonen går ut av seg selv, og ingen
         får tilgang til noe før du takker ja.
       </p>
+      {ask_markup}
       <p style="margin:0;padding-top:15px;border-top:1px solid {_RULE};
                 font-size:0.78rem;color:{_FAINT};">
         Virker ikke knappen, kopier denne lenken inn i nettleseren:<br />
@@ -317,6 +346,5 @@ Hilsen Myntos
         subject=subject,
         text=text,
         html=html_body,
-        reply_to=inviter_email,
         images=(InlineImage(cid=LOGO_CID, data=logo_png()),),
     )

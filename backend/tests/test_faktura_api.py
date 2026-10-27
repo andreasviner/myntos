@@ -11,6 +11,7 @@ and then refuses to let anyone change any of it.
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,6 +20,7 @@ from myntos.core.clock import utc_now
 from myntos.domain.faktura import kid
 from myntos.integrations import loynd
 from tests.conftest import join_company, register, write
+from tests.test_faktura_drafting import CUSTOMER_EMAIL, CUSTOMER_EMAIL_REPLY
 
 ORGNR = "910000004"
 CUSTOMER_ORGNR = "910000012"
@@ -692,12 +694,7 @@ def test_the_preview_says_what_the_next_invoice_would_get(client: TestClient) ->
     company = signed_in_company(client)
 
     upcoming = client.get(f"/api/v1/companies/{company['id']}/faktura/neste-nummer").json()
-    assert upcoming == {
-        "document_number": "1",
-        "payment_reference": kid.preview_for_next(1),
-        # No party asked about, so the customer half of the KID is zeros.
-        "customer_number": None,
-    }
+    assert upcoming == {"document_number": "1", "payment_reference": "18"}
 
     # And it is a preview, not a reservation: nothing was consumed.
     issued = issue(client, company["id"], create_draft(client, company["id"])["id"]).json()
@@ -725,33 +722,27 @@ def make_customer(client: TestClient, company_id: int, **overrides: Any) -> dict
     return body
 
 
-def test_the_kid_carries_the_customer_number_as_well_as_the_invoice_number(
-    client: TestClient,
-) -> None:
-    """The structure an OCR return file is posted from: kundenr + fakturanr + kontroll."""
+def test_a_registered_customer_gets_the_same_short_kid(client: TestClient) -> None:
+    """Invoice 1 is «18» whoever it is to: the invoice number already names the buyer."""
     company = signed_in_company(client)
     customer = make_customer(client, company["id"])
-    assert customer["party_id"] == "10000"
 
     draft = create_draft(client, company["id"], party_id=customer["id"], buyer_name=None)
     issued = issue(client, company["id"], draft["id"]).json()
 
-    assert issued["payment_reference"] == "100000000016"
-    assert kid.split(issued["payment_reference"]) == ("10000", "000001")
+    assert issued["payment_reference"] == "18"
 
 
-def test_a_buyer_typed_onto_the_document_gets_zeros_for_the_customer(
-    client: TestClient,
-) -> None:
-    """A one-off sale was never in the register, and the width still has to hold."""
+def test_a_buyer_typed_onto_the_document_gets_no_zeros(client: TestClient) -> None:
+    """It used to be 000000000018, which nobody copies off a paper invoice correctly."""
     company = signed_in_company(client)
     issued = issue(client, company["id"], create_draft(client, company["id"])["id"]).json()
 
-    assert kid.split(issued["payment_reference"]) == ("00000", "000001")
+    assert issued["payment_reference"] == "18"
 
 
-def test_the_preview_follows_the_customer_that_is_picked(client: TestClient) -> None:
-    """The KID changes with the customer, so the form has to ask again."""
+def test_the_preview_ignores_a_customer_it_is_asked_about(client: TestClient) -> None:
+    """The route used to take party_id, and an old caller sending one still gets an answer."""
     company = signed_in_company(client)
     customer = make_customer(client, company["id"])
 
@@ -760,23 +751,7 @@ def test_the_preview_follows_the_customer_that_is_picked(client: TestClient) -> 
         f"/api/v1/companies/{company['id']}/faktura/neste-nummer?party_id={customer['id']}"
     ).json()
 
-    assert named["customer_number"] == "10000"
-    assert named["payment_reference"] != anonymous["payment_reference"]
-    assert named["payment_reference"].startswith("10000")
-
-
-def test_another_tenants_customer_cannot_be_asked_about(client: TestClient) -> None:
-    """Or one organization's customer numbers leak through the other's KIDs."""
-    company = signed_in_company(client)
-    write(client, "POST", "/api/v1/auth/logout")
-    other = signed_in_company(client, email="andre@example.no")
-    stranger = make_customer(client, other["id"])
-
-    response = client.get(
-        f"/api/v1/companies/{other['id']}/faktura/neste-nummer?party_id={stranger['id'] + 500}"
-    )
-    assert response.status_code == 404
-    assert company["id"] != other["id"]
+    assert named == anonymous
 
 
 def test_a_seller_may_turn_the_kid_off(client: TestClient) -> None:
@@ -983,4 +958,325 @@ def test_a_description_longer_than_we_accept_is_refused_before_it_is_sent(
 
     company = signed_in_company(client)
     assert draft_lines(client, company["id"], "x" * 5000).status_code == 422
+    assert not asked
+
+
+# --- A proposed invoice ---------------------------------------------------------------
+#
+# What the box at the top of the form does: a pasted text in, the buyer, the
+# terms and the lines out, then a draft made from exactly that and issued. The
+# model is a stand-in; what is tested is that its answer becomes a correct
+# invoice, and that nothing reaches the invoice the text did not say.
+
+# The fields of a proposal that are also fields of a draft. The rest
+# (party_match, invoice_email, warnings) are for the person reading it.
+DRAFT_FIELDS = (
+    "party_id",
+    "buyer_name",
+    "buyer_orgnr",
+    "buyer_address_line",
+    "buyer_postal_code",
+    "buyer_city",
+    "buyer_is_business",
+    "delivery_date",
+    "delivery_place",
+    "due_date",
+    "buyer_reference",
+    "lines",
+)
+
+
+def draft_invoice(client: TestClient, company_id: int, text: str) -> Any:
+    return write(
+        client, "POST", f"/api/v1/companies/{company_id}/faktura/forslag", json={"text": text}
+    )
+
+
+def as_draft(proposal: dict[str, Any], **extra: Any) -> dict[str, Any]:
+    """The proposal as a draft takes it: what it said, and nothing it left open."""
+    body = {name: proposal[name] for name in DRAFT_FIELDS if proposal[name] is not None}
+    body.update(extra)
+    return body
+
+
+def model_answering(**replies: str) -> Any:
+    """A stand-in that answers by which text it was shown: {word in the text: reply}."""
+
+    async def complete(*, system: str, prompt: str, max_tokens: int = 16) -> str:
+        del system, max_tokens
+        return next(reply for word, reply in replies.items() if word in prompt)
+
+    return complete
+
+
+def oslo_today() -> date:
+    return utc_now().astimezone(ZoneInfo("Europe/Oslo")).date()
+
+
+def test_a_customers_email_and_a_described_sale_become_an_issued_invoice(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The case from a real customer: their details in one box, the sale in the other."""
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        loynd,
+        "complete",
+        model_answering(
+            Fakturaadresse=CUSTOMER_EMAIL_REPLY,
+            kursmapper=(
+                "kunde: -\nadresse: -\nreferanse: -\nleveringsdato: -\nleveringssted: -\n"
+                "forfall: -\nRådgivning | 10 | timer | 1500 | 1\nKursmappe | 2 | stk | 450 | 1"
+            ),
+        ),
+    )
+    company = signed_in_company(client)
+
+    proposed = draft_invoice(client, company["id"], CUSTOMER_EMAIL)
+    assert proposed.status_code == 200, proposed.text
+    buyer = proposed.json()
+    assert buyer["party_id"] is None
+    assert buyer["party_match"] is None
+    assert buyer["buyer_name"] == "Fjord Aluminium AS"
+    assert buyer["buyer_orgnr"] == "910000039"
+    assert buyer["buyer_address_line"] == "Postboks 53"
+    assert buyer["buyer_postal_code"] == "6601"
+    assert buyer["buyer_city"] == "Sunndalsøra"
+    assert buyer["buyer_is_business"] is True
+    assert buyer["buyer_reference"] == "GS-HR00003-02-05, Att: Kari Nordmann"
+    assert buyer["invoice_email"] == "faktura@fjordaluminium.no"
+    # The e-mail named no day, place or term, and none was made up for it.
+    assert (buyer["delivery_date"], buyer["delivery_place"], buyer["due_date"]) == (None,) * 3
+    assert buyer["lines"] == []
+    assert any("faktura@fjordaluminium.no" in w for w in buyer["warnings"])
+    assert any("ingen linjer" in w for w in buyer["warnings"])
+
+    lines = draft_lines(
+        client, company["id"], "10 timer rådgivning à 1500 og to kursmapper à 450"
+    ).json()["lines"]
+    assert len(lines) == 2
+
+    body = as_draft(
+        buyer, lines=lines, delivery_date=DELIVERED.isoformat(), delivery_place="Sunndalsøra"
+    )
+    created = write(client, "POST", f"/api/v1/companies/{company['id']}/faktura", json=body)
+    assert created.status_code == 201, created.text
+    draft = created.json()
+    assert [v for v in draft["violations"] if v["severity"] == "blokkerende"] == []
+
+    issued = issue(client, company["id"], draft["id"])
+    assert issued.status_code == 201, issued.text
+    invoice = issued.json()
+    assert invoice["document_number"] == "1"
+    assert invoice["buyer_name"] == "Fjord Aluminium AS"
+    assert invoice["buyer_orgnr"] == "910000039"
+    assert invoice["buyer_address_line"] == "Postboks 53"
+    assert (invoice["buyer_postal_code"], invoice["buyer_city"]) == ("6601", "Sunndalsøra")
+    assert invoice["buyer_reference"] == "GS-HR00003-02-05, Att: Kari Nordmann"
+    assert invoice["net_total"] == "15900.00"
+    assert invoice["vat_total"] == "3975.00"
+    assert invoice["gross_total"] == "19875.00"
+    assert invoice["payment_reference"] == "18"
+    assert invoice["voucher_id"] is not None
+
+    # The e-invoice carries what the customer asked it to be marked with, and is
+    # addressed by their number.
+    xml = client.get(f"/api/v1/companies/{company['id']}/faktura/{invoice['id']}/ehf").text
+    assert "<cbc:BuyerReference>GS-HR00003-02-05, Att: Kari Nordmann</cbc:BuyerReference>" in xml
+    assert "910000039" in xml
+
+
+def test_a_described_sale_to_a_registered_customer_issues_as_proposed(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    text = (
+        f"Faktura til Bygg og Anlegg AS for 10 timer rådgivning levert 14. mars {THIS_YEAR} "
+        "i Bergen, 1 500 kroner timen. Forfall 30 dager. Deres ref: Ola Nordmann"
+    )
+    reply = (
+        f"kunde: Bygg og Anlegg AS\nadresse: -\nreferanse: Ola Nordmann\n"
+        f"leveringsdato: {THIS_YEAR}-03-14\nleveringssted: Bergen\nforfall: 30 dager\n"
+        "Rådgivning | 10 | timer | 1500 | 1"
+    )
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "complete", answering(reply))
+    company = signed_in_company(client)
+    customer = make_customer(client, company["id"], name="Bygg og Anlegg AS")
+
+    proposal = draft_invoice(client, company["id"], text).json()
+    assert proposal["party_id"] == customer["id"]
+    assert proposal["party_match"] == "navn"
+    assert proposal["buyer_is_business"] is True
+    assert proposal["delivery_date"] == DELIVERED.isoformat()
+    assert proposal["delivery_place"] == "Bergen"
+    assert proposal["due_date"] == (oslo_today() + timedelta(days=30)).isoformat()
+    assert proposal["buyer_reference"] == "Ola Nordmann"
+    assert proposal["warnings"] == []
+
+    created = write(
+        client, "POST", f"/api/v1/companies/{company['id']}/faktura", json=as_draft(proposal)
+    )
+    assert created.status_code == 201, created.text
+    invoice = issue(client, company["id"], created.json()["id"]).json()
+
+    assert invoice["status"] == "utstedt"
+    assert invoice["party_id"] == customer["id"]
+    # The register's details, not the sentence's.
+    assert invoice["buyer_name"] == "Bygg og Anlegg AS"
+    assert invoice["buyer_orgnr"] == CUSTOMER_ORGNR
+    assert invoice["buyer_address_line"] == "Storgata 1"
+    assert invoice["delivery_date"] == DELIVERED.isoformat()
+    assert invoice["delivery_place"] == "Bergen"
+    assert invoice["due_date"] == proposal["due_date"]
+    assert [line["net_amount"] for line in invoice["lines"]] == ["15000.00"]
+    assert invoice["gross_total"] == "18750.00"
+    assert invoice["payment_reference"] == "18"
+
+    summary = client.get(
+        f"/api/v1/companies/{company['id']}/cashflow/summary?financial_year={THIS_YEAR}"
+    ).json()
+    assert Decimal(summary["output_vat"]) == Decimal("3750.00")
+
+
+def test_a_new_address_in_the_text_for_a_registered_customer_is_pointed_out(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The draft prints the register's address, so the e-mail's new one must be read."""
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "complete", answering(CUSTOMER_EMAIL_REPLY))
+    company = signed_in_company(client)
+    customer = make_customer(client, company["id"], name="Fjord Aluminium AS", orgnr="910000039")
+
+    proposal = draft_invoice(client, company["id"], CUSTOMER_EMAIL).json()
+
+    assert proposal["party_id"] == customer["id"]
+    assert proposal["party_match"] == "orgnr"
+    assert any("annen fakturaadresse" in w for w in proposal["warnings"])
+
+
+def test_another_companys_customer_is_never_proposed(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One account, two sets of books: a name that fits next door is not a customer here."""
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        loynd, "complete", answering("kunde: Bygg og Anlegg AS\nRådgivning | 1 | stk | 900 | 1")
+    )
+    session = register(client)
+    organization_id = session["memberships"][0]["organization_id"]
+    ours = make_company(client, organization_id)
+    theirs = make_company(client, organization_id, orgnr="910000020", name="Annen Drift AS")
+    make_customer(client, theirs["id"], name="Bygg og Anlegg AS")
+
+    proposal = draft_invoice(client, ours["id"], "Rådgivning for Bygg og Anlegg AS, 900").json()
+
+    assert proposal["party_id"] is None
+    assert proposal["party_match"] is None
+    assert proposal["buyer_name"] == "Bygg og Anlegg AS"
+
+
+def test_a_buyer_the_text_does_not_name_never_reaches_the_proposal(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        loynd,
+        "complete",
+        answering(
+            "kunde: Hansen Bygg AS\nleveringsdato: 2026-03-31\nRådgivning | 10 | timer | 1500 | 1"
+        ),
+    )
+    company = signed_in_company(client)
+    make_customer(client, company["id"], name="Hansen Bygg AS")
+
+    proposal = draft_invoice(client, company["id"], "10 timer rådgivning i mars à 1500").json()
+
+    assert proposal["buyer_name"] is None
+    assert proposal["party_id"] is None
+    assert proposal["delivery_date"] is None
+    assert len(proposal["lines"]) == 1
+
+
+def test_a_text_with_nothing_in_it_says_so(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "complete", answering("kunde: -\nadresse: -"))
+    company = signed_in_company(client)
+
+    proposal = draft_invoice(client, company["id"], "Takk for sist!").json()
+
+    assert proposal["lines"] == []
+    assert proposal["buyer_name"] is None
+    assert proposal["warnings"][0].startswith("Vi fant verken kjøper eller fakturalinjer")
+
+
+def test_a_company_that_switched_ki_off_is_not_asked_about(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked = False
+
+    async def complete(**kwargs: Any) -> str:
+        nonlocal asked
+        asked = True
+        return ""
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "complete", complete)
+    company = signed_in_company(client)
+    write(client, "PATCH", f"/api/v1/companies/{company['id']}", json={"ki_enabled": False})
+
+    response = draft_invoice(client, company["id"], CUSTOMER_EMAIL)
+
+    assert response.status_code == 200
+    assert response.json()["buyer_name"] is None
+    assert "KI er slått av" in response.json()["warnings"][0]
+    assert not asked
+
+
+def test_a_proposal_without_a_model_is_an_empty_form_not_an_error(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    company = signed_in_company(client)
+    unconfigured = draft_invoice(client, company["id"], CUSTOMER_EMAIL)
+    assert unconfigured.status_code == 200
+    assert "Løynd" in unconfigured.json()["warnings"][0]
+
+    async def refusing(**kwargs: Any) -> str:
+        raise loynd.LoyndUnavailableError("nede")
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "complete", refusing)
+    down = draft_invoice(client, company["id"], CUSTOMER_EMAIL)
+    assert down.status_code == 200
+    assert down.json()["lines"] == []
+    assert "svar fra Løynd" in down.json()["warnings"][0]
+
+
+def test_a_viewer_has_nothing_to_propose(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "complete", answering(CUSTOMER_EMAIL_REPLY))
+    owner = register(client)
+    company = make_company(client, owner["memberships"][0]["organization_id"])
+    join_company(client, company["id"], email="revisor@example.no", role="viewer")
+
+    assert draft_invoice(client, company["id"], CUSTOMER_EMAIL).status_code == 403
+
+
+def test_a_text_longer_than_we_accept_is_refused_before_it_is_sent(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked = False
+
+    async def complete(**kwargs: Any) -> str:
+        nonlocal asked
+        asked = True
+        return ""
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "complete", complete)
+    company = signed_in_company(client)
+
+    assert draft_invoice(client, company["id"], "x" * 2001).status_code == 422
     assert not asked

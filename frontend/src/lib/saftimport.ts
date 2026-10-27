@@ -6,7 +6,8 @@
  * The figures themselves are the server's (`review`), never recomputed here.
  */
 
-import type { MvaPeriodRow, SaftImport, SaftMoveReview } from './api';
+import type { MvaPeriodRow, SaftArchive, SaftImport, SaftMoveReview } from './api';
+import { fileSize } from './format';
 
 /**
  * Whether the server is working on it: the page polls until it is not. Any
@@ -31,6 +32,21 @@ export function currentComparison(jobs: SaftImport[]): SaftImport | null {
   return jobs.find((job) => job.purpose === 'sammenligning') ?? null;
 }
 
+/**
+ * Whether the server has posted the books and is keeping the export's
+ * documents. `posted_at` is set in the books' own transaction, before the
+ * documents, so it tells the two halves of a posting apart, and only the
+ * second has a count to show.
+ */
+export function keepingDocuments(job: SaftImport): boolean {
+  return job.status === 'posting' && job.posted_at !== null;
+}
+
+/** How many documents the review's exports hold, kept on the yes. */
+export function documentsIn(review: SaftMoveReview): number {
+  return review.archives.reduce((sum, archive) => sum + archive.documents, 0);
+}
+
 /** «2025», «2024–2026». */
 export function yearSpan(review: SaftMoveReview): string {
   const years = review.years.map((year) => year.year);
@@ -49,6 +65,10 @@ export function postLabel(review: SaftMoveReview): string {
   if (opening !== null && (opening.action === 'post' || opening.action === 'replace')) {
     return 'Før inngående balanse';
   }
+  // The books are in Myntos already (brought over before the documents were
+  // kept), and the export's documents are what is left to do.
+  const documents = documentsIn(review);
+  if (documents > 0) return `Ta vare på ${plural(documents, 'dokument', 'dokumenter')}`;
   return 'Ingenting nytt å føre';
 }
 
@@ -73,8 +93,46 @@ export function summary(review: SaftMoveReview): string {
   return parts.join(' ');
 }
 
-/** «Ført 601 bilag for 2025–2026.» for a posted import. */
+/** One export in the review: «fiken-komplett-gard.zip»: 1 204 dokumenter, 512.0 MB. */
+export function archiveLine(archive: SaftArchive): string {
+  return (
+    `«${archive.file_name}» har ${plural(archive.documents, 'dokument', 'dokumenter')} ` +
+    `(${fileSize(archive.bytes)}) som tas vare på i Myntos.`
+  );
+}
+
+/** Why a file in the export is not kept, as the review lists it. */
+export function skipReason(reason: SaftArchive['skipped'][number]['reason']): string {
+  switch (reason) {
+    case 'encrypted':
+      return 'låst med passord';
+    case 'too_large':
+      return 'større enn 100 MB';
+    case 'too_many':
+      return 'over det Myntos tar fra en eksport';
+    case 'broken':
+      return 'kunne ikke pakkes ut';
+  }
+}
+
+/** What was kept of the exports' documents, once they are; null before or without any. */
+export function keptSummary(archives: SaftArchive[]): string | null {
+  if (archives.length === 0 || archives.every((archive) => archive.kept === null)) return null;
+  const sum = (pick: (archive: SaftArchive) => number | null): number =>
+    archives.reduce((total, archive) => total + (pick(archive) ?? 0), 0);
+  const parts = [`Tok vare på ${plural(sum((a) => a.kept), 'dokument', 'dokumenter')} fra eksporten.`];
+  const already = sum((a) => a.already_kept);
+  if (already > 0) parts.push(`${plural(already, 'dokument', 'dokumenter')} var tatt vare på fra før.`);
+  const skipped = sum((a) => a.skipped_count);
+  if (skipped > 0) parts.push(`${plural(skipped, 'fil', 'filer')} i eksporten ble ikke tatt vare på.`);
+  return parts.join(' ');
+}
+
+/** «Ført 601 bilag for 2025–2026.» for a posted import, and what was kept of its export. */
 export function postedSummary(result: SaftMoveReview): string {
+  const kept = keptSummary(result.archives);
+  // A posting of the documents alone posted no books, and says nothing about them.
+  if (!result.postable) return kept ?? '';
   const parts = [`Ført ${plural(result.vouchers, 'bilag', 'bilag')} for ${yearSpan(result)}.`];
   const opening = result.opening;
   if (opening !== null && (opening.action === 'post' || opening.action === 'replace')) {
@@ -90,6 +148,7 @@ export function postedSummary(result: SaftMoveReview): string {
       : null,
   ].filter((part): part is string => part !== null);
   if (added.length > 0) parts.push(`La til ${added.join(', ')}.`);
+  if (kept !== null) parts.push(kept);
   return parts.join(' ');
 }
 
