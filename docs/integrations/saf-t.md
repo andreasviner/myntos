@@ -322,11 +322,56 @@ The page is `/tidligere-program/`.
 - **VAT copied, not recomputed:** code (the file's `StandardTaxCode`), rate,
   basis and both amounts. `UTTAK-`, `TAP-`, `JUST-` and `TILB-` codes become
   the melding's spesifikasjon; `-K` compensation codes are refused.
+- **Fiken's VAT is read as Fiken meant it** (`vat_as_kept`), because Fiken's
+  files write it in a way that, read literally, is wrong on every line. Found
+  2026-10-28 by running the first Fiken customer's complete export (ten years)
+  through a scratch copy with his permission:
+  - **A reverse charge is two entries** of code 86 on the cost line, the VAT as
+    debit (the deduction) and as credit (what is owed). Read as written that
+    nets to nothing. It becomes the one entry Myntos and Skatteetaten's
+    examples use, on the purchase's side, and the melding makes both the output
+    line and the deduction (`omvendt_avgift_samlet`). This was what stopped
+    that customer's import (`flere_mva_koder`, 2026-10-27), not several codes.
+  - **The VAT is always a debit**, a sale's too. Read as written, a sale is a
+    deduction. An ordinary code's VAT is put on its line's side, so a sale is
+    owed and a kreditnota takes it back (`mva_paa_linjens_side`). This is only
+    done where the VAT is the code's rate of the line's amount to the øre: a
+    code written on the customer's line instead of the sale's would otherwise
+    become a deduction. A code with a spesifikasjon is left alone, because its
+    direction is the spesifikasjon's.
+  - **The base is always 0.00.** A lone code's base becomes the line's amount
+    where the VAT is the rate of it (`mva_grunnlag_fra_linjen`). At 0 % that
+    always holds, so code 5 and 6 sales get their base too.
+
+  **The comparison could not see any of this.** It reads the file through the
+  same function, and before the function existed it read it as wrongly as the
+  import posted it, so it said `stemmer` on books whose melding was off by
+  tens of thousands a term. The check that caught it was the MVA page's
+  reconciliation of the melding against 2700 and 2710. After the fix all 44
+  of that export's terms with VAT reconcile to 0.00, including one where
+  kreditnotaer outweighed sales and the output VAT is negative, as Fiken
+  settled it. Tripletex writes none of this, and the Reime Gard pilot is
+  unchanged.
+- **A line with several codes becomes a line per code** (`vat_parts`), on the
+  same account, party and dimensions, each with its code's base as its amount
+  and its `TaxInformation` as the file has it; what the bases leave of the
+  line goes with the largest. SAF-T allows any number of `TaxInformation` on a
+  line; Myntos keeps one code on a line (`mva_koder_delt`). The balances stay
+  the file's and so does every VAT figure, code by code, which is how the
+  comparison reads the file. When the bases add up to more than the line
+  (beyond an øre per code) it is still refused (`flere_mva_koder`): then the
+  codes are not parts of the line, and which part is which is not in the file.
 - **The old program's settlements stay settlements.** A voucher of VAT accounts
-  against 2740 with only øre beside it gets the settlement's voucher type
+  against 2740 with only rounding beside it gets the settlement's voucher type
   (`mva_avregning`), and `ledger.service.not_a_settlement()` leaves it out of
   the year's VAT figures and the MVA page's reconciliation as it does Myntos's
   own. Without it every term the old program filed would reconcile to nothing.
+  The rounding allowed is under a krone for each VAT line settled, not a krone
+  in all: the old melding took each post in whole kroner, and Fiken settled a
+  term with input VAT of 223.50 and 70.93 as 223 and 70, with 1.43 on 7740.
+  Under the old one-krone limit that voucher counted as the term's VAT, because
+  it was dated on the term's last day, and the whole payable amount showed up
+  as a difference.
 - **Not in the register**, which lists what was registered in Myntos and cannot
   read another program's voucher back as a category; the register refuses to
   reverse one (`cannot_reverse_here`). It counts everywhere else.

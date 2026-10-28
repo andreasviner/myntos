@@ -1104,6 +1104,38 @@ def test_a_fee_is_not_vat() -> None:
     assert read(FINN, today=TODAY).vat_amount != Decimal("206.00")
 
 
+# Biltema's till receipt, as Løynd transcribed the `biltema1/` photograph: the
+# header and the figures, without the items in between or the card terminal's
+# lines below.
+BILTEMA = """Biltema Norge avd 275 Lade
+Foretaksregisteret NO 882692302 MVA
+SALGSKVITTERING
+Kvitt. 127875 27.10.2026 14:27:18
+Herav mva 153.04 Ant. varer 10
+28442 OPPBEVARINGSBOKS. 70 L
+1 * 99.90 99.90
+TOTALT Å BETALE 765.20
+BANK 765.20
+MVA% Grunnlag MVA Totalt
+25.00 612.16 153.04 765.20
+"""
+
+
+def test_the_next_field_on_a_vat_line_is_not_the_vat() -> None:
+    """«Ant. varer 10» is how many things were bought, printed beside the VAT."""
+    found = read(BILTEMA, today=TODAY)
+    assert found.gross_amount == Decimal("765.20")
+    assert found.vat_amount == Decimal("153.04")
+    assert found.net_amount == Decimal("612.16")
+    assert found.vat_rate == Decimal("0.25")
+
+
+def test_a_basis_before_the_vat_is_still_read_past() -> None:
+    """Figures with no words between them are one field, and the VAT is the last."""
+    found = read("Faktura\n25 % mva av 12 500,00 3 125,00\nÅ betale 15 625,00\n", today=TODAY)
+    assert found.vat_amount == Decimal("3125.00")
+
+
 def test_a_labelled_amount_does_not_reach_over_a_line_with_words_on_it() -> None:
     """How the fee above was claimed: two lines below a rate that had no figure."""
     assert read(FINN, today=TODAY).vat_amount is None

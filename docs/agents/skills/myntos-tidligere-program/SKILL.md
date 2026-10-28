@@ -380,10 +380,15 @@ worked on, and not an archived one).
 | `kontoer_mangler`, `parter_mangler`, `dimensjoner_mangler` | feil | Accounts, parties or dimension values to add (one-file routes; the import adds them itself) | Add them, or use the import |
 | `bilag_i_ubalanse` | feil | A voucher in the file does not balance | Ask for a fresh export; it is the old program's to fix |
 | `ukjent_konto` | feil | An account id with no four-digit NS 4102 number | Tell the person; it needs the old program's accountant |
-| `mva_kode_ukjent`, `flere_mva_koder` | feil | A VAT code Myntos does not file (the `-K` compensation codes), or two on one line | Tell the person; these need to be booked another way |
+| `mva_kode_ukjent` | feil | A VAT code Myntos does not file (the `-K` compensation codes) | Tell the person; these need to be booked another way |
+| `flere_mva_koder` | feil | A line whose VAT codes have bases adding up to more than the line, so they are not parts of it and which part is which is not in the file | Tell the person to report it under «Meld feil eller ønsker»; meanwhile `til` the day before the first named bilag brings over everything before it |
 | `ingen_periode` | feil | `til` is before 1 January | Send a later date |
 | `konto_som_inngaende_balanse` | merknad | Lines follow an account the opening balance moved | Nothing |
 | `mva_underkonto` | merknad | VAT sub-accounts put on 2700 and 2710 | Nothing |
+| `mva_koder_delt` | merknad | Lines with several VAT codes (two rates on one income line) became a line per code on the same account, each with the file's base and VAT | Nothing |
+| `omvendt_avgift_samlet` | merknad | Reverse charges (code 86 and the like) written as two VAT entries on one line, the VAT owed and the same VAT deducted, as Fiken does, became one entry; the melding gets both the output VAT and the deduction | Nothing |
+| `mva_paa_linjens_side` | merknad | Lines whose VAT was on the other side from the line (Fiken writes all VAT as debit, a sale's too) got it on the line's side, so a sale is output VAT and a kreditnota takes it back | Nothing. Read as written, every sale would have been a deduction |
+| `mva_grunnlag_fra_linjen` | merknad | Lines with base 0 and VAT that is the rate of the line's amount got the line's amount as base, so the melding has the grunnlag | Nothing |
 | `bilag_delt_paa_dato` | merknad | Vouchers split by date | Nothing |
 | `allerede_hentet`, `bilag_etter_perioden`, `bilag_for_aaret` | merknad | Skipped: already here, after `til`, or before the year (in the opening balance) | Nothing |
 | `dimensjoner_utelatt` | merknad | The file's other dimensions (Tripletex's «Bilagsart», «Ansatte») stay behind; only avdeling, prosjekt, driftsgren and produkt come along, and on a farm the avdeling and product in a six- or nine-digit account id (myntos-avdelinger) | Nothing |

@@ -72,7 +72,13 @@ from myntos.domain.mva.periods import Termin, termin_for
 from myntos.saft.errors import SaftWrongYearError
 from myntos.saft.opening_import import check_company, match_party, target_account
 from myntos.saft.reader import PartyKind, SaftEntries
-from myntos.saft.voucher_import import ImportSource, account_map, parts_by_date, split_code
+from myntos.saft.voucher_import import (
+    ImportSource,
+    account_map,
+    parts_by_date,
+    split_code,
+    vat_as_kept,
+)
 
 ZERO = Decimal("0.00")
 VAT_ACCOUNT = "2740"
@@ -238,7 +244,9 @@ async def compare(
                 and (moved.get(line.account_id) or target_account(line.account_id)) in _SUB_LEDGER
             ):
                 file_parties[(line.party_kind, line.party_id)] += line.amount
-            for tax in line.taxes:
+            # Fiken's VAT read as the import posts it: read raw, a sale's VAT is a
+            # deduction, every base is 0 and a reverse charge nets to nothing.
+            for tax in vat_as_kept(line, file_codes).taxes:
                 stripped, spesifikasjon = split_code(tax.code)
                 code = file_codes.get(tax.code) or stripped
                 if code in NON_REPORTABLE_STANDARD_TAX_CODES:

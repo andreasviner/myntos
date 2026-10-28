@@ -84,7 +84,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     pageFor,
     requestFields,
   } from '../lib/approvals';
-  import { currentCompany, loadCompanies } from '../lib/company';
+  import { currentCompany, loadCompanies, showWaitingCount } from '../lib/company';
   import { el, setStatus, show } from '../lib/dom';
   import { fileSize, isoDate, orgnummer } from '../lib/format';
   import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
@@ -312,6 +312,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       government = await getGovernmentLoginStatus().catch(() => government);
     }
     const decided = all.filter((item) => !isWaiting(item));
+    // Tallet ved «Godkjenning» i menyen leses bare når siden lastes, så det
+    // følger lista her, ellers sto (1) igjen etter at den siste var godkjent.
+    showWaitingCount(waiting.length);
     el('#venter').replaceChildren(...waiting.map(waitingCard));
     show(el('#ingen-venter'), waiting.length === 0);
     el('#avgjort').replaceChildren(...decided.slice(0, 50).map(decidedRow));

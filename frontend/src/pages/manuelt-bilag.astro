@@ -271,6 +271,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   import { fileSize, isoDate, kroner, orgnummer, todayIso } from '../lib/format';
   import { settleLimited } from '../lib/parallel';
   import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+  import { fillTaxSelect } from '../lib/taxcodes';
 
   // Fire om gangen, som i kontantstrømmen: under databasens pulje på fem.
   const UPLOADS_AT_ONCE = 4;
@@ -359,23 +360,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     const select = document.createElement('select');
     select.className = 'tax';
     select.setAttribute('aria-label', 'Mva-kode');
-    const none = document.createElement('option');
-    none.value = '';
-    none.textContent = 'Ingen';
-    select.append(none);
     const codes = [...(state?.tax_codes ?? [])];
     // Et bilag som rettes kan ha en kode som ikke tilbys i dag. Den vises
     // likevel, så rettingen ikke stille fjerner mva; kontrollen sier fra.
     if (selected !== null && !codes.some((code) => code.code === selected)) {
       codes.push({ code: selected, description: '', rate_percent: '' });
     }
-    for (const code of codes) {
-      const option = document.createElement('option');
-      option.value = code.code;
-      option.textContent = code.description ? `${code.code} ${code.description}` : code.code;
-      option.selected = code.code === selected;
-      select.append(option);
-    }
+    // Gruppert, men ikke snevret inn: en linje her har en konto og ingen type,
+    // så siden av handelen er ikke kjent.
+    fillTaxSelect(select, codes);
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = 'Ingen';
+    select.prepend(none);
+    select.value = selected ?? '';
     return select;
   }
 

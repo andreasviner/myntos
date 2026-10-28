@@ -1,10 +1,12 @@
 """Read and answer feedback, on the machine Myntos runs on.
 
-There is no page or route for this, on purpose: reading every sender's words
-would need an operator plane in the API, which Myntos does not have, and the
-feedback is the one place strangers can write freely to the operator. The
-shell is already the operator's, so this reads the database the backend reads
-(``<repo>/.env``) and nothing more. docs/feedback.md has the whole workflow.
+The operator's page (``/drift/``, docs/operator.md) reads the same items and
+sets their status. Replying, publishing, unpublishing and deleting are only
+here, on purpose: a reply reaches the sender, a summary reaches the public
+list and a deletion cannot be undone, so they need the shell, which is already
+the operator's, and not a key that could leak. This reads the database the
+backend reads (``<repo>/.env``) and nothing more. docs/feedback.md has the
+whole workflow.
 
     uv run python -m myntos.domain.feedback.triage list            # unread
     uv run python -m myntos.domain.feedback.triage list --status all

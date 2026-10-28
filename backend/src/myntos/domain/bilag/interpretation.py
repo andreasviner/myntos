@@ -114,12 +114,7 @@ def signed_amounts_in(line: str) -> list[tuple[Decimal, bool]]:
     coming back.
     """
     found: list[tuple[Decimal, bool]] = []
-    numbers = _number_spans(line)
-    for match in _AMOUNT_RE.finditer(line):
-        if _PERCENT_AFTER.match(line, match.end()) is not None:
-            continue
-        if _inside(match, numbers):
-            continue
+    for match in _amount_matches(line):
         value = parse_amount(match.group())
         if value is not None:
             found.append((value, _MINUS_BEFORE.search(line[: match.start()]) is not None))
@@ -133,16 +128,21 @@ def amounts_in(line: str) -> list[Decimal]:
     is what lets ``Mva 25 % 312,50`` be read for its 312,50.
     """
     found: list[Decimal] = []
-    numbers = _number_spans(line)
-    for match in _AMOUNT_RE.finditer(line):
-        if _PERCENT_AFTER.match(line, match.end()) is not None:
-            continue
-        if _inside(match, numbers):
-            continue
+    for match in _amount_matches(line):
         value = parse_amount(match.group())
         if value is not None:
             found.append(value)
     return found
+
+
+def _amount_matches(line: str) -> list[re.Match[str]]:
+    """Where on the line the amounts are: every figure but rates and account numbers."""
+    numbers = _number_spans(line)
+    return [
+        match
+        for match in _AMOUNT_RE.finditer(line)
+        if _PERCENT_AFTER.match(line, match.end()) is None and not _inside(match, numbers)
+    ]
 
 
 def _number_spans(line: str) -> list[tuple[int, int]]:
@@ -938,6 +938,80 @@ def _has_label(low: str, labels: tuple[str, ...]) -> bool:
     return False
 
 
+def _label_span(line: str, labels: tuple[str, ...]) -> tuple[int, int] | None:
+    """Where the first of ``labels`` on the line is, found as :func:`_has_label` finds it."""
+    first: tuple[int, int] | None = None
+    for label in labels:
+        pattern = re.escape(label)
+        if len(label) <= _WHOLE_WORD_LABEL:
+            pattern = rf"(?<!\w){pattern}(?!\w)"
+        match = re.search(pattern, line, re.IGNORECASE)
+        if match is None:
+            continue
+        # The earliest, and of two starting together the longer: "Herav mva" is
+        # one label, not "Herav" with "mva" after it.
+        if first is None or (match.start(), -match.end()) < (first[0], -first[1]):
+            first = (match.start(), match.end())
+    return first
+
+
+#: A word, for finding where one field on a line stops and the next begins.
+_WORD = re.compile(r"[^\W\d_]+")
+#: Words that belong to the figure beside them rather than starting a field:
+#: «153,04 kr», and the ISO code between a foreign figure and the kroner one.
+_CURRENCY_TOKEN = re.compile(r"(?i:kr|nok|kroner)|[A-Z]{3}")
+#: A figure written with its øre, which is how a sum is printed and a count
+#: never is.
+_WITH_ORE = re.compile(r"[.,]\d{1,2}$")
+
+
+def _label_field(line: str, labels: tuple[str, ...]) -> str:
+    """The line as far as the end of the field its label begins.
+
+    A till receipt prints two fields to a line. Biltema's reads «Herav mva
+    153.04 Ant. varer 10», and the last figure on it is how many things were
+    bought, so a receipt with 153,04 kroner of VAT on it came back with 10, and
+    then with a warning that its amounts did not add up.
+
+    So the field ends at the first word after its first sum, a figure with øre.
+    A sum, not any figure: eBay's «Total for 1 items: 600,62 kr» has a count
+    inside its own label, and cutting after the 1 made the total 1 krone.
+    «25 % mva av 12 500,00 312,50» has only figures after its first sum and is
+    still read whole, for its 312,50. A line with no øre on it at all is read
+    as it always was.
+    """
+    span = _label_span(line, labels)
+    if span is None:
+        return line
+    sums = [
+        match
+        for match in _amount_matches(line)
+        if match.start() >= span[1] and _WITH_ORE.search(match.group()) is not None
+    ]
+    if not sums:
+        return line
+    for word in _WORD.finditer(line, sums[0].end()):
+        if _CURRENCY_TOKEN.fullmatch(word.group()) is None:
+            return line[: word.start()]
+    return line
+
+
+def _in_column(header: str, labels: tuple[str, ...], row: list[tuple[Decimal, bool]]) -> int:
+    """Which of the figures in ``row`` stands under the label in ``header``.
+
+    The last, unless the header is a table's: Biltema prints its VAT summary as
+    «MVA% Grunnlag MVA Totalt» over «25.00 612.16 153.04 765.20», and taking the
+    last figure for «Grunnlag» made the net the whole 765,20 and the rate 20 %.
+    Only when the header has exactly as many words as the row has figures; a
+    heading of two words over one figure is read the old way.
+    """
+    span = _label_span(header, labels)
+    columns = [match.start() for match in re.finditer(r"\S+", header)]
+    if span is None or len(columns) != len(row) or len(row) < 2:
+        return -1
+    return sum(1 for start in columns if start <= span[0]) - 1
+
+
 def _is_bare_amount(line: str) -> bool:
     """True for a line holding nothing but a figure — ``1 562,50``, ``kr 1 562,50``."""
     if not amounts_in(line):
@@ -957,9 +1031,12 @@ def _labelled_amount(
 
     The **last** figure on the line is the one taken: ``25 % mva av 12 500,00
     312,50`` states the basis before the amount, and a layout that prints more
-    than one figure prints the one it is talking about last. When the label sits
+    than one figure prints the one it is talking about last. The line ends where
+    the label's field does, because a receipt prints the next field beside it
+    (:func:`_label_field`). When the label sits
     alone on its line — which happens when a PDF's text comes out column by
-    column — the following line is used if it holds nothing but a figure.
+    column — the following line is used if it holds nothing but figures, and
+    the one under the label when the label heads a table (:func:`_in_column`).
 
     ``allow_zero`` is for the VAT line only: a total of nothing is a misreading,
     while VAT of nothing is a fact worth knowing — it is how an invoice from
@@ -991,7 +1068,7 @@ def _labelled_amounts(
             continue
         if any(word in low for word in exclude):
             continue
-        found = signed_amounts_in(line)
+        found = signed_amounts_in(_label_field(line, labels))
         pair = found[-1] if found else None
         if pair is None:
             # Only across blank lines. Scanning past a line with words on it is
@@ -1002,7 +1079,8 @@ def _labelled_amounts(
                 if not following.strip():
                     continue
                 if _is_bare_amount(following):
-                    pair = signed_amounts_in(following)[-1]
+                    row = signed_amounts_in(following)
+                    pair = row[_in_column(line, labels, row)]
                 break
         if pair is None:
             continue
@@ -2451,9 +2529,10 @@ def apply_type(
         # orders on one card charge (9 771,76) came back with no code, so the
         # form fell back to the category: 0 for an unregistered company, without
         # a word about the 25 % on the invoices, which read as a mistake; and
-        # 25 % for a registered one, deducting 1 954 kroner of VAT when 333 was
-        # charged and none of it was deductible. The 5 908,81 spot welder in
-        # that charge was over the VOEC limit and carried no VAT at all.
+        # 25 % for a registered one, deducting 1 954 kroner of VAT that was paid
+        # to the shop in the price and none of which was deductible. Not 81/82
+        # either, which a person later chose by hand: they compute import VAT on
+        # top of a price that already has it in (regnaskaps_tests FASIT § 10).
         #
         # Before the currency, because a VOEC invoice prints its own currency
         # beside the kroner, and "ingen norsk mva" would be untrue of it.
@@ -2610,6 +2689,7 @@ def suggest(
     model_fields: frozenset[str] = frozenset(),
     direction: CashFlowDirection | None = None,
     farm: bool = False,
+    pictures: bool = False,
 ) -> InvoiceSuggestion:
     """Propose form values for the invoice in ``text``.
 
@@ -2632,6 +2712,11 @@ def suggest(
     ``farm`` is whether the books have the farming add-on, which makes a
     melkeoppgjør or a slakteoppgjør read as what it is: a sale the buyer wrote
     up (:func:`issued_by_buyer`).
+
+    ``pictures`` is whether every document behind ``text`` is an image. An
+    empty text then says nothing about a PDF, and the caller words what went
+    wrong with the pictures itself; a photographed receipt used to come back
+    told both that the photo was unreadable and that "the PDF" had no text.
     """
     hints = parties or []
 
@@ -2647,10 +2732,11 @@ def suggest(
     )
 
     if not text.strip():
-        suggestion.warnings.append(
-            "Vi fant ingen tekst i PDF-en. Er den skannet eller fotografert, må du fylle "
-            "ut feltene selv. Dokumentet blir lagret som bilag uansett."
-        )
+        if not pictures:
+            suggestion.warnings.append(
+                "Vi fant ingen tekst i PDF-en. Er den skannet eller fotografert, må du fylle "
+                "ut feltene selv. Dokumentet blir lagret som bilag uansett."
+            )
         return suggestion
 
     # --- Who it is with, which is also the best evidence of direction ---

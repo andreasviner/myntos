@@ -86,7 +86,12 @@ newline and tab are removed, because the operator reads it in a terminal. A
 and `agent_name` are taken on trust and decide nothing; a person's submission
 never keeps a program name.
 
-## The operator's side is a shell, not a page
+## The operator reads on a page and acts in the shell
+
+Reading and the status are on `/drift/` (docs/operator.md), opened by the
+deployment's operator key and nothing else: every item with the sender's text,
+newest first, and a status to set. Everything that reaches somebody or cannot
+be undone stays in the shell:
 
 ```
 cd backend
@@ -100,16 +105,26 @@ uv run python -m myntos.domain.feedback.triage unpublish 12
 uv run python -m myntos.domain.feedback.triage delete 12            # spam, or a sender's request
 ```
 
-There is no operator plane in the API, and reading every stranger's words is
-not a reason to build one: a route that could do it would be the most
-attractive one in Myntos, guarded by whatever an operator role turned out to
-be. The shell is already the operator's. On the production box the command
-reads `<repo>/.env`, so it is production's feedback.
+Until 2026-10-28 there was no page at all, and this section said why: a route
+that reads every stranger's words would be the most attractive one in Myntos,
+guarded by whatever an operator role turned out to be. The owner asked for
+the page anyway, after a customer's report had to be answered from the
+journal over ssh, and the objection is met rather than dropped. It is not a
+role: there is no operator account, membership or session, only one 256-bit
+key per deployment, stored as its digest, that no company's key or login can
+stand in for. Unset, the routes answer 404. And it is not the whole of the
+shell's power: a reply reaches the sender, a summary reaches the public list
+and a deletion is for good, so a key that leaks can mark items read and
+nothing worse (`test_a_leaked_key_can_change_a_status_and_nothing_else`). On
+the production box the command reads `<repo>/.env`, so it is production's
+feedback, as the page is.
 
-`show` prints the sender's text between markers labelled untrusted. It was
-written by a stranger to be read by whoever reads it, and if the operator's
-terminal has an assistant in it, that is who reads it
-(docs/agents-and-api.md rule 7, from the other side).
+Wherever the text is shown, it was written by a stranger to be read by
+whoever reads it. `show` prints it between markers labelled untrusted, because
+if the operator's terminal has an assistant in it, that is who reads it
+(docs/agents-and-api.md rule 7, from the other side). The page puts it in with
+`textContent` only, and the same goes for an assistant in the operator's
+browser.
 
 ## Retention
 

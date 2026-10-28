@@ -595,6 +595,9 @@ export interface BankAccount {
   is_primary: boolean;
 }
 
+/** The levels of sharing with Myntos, lowest first. See lib/datasharing.ts. */
+export type DataSharingLevel = 'none' | 'usage' | 'anonymised' | 'everything';
+
 export interface Company {
   id: number;
   organization_id: number;
@@ -641,6 +644,12 @@ export interface Company {
    * `setAgentAccess`, never through `updateCompany`.
    */
   agent_access_enabled: boolean;
+  /**
+   * What these books let Myntos use to improve Myntos. `none` until an owner or
+   * admin chooses otherwise under Innstillinger; what each level covers is in
+   * lib/datasharing.ts. Changed only through `setDataSharing`.
+   */
+  data_sharing: DataSharingLevel;
   /**
    * Whether somebody has proved through Altinn that they may act for this orgnr.
    *
@@ -1260,6 +1269,10 @@ export const stopAgentKey = (companyId: number, keyId: number): Promise<void> =>
 export const setAgentAccess = (companyId: number, enabled: boolean): Promise<Company> =>
   json<Company>(`/api/v1/companies/${companyId}/agent-access`, 'PUT', { enabled });
 
+/** Choose what these books let Myntos use. Owners and admins, never a key. */
+export const setDataSharing = (companyId: number, level: DataSharingLevel): Promise<Company> =>
+  json<Company>(`/api/v1/companies/${companyId}/datadeling`, 'PUT', { level });
+
 // --- Requests that wait for approval -----------------------------------------------
 //
 // A key whose person chose «Spør meg først» does not write on its own: each
@@ -1494,14 +1507,25 @@ export interface CashFlowType {
    * business has. Only an add-on the company has switched on reaches the page.
    */
   segment?: string | null;
+  /**
+   * The side of the trade: `inn` a sale, `ut` a purchase. The same as
+   * `direction` except on a reversal, where the bank moved the other way.
+   * «Mva-kode» offers the codes of this side (lib/taxcodes.ts).
+   */
+  books_as: Direction;
 }
 
 export type AccountType = 'eiendel' | 'gjeld' | 'egenkapital' | 'inntekt' | 'kostnad';
+
+/** What a code is in the MVA-melding: output VAT, input VAT, or reverse charge. */
+export type TaxCodeKind = 'utgaaende' | 'inngaaende' | 'omvendt';
 
 export interface TaxCode {
   code: string;
   description: string;
   rate_percent: string;
+  /** Null for 0, which goes with either side; absent on a code kept only for a correction. */
+  kind?: TaxCodeKind | null;
 }
 
 export interface Catalogue {
@@ -4907,3 +4931,100 @@ export const withdrawFeedback = (reference: string): Promise<void> =>
 
 export const listPublishedFeedback = (): Promise<PublishedFeedback[]> =>
   request<PublishedFeedback[]>(FEEDBACK);
+
+// --- The operator's page (/drift/, docs/operator.md) ---------------------------------
+//
+// Opened by the deployment's operator key and by nothing else: not a session,
+// not a company's key. The key goes as a bearer token and the session cookie
+// stays home (`credentials: 'omit'`), because the request is not the person's
+// and nothing about it should look like it was.
+
+export type ServerErrorStatus = 'open' | 'resolved';
+
+/** One feedback item as the operator reads it, with the sender's own words. */
+export interface OperatorFeedback {
+  number: number;
+  kind: FeedbackKind;
+  source: 'person' | 'agent';
+  agent_name: string | null;
+  /** Written by a stranger: shown with textContent, never as markup. */
+  text: string;
+  page: string | null;
+  status: FeedbackStatus;
+  reply: string | null;
+  /** The operator's public line; set means it is on the public list. */
+  summary: string | null;
+  created_at: string;
+  changed_at: string | null;
+}
+
+export interface ServerErrorFrame {
+  file: string;
+  line: number;
+  function: string;
+  code: string | null;
+}
+
+/** One kind of failure, kept without anybody's data. */
+export interface ServerErrorEntry {
+  number: number;
+  status: ServerErrorStatus;
+  exception: string | null;
+  causes: string[];
+  logger: string;
+  template: string;
+  route: string | null;
+  count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+  resolved_at: string | null;
+  /** The latest traceback, innermost last. */
+  frames: ServerErrorFrame[];
+}
+
+const DRIFT = '/api/v1/drift';
+
+function asOperator(key: string, init: RequestInit = {}): RequestInit {
+  return {
+    ...init,
+    credentials: 'omit',
+    headers: { ...(init.headers as Record<string, string> | undefined), Authorization: `Bearer ${key}` },
+  };
+}
+
+function operatorJson<T>(key: string, path: string, method: string, payload: unknown): Promise<T> {
+  return request<T>(
+    path,
+    asOperator(key, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  );
+}
+
+export const listOperatorFeedback = (
+  key: string,
+  status: FeedbackStatus | 'all' = 'all',
+): Promise<OperatorFeedback[]> =>
+  request<OperatorFeedback[]>(`${DRIFT}/tilbakemeldinger?status=${status}`, asOperator(key));
+
+export const setOperatorFeedbackStatus = (
+  key: string,
+  number: number,
+  status: FeedbackStatus,
+): Promise<OperatorFeedback> =>
+  operatorJson<OperatorFeedback>(key, `${DRIFT}/tilbakemeldinger/${number}/status`, 'PUT', { status });
+
+export const listServerErrors = (
+  key: string,
+  status: ServerErrorStatus | 'all' = 'open',
+): Promise<ServerErrorEntry[]> =>
+  request<ServerErrorEntry[]>(`${DRIFT}/feil?status=${status}`, asOperator(key));
+
+export const setServerErrorStatus = (
+  key: string,
+  number: number,
+  status: ServerErrorStatus,
+): Promise<ServerErrorEntry> =>
+  operatorJson<ServerErrorEntry>(key, `${DRIFT}/feil/${number}/status`, 'PUT', { status });

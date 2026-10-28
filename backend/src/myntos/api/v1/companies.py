@@ -31,6 +31,8 @@ from myntos.api.deps import KEY_READ, CurrentCompany, CurrentUser, DbSession, ke
 from myntos.api.v1.enhetsregisteret import RegisteredUnitResponse, RoleResponse
 from myntos.api.v1.skatt import authorized_parties_for
 from myntos.core.clock import as_utc, utc_now
+from myntos.domain.data_sharing import service as data_sharing_service
+from myntos.domain.data_sharing.models import DataSharingLevel
 from myntos.domain.identity import register_match
 from myntos.domain.identity import service as identity_service
 from myntos.domain.identity.access import (
@@ -99,6 +101,10 @@ class CompanyResponse(BaseModel):
     # below: it is access, and it has its own permission. See
     # myntos.domain.ledger.models.Company.
     agent_access_enabled: bool
+    # What these books let Myntos use to improve Myntos, ``none`` unless an
+    # owner or admin chose otherwise. Changed by PUT /companies/{id}/datadeling,
+    # never by the PATCH below. See docs/data-sharing.md.
+    data_sharing: DataSharingLevel
     # --- Copied from Enhetsregisteret ---
     # Refreshed by POST /companies/{id}/hent and by a confirmation. The register
     # is the authority for all of them, so these are a cache with a timestamp
@@ -228,6 +234,7 @@ def _company_response(company: Company, membership: CompanyMembership) -> Compan
         ],
         ki_enabled=company.ki_enabled,
         agent_access_enabled=company.agent_access_enabled,
+        data_sharing=data_sharing_service.level_of(company),
         industry_code=company.industry_code,
         industry_description=company.industry_description,
         website=company.website,
@@ -723,6 +730,48 @@ async def update_company(
         # been made, and Brønnøysund being slow is not a reason to refuse it.
         with contextlib.suppress(BrregError):
             await _refresh(db, company, context.membership)
+    return _company_response(company, context.membership)
+
+
+class DataSharingRequest(BaseModel):
+    level: DataSharingLevel
+
+
+@router.put("/companies/{company_id}/datadeling")
+async def set_data_sharing(
+    payload: DataSharingRequest, context: CurrentCompany, db: DbSession
+) -> CompanyResponse:
+    """Choose what these books let Myntos use to make Myntos better.
+
+    Four levels, each sharing everything the one before it does:
+
+    - ``none``: nothing. The default, for every company.
+    - ``usage``: which pages and features are used, how often, how long they
+      take and what fails. Nothing from the books.
+    - ``anonymised``: usage, and how Myntos's proposals for a bilag were
+      corrected (the category, account and VAT code proposed against the ones
+      chosen), with no names, organisation numbers, amounts, free text or
+      documents.
+    - ``everything``: the bilag (receipts and invoices) and everything entered
+      about them, **as they are, not anonymised**: the names, addresses and
+      amounts of customers, suppliers and employees included. Read by the
+      people who build Myntos, kept in the EEA, and never used to train a
+      model.
+
+    ``organization:manage`` (owners and admins), as for the KI switch: it is a
+    statement about the books, made by the people responsible for them, and it
+    has to hold whoever is signed in. Never through a key: what leaves the
+    books for Myntos's own use is the company's decision about its tools, not
+    one its tools may make.
+
+    Every change is logged with who made it. Lowering the level stops the use
+    at once. Setting the level it already has changes nothing and logs
+    nothing. Answers with the whole company, like every other change to it.
+    """
+    require_permission(context.membership.role, Permission.ORGANIZATION_MANAGE)
+    company = await data_sharing_service.choose(
+        db, context.company, payload.level, user_id=context.membership.user_id
+    )
     return _company_response(company, context.membership)
 
 

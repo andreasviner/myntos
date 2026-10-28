@@ -64,6 +64,7 @@ person.
    | `industry_code`, `industry_description`, `website`, `phone`, `email`, `parent_orgnr` | Copied from the register. `parent_orgnr` set means this is a subunit (*underenhet*) | «Næring», «Nettsted», «Telefon», «E-post», «Underenhet av» |
    | `register_synced_at` | When the copy was last refreshed from Enhetsregisteret; `null` is never | |
    | `ki_enabled` | Whether Myntos's own KI may read the company's bilag. Not about you | |
+   | `data_sharing` | What the company lets Myntos use to improve Myntos: `none` (the default), `usage`, `anonymised` or `everything` (the bilag as they are, not anonymised). Not about you | «Del data for å forbedre Myntos»: «Ingenting», «Bruksstatistikk», «Anonymiserte rettelser», «Alt, også bilag» |
    | `plan` | The subscription | «Abonnement» |
    | `role`, `permissions` | The person's role on these books (`owner`, `admin`, `member`, `viewer`: «Eier», «Administrator», «Medlem», «Leser») and what it allows | «Din rolle» |
 
@@ -188,6 +189,13 @@ choosing «Innstillinger for selskapet».
   [Roles and what each may do](https://myntos.no/llms/help/company-and-access/roles-and-permissions.md),
   [Invite an AI](https://myntos.no/llms/help/ai/invite-an-ai.md).
 - **The company's KI switch** (`ki_enabled`), on the KI page.
+- **What the company shares with Myntos** (`data_sharing`). It decides
+  whether Myntos may keep the company's bilag, names and amounts included, so
+  it is the people responsible for the books who choose, under «Del data for å
+  forbedre Myntos»:
+  [Share data to improve Myntos](https://myntos.no/llms/help/company-and-access/share-data-to-improve-myntos.md).
+  Never suggest a level; if asked, say what each level shares and leave the
+  choice to them.
 - **See the person's other companies, or set up a new one.** A key sees one
   set of books, and nothing above it.
 - **Delete the company, or open a deleted one again.** Only an owner can,

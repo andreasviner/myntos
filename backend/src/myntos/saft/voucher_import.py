@@ -52,6 +52,31 @@ A non-reportable code with no VAT on it (0, 7, 20-22) is left off rather than
 refused. Compensation codes (``-K``) belong to a category Myntos does not file,
 and are refused.
 
+**A line with several codes becomes a line per code.** SAF-T lets one line
+carry several ``TaxInformation``. Myntos keeps one code on a line, so each
+code gets a line of its own on the same account, its base as its amount and its
+tax information as the file has it (:func:`vat_parts`). Every balance stays the
+file's, and so does every VAT figure, code by code, which is how
+:mod:`myntos.saft.compare` reads the file. A line whose bases add up to more
+than its amount is still refused: then the codes are not parts of it.
+
+**Fiken's VAT is read as Fiken meant it, not as it is written.** The first
+person to bring their books over from Fiken could post none of their vouchers,
+because lines that looked like several codes stopped the whole import, and
+they were not several codes at all. Fiken writes a service bought
+abroad as two entries of code 86 on the cost line, both with a base of 0.00:
+the VAT as debit, which is the deduction, and the same VAT as credit, which is
+what is owed. Split as above that is twice the base and no VAT. Running the
+whole export through the VAT page then showed two habits more, on every line:
+the base is always 0.00, and the VAT is always a debit, a sale's too, so a
+sale read as written is a deduction and a term's melding came out tens of
+thousands away from the VAT accounts, while the comparison, reading the file
+the same wrong way, saw nothing. :func:`vat_as_kept` reads each back: the reverse charge as
+the single entry Myntos and Skatteetaten's examples use, an ordinary code's
+VAT on its line's side, and a base of 0 as the line's amount where the VAT is
+the rate of it to the øre. The comparison reads the file through it too, so
+the independent check of this is the VAT page's, against 2700 and 2710.
+
 **Avdelinger, prosjekter and driftsgrener come along; the rest of the file's
 dimensions do not.** A line's ``Analysis`` is kept when the file's name for the
 dimension says it is one Myntos knows (:func:`myntos.domain.ledger.driftsgrener.kind_of`):
@@ -83,8 +108,8 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from collections.abc import Sequence
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import date
 from decimal import Decimal
 
@@ -119,7 +144,7 @@ from myntos.domain.ledger.models import (
     Transaction,
     TransactionLine,
 )
-from myntos.domain.mva.codes import Spesifikasjon
+from myntos.domain.mva.codes import MVA_CODES, CodeKind, Spesifikasjon
 from myntos.saft.errors import InvalidVoucherImportError, SaftWrongYearError
 from myntos.saft.opening_import import (
     AccountToAdd,
@@ -139,12 +164,19 @@ from myntos.saft.reader import (
     SaftEntries,
     SourceAccount,
     SourceLine,
+    SourceTax,
     SourceTransaction,
 )
 
 ZERO = Decimal("0.00")
 VAT_SETTLEMENT_ACCOUNT = "2740"
 _RATE = Decimal("0.000001")
+
+#: How far each code's base may be rounded, when a line's codes share it out.
+_BASE_ROUNDING = Decimal("0.01")
+
+#: SAF-T's RecordID is 18 characters at most.
+_RECORD_ID_LENGTH = 18
 
 #: Tripletex's own codes for a standard code used with a spesifikasjon.
 _SPESIFIKASJON_PREFIXES: tuple[tuple[str, Spesifikasjon], ...] = (
@@ -326,15 +358,23 @@ def _settles_vat(lines: Sequence[PlannedLine], vat_accounts: set[str]) -> bool:
     Tripletex's «Mva-melding, Januar - Februar» is 2700 and 2710 against 2740,
     with the return's rounding to whole kroner on 7740. The payment that
     follows is the bank against 2740, which is not one.
+
+    The rounding may be up to a krone for each line it settles, not a krone in
+    all: the old melding took each post in whole kroner, and Fiken's settlement
+    of a term with two input VAT lines (223.50 and 70.93, taken as 223 and 70)
+    put 1.43 on 7740. Dated on the term's last day, it then counted as the
+    term's VAT and the VAT page put the whole payable amount down as a
+    difference against the accounts.
     """
     if any(line.tax_code is not None for line in lines):
         return False
     on_vat = [line.account_number for line in lines if line.account_number in vat_accounts]
     others = [line for line in lines if line.account_number not in vat_accounts]
+    settled = [number for number in on_vat if number != VAT_SETTLEMENT_ACCOUNT]
     return (
         VAT_SETTLEMENT_ACCOUNT in on_vat
-        and any(number != VAT_SETTLEMENT_ACCOUNT for number in on_vat)
-        and all(line.debit + line.credit < 1 for line in others)
+        and bool(settled)
+        and sum((line.debit + line.credit for line in others), ZERO) < len(settled)
     )
 
 
@@ -353,6 +393,165 @@ def split_code(code: str) -> tuple[str, str | None]:
         if code.upper().startswith(prefix):
             return code[len(prefix) :], spesifikasjon.value
     return code, None
+
+
+def vat_as_kept(line: SourceLine, file_codes: Mapping[str, str]) -> SourceLine:
+    """The line with its VAT as Myntos keeps it, read from what the file wrote.
+
+    Myntos reads a VAT entry's side as its direction (credit is owed, debit is
+    deducted) and reports its base. Fiken's files write neither the way that
+    reading needs, in three ways, each read back to what Fiken reported:
+
+    - **The base is 0.00 on every entry.** The base is then the line's amount,
+      but only where the VAT is the code's rate of that amount to the øre: a
+      base that cannot be checked would be a guess on the melding.
+    - **The VAT is always a debit**, on a sale as on a purchase. Read as written
+      a sale is a deduction: the first Fiken export tried came out with output
+      VAT below zero, tens of thousands away from 2700 in a term. On an ordinary
+      code the VAT goes the way its line goes, a sale owed and a kreditnota
+      taken back, so the amount is put on the line's side. A code with a
+      spesifikasjon (Tripletex's ``TILB-1`` and the rest) is left as written,
+      because its direction is the spesifikasjon's, not the line's.
+    - **A reverse charge is two entries** of the same code on the cost line, the
+      VAT as debit (the deduction) and as credit (what is owed), which read as
+      written nets to nothing. Myntos keeps one entry with the VAT on the
+      purchase's side, and the melding makes both lines of it.
+
+    Tripletex's files do none of this, and their lines come back as they are.
+    """
+    merged = _reverse_charge_merged(line, file_codes)
+    if merged is not None:
+        return merged
+    taxes = tuple(
+        _ordinary(line, tax, file_codes, alone=len(line.taxes) == 1) for tax in line.taxes
+    )
+    return line if taxes == line.taxes else replace(line, taxes=taxes)
+
+
+def _is_rate_of(base: Decimal, percentage: Decimal, vat: Decimal) -> bool:
+    return base != ZERO and (
+        abs((abs(base) * percentage / 100).quantize(ZERO) - abs(vat)) <= _BASE_ROUNDING
+    )
+
+
+def _base_of(line: SourceLine, tax: SourceTax, vat: Decimal) -> Decimal:
+    """The entry's base, or the line's amount when the file gave 0 and the VAT is its rate."""
+    if tax.base != ZERO:
+        return tax.base
+    return abs(line.amount) if _is_rate_of(line.amount, tax.percentage, vat) else ZERO
+
+
+def _ordinary(
+    line: SourceLine, tax: SourceTax, file_codes: Mapping[str, str], *, alone: bool
+) -> SourceTax:
+    """An ordinary code's entry, its VAT on its line's side and a base of 0 read off the line."""
+    stripped, spesifikasjon = split_code(tax.code)
+    known = MVA_CODES.get(file_codes.get(tax.code) or stripped)
+    if spesifikasjon is not None or known is None or known.kind is CodeKind.OMVENDT:
+        return tax
+    if line.amount == ZERO or min(tax.debit_tax, tax.credit_tax) < ZERO:
+        return tax
+    if tax.debit_tax and tax.credit_tax:
+        return tax
+    vat = tax.debit_tax or tax.credit_tax
+    # Several codes share their line, so only a lone code's base can be the line.
+    base = _base_of(line, tax, vat) if alone else tax.base
+    # The VAT is moved only where it is the rate of the base, which says the
+    # entry is about this line: a code written on the customer's line instead of
+    # the sale's would otherwise be turned into a deduction.
+    if not _is_rate_of(base, tax.percentage, vat):
+        return tax
+    on_debit = line.amount > ZERO
+    return replace(
+        tax,
+        base=base,
+        debit_tax=vat if on_debit else ZERO,
+        credit_tax=ZERO if on_debit else vat,
+    )
+
+
+def _reverse_charge_merged(line: SourceLine, file_codes: Mapping[str, str]) -> SourceLine | None:
+    """The two entries of a reverse charge as one, on the purchase's side; None if not one."""
+    if len(line.taxes) != 2:
+        return None
+    first, second = line.taxes
+    if (first.code, first.percentage, abs(first.base)) != (
+        second.code,
+        second.percentage,
+        abs(second.base),
+    ):
+        return None
+    known = MVA_CODES.get(file_codes.get(first.code) or split_code(first.code)[0])
+    if known is None or known.kind is not CodeKind.OMVENDT:
+        return None
+    owed = [tax.credit_tax for tax in line.taxes if tax.credit_tax and not tax.debit_tax]
+    deducted = [tax.debit_tax for tax in line.taxes if tax.debit_tax and not tax.credit_tax]
+    if len(owed) != 1 or owed != deducted:
+        return None
+    vat = owed[0]
+    base = abs(_base_of(line, first, vat))
+    if base == ZERO:
+        return None
+    on_debit = line.amount > ZERO
+    merged = SourceTax(
+        code=first.code,
+        percentage=first.percentage,
+        base=base,
+        debit_tax=vat if on_debit else ZERO,
+        credit_tax=ZERO if on_debit else vat,
+    )
+    return replace(line, taxes=(merged,))
+
+
+def vat_parts(line: SourceLine) -> list[tuple[Decimal, SourceTax | None]] | None:
+    """The line as Myntos posts it: one part per VAT code, each signed as the line is.
+
+    A line with one code, or none, is one part. With several, each code's part
+    is its base, and what the bases leave over goes with the largest: a part of
+    the line no VAT was calculated on, as on a line with one code whose base is
+    less than its amount, or the øre each base was rounded by. The tax
+    information is not touched, so the VAT is the file's whatever the shares.
+    An entry with neither base nor VAT carries nothing and is left out.
+
+    None when the bases add up to more than the line, or a code would get
+    nothing: then the codes are not parts of the line, and how much of it each
+    one is cannot be read off the file.
+    """
+    if len(line.taxes) <= 1:
+        return [(line.amount, line.taxes[0] if line.taxes else None)]
+    taxes = [tax for tax in line.taxes if tax.base or tax.debit_tax or tax.credit_tax]
+    if len(taxes) <= 1:
+        return [(line.amount, taxes[0] if taxes else line.taxes[0])]
+    shares = [abs(tax.base) for tax in taxes]
+    left = abs(line.amount) - sum(shares, ZERO)
+    if left < -_BASE_ROUNDING * len(taxes):
+        return None
+    shares[shares.index(max(shares))] += left
+    if any(share <= ZERO for share in shares):
+        return None
+    sign = 1 if line.amount > ZERO else -1
+    return [(sign * share, tax) for share, tax in zip(shares, taxes, strict=True)]
+
+
+def _record_id(line: SourceLine, index: int, part: int, taken: set[str]) -> str:
+    """The file's RecordID, with ``-2`` for the line's second code; else the line's place."""
+    suffix = f"-{part + 1}" if part else ""
+    candidate = f"{index}{suffix}"
+    if line.record_id:
+        own = f"{line.record_id}{suffix}"
+        if len(own) <= _RECORD_ID_LENGTH and own not in taken:
+            candidate = own
+    taken.add(candidate)
+    return candidate
+
+
+def _shared(total: Decimal, parts: Sequence[Decimal]) -> list[Decimal]:
+    """``total`` split as ``parts`` split their sum, to the øre, the rounding on the largest."""
+    whole = sum((abs(part) for part in parts), ZERO)
+    shares = [(total * abs(part) / whole).quantize(ZERO) for part in parts]
+    largest = max(range(len(parts)), key=lambda index: abs(parts[index]))
+    shares[largest] += total - sum(shares, ZERO)
+    return shares
 
 
 def account_map(
@@ -701,7 +900,9 @@ async def plan(
 
     # --- The vouchers --------------------------------------------------------------
     vouchers: list[PlannedVoucher] = []
-    already = later = before = split = dropped_codes = 0
+    already = later = before = split = dropped_codes = codes_shared = 0
+    reverse_charges: set[str] = set()
+    reverse_charge_lines = turned = based = 0
     unbalanced: list[str] = []
     unknown_accounts: set[str] = set()
     unknown_codes: set[str] = set()
@@ -751,12 +952,22 @@ async def plan(
                 continue
             lines: list[PlannedLine] = []
             records: set[str] = set()
-            for index, line in enumerate(source_lines, start=1):
-                taxed = line.taxes[0] if line.taxes else None
-                if line.amount == ZERO and (
-                    taxed is None or taxed.debit_tax == taxed.credit_tax == ZERO
+            for index, source_line in enumerate(source_lines, start=1):
+                if source_line.amount == ZERO and all(
+                    tax.debit_tax == tax.credit_tax == ZERO for tax in source_line.taxes
                 ):
                     continue
+                line = vat_as_kept(source_line, file_codes)
+                if len(line.taxes) < len(source_line.taxes):
+                    reverse_charge_lines += 1
+                    reverse_charges.add(line.taxes[0].code)
+                elif line is not source_line:
+                    pairs = list(zip(source_line.taxes, line.taxes, strict=True))
+                    turned += any(
+                        (written.debit_tax, written.credit_tax) != (kept.debit_tax, kept.credit_tax)
+                        for written, kept in pairs
+                    )
+                    based += any(written.base != kept.base for written, kept in pairs)
                 account_number = moved.get(line.account_id) or target_account(line.account_id)
                 if account_number is None:
                     unknown_accounts.add(line.account_id)
@@ -782,51 +993,62 @@ async def plan(
                 text = line.description or transaction.description
                 if line.account_id != account_number:
                     text = f"{text} ({line.account_id})"
-                record_id = line.record_id if 0 < len(line.record_id) <= 18 else str(index)
-                if record_id in records:
-                    record_id = str(index)
-                records.add(record_id)
-                if len(line.taxes) > 1:
+                shares = vat_parts(line)
+                if shares is None:
                     several_codes.append(number)
-                tax_code: str | None = None
-                spesifikasjon: str | None = None
-                if taxed is not None:
-                    stripped, spesifikasjon = split_code(taxed.code)
-                    standard = file_codes.get(taxed.code) or stripped
-                    code = tax_codes.get(standard)
-                    no_vat = taxed.debit_tax == taxed.credit_tax == ZERO
-                    if taxed.code.upper().endswith("-K") or (
-                        code is None and not (no_vat and standard in _SILENT_CODES)
-                    ):
-                        unknown_codes.add(taxed.code)
-                    elif code is None:
-                        dropped_codes += 1
-                    else:
-                        tax_code = code.code
-                lines.append(
-                    PlannedLine(
-                        record_id=record_id,
-                        account_number=account_number,
-                        description=(text.strip() or "Bilag fra SAF-T-filen")[:255],
-                        debit=line.amount if line.amount > ZERO else ZERO,
-                        credit=-line.amount if line.amount < ZERO else ZERO,
-                        party_pk=party_pk,
-                        tax_code=tax_code,
-                        tax_rate=(
-                            (taxed.percentage / 100).quantize(_RATE)
-                            if tax_code is not None and taxed is not None
-                            else None
-                        ),
-                        tax_base=abs(taxed.base) if tax_code and taxed else None,
-                        debit_tax=taxed.debit_tax if tax_code and taxed else None,
-                        credit_tax=taxed.credit_tax if tax_code and taxed else None,
-                        spesifikasjon=spesifikasjon if tax_code else None,
-                        currency_code=line.currency_code,
-                        currency_amount=line.currency_amount,
-                        exchange_rate=line.exchange_rate,
-                        dimensions=sorting.of(line),
-                    )
+                    # Read on with the first code alone, so the rest of the
+                    # review is still there to read; the finding stops the post.
+                    shares = [(line.amount, line.taxes[0])]
+                elif len(shares) > 1:
+                    codes_shared += 1
+                currency_amounts = (
+                    _shared(line.currency_amount, [amount for amount, _ in shares])
+                    if line.currency_amount is not None and len(shares) > 1
+                    else [line.currency_amount] * len(shares)
                 )
+                sorted_by = sorting.of(line)
+                for part, ((amount, taxed), currency_amount) in enumerate(
+                    zip(shares, currency_amounts, strict=True)
+                ):
+                    tax_code: str | None = None
+                    spesifikasjon: str | None = None
+                    if taxed is not None:
+                        stripped, spesifikasjon = split_code(taxed.code)
+                        standard = file_codes.get(taxed.code) or stripped
+                        code = tax_codes.get(standard)
+                        no_vat = taxed.debit_tax == taxed.credit_tax == ZERO
+                        if taxed.code.upper().endswith("-K") or (
+                            code is None and not (no_vat and standard in _SILENT_CODES)
+                        ):
+                            unknown_codes.add(taxed.code)
+                        elif code is None:
+                            dropped_codes += 1
+                        else:
+                            tax_code = code.code
+                    lines.append(
+                        PlannedLine(
+                            record_id=_record_id(line, index, part, records),
+                            account_number=account_number,
+                            description=(text.strip() or "Bilag fra SAF-T-filen")[:255],
+                            debit=amount if amount > ZERO else ZERO,
+                            credit=-amount if amount < ZERO else ZERO,
+                            party_pk=party_pk,
+                            tax_code=tax_code,
+                            tax_rate=(
+                                (taxed.percentage / 100).quantize(_RATE)
+                                if tax_code is not None and taxed is not None
+                                else None
+                            ),
+                            tax_base=abs(taxed.base) if tax_code and taxed else None,
+                            debit_tax=taxed.debit_tax if tax_code and taxed else None,
+                            credit_tax=taxed.credit_tax if tax_code and taxed else None,
+                            spesifikasjon=spesifikasjon if tax_code else None,
+                            currency_code=line.currency_code,
+                            currency_amount=currency_amount,
+                            exchange_rate=line.exchange_rate,
+                            dimensions=sorted_by,
+                        )
+                    )
             if len(lines) < 2:
                 # Nothing but lines of nothing: there is no entry to make.
                 continue
@@ -883,9 +1105,13 @@ async def plan(
         findings.append(
             feil(
                 "flere_mva_koder",
-                "En linje har mer enn én mva-kode, og Myntos fører én per linje: "
-                + ", ".join(several_codes[:_NAMED])
-                + ".",
+                f"{len(several_codes)} av linjene har flere mva-koder med grunnlag som til sammen "
+                "er mer enn linjens beløp, så Myntos kan ikke se hvor mye av linjen hver kode "
+                "gjelder. Bilag "
+                + ", ".join(list(dict.fromkeys(several_codes))[:_NAMED])
+                + (" …" if len(set(several_codes)) > _NAMED else "")
+                + ". Si fra under «Meld feil eller ønsker», så ser vi på hvordan det gamle "
+                "programmet har ført dem.",
             )
         )
     by_number = {number: list(sources.values()) for number, sources in missing.items()}
@@ -923,9 +1149,49 @@ async def plan(
         findings.append(
             merknad(
                 "mva_underkonto",
-                "Filen fører mva på " + ", ".join(sorted(vat_folded)) + ". Myntos har én "
-                "konto for utgående mva (2700) og én for inngående (2710), og linjene står der, "
+                "Filen fører mva på " + ", ".join(sorted(vat_folded)) + ". Myntos har en "
+                "konto for utgående mva (2700) og en for inngående (2710), og linjene står der, "
                 "med kontoen fra filen i teksten.",
+            )
+        )
+    if reverse_charge_lines:
+        findings.append(
+            merknad(
+                "omvendt_avgift_samlet",
+                f"{reverse_charge_lines} av linjene i filen fører omvendt avgiftsplikt (kode "
+                + ", ".join(sorted(reverse_charges))
+                + ") som to mva-oppføringer på samme linje, en for mva-en som skal betales og "
+                "en for fradraget, slik Fiken gjør. Myntos fører dem som en oppføring, med "
+                "linjens beløp som grunnlag når filen har 0, og mva-meldingen får både den "
+                "utgående mva-en og fradraget.",
+            )
+        )
+    if turned:
+        findings.append(
+            merknad(
+                "mva_paa_linjens_side",
+                f"{turned} av linjene i filen har mva-beløpet på motsatt side av linjen. Fiken "
+                "fører all mva som debet, også på salg; Myntos fører mva-en samme vei som "
+                "linjen, så et salg gir utgående mva og en kreditnota trekker den fra.",
+            )
+        )
+    if based:
+        findings.append(
+            merknad(
+                "mva_grunnlag_fra_linjen",
+                f"{based} av linjene i filen har grunnlag 0, men mva som er satsen av linjens "
+                "beløp. Myntos bruker linjens beløp som grunnlag, så mva-meldingen får "
+                "grunnlaget med.",
+            )
+        )
+    if codes_shared:
+        findings.append(
+            merknad(
+                "mva_koder_delt",
+                f"{codes_shared} av linjene i filen har flere mva-koder, som et salg med både 25 "
+                "og 15 % mva på samme inntektskonto. Myntos fører en kode per linje, så hver av "
+                "dem blir en linje per kode på samme konto, med grunnlaget og mva-beløpet fra "
+                "filen.",
             )
         )
     if split:

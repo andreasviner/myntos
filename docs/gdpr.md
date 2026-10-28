@@ -30,6 +30,7 @@ is its code.
 | | Who closed or reopened a financial year (`financial_year_event.user_id`) |
 | | The written reason beside a manual voucher or its reversal (`voucher_explanation`), which has no actor column: the voucher's own author is its author, so it names nobody the voucher does not |
 | | Who chose an account's næringsspesifikasjon post (`account_grouping.chosen_by_user_id`) |
+| | Who chose what the company shares with Myntos (`data_sharing_choice.chosen_by_user_id`), when they chose to share something: Myntos keeps what it was given on that choice and must be able to say who made it. The company's choice stands; it is the company's, not the person's ([data-sharing.md](data-sharing.md)) |
 | The tokens of every key the person made for an agent (`agent_token`), and the name of the program that last used each key (`agent_key.last_used_client`) | Each key the person made, stopped: its name, its company, its dates (`agent_key`), because a voucher registered through it says so (`gl_transaction.created_via_agent_key_id`) |
 | The files in requests those keys were still waiting to have approved (`agent_approval_file.content`) | The requests themselves, as a record of what was asked and decided (`agent_approval`, with `decided_by_user_id` SET NULL like every actor column) |
 | | SAF-T imports and who started and posted them (`saft_import`, actor columns SET NULL like every other: the vouchers it posted name their author themselves, so the row keeps no one's name). The uploaded files (in the working store, `saft_import_file.storage_key`) are the company's books, not the person's, and are deleted once posted, thrown away or 14 days after the upload whatever happens to the person. The documents in an old program's complete export (Fiken's), kept on the yes (`imported_document`, `kept_by_user_id` SET NULL), are the books' documentation like the bilag archive, and go with the company at the purge |
@@ -208,6 +209,9 @@ deleted at 00:30 on 1 January, a company has entered something in the new year.
 - every membership but the owners' is deleted, pending invitations go, every
   key stops (`company_closed`) with its tokens, waiting approvals lose their
   files, and `agent_access_enabled` is switched off;
+- what the company shares with Myntos goes back to `none`, logged with who
+  deleted it, and opening the books again does not bring the old level back
+  ([data-sharing.md](data-sharing.md));
 - uploaded SAF-T import files are let go of (they are a working copy); the
   daily sweep (`saft.jobs.sweep`) deletes the stored objects, as it does
   those of books deleted outright, whose rows went with the company;

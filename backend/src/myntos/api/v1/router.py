@@ -25,6 +25,7 @@ from myntos.api.v1 import (
     members,
     mva,
     mva_justering,
+    operator,
     organizations,
     parties,
     regnskap,
@@ -71,3 +72,4 @@ api_router.include_router(mva_justering.router)
 api_router.include_router(agent.router)
 api_router.include_router(approvals.router)
 api_router.include_router(feedback.router)
+api_router.include_router(operator.router)

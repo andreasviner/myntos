@@ -50,11 +50,18 @@ from myntos.domain.arsoppgjor import models as arsoppgjor_models  # noqa: F401  
 from myntos.domain.bank import models as bank_models  # noqa: F401  (registers tables)
 from myntos.domain.bilag import models as bilag_models  # noqa: F401  (registers tables)
 from myntos.domain.bilag import reading_cache, readings
+from myntos.domain.data_sharing import (
+    models as data_sharing_models,  # noqa: F401  (registers tables)
+)
 from myntos.domain.faktura import models as faktura_models  # noqa: F401  (registers tables)
 from myntos.domain.feedback import models as feedback_models  # noqa: F401  (registers tables)
 from myntos.domain.identity import models as identity_models  # noqa: F401  (registers tables)
 from myntos.domain.ledger import models as ledger_models  # noqa: F401  (registers tables)
 from myntos.domain.mva import models as mva_models  # noqa: F401  (registers tables)
+from myntos.domain.server_errors import (
+    models as server_error_models,  # noqa: F401  (registers tables)
+)
+from myntos.domain.server_errors.recorder import RECORDER
 from myntos.integrations import brreg, norgesbank
 from myntos.main import create_app
 from myntos.saft import models as saft_models  # noqa: F401  (registers tables)
@@ -147,6 +154,20 @@ def a_cold_reading_cache() -> Iterator[None]:
     yield
     reading_cache.CACHE.clear()
     readings.STORE.clear()
+
+
+@pytest.fixture(autouse=True)
+def an_empty_error_recorder() -> Iterator[None]:
+    """Every test starts with nothing counted for the error log.
+
+    ``recorder.RECORDER`` is process-wide like the reading cache, and the
+    application's lifespan writes what it holds into the test's own database on
+    the way out, so a failure one test logged on purpose would otherwise turn up
+    in the next test's ``server_error`` table.
+    """
+    RECORDER.take()
+    yield
+    RECORDER.take()
 
 
 @pytest.fixture(autouse=True)

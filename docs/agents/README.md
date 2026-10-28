@@ -224,7 +224,7 @@ features in the order a person does.
 | `departments` | `/avdelinger/` | `myntos-avdelinger` |
 | `farming` | The «Landbruk» card on `/kontoplan/`, the farm types on `/kontantstrom/`, NIBIO's driftsgrener on `/avdelinger/`, the year-end count on `/buskap/` and `/private-uttak/` | `myntos-landbruk`, `myntos-avdelinger`, `myntos-landbruk-arsoppgjor` |
 | `saf-t` | `/saft/` | `myntos-saft` |
-| `company-and-access` | `/organisasjon/`, `/slett-selskap/` | `myntos-selskap` |
+| `company-and-access` | `/organisasjon/`, `/slett-selskap/`, `/datadeling/` | `myntos-selskap` |
 | `ai` | `/ki/`, `/godkjenning/`, the KI part of `/organisasjon/` | `myntos-godkjenning`, `myntos-connect` |
 | `your-account` | `/konto/`, `/bytt-til-epost/` | – |
 | `feedback` | `/tilbakemelding/`, and the «Si fra» link on `/funksjoner/` | `myntos-tilbakemelding` |

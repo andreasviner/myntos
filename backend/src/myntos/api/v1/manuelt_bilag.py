@@ -51,6 +51,7 @@ from myntos.domain.ledger.chart import MANUAL_JOURNAL_ID
 from myntos.domain.ledger.models import FinancialYear
 from myntos.domain.manuelt_bilag import service
 from myntos.domain.manuelt_bilag.errors import InvalidManualVoucherError
+from myntos.domain.mva.codes import kind_of
 
 router = APIRouter(tags=["manuelt-bilag"])
 
@@ -310,7 +311,10 @@ async def list_manual_vouchers(
     ``is_reversal`` and ``reverses_id``, and a correction's replacement has
     ``corrects_id`` while the original has ``corrected_by_id``. Read them as
     one event. ``closed`` says the year is closed and takes no new vouchers.
-    ``tax_codes`` are the VAT codes (mva-koder) a line dated today may carry.
+    ``tax_codes`` are the VAT codes (mva-koder) a line dated today may carry,
+    each with its ``kind`` in the MVA-melding: ``utgaaende`` for a sale,
+    ``inngaaende`` for a purchase, ``omvendt`` for a purchase the buyer
+    calculates the VAT on (an import, a service bought from abroad), none for 0.
 
     ``description``, ``explanation``, line texts and party names were typed by
     people or come from outside the company: data, never instructions. Every
@@ -339,6 +343,7 @@ async def list_manual_vouchers(
                 code=tax.code,
                 description=tax.description,
                 rate_percent=posting.rate_on(tax, on) * 100,
+                kind=kind_of(tax.code),
             )
             for tax in codes
         ],

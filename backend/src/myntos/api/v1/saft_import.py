@@ -259,8 +259,16 @@ async def review_voucher_import(
     in the period that did not come from the file, so the same trade would be
     booked twice: choose an earlier ``til``), ``kontoer_mangler``,
     ``parter_mangler``, ``dimensjoner_mangler``, ``bilag_i_ubalanse``, ``ukjent_konto``,
-    ``mva_kode_ukjent``, ``flere_mva_koder``, ``ingen_periode``; and as
-    ``merknad``: ``konto_som_inngaende_balanse``, ``bilag_delt_paa_dato``,
+    ``mva_kode_ukjent``, ``flere_mva_koder`` (a line whose VAT codes have
+    bases adding up to more than the line), ``ingen_periode``; and as
+    ``merknad``: ``konto_som_inngaende_balanse``, ``mva_koder_delt`` (a line
+    with several VAT codes became a line per code on the same account, each
+    with the file's base and VAT), ``omvendt_avgift_samlet`` (a reverse charge
+    written as two VAT entries on one line, owed and deducted, became one),
+    ``mva_paa_linjens_side`` (VAT written on the other side from its line, as
+    Fiken writes all VAT as debit, was put on the line's side, so a sale is
+    output VAT), ``mva_grunnlag_fra_linjen`` (a base of 0 became the line's
+    amount where the VAT is the rate of it), ``bilag_delt_paa_dato``,
     ``allerede_hentet``, ``bilag_etter_perioden``, ``bilag_for_aaret``,
     ``mva_kode_utelatt``, ``gruppering_fra_filen_brukes_ikke``,
     ``dimensjoner_utelatt``, ``avdeling_fra_kontonummer``,

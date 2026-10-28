@@ -109,11 +109,23 @@ function mountApprovalsLink(current: Company | undefined): void {
   link.hidden = current?.agent_access_enabled !== true;
   if (current === undefined || link.hidden) return;
   void listApprovals(current.id, 'pending')
-    .then((found) => {
-      badge.textContent = waitingBadge(found.filter(isWaiting).length);
-      badge.hidden = badge.textContent === '';
-    })
+    .then((found) => showWaitingCount(found.filter(isWaiting).length))
     .catch(() => undefined);
+}
+
+/**
+ * Set the count beside «Godkjenning» to what waits now.
+ *
+ * Exported for /godkjenning/, which knows the moment a request is decided. The
+ * header reads the count once, when the page loads, so approving the only
+ * request left the (1) standing beside the menu item while the page under it
+ * said nothing waited.
+ */
+export function showWaitingCount(count: number): void {
+  const badge = document.querySelector<HTMLElement>('[data-approvals-count]');
+  if (badge === null) return;
+  badge.textContent = waitingBadge(count);
+  badge.hidden = badge.textContent === '';
 }
 
 /** The permission /organisasjon/ requires before it will set up a company. */

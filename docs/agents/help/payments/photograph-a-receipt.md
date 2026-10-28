@@ -47,8 +47,9 @@ archive when the payment is registered.
 
 | What they see | Why | What to do |
 | --- | --- | --- |
-| «ikke lest» after the picture | Nothing could be read from it | Take a sharper picture, or fill in the fields |
-| «Vi fikk ikke lest tekst ut av bildene. Prøv et skarpere bilde, eller fyll inn feltene selv.» | None of the pictures could be read | Retake in better light, or fill in the fields |
+| «ikke lest» after the picture | Nothing could be read from it, or it was not read at all just then (see the next two rows) | Go by the warning above the form |
+| «Vi fikk ikke lest bildene denne gangen. Prøv igjen om litt, eller fyll inn feltene selv.» | The pictures were never read: Myntos's AI did not answer just then. Nothing is known to be wrong with the pictures | Do not retake the photo. Wait a minute, then write something in «Beskrivelse» or pick the picture again with «Legg til flere filer»; either reads the bilag again. Or fill in the fields |
+| «Vi fikk ikke lest tekst ut av bildene. Prøv et skarpere bilde, eller fyll inn feltene selv.» | The pictures were read and no text came out of them | Retake in better light, or fill in the fields |
 | «KI er ikke brukt på dette bilaget, …» | The company's AI is off, so pictures cannot be read | Fill in the fields by hand; the picture is still attached when they register. An administrator can switch AI on under «KI» |
 | No «Ta bilde av kvitteringen» link | They are on a computer | Upload the saved picture with «Last opp faktura, kvittering eller skjermbilder» |
 

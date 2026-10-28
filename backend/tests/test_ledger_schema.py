@@ -32,9 +32,11 @@ from myntos.domain.anlegg import models as anlegg_models  # noqa: F401
 from myntos.domain.arsoppgjor import landbruk_models  # noqa: F401
 from myntos.domain.bank import models as bank_models  # noqa: F401
 from myntos.domain.bilag import models as bilag_models  # noqa: F401
+from myntos.domain.data_sharing import models as data_sharing_models  # noqa: F401
 from myntos.domain.identity import models as identity_models  # noqa: F401
 from myntos.domain.ledger import models  # noqa: F401
 from myntos.domain.mva import models as mva_models  # noqa: F401
+from myntos.domain.server_errors import models as server_error_models  # noqa: F401
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 

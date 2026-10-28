@@ -41,7 +41,9 @@ It is for every business, not only farms.
    second line is added under the heading «Linjer».
 4. For each line, choose «Hva gjaldt linjen?», fill in «Beløp inkl. mva» and
    check «Mva-kode». The type list has both «Penger inn» and «Penger ut»: in a
-   settlement the sale is money in and each deduction money out. When a type
+   settlement the sale is money in and each deduction money out. Each line's
+   «Mva-kode» shows only the codes for its own type's side, sale or purchase.
+   When a type
    can go to another account, a «Konto» list appears on that line. When the
    company has avdelinger, prosjekter or driftsgrener, each line also has a
    list for each of them («Avdeling», «Driftsgren» …), so the milk can go to

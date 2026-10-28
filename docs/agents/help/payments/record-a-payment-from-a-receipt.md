@@ -83,8 +83,9 @@ counts.
 | What they see | Why | What to do |
 | --- | --- | --- |
 | The card «Du har lesetilgang» instead of the form | Their role is «Leser» | Ask an administrator for the role «Medlem» |
-| «ikke lest» after a file | Nothing could be read from that file | Check the fields by hand, or try a sharper photo |
-| «Vi fikk ikke lest tekst ut av bildene. Prøv et skarpere bilde, eller fyll inn feltene selv.» | The pictures were unreadable | Take a sharper photo, or fill in the fields |
+| «ikke lest» after a file | Nothing could be read from that file, or it was not read at all just then (see the next two rows) | Go by the warning above the form, or check the fields by hand |
+| «Vi fikk ikke lest bildene denne gangen. Prøv igjen om litt, eller fyll inn feltene selv.» | The pictures were never read: Myntos's AI did not answer just then. Nothing is known to be wrong with them | Do not retake them. Wait a minute, then write something in «Beskrivelse» or pick a file again with «Legg til flere filer»; either reads the bilag again. Or fill in the fields |
+| «Vi fikk ikke lest tekst ut av bildene. Prøv et skarpere bilde, eller fyll inn feltene selv.» | The pictures were read and no text came out of them | Take a sharper photo, or fill in the fields |
 | «KI er ikke brukt på dette bilaget, …» | The company has switched off Myntos's AI, or it was unavailable, so only the PDF's own text was read | Fill in what is missing. An administrator can switch AI back on under «KI» in the top menu |
 | «PDF-en er passordbeskyttet, så vi fikk ikke lest innholdet.» | The PDF is locked | Upload an unlocked copy, or fill in the fields |
 | «Vi fikk ikke lest bilaget: … Fyll ut skjemaet selv.» | The file is not a PDF or picture, is over 25 MB, or reading failed | Use a PDF or picture under 25 MB, or fill in the form |

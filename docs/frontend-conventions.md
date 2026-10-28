@@ -236,6 +236,19 @@ to "use the default".
   opinion about. The company-setup form (`nytt-selskap.astro`) has no account
   picker at all: a person holds exactly one account that may add companies
   (signup makes one, and nobody joins another), so there is nothing to ask.
+- What a narrow select must show goes first in each option. A closed
+  `<select>` shows as much of its option as fits its column and cuts the
+  rest, and Safari cuts hardest: «Mva-kode» read «1: Inngående mva, høy sa…»
+  and never showed the rate, which is what a person looks at it for. It now
+  reads «1: 25 % – Inngående mva, høy sats» (`lib/taxcodes.ts`).
+- A list that one field makes shorter **hides** the options that no longer
+  fit, never removes them. «Mva-kode» on `/kontantstrom/` shows only the codes
+  for the chosen type's side of the trade (`books_as` against the code's
+  `kind`), and a value can still arrive from a proposal, an answer or an entry
+  being corrected after the list has narrowed. A select asked for a value it
+  has no option for quietly takes none, so with the option removed the form
+  would send something other than the code the bilag or the corrected entry
+  had, and show nothing wrong.
 
 ## Work the server finishes after answering
 

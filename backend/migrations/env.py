@@ -18,11 +18,13 @@ from myntos.domain.arsoppgjor import models as _arsoppgjor_models  # noqa: F401
 # is what autogenerate diffs against. New model modules must be added here.
 from myntos.domain.bank import models as _bank_models  # noqa: F401
 from myntos.domain.bilag import models as _bilag_models  # noqa: F401
+from myntos.domain.data_sharing import models as _data_sharing_models  # noqa: F401
 from myntos.domain.faktura import models as _faktura_models  # noqa: F401
 from myntos.domain.feedback import models as _feedback_models  # noqa: F401
 from myntos.domain.identity import models as _identity_models  # noqa: F401
 from myntos.domain.ledger import models as _ledger_models  # noqa: F401
 from myntos.domain.mva import models as _mva_models  # noqa: F401
+from myntos.domain.server_errors import models as _server_error_models  # noqa: F401
 from myntos.saft import models as _saft_models  # noqa: F401
 from myntos.skattemelding import models as _skattemelding_models  # noqa: F401
 

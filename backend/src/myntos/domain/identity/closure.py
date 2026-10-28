@@ -47,6 +47,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from myntos.core.clock import utc_now
 from myntos.domain.bank.models import BankStatementFile
 from myntos.domain.bilag.models import Attachment
+from myntos.domain.data_sharing.models import DataSharingChoice, DataSharingLevel
 from myntos.domain.faktura.models import SalesDocument
 from myntos.domain.identity.erasure import has_books
 from myntos.domain.identity.errors import (
@@ -242,6 +243,17 @@ async def close_company(
     # again later does not bring an agent back with them (agents-and-api.md
     # rule 3: turning access off stops keys for good).
     company.agent_access_enabled = False
+    # Sharing goes back to nothing for the same reason, and logged like any
+    # other change: these books are no longer being worked in, so there is
+    # nothing to improve Myntos with, and a reopening should not quietly resume
+    # a choice made for books that were in use (docs/data-sharing.md).
+    if company.data_sharing != DataSharingLevel.NONE.value:
+        company.data_sharing = DataSharingLevel.NONE.value
+        db.add(
+            DataSharingChoice(
+                company_id=company.id, level=DataSharingLevel.NONE.value, chosen_by_user_id=user_id
+            )
+        )
     await db.execute(
         update(AgentKey)
         .where(AgentKey.company_id == company.id, AgentKey.revoked_at.is_(None))
@@ -356,8 +368,9 @@ async def reopen_company(db: AsyncSession, company: Company) -> Company:
     were deleted.
 
     What closing took is not given back: the colleagues re-join by
-    invitation, keys are made anew, and access for agents is switched on
-    again by somebody who reads what it means. Only the books return.
+    invitation, keys are made anew, and access for agents and sharing with
+    Myntos are switched on again by somebody who reads what they mean. Only the
+    books return.
     """
     # New books for the same orgnr set up in this account since: two open sets
     # is what uq_company_open_orgnr forbids, and the person decides which goes.

@@ -31,6 +31,7 @@ export const PUBLIC_PAGES: readonly string[] = [
   '/priser/',
   '/bankpriser/',
   '/ki/',
+  '/datadeling/',
   '/kom-i-gang/',
   '/sammenlign/',
   '/personvern/',

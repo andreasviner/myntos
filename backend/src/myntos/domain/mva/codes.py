@@ -103,6 +103,13 @@ MVA_CODES: dict[str, MvaCode] = {
     )
 }
 
+
+def kind_of(code: str) -> CodeKind | None:
+    """The kind of line ``code`` makes in a melding, or None for one that never reaches it."""
+    known = MVA_CODES.get(code)
+    return None if known is None else known.kind
+
+
 # The order the lines appear in, in the melding and on screen: sales first,
 # then deductions, then everything bought from abroad. Skatteetaten does not
 # require an order. A person reading the melding before confirming it does, and

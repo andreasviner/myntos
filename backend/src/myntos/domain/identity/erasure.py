@@ -53,6 +53,7 @@ from myntos.core.clock import utc_now
 from myntos.domain.arsoppgjor.models import FinancialYearEvent
 from myntos.domain.bank.models import BankStatementFile, BankStatementLine
 from myntos.domain.bilag.models import Attachment
+from myntos.domain.data_sharing.models import DataSharingChoice, DataSharingLevel
 from myntos.domain.faktura.models import SalesDocument
 from myntos.domain.identity.errors import ErasureBlockedError
 from myntos.domain.identity.models import (
@@ -214,6 +215,13 @@ async def _is_named_by_records(db: AsyncSession, user_id: int) -> bool:
         # it, and an account regrouped by "nobody" is one an auditor cannot ask
         # about.
         exists().where(AccountGrouping.chosen_by_user_id == user_id),
+        # Who let Myntos use a company's books: Myntos keeps what it was given
+        # on the strength of that choice, and has to be able to say who made
+        # it. Choosing nothing is not part of that record.
+        exists().where(
+            DataSharingChoice.chosen_by_user_id == user_id,
+            DataSharingChoice.level != DataSharingLevel.NONE.value,
+        ),
     )
     for check in checks:
         if await db.scalar(select(check)):

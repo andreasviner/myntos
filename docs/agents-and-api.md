@@ -209,6 +209,9 @@ Whatever its scopes, a key cannot:
 - **Manage access**: members, roles, invitations, other keys, the Tilgang
   switch itself. A key may revoke itself and nothing else.
 - **Delete the account or a company**, or read the government-token vault.
+- **Open the operator's page** (`/api/v1/drift/*`): every stranger's feedback
+  and the server's failures belong to no company, and only the deployment's
+  operator key opens them ([operator.md](operator.md)).
 
 *Why:* each of these is the action a stolen key would be used for, or the
 gate itself. Keeping them off the key entirely is simpler and safer than
@@ -226,10 +229,12 @@ answers a key 403 `not_for_agent_keys`. So a new route is closed to keys until
 somebody decides otherwise, and this rule holds by its routes never
 declaring a scope. Every route closed this way is listed with its reason in
 `_NOT_FOR_AGENTS` in `test_agent_surface.py`, which also fails on a route
-that has decided neither way. Two closures are judgement calls worth
+that has decided neither way. Three closures are judgement calls worth
 knowing: `PATCH /companies/{id}` (it carries `ki_enabled`, the company's
-decision about whether its bilag reach a model) and the register's board list
-with who has access (`GET /companies/{id}/register`). A send is published as
+decision about whether its bilag reach a model), `PUT
+/companies/{id}/datadeling` (what the company lets Myntos keep for itself, up
+to the bilag as they are: [data-sharing.md](data-sharing.md)), and the
+register's board list with who has access (`GET /companies/{id}/register`). A send is published as
 `x-myntos-key-send`, and one with the person's login as
 `x-myntos-key-id-porten`.
 

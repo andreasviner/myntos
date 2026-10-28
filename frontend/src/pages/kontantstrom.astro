@@ -1239,6 +1239,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   import { fileSize, isoDate, kroner, todayIso } from '../lib/format';
   import { settleLimited } from '../lib/parallel';
   import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+  import { fillTaxSelect, narrowTaxSelect } from '../lib/taxcodes';
 
   /**
    * What the file dialogs offer. One string, because the entry form and the
@@ -1403,6 +1404,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       typeSelect.replaceChildren(waiting);
       typeSelect.value = '';
       taxSelect.value = '';
+      narrowTaxSelect(taxSelect, null);
       typeNote.textContent = '';
       return;
     }
@@ -1431,6 +1433,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     typeSelect.prepend(waiting);
     typeSelect.value = '';
     taxSelect.value = '';
+    narrowTaxSelect(taxSelect, null);
     typeNote.textContent = '';
   }
 
@@ -1566,9 +1569,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     const tax = document.createElement('select');
     tax.className = 'line-tax';
     tax.setAttribute('aria-label', `Mva-kode, linje ${index}`);
-    for (const code of catalogue.tax_codes) {
-      tax.append(option(code.code, `${code.code}: ${code.description}`));
-    }
+    fillTaxSelect(tax, catalogue.tax_codes);
     taxLabel.append(taxText, tax);
 
     // Konto, som for én linje: bare når typen har et alternativ av samme slag,
@@ -1630,6 +1631,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     type.addEventListener('change', () => {
       const chosen = catalogue.types.find((entry) => entry.code === type.value);
       if (chosen !== undefined) tax.value = chosen.default_tax_code;
+      narrowTaxSelect(tax, chosen?.books_as ?? null);
       note.textContent = chosen?.note ?? '';
       note.hidden = chosen === undefined;
       // En konto personen valgte for en annen type gjelder ikke denne.
@@ -1645,6 +1647,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       note.hidden = chosen === undefined;
       amount.value = values.gross_amount;
       if (values.tax_code !== null) tax.value = values.tax_code;
+      narrowTaxSelect(tax, chosen?.books_as ?? null);
       fillLineAccounts(chosen);
       if (
         values.account_number &&
@@ -1945,11 +1948,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     setPartyText(party.name, party);
   }
 
-  /** Show the type's note and preselect the VAT code it assumes. */
+  /**
+   * Show the type's note, preselect the VAT code it assumes, and offer only the
+   * codes for its side of the trade. Every way a type gets chosen comes through
+   * here: the user, the bilag's proposal, an answer, an entry being corrected.
+   */
   function applyType(): void {
     const entry = selectedType();
     typeNote.textContent = entry?.note ?? '';
     if (entry !== undefined) taxSelect.value = entry.default_tax_code;
+    narrowTaxSelect(taxSelect, entry?.books_as ?? null);
     fillAccounts(entry);
   }
 
@@ -3875,9 +3883,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       show(el('#form-card'), mayWrite);
       show(el('#readonly'), !mayWrite);
 
-      for (const code of catalogue.tax_codes) {
-        taxSelect.append(option(code.code, `${code.code}: ${code.description}`));
-      }
+      fillTaxSelect(taxSelect, catalogue.tax_codes);
 
       el<HTMLInputElement>('#date-input').value = todayIso();
       el('#file-hint').textContent =

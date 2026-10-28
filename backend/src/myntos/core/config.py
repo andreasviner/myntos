@@ -132,6 +132,16 @@ class Settings(BaseSettings):
     # strangers wrote is not kept for ever. Open items are kept until closed.
     feedback_retention_days: int = 365
 
+    # --- The operator's page and the error log (docs/operator.md) ---
+    # The SHA-256 digest of the operator key, which opens /drift/: every
+    # stranger's feedback and the server's recorded failures. Only the digest
+    # is here, as for every credential in Myntos; the key is made by
+    # `python -m myntos.auth.operator` and kept by the operator. Unset, or not
+    # a digest, the page's routes answer 404 (``operator_key_digest``).
+    operator_key_sha256: str | None = None
+    # How long a kind of failure is kept after it last happened.
+    server_error_retention_days: int = 90
+
     # --- Outgoing email (optional; nothing below is required to run) ---
     #
     # Two transports, and a deployment picks one by configuring it. Left unset,
@@ -441,6 +451,29 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+    @field_validator("operator_key_sha256", mode="before")
+    @classmethod
+    def _blank_digest_is_unset(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip().lower() or None
+        return value
+
+    @property
+    def operator_key_digest(self) -> str | None:
+        """``OPERATOR_KEY_SHA256`` when it is a SHA-256 digest, else ``None``: the page is off.
+
+        Pasting the key where its digest goes is the mistake this setting
+        invites, and it would fail quietly: every key presented would be
+        hashed and compared with a key, and never match. Not refused at
+        startup, though, because a typo in an optional setting must not keep
+        the books from opening on the next restart. The page stays off and
+        says why (``require_operator``), and ``create_app`` logs a warning.
+        """
+        value = self.operator_key_sha256
+        if value is None or len(value) != 64:
+            return None
+        return value if all(char in "0123456789abcdef" for char in value) else None
 
     @property
     def bankid_key_material(self) -> bytes | None:

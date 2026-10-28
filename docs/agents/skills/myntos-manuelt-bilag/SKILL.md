@@ -71,8 +71,9 @@ rather than assuming a number exists.
 
 1. `GET /api/v1/companies/{company_id}/manuelt-bilag?aar=2026`: the year's
    manual vouchers (`entries`), whether the year is `closed`, and the VAT
-   codes a line may carry (`tax_codes`). A closed year takes nothing; see
-   "Refusals".
+   codes a line may carry (`tax_codes`, each with its `kind`: `utgaaende` for
+   a sale, `inngaaende` for a purchase, `omvendt` for an import or a service
+   bought abroad, none for 0). A closed year takes nothing; see "Refusals".
 
 2. **Agree the voucher with the person.** You need:
    - `occurred_on`: the date. Year-end adjustments are dated the last day of

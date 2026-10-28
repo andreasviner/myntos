@@ -1,0 +1,136 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { LEVELS } from '../lib/datasharing';
+
+/**
+ * Hva hvert nivå av datadeling med Myntos deler, og hva det ikke deler.
+ *
+ * Siden valget under Innstillinger lenker til. Offentlig, fordi den som skal
+ * bestemme om bilagene deles, bør kunne lese hva det betyr uten å være logget
+ * inn, og fordi den som får spørsmålet fra en kunde, en revisor eller en
+ * ansatt, skal kunne lenke hit.
+ *
+ * Alt om nivåene kommer fra lib/datasharing.ts, den samme listen som valget
+ * tegnes fra, så forklaringen og valget ikke kan si to forskjellige ting.
+ * Reglene nederst er løftene i docs/data-sharing.md, sagt til den som velger.
+ */
+
+const previous = (index: number): string | undefined => LEVELS[index - 1]?.label;
+---
+
+<BaseLayout
+  title="Del data med Myntos: hva hvert nivå deler"
+  description="Selskapet velger selv om det vil dele noe med Myntos for å gjøre programmet bedre. Standard er ingenting. Her står nøyaktig hva hvert nivå deler, og hva det ikke deler."
+>
+  <p class="pill">Personvern</p>
+
+  <section class="card">
+    <h1>Hva deles på hvert nivå?</h1>
+    <p class="lead">
+      Under Innstillinger kan selskapet velge å dele data med oss, så vi kan gjøre Myntos bedre.
+      Standard er <strong>ingenting</strong>, og slik er det til en eier eller administrator i
+      selskapet velger noe annet. Hvert nivå deler alt nivået før det deler, og litt til.
+    </p>
+    <p>
+      Myntos samler ikke inn noe av dette ennå. Valget lagres, så det gjelder fra den dagen vi
+      begynner.
+    </p>
+    <p class="actions">
+      <a class="btn btn-primary" href="/organisasjon/#datadeling">Velg for selskapet ditt</a>
+      <a class="btn btn-ghost" href="/personvern/#datadeling">Personvern</a>
+    </p>
+  </section>
+
+  {
+    LEVELS.map((level, index) => (
+      <section class="card niva" data-fare={level.danger ? 'true' : undefined}>
+        <h2>{level.label}</h2>
+        <p>{level.summary}</p>
+        {level.shares.length > 0 && (
+          <>
+            <h3>Dette deles</h3>
+            <ul>
+              {index > 1 && <li>Alt fra «{previous(index)}».</li>}
+              {level.shares.map((line) => (
+                <li>{line}</li>
+              ))}
+            </ul>
+          </>
+        )}
+        <h3>{level.danger ? 'Slik behandler vi det' : 'Dette deles ikke'}</h3>
+        <ul>
+          {level.keeps.map((line) => (
+            <li>{line}</li>
+          ))}
+        </ul>
+      </section>
+    ))
+  }
+
+  <section class="card">
+    <h2>Det samme for alle nivåer</h2>
+    <ul>
+      <li>
+        Valget gjelder bare selskapet det er gjort for. Har du flere selskaper i Myntos, velger du for
+        hvert av dem.
+      </li>
+      <li>Bare eiere og administratorer kan endre det. Alle i selskapet kan se hva som er valgt.</li>
+      <li>
+        Det gjelder fra den dagen det lagres. Det som allerede er ført, deles ikke i ettertid.
+      </li>
+      <li>
+        Du kan velge et lavere nivå når som helst, og det gjelder med en gang. Bilag og annet som er
+        delt på nivået «Alt, også bilag», slettes da. Det som er delt anonymt, kan ikke knyttes til
+        selskapet, og blir derfor ikke slettet.
+      </li>
+      <li>
+        Vil vi bruke noe mer enn det som står her, spør vi på nytt. Til dere har svart, gjelder det
+        dere valgte.
+      </li>
+      <li>Ingenting av det selges, og ingenting deles med andre.</li>
+      <li>
+        Feil på serveren lagres uansett hva dere har valgt, også med «Ingenting»: hva i koden som
+        feilet, hvor ofte og når. Ikke hvem det gjaldt, selskapet eller noe fra regnskapet. Det er
+        drift, ikke deling, og står i <a href="/personvern/">personvernerklæringen</a>.
+      </li>
+      <li>Sletter dere selskapet fra Myntos, går valget tilbake til «Ingenting».</li>
+    </ul>
+  </section>
+</BaseLayout>
+
+<style>
+  .lead {
+    font-size: 1.05rem;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 0;
+  }
+
+  h3 {
+    margin: 1.1rem 0 0.4rem;
+    font-size: 1rem;
+  }
+
+  ul {
+    margin: 0;
+    padding-left: 1.2rem;
+    display: grid;
+    gap: 0.35rem;
+  }
+
+  /* Det øverste nivået er rødt, som på valget under Innstillinger: det er det
+     eneste som ikke er anonymisert. */
+  .niva[data-fare] {
+    border-color: var(--danger-line);
+    background: var(--danger-bg);
+  }
+
+  .niva[data-fare] h2,
+  .niva[data-fare] > p {
+    color: var(--danger);
+  }
+</style>

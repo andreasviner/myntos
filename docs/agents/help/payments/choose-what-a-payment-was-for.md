@@ -40,7 +40,12 @@ They need the role «Medlem» or more, and the form open on
    that the purchase carries 25 % VAT that may be deducted.
 4. Check «Mva-kode». It is set from the type («Foreslått ut fra typen. Endre
    hvis fakturaen sier noe annet.»). Change it only if the receipt shows a
-   different VAT rate, or none.
+   different VAT rate, or none. Each code reads code, rate, name, for example
+   «1: 25 % – Inngående mva, høy sats». The list shows only the codes for the
+   type's side: a sale gets «Salg», a purchase or a refund of one gets «Kjøp»
+   and «Import og omvendt avgiftsplikt», and «0: Ingen
+   merverdiavgiftsbehandling» is in both. A code that seems to be missing
+   belongs to the other side, which means the type is the thing to change.
 5. If a «Konto» field appears, the company has added accounts of the same
    kind to its chart of accounts, and one of those can be chosen instead of
    the type's own. Otherwise the field does not show.

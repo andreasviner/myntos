@@ -1,0 +1,530 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+{/* Drift: det Myntos har som ikke hører til noe selskap. Tilbakemeldingene,
+    med avsenderens egen tekst, og feilene på serveren. Se docs/operator.md.
+
+    Ingen innlogging åpner siden, og ingen nøkkel for et selskap heller: bare
+    driftsnøkkelen, som lages på maskinen og som bare finnes som sjekksum i
+    .env. Uten den svarer API-et 404, og siden sier hvorfor. Nøkkelen sendes
+    som bearer-token uten informasjonskapselen, og huskes i fanen til den
+    lukkes eller låses (lib/drift.ts).
+
+    Det siden kan endre, er valgt for en nøkkel som har lekket: statusen på en
+    tilbakemelding og om en feil er løst. Svar, publisering og sletting når
+    avsenderen, den offentlige listen eller er for alltid, så de gjøres på
+    maskinen med triage-kommandoen.
+
+    Alt en fremmed har skrevet, settes inn med textContent. Teksten i en
+    tilbakemelding er skrevet av hvem som helst, og denne siden er den eneste
+    som viser den. */}
+
+<BaseLayout
+  title="Drift | Myntos"
+  description="Tilbakemeldinger og feil på serveren, for den som drifter Myntos."
+  width="wide"
+>
+  <div class="head">
+    <p class="pill">Drift</p>
+    <h1>Tilbakemeldinger og feil</h1>
+    <p class="lead">
+      For den som drifter Myntos. Siden åpnes med driftsnøkkelen, ikke med en vanlig innlogging.
+    </p>
+  </div>
+
+  <section class="card lock" id="lock" aria-labelledby="lock-title">
+    <h2 class="card-title" id="lock-title">Åpne med driftsnøkkelen</h2>
+    <p class="status" id="lock-status" hidden></p>
+    <form id="lock-form" novalidate>
+      <label class="field">
+        <span>Driftsnøkkel</span>
+        <input
+          type="password"
+          name="key"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="myntos_op_…"
+          required
+        />
+      </label>
+      <button class="btn btn-primary" type="submit" id="open">Åpne</button>
+    </form>
+    <p class="card-hint">
+      Nøkkelen lages på maskinen med <code>uv run python -m myntos.auth.operator</code>, og bare
+      sjekksummen av den står i <code>.env</code>. Den huskes til du lukker fanen eller trykker
+      «Lås».
+    </p>
+  </section>
+
+  <div id="board" hidden>
+    <div class="bar">
+      <button class="btn btn-ghost btn-small" type="button" id="reload">Oppdater</button>
+      <button class="btn btn-ghost btn-small" type="button" id="lock-again">Lås</button>
+    </div>
+
+    <section class="block" aria-labelledby="errors-title">
+      <div class="block-head">
+        <h2 id="errors-title">Feil på serveren <span class="tally" id="errors-tally"></span></h2>
+        <label class="filter">
+          <span>Vis</span>
+          <select id="errors-filter">
+            <option value="open" selected>Åpne</option>
+            <option value="resolved">Løste</option>
+            <option value="all">Alle</option>
+          </select>
+        </label>
+      </div>
+      <p class="card-hint">
+        Lagret uten data: typen, koden som feilet og ruten som mal, aldri meldingen, verdiene,
+        adressen eller hvem det gjaldt. Hele linjen står i journalen på maskinen, og kommandoen
+        under hver feil finner den.
+      </p>
+      <p class="status" id="errors-status" hidden></p>
+      <ul class="rows" id="errors"></ul>
+      <p class="card-hint" id="errors-empty" hidden>Ingen feil her.</p>
+    </section>
+
+    <section class="block" aria-labelledby="feedback-title">
+      <div class="block-head">
+        <h2 id="feedback-title">Tilbakemeldinger <span class="tally" id="feedback-tally"></span></h2>
+        <label class="filter">
+          <span>Vis</span>
+          <select id="feedback-filter">
+            <option value="all" selected>Alle</option>
+            <option value="new">Ikke lest ennå</option>
+            <option value="read">Lest</option>
+            <option value="planned">Planlagt</option>
+            <option value="done">Ferdig</option>
+            <option value="declined">Blir ikke gjort</option>
+          </select>
+        </label>
+      </div>
+      <p class="card-hint">
+        Avsenderen ser statusen med referansen sin. Svar, publisering og sletting gjøres på
+        maskinen, for eksempel <code
+          >uv run python -m myntos.domain.feedback.triage reply 12 "Rettet i dag."</code
+        >
+      </p>
+      <p class="status" id="feedback-status" hidden></p>
+      <ul class="rows" id="feedback"></ul>
+      <p class="card-hint" id="feedback-empty" hidden>Ingen tilbakemeldinger her.</p>
+    </section>
+  </div>
+</BaseLayout>
+
+<style>
+  .head {
+    max-width: 44rem;
+    padding: 2rem 0 1rem;
+  }
+  .lock {
+    max-width: 32rem;
+  }
+  .bar {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+  }
+  .block {
+    margin-top: 1.5rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+  }
+  .block-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+  }
+  .block-head h2 {
+    margin: 0;
+  }
+  .tally {
+    color: var(--muted);
+    font-weight: 500;
+    font-size: 0.95rem;
+  }
+  .filter {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+  }
+  code {
+    overflow-wrap: anywhere;
+  }
+  .rows {
+    list-style: none;
+    padding: 0;
+    margin: 1rem 0 0;
+    display: grid;
+    gap: 0.75rem;
+  }
+  /* Radene bygges av skriptet, og en sides <style> når ikke det skriptet lager
+     (docs/frontend-conventions.md). Forankret i listene, som står i markeringen. */
+  .rows :global(li) {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.9rem 1.1rem;
+    background: var(--surface);
+    min-width: 0;
+  }
+  .rows :global(.row-head) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.4rem 0.8rem;
+  }
+  .rows :global(.row-title) {
+    font-weight: 650;
+    overflow-wrap: anywhere;
+  }
+  .rows :global(.badge) {
+    font-size: 0.76rem;
+    font-weight: 650;
+    padding: 0.15rem 0.55rem;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--border-strong);
+    color: var(--muted);
+  }
+  .rows :global(.badge[data-tone='open']) {
+    border-color: var(--danger-line);
+    color: var(--danger);
+  }
+  .rows :global(.row-when) {
+    margin-left: auto;
+    font-size: 0.82rem;
+    color: var(--faint);
+  }
+  .rows :global(.row-line) {
+    margin: 0.4rem 0 0;
+    font-size: 0.9rem;
+    overflow-wrap: anywhere;
+  }
+  .rows :global(.row-line .label) {
+    color: var(--muted);
+  }
+  .rows :global(.quote) {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    padding: 0.75rem 0.9rem;
+    margin: 0.6rem 0 0;
+  }
+  .rows :global(details) {
+    margin-top: 0.5rem;
+    font-size: 0.88rem;
+  }
+  .rows :global(pre) {
+    margin: 0.4rem 0 0;
+    padding: 0.6rem 0.75rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    overflow-x: auto;
+    font-size: 0.8rem;
+    line-height: 1.45;
+  }
+  .rows :global(.row-actions) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem 1rem;
+    margin-top: 0.7rem;
+  }
+  .rows :global(.row-status) {
+    margin: 0;
+    font-size: 0.85rem;
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    listOperatorFeedback,
+    listServerErrors,
+    setOperatorFeedbackStatus,
+    setServerErrorStatus,
+    type OperatorFeedback,
+    type ServerErrorEntry,
+    type ServerErrorStatus,
+  } from '../lib/api';
+  import { el, setStatus, show } from '../lib/dom';
+  import {
+    ERROR_STATUS_LABELS,
+    KEY_PROBLEMS,
+    SOURCE_LABELS,
+    forgetKey,
+    frameLine,
+    journalCommand,
+    keepKey,
+    keyProblem,
+    moment,
+    ownFrame,
+    shortType,
+    storedKey,
+    timesLabel,
+  } from '../lib/drift';
+  import { KIND_LABELS, STATUS_LABELS, type FeedbackStatus } from '../lib/feedback';
+
+  const lock = el('#lock');
+  const lockForm = el<HTMLFormElement>('#lock-form');
+  const lockStatus = el<HTMLParagraphElement>('#lock-status');
+  const keyInput = el<HTMLInputElement>('input[name="key"]', lockForm);
+  const openButton = el<HTMLButtonElement>('#open');
+  const board = el('#board');
+
+  const errorsFilter = el<HTMLSelectElement>('#errors-filter');
+  const errorsList = el<HTMLUListElement>('#errors');
+  const errorsStatus = el<HTMLParagraphElement>('#errors-status');
+  const feedbackFilter = el<HTMLSelectElement>('#feedback-filter');
+  const feedbackList = el<HTMLUListElement>('#feedback');
+  const feedbackStatus = el<HTMLParagraphElement>('#feedback-status');
+
+  let key: string | null = storedKey();
+
+  function node<K extends keyof HTMLElementTagNameMap>(
+    tag: K,
+    className: string,
+    text?: string,
+  ): HTMLElementTagNameMap[K] {
+    const made = document.createElement(tag);
+    if (className) made.className = className;
+    if (text !== undefined) made.textContent = text;
+    return made;
+  }
+
+  function line(label: string, value: string): HTMLParagraphElement {
+    const row = node('p', 'row-line');
+    row.append(node('span', 'label', `${label}: `), document.createTextNode(value));
+    return row;
+  }
+
+  // --- Nøkkelen ---------------------------------------------------------------------------
+
+  function locked(message = ''): void {
+    key = null;
+    forgetKey();
+    show(board, false);
+    show(lock, true);
+    setStatus(lockStatus, message);
+    keyInput.value = '';
+  }
+
+  // 401 og 404 betyr det samme hvor de enn kommer: nøkkelen stemmer ikke, eller
+  // siden er ikke slått på. Begge sender tilbake til låsen med beskjeden.
+  function refused(error: unknown): boolean {
+    if (!(error instanceof ApiError)) return false;
+    if (error.code === 'not_the_operator') {
+      locked('Nøkkelen stemmer ikke med sjekksummen i .env.');
+      return true;
+    }
+    if (error.code === 'operator_page_off') {
+      // API-et sier hvorfor: nøkkelen mangler i .env, eller det står noe der
+      // som ikke er en sjekksum.
+      locked(error.message);
+      return true;
+    }
+    return false;
+  }
+
+  function failed(status: HTMLElement, error: unknown, fallback: string): void {
+    if (refused(error)) return;
+    setStatus(status, error instanceof ApiError ? error.message : fallback);
+  }
+
+  lockForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const problem = keyProblem(keyInput.value);
+    if (problem !== null) {
+      setStatus(lockStatus, KEY_PROBLEMS[problem]);
+      return;
+    }
+    const candidate = keyInput.value.trim();
+    openButton.disabled = true;
+    openButton.textContent = 'Åpner …';
+    setStatus(lockStatus, '');
+    // Prøvd mot API-et før den huskes, så en feil nøkkel ikke blir liggende i fanen.
+    void listServerErrors(candidate, 'open')
+      .then(() => {
+        key = candidate;
+        keepKey(candidate);
+        keyInput.value = '';
+        opened();
+      })
+      .catch((error: unknown) => failed(lockStatus, error, 'Fikk ikke kontakt med serveren.'))
+      .finally(() => {
+        openButton.disabled = false;
+        openButton.textContent = 'Åpne';
+      });
+  });
+
+  el<HTMLButtonElement>('#lock-again').addEventListener('click', () => locked());
+  el<HTMLButtonElement>('#reload').addEventListener('click', () => loadAll());
+
+  function opened(): void {
+    show(lock, false);
+    show(board, true);
+    loadAll();
+  }
+
+  function loadAll(): void {
+    loadErrors();
+    loadFeedback();
+  }
+
+  // --- Feil på serveren -----------------------------------------------------------------
+
+  function errorRow(entry: ServerErrorEntry): HTMLLIElement {
+    const row = document.createElement('li');
+    const head = node('div', 'row-head');
+    head.append(node('span', 'row-title', shortType(entry.exception)));
+    const badge = node('span', 'badge', ERROR_STATUS_LABELS[entry.status]);
+    badge.dataset.tone = entry.status;
+    head.append(badge, node('span', 'badge', timesLabel(entry.count)));
+    head.append(node('span', 'row-when', `Sist ${moment(entry.last_seen_at)}`));
+    row.append(head);
+
+    row.append(line('Rute', entry.route ?? 'I bakgrunnen, ikke en forespørsel'));
+    row.append(line('Logget', `${entry.logger}: ${entry.template}`));
+    const own = ownFrame(entry.frames);
+    if (own !== null) row.append(line('Der', frameLine(own)));
+    if (entry.exception !== null) row.append(line('Type', entry.exception));
+    if (entry.causes.length > 0) row.append(line('Utløst av', entry.causes.join(' ← ')));
+    row.append(line('Først', moment(entry.first_seen_at)));
+
+    if (entry.frames.length > 0) {
+      const details = document.createElement('details');
+      details.append(node('summary', '', `Hele sporet (${entry.frames.length})`));
+      const trace = entry.frames
+        .map((frame) => `${frameLine(frame)}${frame.code ? `\n    ${frame.code}` : ''}`)
+        .join('\n');
+      details.append(node('pre', '', trace));
+      row.append(details);
+    }
+
+    const actions = node('div', 'row-actions');
+    const rowStatus = node('p', 'status row-status');
+    rowStatus.hidden = true;
+    const journal = node('code', '', journalCommand(entry));
+    const copy = node('button', 'btn btn-ghost btn-small', 'Kopier');
+    copy.type = 'button';
+    copy.addEventListener('click', () => {
+      void navigator.clipboard.writeText(journal.textContent ?? '').then(
+        () => setStatus(rowStatus, 'Kopiert.', 'ok'),
+        // Utklippstavlen kan være sperret; kommandoen står der og kan markeres.
+        () => window.getSelection()?.selectAllChildren(journal),
+      );
+    });
+    const next: ServerErrorStatus = entry.status === 'open' ? 'resolved' : 'open';
+    const toggle = node(
+      'button',
+      'btn btn-small',
+      entry.status === 'open' ? 'Merk som løst' : 'Åpne igjen',
+    );
+    toggle.type = 'button';
+    toggle.addEventListener('click', () => {
+      if (key === null) return;
+      toggle.disabled = true;
+      void setServerErrorStatus(key, entry.number, next)
+        .then(() => loadErrors())
+        .catch((error: unknown) => {
+          toggle.disabled = false;
+          failed(rowStatus, error, 'Fikk ikke endret statusen.');
+        });
+    });
+    actions.append(toggle, journal, copy);
+    row.append(actions, rowStatus);
+    return row;
+  }
+
+  function loadErrors(): void {
+    if (key === null) return;
+    const status = errorsFilter.value as ServerErrorStatus | 'all';
+    void listServerErrors(key, status)
+      .then((entries) => {
+        setStatus(errorsStatus, '');
+        errorsList.replaceChildren(...entries.map(errorRow));
+        el('#errors-tally').textContent = `(${entries.length})`;
+        show(el('#errors-empty'), entries.length === 0);
+      })
+      .catch((error: unknown) => failed(errorsStatus, error, 'Fikk ikke hentet feilene.'));
+  }
+
+  errorsFilter.addEventListener('change', () => loadErrors());
+
+  // --- Tilbakemeldinger -------------------------------------------------------------------
+
+  function feedbackRow(item: OperatorFeedback): HTMLLIElement {
+    const row = document.createElement('li');
+    const head = node('div', 'row-head');
+    head.append(node('span', 'row-title', `#${item.number} ${KIND_LABELS[item.kind]}`));
+    const from =
+      item.source === 'agent' && item.agent_name
+        ? `${SOURCE_LABELS.agent}: ${item.agent_name}`
+        : SOURCE_LABELS[item.source];
+    head.append(node('span', 'badge', from));
+    head.append(node('span', 'row-when', `Sendt ${moment(item.created_at)}`));
+    row.append(head);
+
+    // Skrevet av en fremmed: textContent, aldri markering.
+    row.append(node('p', 'quote', item.text));
+    if (item.page !== null) row.append(line('Side', item.page));
+    if (item.reply !== null) row.append(line('Svar', item.reply));
+    if (item.summary !== null) row.append(line('Publisert som', item.summary));
+
+    const actions = node('div', 'row-actions');
+    const label = node('label', 'filter');
+    label.append(node('span', '', 'Status'));
+    const select = document.createElement('select');
+    for (const [value, text] of Object.entries(STATUS_LABELS)) {
+      const option = node('option', '', text);
+      option.value = value;
+      option.selected = value === item.status;
+      select.append(option);
+    }
+    label.append(select);
+    const rowStatus = node('p', 'status row-status');
+    rowStatus.hidden = true;
+    select.addEventListener('change', () => {
+      if (key === null) return;
+      select.disabled = true;
+      void setOperatorFeedbackStatus(key, item.number, select.value as FeedbackStatus)
+        .then((changed) => {
+          item.status = changed.status;
+          setStatus(rowStatus, 'Lagret.', 'ok');
+        })
+        .catch((error: unknown) => {
+          select.value = item.status;
+          failed(rowStatus, error, 'Fikk ikke endret statusen.');
+        })
+        .finally(() => {
+          select.disabled = false;
+        });
+    });
+    actions.append(label, rowStatus);
+    row.append(actions);
+    return row;
+  }
+
+  function loadFeedback(): void {
+    if (key === null) return;
+    const status = feedbackFilter.value as FeedbackStatus | 'all';
+    void listOperatorFeedback(key, status)
+      .then((items) => {
+        setStatus(feedbackStatus, '');
+        feedbackList.replaceChildren(...items.map(feedbackRow));
+        el('#feedback-tally').textContent = `(${items.length})`;
+        show(el('#feedback-empty'), items.length === 0);
+      })
+      .catch((error: unknown) => failed(feedbackStatus, error, 'Fikk ikke hentet tilbakemeldingene.'));
+  }
+
+  feedbackFilter.addEventListener('change', () => loadFeedback());
+
+  if (key !== null) opened();
+</script>

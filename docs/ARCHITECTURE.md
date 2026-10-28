@@ -283,6 +283,13 @@ to `Konto {id}`, and leaves a name somebody chose alone.
   with its person's role as it stands on each request, and some routes no key
   reaches at all: filing, money, access, the account. The rules and the
   reasons are in [agents-and-api.md](agents-and-api.md).
+- **The operator key** is a fourth, and belongs to no person and no company:
+  one per deployment, `myntos_op_` and 256 random bits, its SHA-256 digest in
+  `OPERATOR_KEY_SHA256`. It opens `/drift/` (every stranger's feedback, and
+  the server's failures) and nothing else, and no session or company key opens
+  that. Unset, the routes answer 404. A leaked one can set a status and no
+  more; replying, publishing and deleting feedback stay in the shell. See
+  [operator.md](operator.md).
 - A person sees and ends their own sessions at `/konto/`
   (`GET /account/sessions`, one or all the others). The list shows a coarse
   "Firefox på Linux" derived from the stored user agent, never the raw string
@@ -1009,6 +1016,7 @@ everywhere is no easier to find than one present where you are.
 | `/arsavslutning/` | One financial year's result, tax (AS) and disposition, shown line by line before a confirmed close; reopening with a reason and the log of both. Reached from the overview's note |
 | `/skattemelding/` | An aksjeselskap's skattemelding and næringsspesifikasjon for a closed year: what stops it (each with a link to where it is fixed), the taxable result and the formue as Skatteetaten will compute them, every post with its accounts; the one question only the person can answer, Skatteetaten's check, a confirmation step before filing, the answer afterwards. Reached from the overview's note and from a closed year on `/arsavslutning/`. See [integrations/skatteetaten.md](integrations/skatteetaten.md#filing-from-myntos-built-2026-10-22) |
 | `/parter/` | Customers and suppliers (SAF-T `Party`) for the active company: the register a counterparty is picked from. Reached from `/faktura/` and the register's entry form, not from the menu |
+| `/datadeling/` | What each level of sharing with Myntos shares and keeps, public, drawn from `lib/datasharing.ts` like the choice on `/organisasjon/`. See [data-sharing.md](data-sharing.md) |
 | `/ki/` | Where KI is used in Myntos and who runs the model, public; signed in, also the switch (`Company.ki_enabled`) that turns it off for one set of books, naming the company it applies to. See [§ KI](#ki-anywhere-in-the-product-one-provider-only) |
 | `/godkjenning/` | What keys for agents and programs asked to do and that waits for the key's person: approve (runs the stored request as the key), decline with a reason the agent reads, or go to the MVA or Skattemelding page for a request to file. A request that sends something out of Myntos (`key_send`: a check or a filing with Skatteetaten) always lands here, and the card asks for the person's ID-porten login before «Godkjenn» when it goes with it. Decided ones below. In the top menu only while the company has keys switched on, with a count of what waits. See [agents-and-api.md](agents-and-api.md) rule 13 |
 | `/nytt-selskap/` | Setting up books for another company: orgnr (or Altinn's list of companies the person may act for), then the books, then inviting colleagues. Reached from «Legg til selskap» in the company menu, and only for an account holder with `organization:manage` |
@@ -1018,8 +1026,9 @@ everywhere is no easier to find than one present where you are.
 | `/konto/` | The **person**, not a company: how they sign in (password, linked providers, «Koble til BankID», and removing one while another way in remains), where they are signed in (end one device, or all the others), and deleting the account, with what is deleted and what stays with each company stated before the button. Reached from the company menu as «Din konto». See [gdpr.md](gdpr.md) |
 | `/slett-selskap/` | Deleting the active company, for an owner: a SAF-T link for every year with entries, what will happen (deleted at once when nothing is entered, otherwise locked until the date bokføringsloven § 13 sets and purged the day after), the same proof as deleting the account, and two boxes. Reached from the red «Slett selskapet …» in the last section of `/organisasjon/`, owners only; a deleted company is opened again from «Slettede selskaper» on `/konto/`. See [gdpr.md § Deleting a company](gdpr.md#deleting-a-company) |
 | `/bekreft-epost/`, `/glemt-passord/`, `/nytt-passord/` | Address confirmation and password reset, from links in the fragment. The front page carries a notice (`components/VerifyEmailNotice.astro`) while the address is unconfirmed and the deployment sends mail. See [Credentials and sessions](#credentials-and-sessions) |
-| `/organisasjon/` | Everything about **one company**: its own details (the only place its bank accounts, VAT registration, Foretaksregisteret and the address are edited), its subscription, who may open it and who has been invited to it, the Altinn confirmation of who it belongs to, and everything Enhetsregisteret holds about it including the board and the revisor. The board list marks who can open the books and offers to invite whoever cannot: [register-access.md](register-access.md). No account is shown here: see [company-isolation.md](company-isolation.md#the-account-is-not-a-company) |
+| `/organisasjon/` | Everything about **one company**: its own details (the only place its bank accounts, VAT registration, Foretaksregisteret and the address are edited), its subscription, who may open it and who has been invited to it, the Altinn confirmation of who it belongs to, what it lets Myntos use to improve Myntos (`Company.data_sharing`, owners and admins, the top level in red: [data-sharing.md](data-sharing.md)), and everything Enhetsregisteret holds about it including the board and the revisor. The board list marks who can open the books and offers to invite whoever cannot: [register-access.md](register-access.md). No account is shown here: see [company-isolation.md](company-isolation.md#the-account-is-not-a-company) |
 | `/tilbakemelding/` | Bug reports, improvements and wishes from anybody, signed in or not, kept without a name: the form, the reference shown once, one item read back or withdrawn by its `#ref=`, and the list the operator chose to publish in its own words. Linked from the footer and from `/funksjoner/`. See [feedback.md](feedback.md) |
+| `/drift/` | The operator's page, opened by the deployment's operator key and by no session or company key: every feedback item with the sender's text and its status, and the server's recorded failures, kept without anybody's data, with the `journalctl` command for the details. Not linked from anywhere, noindex. See [operator.md](operator.md) |
 | `/priser/`, `/bankpriser/`, `/funksjoner/`, `/about/`, `/kom-i-gang/` (and one guide per program under it), `/ansvar/`, `/personvern/`, `/vilkar/` | Marketing and legal pages, readable signed out: prices, a comparison of business banks, features, moving from another program, the disclaimer, the privacy policy and the terms. `/personvern/` and `/ki/` carry the public promise about KI ([§ KI](#ki-anywhere-in-the-product-one-provider-only)) |
 
 `/faktura/` is three cards and one of them at a time — the form, the review,
@@ -1075,8 +1084,8 @@ Consequences for the code:
 | --- | --- | --- |
 | `api` | HTTP endpoints, versioned (`/api/v1`) | domain, core |
 | `core` | Settings (pydantic-settings, env-driven), security middleware, clock | — |
-| `auth` | Myntos login (passwords, tokens, sessions, Google/Microsoft/BankID OIDC), keys for agents and integrations (`agent_keys`), **and** Maskinporten + ID-porten token acquisition | core, domain.identity; `agent_keys` also reads two ledger models, because a key belongs to a company and its stamp goes on a voucher |
-| `domain` | Ledger (incl. the cash-flow register), bilag, faktura, bank (camt.053 import and matching), mva, årsoppgjør (opening balance, year-end closing), identity (accounts/organizations), feedback (anonymous bug reports and wishes, and the operator's triage command) — business logic | core, db; the `storage` protocol and keys, and one data type from `integrations.brreg` (below) |
+| `auth` | Myntos login (passwords, tokens, sessions, Google/Microsoft/BankID OIDC), keys for agents and integrations (`agent_keys`), the operator key (`operator`), **and** Maskinporten + ID-porten token acquisition | core, domain.identity; `agent_keys` also reads two ledger models, because a key belongs to a company and its stamp goes on a voucher |
+| `domain` | Ledger (incl. the cash-flow register), bilag, faktura, bank (camt.053 import and matching), mva, årsoppgjør (opening balance, year-end closing), identity (accounts/organizations), feedback (anonymous bug reports and wishes, and the operator's triage command), server_errors (the server's failures, kept without their data, [operator.md](operator.md)) — business logic | core, db; the `storage` protocol and keys, and one data type from `integrations.brreg` (below) |
 | `integrations` | Skatteetaten/Altinn/Brreg/Løynd/Norges Bank clients (translate domain ⇄ external APIs) | auth, core |
 | `saft` | SAF-T Financial export: snapshot, writer, cross-reference check, vendored code lists | domain |
 | `skattemelding` | The skattemelding and næringsspesifikasjon: the year's XSD read for order and what Skatteetaten derives, the writer, the builder from plain figures, the envelope, vendored XSDs and code lists; and the one module that reads the books for it (`service`, through `saft.service`) and the filings (`models`) | domain, saft |
@@ -1855,8 +1864,15 @@ ordered to store in Norway after a compliance breach.
   than the token stored readable. Neither kind is ever logged. Application
   credentials are never stored in usable form:
   passwords as Argon2id hashes, session, invitation, confirmation and reset
-  tokens, and agent keys and their tokens, as SHA-256 digests of 256-bit
-  random values.
+  tokens, agent keys and their tokens, and the operator key, as SHA-256
+  digests of 256-bit random values.
+- **Errors:** what fails is logged to the journal in full, next to uvicorn's
+  access line with the client's address, so only somebody on the machine reads
+  it. Each failure is also kept in the database without its data (the types,
+  the frames and the log line's and route's templates; never the message, a
+  logged value, the address asked for or who it was), for the operator's page
+  ([operator.md](operator.md)). That is why every log call is a template with
+  its values as arguments (ruff `G`).
 - **Passwords:** Argon2id at argon2-cffi defaults (t=3, m=64 MiB, p=4 — above
   the OWASP 19 MiB floor); parameters live in the hash, so raising them
   re-hashes users on their next sign-in. Policy is length-only (at least

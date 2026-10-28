@@ -16,7 +16,9 @@ from fastapi.testclient import TestClient
 
 from myntos.core.clock import utc_now
 from myntos.domain.bilag import classification
-from myntos.domain.ledger.cashflow import CashFlowDirection
+from myntos.domain.ledger import landbruk
+from myntos.domain.ledger.cashflow import CashFlowDirection, types_for
+from myntos.domain.mva.codes import CodeKind, kind_of
 from myntos.integrations import loynd, norgesbank
 from tests.conftest import PASSWORD, join_company, register, write
 
@@ -1212,6 +1214,34 @@ def test_the_catalogue_lists_types_with_their_notes(client: TestClient) -> None:
     assert any(code["code"] == "3" for code in catalogue["tax_codes"])
 
 
+def test_every_category_proposes_a_vat_code_from_its_own_side(client: TestClient) -> None:
+    """The form shows a category only its own side's codes, so its default must be one.
+
+    Once a category is chosen, «Mva-kode» on /kontantstrom/ hides the codes for
+    the other side of the trade: a purchase sees input VAT and reverse charge,
+    a sale output VAT, and 0 is in both. The list was 27 codes long, which is
+    the reason. A category whose default sat on the other side would be
+    proposed a code its own list does not show. Checked over the farm's
+    categories too, since the company catalogue below has none of them.
+    """
+    company = signed_in_company(client)
+    catalogue = client.get(f"/api/v1/companies/{company['id']}/cashflow/types").json()
+    kinds = {code["code"]: code["kind"] for code in catalogue["tax_codes"]}
+    assert kinds["0"] is None
+    assert (kinds["3"], kinds["1"], kinds["86"]) == ("utgaaende", "inngaaende", "omvendt")
+    by_code = {entry["code"]: entry for entry in catalogue["types"]}
+    # A refund is money in on a purchase: its codes are the purchase's.
+    assert by_code["refusjon_husleie"]["direction"] == "inn"
+    assert by_code["refusjon_husleie"]["books_as"] == "ut"
+
+    for entry in types_for(segments=frozenset({landbruk.SEGMENT})):
+        kind = kind_of(entry.default_tax_code)
+        if kind is None:
+            continue
+        sale = entry.books_as is CashFlowDirection.INN
+        assert (kind is CodeKind.UTGAAENDE) == sale, entry.code
+
+
 # --- Kroner, the file's own name, and the switch that turns the model off ---------
 
 
@@ -1921,6 +1951,66 @@ def test_an_image_that_could_not_be_read_says_so_in_its_own_words(
     warnings = " ".join(suggestion["warnings"])
     assert "bildene" in warnings
     assert "skadet" not in warnings
+    # Nor is there a PDF to have found no text in.
+    assert "PDF" not in warnings
+
+
+def test_an_image_the_reader_refused_is_not_called_unsharp(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `biltema1/` case: a sharp iPhone photo that Løynd answered 400 for.
+
+    Pillow calls an iPhone JPEG with a gain map "MPO", and Løynd's format check
+    refused it before any model saw it. Nothing was learnt about the picture,
+    so the user must not be sent off to take another one.
+    """
+
+    async def refusing(**_: Any) -> Any:
+        raise loynd.LoyndUnavailableError("fikk ikke lest dokumentet hos Løynd")
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "extract_file", refusing)
+
+    company = signed_in_company(client)
+    suggestion = interpret_many(client, company["id"], [("IMG_1889.jpg", png_bytes())]).json()
+
+    warnings = " ".join(suggestion["warnings"])
+    assert "denne gangen" in warnings
+    assert "skarpere" not in warnings
+    assert "PDF" not in warnings
+    # Nothing to continue: an answer would be about a bilag with its only file
+    # missing, so the page reads the whole bilag again instead.
+    assert suggestion["reading_id"] is None
+
+
+def test_a_refused_reading_is_not_remembered(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once Løynd answers again, the same photo is read rather than recalled unread."""
+    answering = False
+
+    async def extract(*, content: bytes, filename: str, content_type: str) -> Any:
+        del content, filename, content_type
+        if not answering:
+            raise loynd.LoyndUnavailableError("nede")
+        return loynd.ExtractedDocument(text="\n".join(FINN_RECEIPT_LINES))
+
+    async def fake_complete(**_: Any) -> str:
+        return "1"
+
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "extract_file", extract)
+    stub_loynd(monkeypatch, fake_complete)
+
+    company = signed_in_company(client)
+    photo = [("kvittering.png", png_bytes())]
+    first = interpret_many(client, company["id"], photo).json()
+    assert first["documents_read"][0]["chars"] == 0
+
+    answering = True
+    again = interpret_many(client, company["id"], photo).json()
+    assert again["documents_read"][0]["chars"] > 0
+    assert again["occurred_on"] == date(2026, 8, 30).isoformat()
 
 
 def test_one_unreadable_document_among_several_is_named_not_counted(

@@ -2,6 +2,7 @@
 import ClaimedDialog from '../components/ClaimedDialog.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
+import { LEVELS } from '../lib/datasharing';
 ---
 
 {/* Selskapet: hvem det er, og hvem som har tilgang til regnskapet.
@@ -572,6 +573,76 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
             <summary>Alt registeret har om selskapet</summary>
             <dl class="org-felt" id="register-felt"></dl>
           </details>
+        </div>
+      </section>
+
+      {/* --- Del data med Myntos -------------------------------------------
+
+          Ingenting er standard, for hvert selskap, og det er et valg for dem
+          som har ansvaret for regnskapet: eiere og administratorer. Andre ser
+          hva selskapet deler, men kan ikke endre det.
+
+          Nesten nederst, rett over «Slett selskapet», og en nedtrekksliste i
+          stedet for fire rader: det velges sjelden og skal ikke ta plass fra
+          det folk kommer hit for å gjøre. Setningen under listen sier hva det
+          valgte nivået deler, så ingen må åpne listen for å se det.
+
+          Nivåene og hva de omfatter kommer fra lib/datasharing.ts, den samme
+          listen /datadeling/ forklarer, så valget og forklaringen ikke kan si
+          to forskjellige ting. Det øverste nivået er bilagene slik de er, ikke
+          anonymisert. Derfor er det rødt, og derfor må man krysse av for at man
+          forstår det før «Lagre» virker. Se docs/data-sharing.md. */}
+      <section id="datadeling" hidden>
+        <div class="org-section-head">
+          <h2>Del data for å forbedre Myntos</h2>
+          <div class="org-section-tools">
+            <a class="btn btn-ghost btn-small" href="/datadeling/">Hva deles på hvert nivå?</a>
+          </div>
+        </div>
+
+        <div class="card">
+          <p class="card-hint" id="datadeling-na"></p>
+          {/* «Takk :)» står over listen et øyeblikk når noen velger det røde
+              nivået. Det er et takk for tilbudet, ikke en bekreftelse: ingenting
+              er lagret før avkrysningen og «Lagre». */}
+          <div class="org-datadeling-velg">
+            <label class="field org-datadeling">
+              <span>Hva selskapet deler</span>
+              <select id="datadeling-valg" aria-describedby="datadeling-om">
+                {
+                  LEVELS.map((level) => (
+                    <option value={level.value} data-fare={level.danger ? 'true' : undefined}>
+                      {level.label}
+                    </option>
+                  ))
+                }
+              </select>
+            </label>
+            <span class="org-takk" id="datadeling-takk" role="status" hidden>Takk :)</span>
+          </div>
+          <p class="field-hint org-datadeling-om" id="datadeling-om"></p>
+
+          <div class="org-datadeling-fare" id="datadeling-fare" hidden>
+            <p>
+              <strong>Bilagene deles slik de er, ikke anonymisert.</strong> De har ofte opplysninger
+              om andre enn deg: kunder, leverandører og ansatte. Velg dette bare hvis selskapet kan
+              stå inne for å dele dem med oss.
+            </p>
+            <label class="org-agent-check" id="datadeling-forstaar-rad">
+              <input type="checkbox" id="datadeling-forstaar" />
+              <span>Jeg forstår at bilagene deles slik de er, og vil dele dem.</span>
+            </label>
+          </div>
+
+          <p class="card-hint" id="datadeling-les" hidden>
+            Bare eiere og administratorer kan endre hva selskapet deler.
+          </p>
+          <div class="org-knapperad" id="datadeling-knapper" hidden>
+            <button type="button" class="btn btn-primary" id="datadeling-lagre" disabled>
+              Lagre
+            </button>
+          </div>
+          <p class="status" id="datadeling-status" role="status" hidden></p>
         </div>
       </section>
 
@@ -1424,6 +1495,93 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
     clip: rect(0 0 0 0);
     white-space: nowrap;
   }
+
+  /* --- Del data med Myntos ----------------------------------------------------
+     En nedtrekksliste, laveste nivå først. Det øverste er rødt i listen der
+     nettleseren lar oss farge et valg, og hele feltet blir rødt når det er
+     valgt, sammen med setningen under: det er det eneste nivået som ikke er
+     anonymisert, og det skal ikke gå an å velge det uten å ha sett det. */
+  .org-datadeling-velg {
+    position: relative;
+    max-width: 24rem;
+  }
+  .org-datadeling {
+    margin-bottom: 0;
+  }
+  /* Valgene arver ellers feltets farge, så alle ville blitt røde i listen så
+     snart det røde er valgt. */
+  .org-datadeling option {
+    color: var(--fg);
+    background: var(--surface);
+  }
+  .org-datadeling option[data-fare] {
+    color: var(--danger);
+  }
+  .org-datadeling select[data-fare] {
+    color: var(--danger);
+    border-color: var(--danger-line);
+    background: var(--danger-bg);
+  }
+  .org-datadeling-om {
+    margin: 0.4rem 0 0.9rem;
+  }
+  .org-datadeling-om[data-fare] {
+    color: var(--danger);
+  }
+  /* Et lite takk over høyre ende av listen, et øyeblikk. Skriptet skjuler det
+     igjen; animasjonen er bare pynt, så den slås helt av for den som har bedt
+     om lite bevegelse, i stedet for å bli et blink av den globale regelen. */
+  .org-takk {
+    position: absolute;
+    top: -0.3rem;
+    right: 0;
+    padding: 0.15rem 0.6rem;
+    border: 1px solid var(--accent-line);
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 0.85rem;
+    font-weight: 600;
+    pointer-events: none;
+  }
+  .org-takk.org-takk-vis {
+    animation: org-takk 1.4s ease forwards;
+  }
+  @keyframes org-takk {
+    0% {
+      opacity: 0;
+      transform: translateY(4px) scale(0.9);
+    }
+    15%,
+    75% {
+      opacity: 1;
+      transform: none;
+    }
+    100% {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .org-takk.org-takk-vis {
+      animation: none !important;
+    }
+  }
+  .org-datadeling-fare {
+    margin: 0 0 0.9rem;
+    padding: 0.8rem 1rem;
+    border: 1px solid var(--danger-line);
+    border-radius: var(--radius-small);
+    background: var(--danger-bg);
+    color: var(--danger);
+  }
+  .org-datadeling-fare p {
+    margin: 0 0 0.7rem;
+  }
+  .org-datadeling-fare .org-agent-check {
+    margin: 0;
+    color: var(--fg);
+  }
 </style>
 <script>
   import { CALLBACK_ERRORS } from '../lib/providers';
@@ -1443,6 +1601,7 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
     listApprovals,
     listMembers,
     setAgentAccess,
+    setDataSharing,
     stopAgentKey,
     refreshCompany,
     removeMember,
@@ -1453,6 +1612,7 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
     type AgentKey,
     type BankAccount,
     type Company,
+    type DataSharingLevel,
     type GovernmentLoginStatus,
     type Invitation,
     type Member,
@@ -1473,6 +1633,7 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
     type Mode,
   } from '../lib/agentkeys';
   import { isWaiting } from '../lib/approvals';
+  import { currentText as sharingText, levelOf } from '../lib/datasharing';
   import { currentCompany, loadCompanies, mountChromeCompanyMenu } from '../lib/company';
   import { clearStatus, el, setStatus, show } from '../lib/dom';
   import { isoDate, kontonummer, kroner, orgnummer } from '../lib/format';
@@ -2347,6 +2508,7 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
     // button needs the permission editing needs.
     show(el('#register'), selskap !== null);
     show(el('#register-hent'), mayAdmin());
+    show(el('#datadeling'), selskap !== null);
     // No books at all is the one case this page cannot answer, so it points at
     // the page that can. Only for someone whose *account* could set one up: an
     // invitation to a refusal is worse than silence, and somebody invited to a
@@ -2365,6 +2527,7 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
     mountChromeCompanyMenu(companies, selskap);
 
     showSelskapDetaljer(selskap);
+    showDatadeling(selskap);
     showEierskap();
     showRegisterAge();
   }
@@ -3678,6 +3841,109 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
     });
   }
 
+  // --- Del data med Myntos ----------------------------------------------------------
+  //
+  // Valgene lages fra lib/datasharing.ts når siden bygges; her tegnes det
+  // selskapet har valgt, og et nytt valg lagres. Ingenting lagres på et valg i
+  // listen alene: «Lagre» er beslutningen, og for nivået som deler bilagene
+  // slik de er, også avkrysningen over den.
+
+  const delingStatus = el<HTMLParagraphElement>('#datadeling-status');
+  const delingValg = el<HTMLSelectElement>('#datadeling-valg');
+  const delingForstaar = el<HTMLInputElement>('#datadeling-forstaar');
+  const delingLagre = el<HTMLButtonElement>('#datadeling-lagre');
+  const delingTakk = el<HTMLSpanElement>('#datadeling-takk');
+  let takkTimer: number | undefined;
+
+  function valgtDeling(): DataSharingLevel {
+    return levelOf(delingValg.value).value;
+  }
+
+  /** Tegn valget fra selskapets eget svar, slik det står nå. */
+  function showDatadeling(company: Company): void {
+    const current = levelOf(company.data_sharing);
+    // Selskapet med navn, hentet fra selskapet lagringen går til, som på /ki/:
+    // et valg om hva som forlater regnskapet skal ikke la noen lure på hvilket.
+    el('#datadeling-na').textContent = sharingText(company.name, company.data_sharing);
+    const may = mayAdmin();
+    delingValg.value = current.value;
+    delingValg.disabled = !may;
+    delingForstaar.checked = false;
+    show(el('#datadeling-les'), !may);
+    show(el('#datadeling-knapper'), may);
+    syncDatadeling();
+  }
+
+  /**
+   * Advarselen, avkrysningen og knappen, ut fra hva som er valgt og hva som er lagret.
+   *
+   * Advarselen står når det øverste nivået er merket, lagret eller ikke, fordi
+   * den sier hva som deles. Avkrysningen kreves bare på vei opp dit: den som
+   * allerede har valgt det, skal ikke måtte si ja igjen for å la det stå.
+   */
+  function syncDatadeling(): void {
+    const chosen = levelOf(valgtDeling());
+    const saved = levelOf(selskap?.data_sharing);
+    const opp = chosen.danger && !saved.danger;
+    const om = el('#datadeling-om');
+    om.textContent = chosen.summary;
+    om.toggleAttribute('data-fare', chosen.danger);
+    delingValg.toggleAttribute('data-fare', chosen.danger);
+    show(el('#datadeling-fare'), chosen.danger);
+    show(el('#datadeling-forstaar-rad'), opp);
+    delingLagre.disabled =
+      !mayAdmin() || chosen.value === saved.value || (opp && !delingForstaar.checked);
+  }
+
+  /**
+   * «Takk :)» et øyeblikk, når noen velger å dele bilagene. Bare når en person
+   * velger det i listen, aldri når siden tegner et valg som alt er lagret.
+   * Velges det igjen før det har forsvunnet, starter det på nytt.
+   */
+  function takk(): void {
+    window.clearTimeout(takkTimer);
+    delingTakk.classList.remove('org-takk-vis');
+    // Tving en ny layout, ellers starter ikke animasjonen på nytt.
+    void delingTakk.offsetWidth;
+    delingTakk.hidden = false;
+    delingTakk.classList.add('org-takk-vis');
+    takkTimer = window.setTimeout(() => {
+      delingTakk.hidden = true;
+      delingTakk.classList.remove('org-takk-vis');
+    }, 1500);
+  }
+
+  function wireDatadeling(): void {
+    delingValg.addEventListener('change', () => {
+      clearStatus(delingStatus);
+      syncDatadeling();
+      if (levelOf(delingValg.value).danger) takk();
+    });
+    delingForstaar.addEventListener('change', syncDatadeling);
+    delingLagre.addEventListener('click', () => {
+      const chosen = valgtDeling();
+      delingLagre.disabled = true;
+      clearStatus(delingStatus);
+      void setDataSharing(bokene().id, chosen)
+        .then((saved) => {
+          nyttSelskap(saved);
+          showDatadeling(saved);
+          setStatus(delingStatus, `Lagret. ${sharingText(saved.name, saved.data_sharing)}`, 'ok');
+        })
+        .catch((error: unknown) => {
+          // Tilbake til det som er lagret. Et valg som blir stående på et nivå
+          // serveren avviste, ville si at selskapet deler noe det ikke gjør.
+          showDatadeling(bokene());
+          setStatus(
+            delingStatus,
+            error instanceof ApiError && error.status === 403
+              ? 'Bare eiere og administratorer kan endre hva selskapet deler.'
+              : 'Fikk ikke lagret. Prøv igjen.',
+          );
+        });
+    });
+  }
+
   // --- Oppstart -------------------------------------------------------------------
 
   void loadSession().then(async (session) => {
@@ -3752,6 +4018,7 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
     wireVarsel();
     wireRegister();
     wireAgents();
+    wireDatadeling();
 
     applyPermissions();
     showRegister();
@@ -3785,6 +4052,10 @@ import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
       // teksten agenten får sender folk hit for å se nøklene, ikke selskapet.
       if (window.location.hash === '#tilgang') {
         el('#tilgang').scrollIntoView({ block: 'start' });
+      }
+      // /datadeling/ og hjelpeartikkelen sender folk hit for å velge.
+      if (window.location.hash === '#datadeling' && !el('#datadeling').hidden) {
+        el('#datadeling').scrollIntoView({ block: 'start' });
       }
       if (window.location.hash === '#selskap' && !el('#selskap').hidden) {
         el('#selskap').scrollIntoView({ block: 'start' });

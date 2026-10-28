@@ -26,6 +26,7 @@ from myntos.api.v1.feedback import keep_out_of_the_access_log
 from myntos.api.v1.router import api_router
 from myntos.api.v1.saft_innlesing import get_import_sessions
 from myntos.auth.approvals import ApprovalHeld
+from myntos.auth.operator import OperatorError
 from myntos.core.config import get_settings
 from myntos.core.security import BodySizeLimitMiddleware, security_headers_middleware
 from myntos.db.session import get_engine
@@ -35,6 +36,9 @@ from myntos.domain.feedback.errors import FeedbackError
 from myntos.domain.identity import closure
 from myntos.domain.identity.errors import IdentityError
 from myntos.domain.ledger.errors import LedgerError
+from myntos.domain.server_errors import recorder
+from myntos.domain.server_errors import service as server_error_service
+from myntos.domain.server_errors.errors import ServerErrorLogError
 from myntos.integrations.brreg import BrregError
 from myntos.saft import intake, jobs, reader
 from myntos.storage.base import DocumentStorage
@@ -115,9 +119,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     storage = app.dependency_overrides.get(get_document_storage, get_document_storage)
     working = app.dependency_overrides.get(get_working_files, get_working_files)
     jobs.resume_in_background(sessions, storage, working)
-    purging = asyncio.get_running_loop().create_task(_purge_daily(sessions, storage, working))
+    loop = asyncio.get_running_loop()
+    purging = loop.create_task(_purge_daily(sessions, storage, working))
+    # The error log's counts are written every few seconds and once more on
+    # the way out, so a restart loses none of what was counted
+    # (docs/operator.md).
+    recording = loop.create_task(recorder.store_regularly(sessions()))
     yield
     purging.cancel()
+    recording.cancel()
+    await recorder.store_pending(sessions())
 
 
 async def _purge_daily(
@@ -128,9 +139,10 @@ async def _purge_daily(
     """Delete, once a day, deleted companies whose retention has run out.
 
     And feedback that was closed longer ago than ``feedback_retention_days``
-    (docs/feedback.md), and the uploaded SAF-T files and printouts nothing
-    needs any more (``jobs.sweep``), for the same reason: what decides it ships
-    with it.
+    (docs/feedback.md), the error log's failures not seen for
+    ``server_error_retention_days`` (docs/operator.md), and the uploaded SAF-T
+    files and printouts nothing needs any more (``jobs.sweep``), for the same
+    reason: what decides it ships with it.
 
     In the process rather than on a systemd timer, so that it is deployed with
     the code that decides what it deletes and cannot be forgotten on a rebuilt
@@ -159,6 +171,14 @@ async def _purge_daily(
                 await db.commit()
         except Exception:  # as above: tomorrow again, and the loop goes on
             logger.exception("Could not purge closed feedback")
+        try:
+            async with sessions()() as db:
+                days = get_settings().server_error_retention_days
+                if purged := await server_error_service.purge(db, retention_days=days):
+                    logger.info("Deleted %d recorded failures not seen for %d days", purged, days)
+                await db.commit()
+        except Exception:  # as above
+            logger.exception("Could not purge the error log")
         try:
             if swept := await jobs.sweep(sessions(), working()):
                 logger.info("Deleted %d working copies of uploads nothing needs", swept)
@@ -195,6 +215,11 @@ def create_app() -> FastAPI:
     settings = get_settings()
     production = settings.environment == "production"
     _log_our_own(settings.log_level)
+    # Every ERROR under ``myntos``, kept without its data for the operator's
+    # page (docs/operator.md). The journal keeps the whole line as before.
+    recorder.install()
+    if settings.operator_key_sha256 is not None and settings.operator_key_digest is None:
+        logger.warning("OPERATOR_KEY_SHA256 is not a SHA-256 digest; the operator's page is off")
 
     app = FastAPI(
         title="Myntos API",
@@ -260,6 +285,8 @@ def create_app() -> FastAPI:
     app.add_exception_handler(FakturaError, domain_error_handler)
     app.add_exception_handler(BrregError, domain_error_handler)
     app.add_exception_handler(FeedbackError, domain_error_handler)
+    app.add_exception_handler(OperatorError, domain_error_handler)
+    app.add_exception_handler(ServerErrorLogError, domain_error_handler)
     # Not an error: a key's request stored to wait for its person (rule 13).
     app.add_exception_handler(ApprovalHeld, approval_held_handler)
 

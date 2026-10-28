@@ -34,6 +34,11 @@ body runs:
   post on its own, because what has been sent cannot be called back;
 - **the key's company is the only company**: any other id in the path is the
   same 404 a stranger gets (:func:`get_company_context`).
+
+And a fourth, which belongs to no company and no person: the operator key
+(:mod:`myntos.auth.operator`), read by :func:`require_operator` on the routes
+under ``/api/v1/drift`` and nowhere else. Those routes read no session and no
+agent key, so neither can open them.
 """
 
 import hmac
@@ -46,6 +51,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from myntos.auth import agent_keys, approvals
 from myntos.auth.agent_keys import KeyAccess
+from myntos.auth.operator import NotTheOperatorError, OperatorPageOffError, is_operator_key
 from myntos.auth.sessions import resolve_session
 from myntos.auth.tokens import hash_token
 from myntos.core.config import get_settings
@@ -205,6 +211,32 @@ def _bearer_token(request: Request) -> str | None:
     if scheme.lower() != "bearer" or not value.strip():
         return None
     return value.strip()
+
+
+def require_operator(request: Request) -> None:
+    """Let the request through only with the operator key (docs/operator.md).
+
+    A bearer token, never a cookie, so there is no CSRF to guard against and
+    the browser's session goes along unread. 404 when the deployment has no
+    operator key, or something in its place that is not a digest; 401 for a
+    missing or wrong key. No lockout: the key is 256 random bits, so guessing
+    is not a way in.
+    """
+    settings = get_settings()
+    digest = settings.operator_key_digest
+    if digest is None and settings.operator_key_sha256 is not None:
+        raise OperatorPageOffError(
+            "OPERATOR_KEY_SHA256 i .env er ikke en sjekksum, så driftssiden er av. Kjør "
+            "python -m myntos.auth.operator og bruk linjen den skriver."
+        )
+    if digest is None:
+        raise OperatorPageOffError(
+            "Driftssiden er ikke slått på: OPERATOR_KEY_SHA256 mangler i .env, eller backend er "
+            "ikke startet på nytt etter at den ble lagt inn."
+        )
+    presented = _bearer_token(request)
+    if presented is None or not is_operator_key(presented, digest):
+        raise NotTheOperatorError("Det er ikke driftsnøkkelen.")
 
 
 def _require_trusted_origin(request: Request) -> None:

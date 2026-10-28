@@ -3,9 +3,10 @@
 The sender's half (:func:`submit`, :func:`find`, :func:`withdraw`,
 :func:`published`) is what the public routes call. The operator's half, from
 :func:`for_operator` down, is called by ``python -m myntos.domain.feedback.triage``
-on the machine and by nothing reachable over HTTP: there is no operator plane
-in the API, and a route that let somebody read every sender's words would need
-one. docs/feedback.md says why that stays so.
+on the machine, and the reading and the status by the operator's page
+(``/drift/``, :mod:`myntos.api.v1.operator`), which only the operator key
+opens. Replying, publishing and deleting stay on the machine: docs/feedback.md
+and docs/operator.md say why.
 """
 
 from __future__ import annotations
@@ -215,10 +216,22 @@ async def unread_count(db: AsyncSession) -> int:
 
 
 async def for_operator(
-    db: AsyncSession, *, status: FeedbackStatus | None = None, limit: int = 100
+    db: AsyncSession,
+    *,
+    status: FeedbackStatus | None = None,
+    limit: int = 100,
+    newest_first: bool = False,
 ) -> list[Feedback]:
-    """Items to read, oldest unhandled first: the order a queue is worked in."""
-    query = select(Feedback).order_by(Feedback.created_at, Feedback.id).limit(limit)
+    """Items to read, oldest first by default: the order a queue is worked in.
+
+    The page asks for the newest first instead, because it is read top down
+    and what arrived since the last visit belongs at the top.
+    """
+    if newest_first:
+        query = select(Feedback).order_by(Feedback.created_at.desc(), Feedback.id.desc())
+    else:
+        query = select(Feedback).order_by(Feedback.created_at, Feedback.id)
+    query = query.limit(limit)
     if status is not None:
         query = query.where(Feedback.status == status)
     return list(await db.scalars(query))
@@ -227,7 +240,8 @@ async def for_operator(
 async def get(db: AsyncSession, item_id: int) -> Feedback:
     # A select rather than db.get: docs/company-isolation.md counts the
     # db.get calls in the backend, and this one is not company-scoped either
-    # way, since only the operator on the machine ever names an item by id.
+    # way, since only the operator (on the machine, or with the operator key)
+    # ever names an item by id.
     item = await db.scalar(select(Feedback).where(Feedback.id == item_id))
     if item is None:
         raise FeedbackNotFoundError(f"Ingen tilbakemelding har nummer {item_id}.")

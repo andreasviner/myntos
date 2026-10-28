@@ -25,6 +25,7 @@ from fastapi import Request, Response, status
 from fastapi.responses import JSONResponse
 
 from myntos.auth.approvals import ApprovalHeld
+from myntos.auth.operator import NotTheOperatorError, OperatorError, OperatorPageOffError
 from myntos.core.clock import as_utc
 from myntos.core.config import get_settings
 from myntos.domain.anlegg.errors import (
@@ -198,6 +199,8 @@ from myntos.domain.mva.errors import (
     SubmissionFailedError,
     UnsupportedCategoryError,
 )
+from myntos.domain.server_errors.errors import ServerErrorLogError, ServerErrorNotFoundError
+from myntos.domain.server_errors.recorder import ROUTE_ATTRIBUTE
 from myntos.integrations.brreg import (
     BrregError,
     RegisterUnavailableError,
@@ -229,7 +232,15 @@ from myntos.skattemelding.errors import (
 # Errors this module knows how to render. Every hierarchy is handled the same
 # way; keeping one table means a new error cannot be given a status code in one
 # place and forgotten in another.
-HandledError = IdentityError | LedgerError | FakturaError | BrregError | FeedbackError
+HandledError = (
+    IdentityError
+    | LedgerError
+    | FakturaError
+    | BrregError
+    | FeedbackError
+    | OperatorError
+    | ServerErrorLogError
+)
 
 _STATUS_BY_ERROR: dict[type[Exception], int] = {
     # --- Identity ---
@@ -312,6 +323,11 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     # items. 503 for the second, because waiting the hour does not help.
     FeedbackBusyError: status.HTTP_429_TOO_MANY_REQUESTS,
     FeedbackInboxFullError: status.HTTP_503_SERVICE_UNAVAILABLE,
+    # --- The operator's page and the error log (docs/operator.md) ---
+    # 404 when the deployment has no operator key: there is no page to open.
+    OperatorPageOffError: status.HTTP_404_NOT_FOUND,
+    NotTheOperatorError: status.HTTP_401_UNAUTHORIZED,
+    ServerErrorNotFoundError: status.HTTP_404_NOT_FOUND,
     # --- Requests that wait for a person's approval ---
     ApprovalNotFoundError: status.HTTP_404_NOT_FOUND,
     # 409: well-formed, and refused by the state the request is already in.
@@ -629,12 +645,20 @@ async def unhandled_error_middleware(
     :func:`myntos.main.create_app` for that to hold.
 
     ``ServerErrorMiddleware`` would also have logged the traceback, so we do it
-    here; nothing else will.
+    here; nothing else will. The record carries the route's template as well,
+    for the error log (docs/operator.md): the path in the message names the
+    company, the template does not, and the log keeps only the template.
     """
     try:
         return await call_next(request)
     except Exception:
-        _logger.exception("unhandled error on %s %s", request.method, request.url.path)
+        route = getattr(request.scope.get("route"), "path", None)
+        _logger.exception(
+            "unhandled error on %s %s",
+            request.method,
+            request.url.path,
+            extra={ROUTE_ATTRIBUTE: f"{request.method} {route}" if route else None},
+        )
         # Deliberately opaque: the caller gets no exception text, only that the
         # fault was ours. The traceback is in the logs, where it belongs.
         return JSONResponse(

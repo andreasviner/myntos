@@ -259,6 +259,18 @@ class Company(Base):
     # cannot quietly bring back a key somebody had forgotten.
     agent_access_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # What these books let Myntos use to make Myntos better: ``none``,
+    # ``usage``, ``anonymised`` or ``everything`` (docs/data-sharing.md).
+    #
+    # ``none`` by default, like agent access and for a sharper reason: the top
+    # level is the bilag as they are, with the names and amounts of customers,
+    # suppliers and employees on them, and nobody but the people responsible
+    # for the books may hand those over. Read through
+    # :func:`myntos.domain.data_sharing.service.allows`, and changed only
+    # through :func:`~myntos.domain.data_sharing.service.choose`, which logs
+    # who chose it.
+    data_sharing: Mapped[str] = mapped_column(String(32), default="none")
+
     # Whether these books get the farming add-on: the accounts from NIBIO's
     # Landbrukets kodesystem, the farm categories in the register, and a model
     # told that a settlement from Tine is a sale (docs/landbruk.md).

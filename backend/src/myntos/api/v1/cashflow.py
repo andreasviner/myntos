@@ -102,6 +102,7 @@ from myntos.domain.ledger.service import (
     PaymentMethod,
 )
 from myntos.domain.mva import naering as mva_naering
+from myntos.domain.mva.codes import CodeKind, kind_of
 from myntos.integrations import loynd, norgesbank
 
 logger = logging.getLogger(__name__)
@@ -135,6 +136,11 @@ class CashFlowTypeResponse(BaseModel):
     #: categories every business has. Only an add-on the company has switched
     #: on ever appears here.
     segment: str | None = None
+    #: Which side of a trade the category is, which on a reversal is not the
+    #: way the bank moved (CashFlowType.books_as). The form offers only the
+    #: VAT codes of this side: a purchase posted under an output code puts
+    #: its VAT on 2710 and reports it to the melding as a sale.
+    books_as: CashFlowDirection
 
 
 class TaxCodeResponse(BaseModel):
@@ -142,6 +148,10 @@ class TaxCodeResponse(BaseModel):
     description: str
     # A percentage for display; the ledger keeps the fraction.
     rate_percent: Decimal
+    #: What the code is in the MVA-melding: ``utgaaende`` a sale,
+    #: ``inngaaende`` a purchase, ``omvendt`` a purchase the buyer calculates
+    #: the VAT on itself. Null for 0, which fits either side.
+    kind: CodeKind | None = None
 
 
 class CatalogueResponse(BaseModel):
@@ -537,6 +547,14 @@ class _Document:
     title: str | None = None
     encrypted: bool = False
     unreadable: bool = False
+    #: Løynd was asked about a picture and gave no reading at all: it refused
+    #: the file or could not be reached. Nothing has been learnt about the
+    #: document, so it is not remembered (:data:`reading_cache.CACHE`) and not
+    #: blamed on the picture. Never set on a PDF, which pypdf then reads, and
+    #: reads as well as Løynd does: neither looks at a page's pixels.
+    #: The 2026-10-28 Biltema receipt was a sharp photograph that Løynd turned
+    #: away in 14 ms, and the user was told to take a sharper one.
+    unanswered: bool = False
     #: What the bytes turned out to be. Decides whether the file went to Løynd's
     #: vision model or to a PDF parser, and whether an empty result is worth a
     #: sentence to the user.
@@ -596,6 +614,11 @@ async def _read_documents(
                 content_type=content_type,
                 use_loynd=use_loynd,
             )
+        # A reader that did not answer said nothing about these bytes, and
+        # remembering it would keep the file unread for ten minutes after Løynd
+        # is back: the user's "read it again" would hand them the outage.
+        if document.unanswered:
+            return document
         reading_cache.CACHE.put(
             cache_key,
             reading_cache.Reading(
@@ -674,13 +697,14 @@ async def _read_document(
     is_image = content_type != PDF_CONTENT_TYPE
     sendable = content_type == PDF_CONTENT_TYPE or content_type in loynd.IMAGE_CONTENT_TYPES
 
+    unanswered = False
     if use_loynd and sendable:
         try:
             document = await loynd.extract_file(
                 content=content, filename=filename, content_type=content_type
             )
         except loynd.LoyndError:
-            pass
+            unanswered = True
         else:
             if not document.empty:
                 return _Document(
@@ -700,6 +724,7 @@ async def _read_document(
             text="",
             title=_from_filename(filename),
             unreadable=True,
+            unanswered=unanswered,
             content_type=content_type,
             label=label,
         )
@@ -922,7 +947,9 @@ async def catalogue(user: CurrentUser) -> CatalogueResponse:
     """The selectable categories and VAT codes.
 
     Requires a session but no company: the catalogue is the same for everyone,
-    and the signup flow needs it before the first company exists.
+    and the signup flow needs it before the first company exists. A type's
+    ``books_as`` and a code's ``kind`` say which codes go with which type, as
+    described under ``GET /api/v1/companies/{company_id}/cashflow/types``.
     """
     del user
     return CatalogueResponse(
@@ -935,6 +962,7 @@ async def catalogue(user: CurrentUser) -> CatalogueResponse:
                 default_tax_code=entry.default_tax_code,
                 note=entry.note,
                 reverses=entry.reverses,
+                books_as=entry.books_as,
             )
             for entry in types_for()
         ],
@@ -943,6 +971,7 @@ async def catalogue(user: CurrentUser) -> CatalogueResponse:
                 code=seed.code,
                 description=seed.description,
                 rate_percent=seed.rate * 100,
+                kind=kind_of(seed.code),
             )
             for seed in STANDARD_TAX_CODES
         ],
@@ -967,6 +996,17 @@ async def company_catalogue(context: CurrentCompany, db: DbSession) -> CompanyCa
     the VAT codes this company may use: only code 0 and a few reverse-charge
     codes when it is not VAT-registered (``vat_registered``). ``accounts`` are
     the other accounts a category may be moved to, same type only.
+
+    A VAT code belongs to one side of a trade, and so does a category. A
+    category's ``books_as`` is its side: ``inn`` a sale, ``ut`` a purchase,
+    which on a refund or a kreditnota is the opposite of ``direction``. A
+    code's ``kind`` is what the MVA-melding reads it as: ``utgaaende`` (output
+    VAT) goes with a sale, ``inngaaende`` (input VAT) and ``omvendt`` (reverse
+    charge: an import, a service bought from abroad) with a purchase, and a
+    code without a ``kind`` (0, no VAT) with either. Choose a code from the
+    category's side. One from the other side is accepted, and puts the VAT on
+    the category's side of the books while the melding reports it as the
+    code's.
 
     ``segments`` lists the add-ons the company has. With ``landbruk`` (the
     farming add-on, ``GET /api/v1/companies/{company_id}/landbruk``) the
@@ -1025,13 +1065,17 @@ async def company_catalogue(context: CurrentCompany, db: DbSession) -> CompanyCa
                 reverses=entry.reverses,
                 account_type=own.account_type,
                 segment=entry.segment,
+                books_as=entry.books_as,
             )
         )
     return CompanyCatalogueResponse(
         types=types,
         tax_codes=[
             TaxCodeResponse(
-                code=seed.code, description=seed.description, rate_percent=seed.rate * 100
+                code=seed.code,
+                description=seed.description,
+                rate_percent=seed.rate * 100,
+                kind=kind_of(seed.code),
             )
             for seed in STANDARD_TAX_CODES
             if allowed is None or seed.code in allowed
@@ -1181,6 +1225,8 @@ async def _proposer(
             model_fields=model_fields,
             direction=kept.retning,
             farm=farm,
+            pictures=bool(kept.documents)
+            and all(document.content_type != PDF_CONTENT_TYPE for document in kept.documents),
         )
 
     return propose
@@ -1420,7 +1466,12 @@ async def _propose(
     )
     # Kept only when a model was asked. Without one there is no conversation to
     # continue, and reading the bilag again with the parser costs nothing.
-    if use_loynd:
+    #
+    # Nor when Løynd gave no reading of one of the files. A follow-up never
+    # reads the files again, so every answer and every edit of the description
+    # would go on asking about a bilag with that file missing; with no reading
+    # to continue, the page reads the whole bilag again instead.
+    if use_loynd and not any(document.unanswered for document in documents):
         proposal.reading_id = readings.STORE.open(
             kept, company_id=context.company.id, user_id=context.membership.user_id
         )
@@ -1645,7 +1696,18 @@ async def _settle(
         # somebody their photograph "may be damaged" sends them looking for a
         # problem with a file that is fine.
         images = sum(1 for document in documents if document.content_type != PDF_CONTENT_TYPE)
-        if images == len(documents):
+        if images == len(documents) and any(document.unanswered for document in documents):
+            # Nobody looked at the pictures, so nothing can be said about them.
+            # "Take a sharper one" is what the Biltema receipt got, sharp and
+            # refused by Løynd for its format; and a retake costs a trip back to
+            # the receipt, where trying again is a sentence in «Beskrivelse» or
+            # the file picked again, and now reads it afresh.
+            warnings.insert(
+                0,
+                "Vi fikk ikke lest bildene denne gangen. Prøv igjen om litt, "
+                "eller fyll inn feltene selv.",
+            )
+        elif images == len(documents):
             warnings.insert(
                 0,
                 "Vi fikk ikke lest tekst ut av bildene. Prøv et skarpere bilde, "

@@ -106,6 +106,16 @@ _COMPANY_SWITCHES = (
     "Carries ki_enabled, whether the company's bilag may reach a model at all, which is the "
     "company's decision about its tools and not one its tools may make (CLAUDE.md rule 5)."
 )
+_DATA_SHARING = (
+    "What the books let Myntos keep for its own use, up to every bilag as it is, not "
+    "anonymised: the company's decision about what leaves its books, and not one its tools "
+    "may make (docs/data-sharing.md)."
+)
+_OPERATOR = (
+    "The operator's page: every stranger's feedback in their own words and the server's "
+    "failures, which belong to no company. Opened by the operator key alone, never by a "
+    "session or a company's key (docs/operator.md)."
+)
 
 # Routes no key may ever call, so no skill teaches them, each with its reason.
 # Every route is here or declares a key scope (myntos.api.deps.KEY_READ and its
@@ -144,6 +154,7 @@ _NOT_FOR_AGENTS: dict[str, str] = {
     "GET /api/v1/organizations/{organization_id}": _ONE_COMPANY,
     "PATCH /api/v1/organizations/{organization_id}": _ONE_COMPANY,
     "PATCH /api/v1/companies/{company_id}": _COMPANY_SWITCHES,
+    "PUT /api/v1/companies/{company_id}/datadeling": _DATA_SHARING,
     "GET /api/v1/companies/{company_id}/sletting": _DELETING_A_COMPANY,
     "POST /api/v1/companies/{company_id}/sletting": _DELETING_A_COMPANY,
     "GET /api/v1/companies/slettede": _DELETING_A_COMPANY,
@@ -170,6 +181,10 @@ _NOT_FOR_AGENTS: dict[str, str] = {
     "GET /api/v1/skatt/idporten/callback": _GOVERNMENT,
     "GET /api/v1/skatt/idporten/start": _GOVERNMENT,
     "GET /api/v1/skatt/status": _GOVERNMENT,
+    "GET /api/v1/drift/feil": _OPERATOR,
+    "PUT /api/v1/drift/feil/{number}/status": _OPERATOR,
+    "GET /api/v1/drift/tilbakemeldinger": _OPERATOR,
+    "PUT /api/v1/drift/tilbakemeldinger/{number}/status": _OPERATOR,
 }
 
 # Routes that existed without an OpenAPI description on 2026-10-10. Empty
@@ -525,6 +540,10 @@ _PAGES_WITHOUT_HELP: dict[str, str] = {
     "/about/": "About the company behind Myntos; nothing to do there.",
     "/ansvar/": "The disclaimer, read rather than used.",
     "/bankpriser/": "A public price comparison of Norwegian banks, read rather than used.",
+    "/drift/": (
+        "The operator's page (docs/operator.md), opened by the deployment's operator key. "
+        "Nobody keeping books uses it, and its workflow is in docs/operator.md."
+    ),
     "/funksjoner/": "The public feature list, which describes what the help explains.",
     "/priser/": "The public price list; nothing to do there.",
     "/sammenlign/": "Myntos compared with other programs, read rather than used.",
@@ -583,8 +602,9 @@ def test_every_page_has_a_help_article() -> None:
     """A page of the app with no article is a page an AI cannot help anybody use.
 
     Add an article under docs/agents/help/<area>/ whose ``pages:`` names the
-    page, and list it in llms.txt. Only public pages with nothing to do on them
-    may stand on ``_PAGES_WITHOUT_HELP``, with the reason.
+    page, and list it in llms.txt. Only public pages with nothing to do on them,
+    and the operator's own page, may stand on ``_PAGES_WITHOUT_HELP``, with the
+    reason.
     """
     explained: set[str] = set()
     for article in _help_files():

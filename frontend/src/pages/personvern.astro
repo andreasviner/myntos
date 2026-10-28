@@ -17,9 +17,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
  * Teksten om BankID og Idura er skrevet ut fra kode og Iduras offentlige
  * dokumentasjon, og den juridiske ordlyden må gjennomgås av eieren før den
  * publiseres. Se docs/gdpr.md. Det samme gjelder avsnittet om nøkler for
- * KI-agenter (3e2), som er skrevet ut fra docs/agents-and-api.md regel 8.
+ * KI-agenter (3e2), som er skrevet ut fra docs/agents-and-api.md regel 8, og
+ * avsnittet om deling for å gjøre Myntos bedre (3d3), som er skrevet ut fra
+ * docs/data-sharing.md.
  */
-const oppdatert = '22. oktober 2026';
+const oppdatert = '28. oktober 2026';
 
 const grunnlag = [
   {
@@ -56,6 +58,11 @@ const grunnlag = [
     formal: 'Lese tilbakemeldinger om feil, forbedringer og ønsker, og svare på dem',
     data: 'Teksten, typen, siden og om den kom fra en person eller en KI-agent. Ikke hvem som sendte den',
     basis: 'Berettiget interesse i å rette feil og gjøre programmet bedre, GDPR art. 6(1)(f)',
+  },
+  {
+    formal: 'Gjøre Myntos bedre med det selskapet har valgt å dele',
+    data: 'På det øverste nivået bilag og føringer, også opplysninger om andre personer, og hvem som valgte nivået. De andre nivåene er anonyme',
+    basis: 'Berettiget interesse i et program som leser bilag riktig, på selskapets eget valg, GDPR art. 6(1)(f). Se avsnitt 3d3',
   },
   {
     formal: 'Behandle regnskapsdataene du legger inn',
@@ -130,6 +137,10 @@ const underleverandorer = [
       <li>Vi selger, leier ut eller deler aldri dataene dine, heller ikke anonymisert eller aggregert.</li>
       <li>Ingen annonser, ingen analyseverktøy og ingen tredjepartsskript på disse sidene.</li>
       <li>Regnskapstallene dine trener ingen modeller, verken våre eller andres.</li>
+      <li>
+        Vi bruker ingenting fra regnskapet til å gjøre Myntos bedre, med mindre selskapet selv velger
+        å dele det. Standard er ingenting.
+      </li>
       <li>Vi bruker én informasjonskapsel, og den holder deg innlogget.</li>
       <li>Data lagres i EØS.</li>
       <li>
@@ -260,8 +271,9 @@ const underleverandorer = [
     Bilag, PDF-er, føringer og opplysninger om kunder og leverandører, også navn, organisasjonsnummer
     og kontaktopplysninger til andre personer, er <strong>ditt</strong> innhold. Her er du
     behandlingsansvarlig, og vi er <strong>databehandler</strong>: vi lagrer og behandler dataene
-    på din instruksjon for å levere tjenesten, og vi bruker dem ikke til noe eget formål. Vi leser
-    dem ikke, med ett unntak: hvis du ber om hjelp med en konkret sak, eller det er strengt
+    på din instruksjon for å levere tjenesten, og vi bruker dem ikke til noe eget formål, med
+    mindre selskapet har valgt å dele dem med oss (<a href="#datadeling">avsnitt 3d3</a>). Ellers
+    leser vi dem ikke, med ett unntak: hvis du ber om hjelp med en konkret sak, eller det er strengt
     nødvendig for å rette en feil eller stanse misbruk.
   </p>
 
@@ -349,6 +361,33 @@ const underleverandorer = [
       beskrevet på <a href="/ki/">siden om KI</a>.
     </li>
   </ul>
+
+  {/* Skrevet ut fra docs/data-sharing.md, og løftene der er de samme som her.
+      Nivåene og hva de deler står på /datadeling/, fra lib/datasharing.ts;
+      her står det som gjør dem til personvern: hvem som er
+      behandlingsansvarlig, hva som er anonymt, og når det slettes. */}
+  <h3 id="datadeling">d3. Deling for å gjøre Myntos bedre</h3>
+  <p>
+    Under Innstillinger kan en eier eller administrator i selskapet velge å dele data med oss, så vi
+    kan gjøre Myntos bedre. Standard er <strong>ingenting</strong>, og så lenge valget står der,
+    gjelder avsnitt 3d fullt ut. Hva hvert nivå deler, står på
+    <a href="/datadeling/">siden om datadeling</a>. Myntos samler ikke inn noe av dette ennå.
+  </p>
+  <p>
+    «Bruksstatistikk» og «Anonymiserte rettelser» lagres uten noe som peker tilbake til deg eller
+    selskapet: ingen konto, ikke selskapet og ikke organisasjonsnummeret. Derfor kan det heller ikke
+    slettes for selskapet i ettertid. Feil på serveren er ikke en del av dette: de lagres for alle,
+    uansett valg, og uten noe fra regnskapet (avsnitt 8).
+  </p>
+  <p>
+    <strong>«Alt, også bilag» er ikke anonymisert.</strong> Da bruker vi bilagene, teksten vi leste
+    av dem og føringen slik den ble gjort, også navn og andre opplysninger om kunder, leverandører
+    og ansatte, til å teste at Myntos leser bilag riktig. For den bruken er vi
+    behandlingsansvarlige. Det leses bare av dem som lager Myntos, lagres i EØS, brukes ikke til å
+    trene noen modell og deles ikke med noen. Det gjelder fra den dagen valget lagres, og det
+    slettes når selskapet velger et lavere nivå eller slettes fra Myntos. Vi lagrer hvem som gjorde
+    valget, og når.
+  </p>
 
   <h3>e. Invitasjoner</h3>
   <p>
@@ -542,6 +581,11 @@ const underleverandorer = [
       <strong>Tilbakemeldinger:</strong> til du trekker dem tilbake, eller til ett år etter at vi
       har markert dem som ferdige eller som noe vi ikke gjør. Det vi fortsatt arbeider med,
       beholdes til vi er ferdige. Spam slettes når vi ser den.
+    </li>
+    <li>
+      <strong>Feil på serveren:</strong> når noe går galt hos oss, lagrer vi hva i koden som feilet,
+      hvor ofte og når. Ikke hvem det gjaldt, selskapet, IP-adressen eller hva som sto i
+      forespørselen. Slettes 90 dager etter at feilen sist skjedde.
     </li>
     <li>
       <strong>Øktopplysninger (IP og nettleser):</strong> beholdes en periode etter utlogging

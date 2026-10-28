@@ -74,8 +74,16 @@ few screenshots.
      `account_number`, `default_tax_code` and a `note` in bokmål that states
      the assumption the category makes. Show the note to the person when it
      applies. A category with `reverses` set is a refund or a kreditnota (see
-     "Choosing the category").
-   - `tax_codes`: the VAT codes (mva-koder) this company may use.
+     "Choosing the category"). `books_as` is the side of the trade (`inn` a
+     sale, `ut` a purchase), which on a refund or a kreditnota is the opposite
+     of `direction`.
+   - `tax_codes`: the VAT codes (mva-koder) this company may use, each with
+     its `kind`: `utgaaende` (output VAT) goes with a sale, `inngaaende`
+     (input VAT) and `omvendt` (reverse charge: imports, services bought
+     abroad) with a purchase, and a code with no `kind` (0) with either. To
+     change a category's VAT code, pick one from its `books_as` side. The API
+     accepts a code from the other side and books it wrongly: the VAT lands
+     on the category's side while the MVA-melding reports the code's.
    - `vat_registered`: whether the company is in the VAT register
      (Merverdiavgiftsregisteret). If not, it deducts no VAT and charges none.
    - `accounts`: the other accounts a category may be moved to, same
@@ -120,12 +128,17 @@ few screenshots.
      that field; `split: true` means the payment is several things and belongs
      in a composite entry (below).
    - `reading_id` is where to send the answers (step 4). Null when no model was
-     asked.
+     asked, and null when the model gave no reading of one of the files: then
+     the warnings say «denne gangen», nothing is known to be wrong with the
+     file, and the thing to do is post the same files to `…/cashflow/forslag`
+     again in a minute rather than answer questions about a bilag with a file
+     missing.
    - `ki_used: false` means no model was asked: the company switched KI off,
      or the model could not be reached. An empty category is then not anyone's
      opinion, and photos cannot be read at all.
    - `documents_read` has one row per file; `chars: 0` is a file nothing could
-     be read from.
+     be read from, either because it holds no text or because it was not read
+     at all (above).
 4. **Fill the gaps with the person, not by guessing.** Ask about each `null`
    that matters and pass on each question, with its `options` as the choices
    when it has some. Then send the answers:
