@@ -47,6 +47,9 @@ for the wrong periods:
   late.
 - The melding can be sent from the day after the termin ends.
 - A termin with nothing in it is still due, with zero.
+- Every deadline of the coming year, VAT and the yearly ones together, is
+  on «Frister», from «Oversikt» → «Neste frister» → «Alle frister →»:
+  [See your deadlines](https://myntos.no/llms/help/overview/see-your-deadlines.md).
 
 ## Related
 

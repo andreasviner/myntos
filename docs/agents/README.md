@@ -63,10 +63,11 @@ search this folder for the old label.
 | `myntos-connect` | The key exchange, refreshing, stopping, every token refusal. Read first |
 | `myntos-godkjenning` | Requests that wait for the person's approval, and asking the person to file |
 | `myntos-selskap` | Which company, its register data, its financial years, Enhetsregisteret lookups |
+| `myntos-frister` | The company's deadlines with Skatteetaten and Brønnøysund for the coming year, and which Myntos knows are met |
 | `myntos-kontantstrom` | Payments in and out, proposals read off a bilag, the bilag archive, corrections |
 | `myntos-bilag` | Every posted voucher, from every journal; one account's movements with its balance |
 | `myntos-regnskap` | The accounts for every year: resultatregnskap and balanse, side by side |
-| `myntos-faktura` | Sales invoices and credit notes |
+| `myntos-faktura` | Sales invoices and credit notes, and sending them as EHF over Peppol |
 | `myntos-parter` | Customers and suppliers |
 | `myntos-bank` | Bank statements, matching lines, a voucher for a bank line |
 | `myntos-mva` | The VAT period, its review, the settings |
@@ -210,7 +211,7 @@ features in the order a person does.
 | Area folder | Pages it explains | Matching skill |
 | --- | --- | --- |
 | `getting-started` | `/registrer/`, `/logg-inn/`, `/bekreft-epost/`, `/glemt-passord/`, `/nytt-passord/`, `/fullfor-registrering/`, `/invitasjon/`, `/nytt-selskap/`, `/kom-i-gang/` | – |
-| `overview` | `/` | `myntos-selskap` |
+| `overview` | `/`, `/frister/` | `myntos-selskap`, `myntos-frister` |
 | `payments` | `/kontantstrom/` | `myntos-kontantstrom` |
 | `vouchers` | `/bilag/` | `myntos-bilag` |
 | `reports` | `/regnskap/` | `myntos-regnskap` |

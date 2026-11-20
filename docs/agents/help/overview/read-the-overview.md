@@ -1,6 +1,6 @@
 ---
 title: Read the overview
-description: What the signed-in front page («Oversikt») in Myntos shows: the company's name and organisasjonsnummer, the year's «Inn i år», «Ut i år» and «Netto», the VAT owed now under «Merverdiavgift», «Siste bevegelser», «Største poster i år», and the links to the VAT return, SAF-T, bank reconciliation, opening balance and year-end. Use when someone asks what the numbers on the Myntos front page mean, why they show zero after importing books, or where to start after signing in.
+description: What the signed-in front page («Oversikt») in Myntos shows: the company's name and organisasjonsnummer, the year's «Inn i år», «Ut i år» and «Netto», the VAT owed now under «Merverdiavgift», the next deadlines under «Neste frister», «Siste bevegelser», «Største poster i år», and the links to the VAT return, SAF-T, bank reconciliation, opening balance and year-end. Use when someone asks what the numbers on the Myntos front page mean, why they show zero after importing books, or where to start after signing in.
 pages: /
 skill: myntos-selskap
 ---
@@ -9,8 +9,8 @@ skill: myntos-selskap
 
 After signing in, Myntos opens on «Oversikt»: one company's year at a glance.
 It shows which company the figures are about, the money in and out this year,
-the VAT owed now, the latest payments, and the largest kinds of income and
-cost. The figures are read off the books: the payments registered under
+the VAT owed now, the next deadlines, the latest payments, and the largest
+kinds of income and cost. The figures are read off the books: the payments registered under
 «Betaling», and the vouchers brought over from another program. They are not
 a VAT return and not finished accounts, and the page says so at the bottom.
 
@@ -38,11 +38,16 @@ account with no company yet sees «Ingen regnskap ennå» instead:
    On the right, «Regnskapet år for år» opens the result and balance sheet for
    every year, earlier years included
    ([See the accounts for every year](https://myntos.no/llms/help/reports/see-the-accounts-for-every-year.md)),
-   and «Registrer betaling» goes to the payment form.
+   «Registrer inntekt» goes to the payment form with «Penger inn» already
+   chosen, for a sale paid by Vipps, card or cash, and «Registrer betaling»
+   goes to the same form with nothing chosen.
 3. The four cards:
    - «Inn i år» and «Ut i år»: money in and out of the bank accounts and cash
      box this calendar year. That is 1920 and 1900, and any account marked as
-     a bank account on «Kontoplan».
+     a bank account on «Kontoplan». It is money, not income: an invoice is
+     income the day it is issued, but counts in «Inn i år» only once its
+     payment is registered:
+     [Register a payment on an invoice](https://myntos.no/llms/help/invoices/register-a-payment-on-an-invoice.md).
    - «Netto»: in minus out, with the number of entries under it («14 føringer
      i 2026»).
    - «Merverdiavgift»: the VAT owed now, not this year's total: the periods
@@ -54,17 +59,22 @@ account with no company yet sees «Ingen regnskap ennå» instead:
      kjent: regnskapet slutter …»: the payment or refund due then is missing,
      so no figure for today can be read off the books. «Mva-meldingen →» opens
      the VAT return.
-4. «Siste bevegelser» lists the latest payments: «Dato», «Beskrivelse»,
+4. «Neste frister» shows the next three deadlines with Skatteetaten and
+   Brønnøysund, anything «Over fristen» first. «Alle frister →» opens the
+   whole year:
+   [See your deadlines](https://myntos.no/llms/help/overview/see-your-deadlines.md).
+5. «Siste bevegelser» lists the latest payments: «Dato», «Beskrivelse»,
    «Type», «Beløp». A corrected payment is one line with «Rettet. 2 eldre
    bilag.» under it; a reversed one is struck through with «Motpostert …
    Går i null.». «Se hele kontantstrømmen →» opens the full register, and
    «Se alle bilag →» every voucher in the books, including those brought over
    from another program, which the payments list never shows.
-5. «Største poster i år» lists the largest types of income and cost this
+6. «Største poster i år» lists the largest types of income and cost this
    year, each marked «Inn» or «Ut», with «Antall» and «Sum».
-6. The note at the bottom links to the pages that are not in the top menu:
+7. The note at the bottom links to the pages that are not in the top menu:
    «Mva-melding», «SAF-T», «Bankavstemming», «Regnskapet år for år», «Hent
-   regnskapet fra et annet program», «Inngående balanse» and «Årsavslutning»:
+   regnskapet fra et annet program», «Inngående balanse», «Årsavslutning»,
+   «Skattemelding» and «Frister», among others:
    [Find the pages that are not in the menu](https://myntos.no/llms/help/overview/find-the-pages-not-in-the-menu.md).
 
 ## If something stops them
@@ -96,6 +106,7 @@ account with no company yet sees «Ingen regnskap ennå» instead:
 
 - [Understand the figures beside the register](https://myntos.no/llms/help/payments/understand-the-payment-figures.md)
 - [Read the payment register](https://myntos.no/llms/help/payments/read-the-payment-register.md)
+- [See your deadlines](https://myntos.no/llms/help/overview/see-your-deadlines.md)
 - An agent with a key can read the same figures through the API:
   [myntos-selskap](https://myntos.no/llms/skills/myntos-selskap.md) and
   [myntos-kontantstrom](https://myntos.no/llms/skills/myntos-kontantstrom.md)

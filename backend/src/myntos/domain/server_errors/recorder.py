@@ -13,6 +13,11 @@ round trip, or a failure of one, in the middle of whatever was logging, so
 the pending counts are stored every few seconds by :func:`store_regularly`,
 which the application's lifespan runs, and once more when it stops. A restart
 in between loses at most those seconds, which the journal still has.
+
+The same write tells the operator, when ``SERVER_ERROR_NOTIFY_TO`` is set, that
+a kind of failure is new or open again: one mail for the first after a quiet
+hour, as feedback does (:mod:`myntos.domain.server_errors.mail` says what it
+may carry).
 """
 
 from __future__ import annotations
@@ -24,12 +29,16 @@ import logging
 import threading
 import traceback
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from myntos.core.clock import utc_now
+from myntos.core.config import get_settings
+from myntos.core.mail import Mailer, build_mailer
 from myntos.domain.server_errors import service
+from myntos.domain.server_errors.mail import Failure, failure_notice
 from myntos.domain.server_errors.models import (
     EXCEPTION_LENGTH,
     LOGGER_LENGTH,
@@ -55,6 +64,11 @@ MAX_PENDING = 200
 
 # How far down ``raise … from …`` the causes are named.
 MAX_CAUSES = 3
+
+# One notice for the first news after this long without any. A failure that
+# repeats is one kind and mails once; this is for a bad deploy that makes ten
+# new kinds a minute apart, which is one thing to go and look at.
+QUIET = timedelta(hours=1)
 
 # The attribute ``unhandled_error_middleware`` puts on its record, through
 # ``extra``: the method and the route's template.
@@ -209,6 +223,9 @@ class ErrorRecorder(logging.Handler):
         super().__init__(level=logging.ERROR)
         self._pending: dict[str, Occurrence] = {}
         self._pending_lock = threading.Lock()
+        # When the operator was last mailed. In the process, so a restart may
+        # mail once more within the hour, which is the cheaper mistake.
+        self.notified_at: datetime | None = None
 
     def emit(self, record: logging.LogRecord) -> None:
         # The recorder's own complaints (a write that failed) are warnings,
@@ -260,18 +277,34 @@ def install() -> None:
         package.addHandler(RECORDER)
 
 
-async def store_pending(sessions: async_sessionmaker[AsyncSession]) -> int:
+async def store_pending(
+    sessions: async_sessionmaker[AsyncSession], mailer: Mailer | None = None
+) -> int:
     """Write what the recorder has counted, and return how many kinds of failure that was.
 
     On failure what was taken goes back, to be tried with the next batch: the
     database being unreachable is itself often the failure being recorded.
+
+    Then, if any kind is new or open again, the operator is mailed
+    (:func:`_notify`). ``mailer`` is the application's, so a test's outbox is
+    the one written to; without one the deployment's own is built when needed.
     """
     taken = RECORDER.take()
     if not taken:
         return 0
     try:
         async with sessions() as db:
-            await service.store(db, taken)
+            news = [
+                Failure(
+                    number=row.id,
+                    logger=row.logger,
+                    template=row.template,
+                    route=row.route,
+                    exception=row.exception,
+                )
+                for row in await service.store(db, taken)
+            ]
+            open_now = await service.open_count(db) if news else 0
             await db.commit()
     except Exception as error:
         RECORDER.put_back(taken)
@@ -279,11 +312,41 @@ async def store_pending(sessions: async_sessionmaker[AsyncSession]) -> int:
         # stored, and be recorded again.
         logger.warning("Could not store %d recorded failures: %s", len(taken), type(error).__name__)
         return 0
+    if news:
+        await _notify(news, open_now=open_now, mailer=mailer)
     return len(taken)
 
 
-async def store_regularly(sessions: async_sessionmaker[AsyncSession]) -> None:
+async def _notify(news: list[Failure], *, open_now: int, mailer: Mailer | None) -> None:
+    """Mail the operator about ``news``, unless nobody is to be told or they were lately.
+
+    The quiet hour starts when a mail goes, and news inside it is not mailed
+    later either: the page lists it, and the mail that did go said how many
+    were open.
+    """
+    settings = get_settings()
+    to = settings.server_error_notify_to
+    if not to:
+        return
+    now = utc_now()
+    if RECORDER.notified_at is not None and now - RECORDER.notified_at < QUIET:
+        return
+    post = mailer if mailer is not None else build_mailer(settings)
+    if not post.configured:
+        return
+    RECORDER.notified_at = now
+    page = f"{settings.frontend_base_url.rstrip('/')}/drift/"
+    delivery = await post.send(failure_notice(to=to, failures=news, open_now=open_now, page=page))
+    if not delivery.sent and delivery.error:
+        # A warning, for the reason above: the failure is stored and on the
+        # page whatever the mail does.
+        logger.warning("Failure notice not sent: %s", delivery.error)
+
+
+async def store_regularly(
+    sessions: async_sessionmaker[AsyncSession], mailer: Mailer | None = None
+) -> None:
     """Store what was recorded every :data:`STORE_EVERY_SECONDS`, until cancelled."""
     while True:
         await asyncio.sleep(STORE_EVERY_SECONDS)
-        await store_pending(sessions)
+        await store_pending(sessions, mailer)

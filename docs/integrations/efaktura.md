@@ -321,13 +321,14 @@ The XML is **frozen at issue** and stored on the row. From 2027 it *is* the sale
 document for a business customer; a document rebuilt on every download is one
 that can quietly differ from what was sent.
 
-### Not implemented: transmission
+### Transmission
 
-Myntos **produces** the EHF file. It does not send it. Sending over Peppol
-requires an access point — a commercial service, or running one and being
-certified — and is the remaining work before the 2027 requirement is actually
-met rather than merely prepared for. Until then the file is downloadable and can
-be handed to whatever channel the business already uses.
+Myntos **produces** the EHF file here and **sends** it elsewhere: the frozen
+`ehf_xml` goes, unchanged, to an access point (Recommand), which carries it
+over Peppol to the buyer's orgnr. Who may register and send, why it is send
+only and never e-mail, and what is still owed before a customer relies on it
+are in [peppol.md](peppol.md). A deployment without an access point offers the
+file to download, to be handed to whatever channel the business already uses.
 
 ## The PDF
 
@@ -342,7 +343,9 @@ bytes, and UTF-8 produces mojibake on exactly æ, ø and å.
 
 ## Known gaps
 
-- **No Peppol transmission** (above). The blocking item for 2027.
+- **Peppol transmission is built but unproven** ([peppol.md](peppol.md),
+  «Before the first customer»): no invoice has yet gone to a real access
+  point. Receiving is not built.
 - **NOK only.** Foreign currency needs the § 5-1-1 nr. 6 NOK restatement of VAT
   and a `TaxCurrencyCode` + second `TaxTotal` in the XML.
 - **No partial kreditnota.**

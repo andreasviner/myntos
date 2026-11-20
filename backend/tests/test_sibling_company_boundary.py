@@ -35,12 +35,14 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from myntos.api.v1 import approvals as approvals_api
 from myntos.core.clock import utc_now
-from myntos.integrations import loynd
+from myntos.core.config import get_settings
+from myntos.integrations import loynd, recommand
 from myntos.main import create_app
 from tests.conftest import (
     agent_header,
@@ -61,6 +63,31 @@ CUSTOMER_ORGNR = "915933149"
 THIS_YEAR = utc_now().year
 
 PDF_BYTES = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n"
+
+
+@pytest.fixture(autouse=True)
+def access_point(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """An access point for e-faktura that is configured and must never be asked.
+
+    Without one, sending an invoice as EHF answers 503 before it reads the
+    document id, and the wall would go untested on the one route that sends a
+    company's invoice abroad. The document lookup refuses a sibling's id before
+    the access point is called, so a request reaching it at all is a failure.
+    """
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"the access point was asked: {request.method} {request.url.path}")
+
+    monkeypatch.setenv("RECOMMAND_API_KEY", "boundary")
+    monkeypatch.setenv("RECOMMAND_API_SECRET", "boundary")
+    monkeypatch.setattr(
+        recommand,
+        "_client",
+        lambda timeout=None: httpx.AsyncClient(transport=httpx.MockTransport(refuse)),
+    )
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 # --- The account, and the two sets of books in it ------------------------------------
@@ -833,6 +860,15 @@ REQUESTS: dict[tuple[str, str], dict[str, Any]] = {
     },
     ("GET", f"{_COMPANIES}/faktura/{{document_id}}/pdf"): {},
     ("POST", f"{_COMPANIES}/faktura/{{document_id}}/utsted"): {},
+    # A draft is no more sendable than a sibling's, but the lookup comes first;
+    # the `access_point` fixture is what lets the send get as far as it.
+    ("POST", f"{_COMPANIES}/faktura/{{document_id}}/send"): {},
+    ("GET", f"{_COMPANIES}/faktura/{{document_id}}/forsendelse"): {},
+    # A payment the sibling's draft could never take either; the lookup comes
+    # before the refusal of a draft, and the lookup is what is being tested.
+    ("POST", f"{_COMPANIES}/faktura/{{document_id}}/innbetalinger"): {
+        "json": {"paid_on": f"{THIS_YEAR}-01-02", "amount": "100.00"}
+    },
     ("PATCH", f"{_COMPANIES}/parties/{{party_pk}}"): {"json": _PARTY_BODY},
     ("PATCH", f"{_COMPANIES}/bankkontoer/{{bank_account_id}}"): {"json": _BANK_ACCOUNT_BODY},
     ("DELETE", f"{_COMPANIES}/bankkontoer/{{bank_account_id}}"): {},
@@ -879,6 +915,10 @@ REQUESTS: dict[tuple[str, str], dict[str, Any]] = {
     ("POST", f"{_COMPANIES}/bank/linjer/{{line_id}}/bilag"): {
         "json": {"type_code": "bankgebyr", "description": "Kontohold"}
     },
+    # Two ids and no body. Your own line is the 49-krone fee, which could
+    # never pay an invoice: both ids are looked up before either is judged,
+    # so the sibling's invoice is still the 404.
+    ("POST", f"{_COMPANIES}/bank/linjer/{{line_id}}/faktura/{{document_id}}"): {},
     ("PATCH", f"{_COMPANIES}/kontoplan/{{account_id}}"): {"json": {"description": "Rettet"}},
     ("DELETE", f"{_COMPANIES}/kontoplan/{{account_id}}"): {},
     # A pair that is in the published list, for a year both companies have, so
@@ -923,11 +963,18 @@ REQUESTS: dict[tuple[str, str], dict[str, Any]] = {
 
 
 def _sub_resource_routes() -> list[tuple[str, str, str]]:
-    """``(method, path, parameter)`` for every company-scoped route with a second id.
+    """``(method, path, parameter)`` for every id after ``{company_id}`` a route takes.
 
-    The second id is the one that can cross the wall. A route whose only
-    parameter is ``{company_id}`` is already covered by
-    ``test_company_boundary.py`` and has nothing to smuggle.
+    Those are the ids that can cross the wall. A route whose only parameter is
+    ``{company_id}`` is already covered by ``test_company_boundary.py`` and has
+    nothing to smuggle.
+
+    A route naming two records (a bank line registered as the payment of an
+    invoice, ``…/bank/linjer/{line_id}/faktura/{document_id}``) is listed once
+    for each, and each case smuggles that one while the other is the caller's
+    own (:func:`_url`). Until 2026-11-19 no route named two and this asserted
+    as much, so that the day one did would not be the day this file quietly
+    checked only the first.
     """
     schema = create_app().openapi()
     found: list[tuple[str, str, str]] = []
@@ -935,16 +982,31 @@ def _sub_resource_routes() -> list[tuple[str, str, str]]:
         if "{company_id}" not in path:
             continue
         extra = [name for name in re.findall(r"\{([^}]+)\}", path) if name != "company_id"]
-        if not extra:
-            continue
-        # More than one would mean a route nesting two sub-resources, which does
-        # not exist yet. Asserting it rather than looping keeps the day it does
-        # from being the day this file silently checks half of it.
-        assert len(extra) == 1, f"{path} nests more than one sub-resource id: {extra}"
-        for method in sorted(operations):
-            if method in {"get", "post", "patch", "put", "delete"}:
-                found.append((method.upper(), path, extra[0]))
+        for parameter in extra:
+            for method in sorted(operations):
+                if method in {"get", "post", "patch", "put", "delete"}:
+                    found.append((method.upper(), path, parameter))
     return found
+
+
+def _url(
+    client: TestClient, path: str, company_id: int, parameter: str, smuggled: int | str
+) -> str:
+    """``path`` under ``company_id``, with ``smuggled`` as ``parameter``.
+
+    Any other id the path names is built under ``company_id`` itself, real and
+    the caller's own, so the one id that can be refused is the one crossing
+    the wall. A route that looked the smuggled id up last, after judging the
+    other, would answer something other than 404 here, and that is a finding:
+    a refusal that depends on the state of your own record says the sibling's
+    id was never checked.
+    """
+    url = path.replace("{company_id}", str(company_id)).replace(f"{{{parameter}}}", str(smuggled))
+    for other in re.findall(r"\{([^}]+)\}", url):
+        own, readable_by_its_owner = _factory(path, other)(client, company_id)
+        readable_by_its_owner()
+        url = url.replace(f"{{{other}}}", str(own))
+    return url
 
 
 def test_there_are_sub_resource_routes_to_check() -> None:
@@ -1010,7 +1072,7 @@ def test_no_route_reaches_a_sibling_companys_records(
     # refusal below would be indistinguishable from a refusal of nothing.
     readable_by_its_owner()
 
-    url = path.replace("{company_id}", str(mine["id"])).replace(f"{{{parameter}}}", str(smuggled))
+    url = _url(client, path, mine["id"], parameter, smuggled)
     assert "{" not in url, f"unsubstituted parameter left in {url}"
 
     response = write(client, method, url, **REQUESTS[(method, path)])
@@ -1043,9 +1105,9 @@ def test_no_route_reaches_a_sibling_companys_records_with_a_key(
     mine, theirs = _two_companies(client)
     smuggled, readable_by_its_owner = _factory(path, parameter)(client, theirs["id"])
     readable_by_its_owner()
+    url = _url(client, path, mine["id"], parameter, smuggled)
     header = agent_header(client, mine["id"])
 
-    url = path.replace("{company_id}", str(mine["id"])).replace(f"{{{parameter}}}", str(smuggled))
     response = write(client, method, url, headers=header, **REQUESTS[(method, path)])
 
     if is_send(method, path):

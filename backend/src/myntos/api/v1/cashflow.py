@@ -86,6 +86,8 @@ from myntos.domain.ledger.cashflow import (
 from myntos.domain.ledger.chart import (
     IMPORT_VOUCHER_LABEL,
     IMPORT_VOUCHER_TYPE,
+    INVOICE_PAYMENT_VOUCHER_LABEL,
+    INVOICE_PAYMENT_VOUCHER_TYPE,
     LANDBRUK_ACCOUNTS,
     MANUAL_VOUCHER_LABEL,
     MANUAL_VOUCHER_TYPE,
@@ -875,6 +877,8 @@ def _label_for(type_code: str | None) -> str | None:
     # counts in the year's money in and out, under its own name.
     if type_code == MANUAL_VOUCHER_TYPE:
         return MANUAL_VOUCHER_LABEL
+    if type_code == INVOICE_PAYMENT_VOUCHER_TYPE:
+        return INVOICE_PAYMENT_VOUCHER_LABEL
     entry_type = CASH_FLOW_TYPES.get(type_code) if type_code is not None else None
     return entry_type.label if entry_type is not None else None
 
@@ -2221,8 +2225,11 @@ async def edit_entry(
 
     Refuses an entry already reversed or corrected, so correct the newest
     replacement instead (409 ``already_reversed``), an original in a closed
-    financial year (409 ``closed_financial_year``), the opening balance and
-    the year-end closing (409 ``cannot_reverse_here``), an id that is not
+    financial year (409 ``closed_financial_year``), the opening balance,
+    the year-end closing and a customer's payment of an invoice (409
+    ``cannot_reverse_here``; reverse the payment with ``POST
+    …/cashflow/{voucher_id}/reversal`` and register the right one with ``POST
+    /api/v1/companies/{company_id}/faktura/{document_id}/innbetalinger``), an id that is not
     this company's (404 ``voucher_not_found``), and everything ``POST
     …/cashflow`` refuses about the new values. Either all of it happens or
     none of it does.
@@ -2231,7 +2238,11 @@ async def edit_entry(
     # Both new vouchers are this person's work, the reversal included: they are
     # the one correcting the entry, whoever made it.
     await ledger_service.reverse_cash_flow(
-        db, company=context.company, voucher_pk=voucher_id, created_by_user_id=user.id
+        db,
+        company=context.company,
+        voucher_pk=voucher_id,
+        created_by_user_id=user.id,
+        replacing=True,
     )
     transaction = await ledger_service.record_cash_flow(
         db,
@@ -2352,7 +2363,11 @@ async def edit_composite(
     """
     require_permission(context.membership.role, Permission.LEDGER_WRITE)
     await ledger_service.reverse_cash_flow(
-        db, company=context.company, voucher_pk=voucher_id, created_by_user_id=user.id
+        db,
+        company=context.company,
+        voucher_pk=voucher_id,
+        created_by_user_id=user.id,
+        replacing=True,
     )
     transaction = await ledger_service.record_composite(
         db,
@@ -2481,6 +2496,11 @@ async def reverse(
     details is corrected with ``PUT /api/v1/companies/{company_id}/cashflow/{voucher_id}``
     instead. The reversal lands in the original's period and gets its own
     bilagsnummer; it is what this returns. No body.
+
+    Also how a customer's payment of an invoice (``type_code``
+    ``innbetaling_faktura``) is undone, from the register or from the invoice:
+    the reversal names the same invoice, so the invoice reads as unpaid by that
+    amount again.
 
     Refuses an entry already reversed or corrected (409 ``already_reversed``),
     one in a closed financial year (409 ``closed_financial_year``), the opening

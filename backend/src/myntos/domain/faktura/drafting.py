@@ -33,7 +33,10 @@ plausible stranger on a document that can only be undone by kreditnota.
 read out of the text by its mod-11 check digit, and the address to send the
 invoice to by its ``@``. The model is not shown the customer register either:
 which registered customer the text means is decided by :func:`match_customer`,
-here, and said out loud when the name only partly fits.
+here, and said out loud when the name only partly fits. When the text names a
+company by its full name and form and gives no number, the number may come
+from Enhetsregisteret instead, by :func:`match_register`: the register's
+answer, never the model's, and only when exactly one unit has that name.
 
 **A numbered menu for the VAT code**, exactly as in the classification module: a
 model cannot invent a treatment that does not exist, and a caller may narrow the
@@ -53,6 +56,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -869,6 +873,105 @@ def differs_from(
         "Fakturaen får adressen i registeret, så endre kunden under Kunder og leverandører "
         "hvis adressen er ny."
     )
+
+
+# --- Which unit in Enhetsregisteret ------------------------------------------------
+#
+# A text that names its buyer «Hapro AS» and gives no number leaves the person
+# to look the number up, and the number is what fills in the address and what an
+# EHF invoice is addressed by. Brønnøysund can answer that from the name, but a
+# name is not a key, so the rule here is about what a name is worth.
+
+
+class RegisterEntry(Protocol):
+    """What matching needs of an Enhetsregisteret entry."""
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def orgnr(self) -> str: ...
+
+    @property
+    def deleted_on(self) -> str | None: ...
+
+
+#: Where ``buyer_orgnr`` in a proposal came from: read out of the text by its
+#: check digit, or found in Enhetsregisteret by the buyer's name.
+OrgnrSource = Literal["tekst", "enhetsregisteret"]
+
+
+def names_a_registered_unit(name: str) -> bool:
+    """Whether ``name`` is written as a company's name, with its legal form last.
+
+    The gate for asking Enhetsregisteret at all. «Ola Hansen» may be the private
+    person the invoice is to, and also the name of somebody's
+    enkeltpersonforetak; matching the one to the other would put a stranger's
+    orgnr on the invoice and, from 2027, send it to them as EHF. «Ola Hansen
+    AS» can only be a company. It also keeps a private person's name from ever
+    being sent to Brønnøysund. A name the text wrote without its form («Hapro»)
+    is not looked up, even when the model added one: the model's «AS» is the
+    model's, and :func:`_buyer_name` has already taken it off.
+    """
+    words = _words(name)
+    return len(words) > 1 and words[-1] in _LEGAL_FORMS
+
+
+def _register_key(name: str) -> str:
+    """A name as the register files it, give or take case, spacing and hyphens.
+
+    Stricter than the words :func:`said` compares. «+BYGG AS» and «BYGG AS» are
+    two live companies, and comparing words alone would make them one name.
+    The legal form is part of the key: «Hapro AS» is not «Hapro SA».
+    """
+    return " ".join(unicodedata.normalize("NFC", name).casefold().replace("-", " ").split())
+
+
+def _orgnrs(found: Sequence[RegisterEntry]) -> str:
+    shown = [entry.orgnr for entry in found[:3]]
+    if len(found) > 3:
+        return ", ".join(shown) + " med flere"
+    return shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + " og " + shown[-1]
+
+
+def match_register[E: RegisterEntry](name: str, entries: Sequence[E]) -> tuple[E | None, list[str]]:
+    """The entry that *is* ``name``, if exactly one is, and what to say either way.
+
+    ``entries`` is the register's ranked answer to a search for the name
+    (:func:`myntos.integrations.brreg.search_by_name`), most of which only
+    shares a word with it. An entry counts when its name is ``name``, give or
+    take case, spacing and hyphens. Exactly one counts, or none is chosen:
+    foretaksnavneloven wants an AS's name to differ from every other in
+    Foretaksregisteret, and the register still holds three live units called
+    «ELEKTRO AS» (2026-11-19), so a law is not a reason to pick one.
+
+    A deleted unit is no buyer: there is nobody left to pay. It is passed over,
+    and said when it is the only one with the name.
+    """
+    wanted = _register_key(name)
+    same = [entry for entry in entries if _register_key(entry.name) == wanted]
+    live = [entry for entry in same if entry.deleted_on is None]
+    if len(live) == 1:
+        chosen = live[0]
+        return chosen, [
+            f"Organisasjonsnummeret er hentet fra Enhetsregisteret, der {chosen.name} "
+            f"({chosen.orgnr}) er den eneste enheten med dette navnet. Kontroller at det er "
+            "riktig kjøper."
+        ]
+    if len(live) > 1:
+        return None, [
+            f"Flere enheter i Enhetsregisteret heter «{name}»: {_orgnrs(live)}. Skriv inn "
+            "organisasjonsnummeret til den riktige."
+        ]
+    if same:
+        return None, [
+            f"«{name}» er slettet fra Enhetsregisteret ({_orgnrs(same)}). Kontroller hvem "
+            "fakturaen skal til."
+        ]
+    return None, [
+        f"Fant ingen enhet i Enhetsregisteret som heter «{name}». Skriv inn "
+        "organisasjonsnummeret selv hvis kjøperen har et."
+    ]
 
 
 # --- Asking ------------------------------------------------------------------------

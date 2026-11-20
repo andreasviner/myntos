@@ -7,9 +7,10 @@ skill: myntos-mva
 
 # Send the MVA-melding
 
-Sending the MVA-melding files it with Skatteetaten through Altinn. It is three
-steps on one page: log in with ID-porten, have Skatteetaten check the
-melding, and confirm the amount and send. **A sent melding cannot be
+Sending the MVA-melding files it with Skatteetaten through Altinn. It is two
+steps on one page: have Skatteetaten check the melding, then confirm the
+amount and send. Both go with the person's ID-porten login, which the first
+press asks for if it is needed. **A sent melding cannot be
 withdrawn.** It can only be replaced, by sending a new melding for the same
 termin.
 
@@ -34,17 +35,18 @@ termin.
    «Mva-meldingen →») and click «Se meldingen» on the termin. If an AI asked
    them to file, the request under «Godkjenning» leads to the same place.
 2. Read the lines and the total, «Å betale» or «Til gode».
-3. Press «Logg inn med ID-porten» and log in. They come back to the same
-   termin.
-4. Press «Kontroller hos Skatteetaten». Nothing is sent yet. See
-   [Check the VAT return with Skatteetaten](https://myntos.no/llms/help/vat/check-the-vat-return-with-skatteetaten.md).
-5. In the box «Send inn», read Skatteetaten's answer.
-6. Tick the box «Jeg har gått gjennom meldingen og vil sende den inn for …»,
+3. Press «Kontroller hos Skatteetaten». Nothing is sent yet. If they are not
+   logged in with ID-porten, the press goes through ID-porten first and the
+   check runs when they are back: [Log in with ID-porten to file the VAT return](https://myntos.no/llms/help/vat/log-in-with-id-porten-for-the-vat-return.md).
+   See [Check the VAT return with Skatteetaten](https://myntos.no/llms/help/vat/check-the-vat-return-with-skatteetaten.md).
+4. In the box «Send inn», read Skatteetaten's answer.
+5. Tick the box «Jeg har gått gjennom meldingen og vil sende den inn for …»,
    which names the company, its organisation number, the termin and the
    amount. Check all four.
-7. Press «Send inn mva-meldingen (…)», which shows the amount again. This is
-   the step that cannot be undone.
-8. The page says «Meldingen er sendt, og kvitteringen er lagret.» or
+6. Press «Send inn mva-meldingen (…)», which shows the amount again. This is
+   the step that cannot be undone. If the login ran out since the check, the
+   press goes through ID-porten and sends when they are back.
+7. The page says «Meldingen er sendt, og kvitteringen er lagret.» or
    «Meldingen er sendt. Kvitteringen kommer litt senere.» The termin's status
    becomes «Sendt og mottatt» or «Sendt, venter på kvittering».
 
@@ -56,7 +58,10 @@ termin.
 | «regnskapet for terminen er endret etter kontrollen; kontroller meldingen på nytt» | The books changed between the check and sending | Check again, read the new figures, then send |
 | «bekreft beløpet i meldingen du kontrollerte før den sendes» | The box was not ticked for the checked amount | Reload, check again, tick and send |
 | «Innsendingen stoppet underveis. …» | Altinn stopped partway | [Handle a submission that stopped partway](https://myntos.no/llms/help/vat/handle-a-submission-that-stopped-partway.md) |
-| «logg inn med ID-porten for å kontrollere og sende mva-meldingen» | The ID-porten login ran out | Reload and log in again |
+| «Meldingen for terminen er sendt. …» where the button was | The termin is already sent, and the books still say the same | Nothing to send. A new melding is only for a change: [Correct a VAT return already sent](https://myntos.no/llms/help/vat/correct-a-vat-return-already-sent.md) |
+| «meldingen for … er sendt, og regnskapet sier det samme som da. …» | A check from before the termin was sent, sent afterwards | Nothing to send; the termin is filed |
+| «Du er logget inn, men meldingen ble ikke sendt: den står ikke lenger klar. Se over terminen.» | The press went through ID-porten, and meanwhile the books changed or the melding was sent from another tab | Read the termin again, check again if needed, then send |
+| «logg inn med ID-porten for å kontrollere og sende mva-meldingen» | The login did not take, even after the trip through ID-porten | Reload and press again |
 
 ## Good to know
 
@@ -64,7 +69,9 @@ termin.
 - When it is sent, Myntos moves the termin's VAT onto account 2740 in a
   voucher of its own:
   [Understand the VAT settlement voucher](https://myntos.no/llms/help/vat/understand-the-vat-settlement-voucher.md).
-- Paying is separate: [Get the receipt and payment details](https://myntos.no/llms/help/vat/get-the-receipt-and-payment-details.md).
+- Paying is separate, from the bank: [Get the receipt and payment details](https://myntos.no/llms/help/vat/get-the-receipt-and-payment-details.md).
+  Recording it in the books is one button, «Før betalingen»:
+  [Record the VAT payment or refund](https://myntos.no/llms/help/vat/record-the-vat-payment-or-refund.md).
 - An AI can prepare the melding and ask, but never send it:
   [Let an AI prepare the VAT return](https://myntos.no/llms/help/vat/let-an-ai-prepare-the-vat-return.md).
 

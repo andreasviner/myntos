@@ -58,6 +58,7 @@ from myntos.domain.feedback import models as feedback_models  # noqa: F401  (reg
 from myntos.domain.identity import models as identity_models  # noqa: F401  (registers tables)
 from myntos.domain.ledger import models as ledger_models  # noqa: F401  (registers tables)
 from myntos.domain.mva import models as mva_models  # noqa: F401  (registers tables)
+from myntos.domain.peppol import models as peppol_models  # noqa: F401  (registers tables)
 from myntos.domain.server_errors import (
     models as server_error_models,  # noqa: F401  (registers tables)
 )
@@ -163,11 +164,14 @@ def an_empty_error_recorder() -> Iterator[None]:
     ``recorder.RECORDER`` is process-wide like the reading cache, and the
     application's lifespan writes what it holds into the test's own database on
     the way out, so a failure one test logged on purpose would otherwise turn up
-    in the next test's ``server_error`` table.
+    in the next test's ``server_error`` table. The operator's quiet hour is
+    the recorder's too, and one test's notice must not silence the next one's.
     """
     RECORDER.take()
+    RECORDER.notified_at = None
     yield
     RECORDER.take()
+    RECORDER.notified_at = None
 
 
 @pytest.fixture(autouse=True)

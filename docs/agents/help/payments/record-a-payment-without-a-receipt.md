@@ -34,7 +34,9 @@ or reversed.
 1. Open «Betaling» in the top menu (`https://myntos.no/kontantstrom/`).
 2. Under the upload box, click «Ingen bilag? Fyll inn manuelt». The fields
    open.
-3. Choose «Penger inn» or «Penger ut». Nothing is chosen in advance.
+3. Choose «Penger inn» or «Penger ut». Nothing is chosen in advance, except
+   when they came from «Registrer inntekt» on the overview: then «Penger inn»
+   is already chosen, and they can still change it.
 4. In «Hva gjaldt det?», choose what the payment was for. The line under it
    says what the choice assumes about VAT. See
    [Choose what a payment was for](https://myntos.no/llms/help/payments/choose-what-a-payment-was-for.md).

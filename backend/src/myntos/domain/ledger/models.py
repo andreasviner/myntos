@@ -1046,6 +1046,16 @@ class TransactionLine(Base):
     # VAT lines, which belong to no category. Copied by a reversal like the
     # rest of the line. Not a SAF-T field.
     entry_type: Mapped[str | None] = mapped_column(String(64))
+    # The issued invoice this 1500 line settles, on a customer's payment
+    # (myntos.domain.faktura.payments). What is paid of an invoice is then read
+    # off the ledger, credits less debits on the lines that name it, rather than
+    # kept in a table beside the vouchers that could disagree with them. Copied
+    # by a reversal like the rest of the line, which is what makes a payment
+    # undone in the register count as unpaid again without anything else
+    # having to know. NULL on every other line. Not a SAF-T field.
+    settles_document_pk: Mapped[int | None] = mapped_column(
+        ForeignKey("sales_document.id", ondelete="RESTRICT"), index=True
+    )
 
     transaction: Mapped[Transaction] = relationship(back_populates="lines")
     account: Mapped[Account] = relationship()

@@ -96,3 +96,32 @@ class UnsupportedCurrencyError(FakturaError):
     NOK only. Accepting a EUR invoice without that restatement would produce a
     document that looks fine and is not.
     """
+
+
+class NotPayableError(FakturaError):
+    """A payment can only be registered on an issued faktura that is not credited.
+
+    A draft owes nothing yet, a kreditnota is money the seller owes rather than
+    is owed, and a credited invoice has been cancelled: the customer owes
+    nothing on it, whatever they paid before it was credited.
+    """
+
+
+class PaymentExceedsOutstandingError(FakturaError):
+    """The payment is more than what is still owed on the invoice.
+
+    Refused rather than booked, because the excess is not a payment of this
+    invoice: it is money the company owes the customer back, or a payment of
+    another invoice, and which one is the person's to say. Registering the
+    whole amount here would mark the invoice overpaid and leave 1500 for the
+    customer in credit with nothing saying why.
+    """
+
+
+class PaymentInFutureError(FakturaError):
+    """The payment is dated after today.
+
+    A payment is registered when the money has come, from the bank statement
+    that says so. One dated ahead is a payment nobody has seen yet, which is
+    exactly what marking an invoice paid on its due date would book.
+    """

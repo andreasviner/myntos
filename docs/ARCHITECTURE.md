@@ -174,6 +174,18 @@ revisor, regnskapsfører, forretningsfører, bostyrer, kontaktperson. Roles live
 the main unit only — `/underenheter/{orgnr}/roller` is a 404 — so a subunit's are
 read from its parent.
 
+**The register is searched by name in one place only**: the invoice proposal
+(`POST …/faktura/forslag`), for a buyer the pasted text names without a number.
+A name is not a key, so three rules hold, in `drafting.match_register` and the
+route. Only a name written with its legal form («Hapro AS») is searched: «Ola
+Hansen» may be the private person the invoice is to and also a stranger's
+enkeltpersonforetak, and a person's name is never sent to Brønnøysund. A unit
+counts only when its name *is* the name, give or take case, spacing and hyphens,
+because the register's search is ranked free text. And exactly one live unit
+must count, or none is chosen: the register holds three live «ELEKTRO AS»
+(2026-11-19) whatever foretaksnavneloven says. There is no public route for the
+search; an agent with a name and no number asks the proposal or the person.
+
 Two things are dropped on the way through, both deliberately. The register pairs
 every person with a **birth date**; it never reaches a browser, for the reason
 fødselsnummer never reaches one from the Altinn party list. And a role the
@@ -406,7 +418,10 @@ text is read outside the EEA:
 - **What it sees:** the recipient address, the subject, the body and the
   sender. For an invitation that is the inviter's name and, once they have
   confirmed it, their address, the company's name, the role and the link; for
-  the account mails, the person's first name and the link.
+  the account mails, the person's first name and the link. The operator's
+  failure notice (docs/operator.md) carries code only: the route and log
+  templates and the exception type, never a value, and goes to the operator
+  alone.
 - **What it never sees:** accounting data. No amounts, bilag, parties, MVA or
   SAF-T content is ever put in a message, and nothing may be added that would
   be. A company's name is public in Enhetsregisteret already.
@@ -818,6 +833,17 @@ The rules, and why:
   `corrects_transaction_pk`, in one request. The register's reversal route
   refuses `IB`, `AVS` and `MANUELT` vouchers (`cannot_reverse_here`), so none
   of them can be undone around its own rules.
+- **A customer's payment of an invoice names the invoice on its 1500 line**
+  (`gl_transaction_line.settles_document_pk`, since 2026-11-19, migration
+  `6ad191291425`), and what an invoice has been paid is read off those lines,
+  reversals included, never stored beside them
+  (`domain/faktura/payments.py`). Never booked on the due date: the bank
+  statement is the documentation. A reversal copies the link, so undoing a
+  payment in the register makes the invoice owed again without the register
+  knowing invoices exist; a *correction* of one is refused
+  (`cannot_reverse_here`), because the register's form would post the
+  replacement without the link. The column is `RESTRICT`, so purging a
+  company's books clears it before deleting either side (docs/gdpr.md).
 - **The old program's years**, from its SAF-T files, one per year, go into an
   `IMPORT` journal under the old program's voucher numbers, never over a period
   Myntos already has entries in. The earliest file's opening balances are the
@@ -1002,11 +1028,12 @@ everywhere is no easier to find than one present where you are.
 | --- | --- |
 | `/` | Marketing when signed out; overview, totals and recent entries when signed in |
 | `/kontantstrom/` | The register: entry form, listing, reversal, bilag upload (several files at once, PDF or photograph, with a box for what the documents do not say) |
-| `/faktura/` | Salgsdokument: line editor, a review step that shows the § 5-1 findings before anything is issued, kreditnota, PDF and EHF download |
+| `/faktura/` | Salgsdokument: line editor, a review step that shows the § 5-1 findings before anything is issued, kreditnota, PDF and EHF download, and sending as EHF over Peppol by default («Utsted og send som EHF» on the review when the customer can receive, «Send som EHF» afterwards) with the delivery status: [integrations/peppol.md](integrations/peppol.md) |
 | `/saft/` | The SAF-T Financial file for one financial year: the backend's cross-reference findings first, the download only when none of them blocks, the version offered only for years that accept two. Reached from the note under the overview's figures, and per year from `/slett-selskap/` with `?aar=`. See [integrations/saf-t.md](integrations/saf-t.md#what-myntos-does-built-2026-10-09) |
 | `/kontoplan/` | The kontoplan for one year: every account, its post in the næringsspesifikasjon, adding, renaming, (de)activating, marking as a bank account (an account besides 1920 and 1900 that the overview counts as the company's money, such as a driftskreditt on 2390; `account.is_bank_account`) and regrouping. Changes need `ledger:chart`. Reached from `/organisasjon/`, `/saft/` and the account field in the register. See [integrations/saf-t.md](integrations/saf-t.md#the-kontoplan-is-editable-built-2026-10-09) |
 | `/mva-justeringer/` | Uttak, tap på krav, justering and tilbakeføring: the MVA-melding's `spesifikasjon` lines, recorded and reversed. Reached from `/mva/`. See [integrations/mva.md](integrations/mva.md#spesifikasjon-uttak-tap-på-krav-justering-tilbakeføring-built-2026-10-09) |
 | `/mva/` | The MVA-melding per period: every line, the deadline, Skatteetaten's check, a confirmation step before filing, the receipt and payment information afterwards, and the melding as XML for upload by hand. Reached from the VAT figure on the overview, not from the top menu. See [integrations/mva.md](integrations/mva.md#what-myntos-does) |
+| `/frister/` | The company's deadlines with Skatteetaten and Brønnøysund for the coming year, worked out from the law, and what Myntos knows is met; never «over fristen» about anything Myntos cannot know was done. Reached from «Neste frister» on the overview, not from the top menu. See `domain/frister/` and [integrations/skatteetaten.md](integrations/skatteetaten.md) on the Frister API |
 | `/bank/` | Bank reconciliation: upload a camt.053 file, see each movement next to the voucher that books it, confirm a suggested voucher or post a new one from the line through the register's own path. Matching is a link and never edits a voucher. Reached from the note under the overview's figures. See [integrations/bank.md](integrations/bank.md) |
 | `/inngaende-balanse/` | The opening balance of books brought from another system: saldobalanse CSV or typed lines, open items per customer and supplier, the backend's review, then one voucher; correction is reversal plus replacement. Reached from the overview's note. See [§ Where the books start](#where-the-books-start-and-where-each-year-ends) |
 | `/manuelt-bilag/` | Manual vouchers for one year: accounts with debit and credit, a written reason, optional documents, the backend's review, then one voucher in the `MANUELT` journal; «Rett» (reversal plus replacement) and «Reverser» with a reason on each. Reached from the overview's note, `/arsavslutning/` and `/bilag/`. See [§ Where the books start](#where-the-books-start-and-where-each-year-ends) |
@@ -1026,7 +1053,7 @@ everywhere is no easier to find than one present where you are.
 | `/konto/` | The **person**, not a company: how they sign in (password, linked providers, «Koble til BankID», and removing one while another way in remains), where they are signed in (end one device, or all the others), and deleting the account, with what is deleted and what stays with each company stated before the button. Reached from the company menu as «Din konto». See [gdpr.md](gdpr.md) |
 | `/slett-selskap/` | Deleting the active company, for an owner: a SAF-T link for every year with entries, what will happen (deleted at once when nothing is entered, otherwise locked until the date bokføringsloven § 13 sets and purged the day after), the same proof as deleting the account, and two boxes. Reached from the red «Slett selskapet …» in the last section of `/organisasjon/`, owners only; a deleted company is opened again from «Slettede selskaper» on `/konto/`. See [gdpr.md § Deleting a company](gdpr.md#deleting-a-company) |
 | `/bekreft-epost/`, `/glemt-passord/`, `/nytt-passord/` | Address confirmation and password reset, from links in the fragment. The front page carries a notice (`components/VerifyEmailNotice.astro`) while the address is unconfirmed and the deployment sends mail. See [Credentials and sessions](#credentials-and-sessions) |
-| `/organisasjon/` | Everything about **one company**: its own details (the only place its bank accounts, VAT registration, Foretaksregisteret and the address are edited), its subscription, who may open it and who has been invited to it, the Altinn confirmation of who it belongs to, what it lets Myntos use to improve Myntos (`Company.data_sharing`, owners and admins, the top level in red: [data-sharing.md](data-sharing.md)), and everything Enhetsregisteret holds about it including the board and the revisor. The board list marks who can open the books and offers to invite whoever cannot: [register-access.md](register-access.md). No account is shown here: see [company-isolation.md](company-isolation.md#the-account-is-not-a-company) |
+| `/organisasjon/` | Everything about **one company**: its own details (the only place its bank accounts, VAT registration, Foretaksregisteret and the address are edited), its subscription, who may open it and who has been invited to it, the Altinn confirmation of who it belongs to, its registration for sending e-invoices over Peppol (owners and admins, only once confirmed: [integrations/peppol.md](integrations/peppol.md)), what it lets Myntos use to improve Myntos (`Company.data_sharing`, owners and admins, the top level in red: [data-sharing.md](data-sharing.md)), and everything Enhetsregisteret holds about it including the board and the revisor. The board list marks who can open the books and offers to invite whoever cannot: [register-access.md](register-access.md). No account is shown here: see [company-isolation.md](company-isolation.md#the-account-is-not-a-company) |
 | `/tilbakemelding/` | Bug reports, improvements and wishes from anybody, signed in or not, kept without a name: the form, the reference shown once, one item read back or withdrawn by its `#ref=`, and the list the operator chose to publish in its own words. Linked from the footer and from `/funksjoner/`. See [feedback.md](feedback.md) |
 | `/drift/` | The operator's page, opened by the deployment's operator key and by no session or company key: every feedback item with the sender's text and its status, and the server's recorded failures, kept without anybody's data, with the `journalctl` command for the details. Not linked from anywhere, noindex. See [operator.md](operator.md) |
 | `/priser/`, `/bankpriser/`, `/funksjoner/`, `/about/`, `/kom-i-gang/` (and one guide per program under it), `/ansvar/`, `/personvern/`, `/vilkar/` | Marketing and legal pages, readable signed out: prices, a comparison of business banks, features, moving from another program, the disclaimer, the privacy policy and the terms. `/personvern/` and `/ki/` carry the public promise about KI ([§ KI](#ki-anywhere-in-the-product-one-provider-only)) |
@@ -1085,8 +1112,8 @@ Consequences for the code:
 | `api` | HTTP endpoints, versioned (`/api/v1`) | domain, core |
 | `core` | Settings (pydantic-settings, env-driven), security middleware, clock | — |
 | `auth` | Myntos login (passwords, tokens, sessions, Google/Microsoft/BankID OIDC), keys for agents and integrations (`agent_keys`), the operator key (`operator`), **and** Maskinporten + ID-porten token acquisition | core, domain.identity; `agent_keys` also reads two ledger models, because a key belongs to a company and its stamp goes on a voucher |
-| `domain` | Ledger (incl. the cash-flow register), bilag, faktura, bank (camt.053 import and matching), mva, årsoppgjør (opening balance, year-end closing), identity (accounts/organizations), feedback (anonymous bug reports and wishes, and the operator's triage command), server_errors (the server's failures, kept without their data, [operator.md](operator.md)) — business logic | core, db; the `storage` protocol and keys, and one data type from `integrations.brreg` (below) |
-| `integrations` | Skatteetaten/Altinn/Brreg/Løynd/Norges Bank clients (translate domain ⇄ external APIs) | auth, core |
+| `domain` | Ledger (incl. the cash-flow register), bilag, faktura, bank (camt.053 import and matching), mva, årsoppgjør (opening balance, year-end closing), identity (accounts/organizations), feedback (anonymous bug reports and wishes, and the operator's triage command), server_errors (the server's failures, kept without their data, [operator.md](operator.md)), peppol (who may register a company with the access point and send an EHF, and what it answered; the endpoint makes the calls, [integrations/peppol.md](integrations/peppol.md)) — business logic | core, db; the `storage` protocol and keys, and one data type from `integrations.brreg` (below) |
+| `integrations` | Skatteetaten/Altinn/Brreg/Løynd/Norges Bank/Recommand clients (translate domain ⇄ external APIs) | auth, core |
 | `saft` | SAF-T Financial export: snapshot, writer, cross-reference check, vendored code lists | domain |
 | `skattemelding` | The skattemelding and næringsspesifikasjon: the year's XSD read for order and what Skatteetaten derives, the writer, the builder from plain figures, the envelope, vendored XSDs and code lists; and the one module that reads the books for it (`service`, through `saft.service`) and the filings (`models`) | domain, saft |
 | `db` | SQLAlchemy base/session; Alembic in `backend/migrations/` | core |
@@ -1805,6 +1832,12 @@ buyer, not the company, not the ledger. The question does not need them.
   program's SAF-T files and printouts) go in a second bucket, also
   `jurisdiction=eu`, standard storage class: Infrequent Access bills 30 days
   for anything deleted sooner and charges for every read.
+- **Peppol access point:** Recommand (BRBX BV, Belgium), which hosts in the
+  EEA, with one key for the deployment. Its own mail goes through Postmark in
+  the USA, so Myntos never asks it to e-mail anything and registers companies
+  without contact details; and the companies are registered to send only,
+  because receiving would take over their Peppol inbox. See
+  [integrations/peppol.md](integrations/peppol.md).
 
 ### Why EEA hosting is legal (and what the product must do about it)
 

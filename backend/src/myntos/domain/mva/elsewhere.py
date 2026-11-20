@@ -178,7 +178,9 @@ async def record(
         # keep. The routes that serve them refuse such a row by its status.
         melding_xml="",
         content_hash=service.content_hash(melding) if melding is not None else "",
-        fastsatt_merverdiavgift=melding.fastsatt_merverdiavgift if melding is not None else ZERO,
+        # As booked, in øre, which is what the recorded amount is compared with
+        # (and what every such row held before the melding was in kroner).
+        fastsatt_merverdiavgift=melding.booked_fastsatt if melding is not None else ZERO,
         lines=service.lines_snapshot(melding) if melding is not None else [],
         merknad=None,
         validation_status="",
@@ -338,10 +340,13 @@ async def proposals(
             if s.termin.index not in found
             and s.termin.end <= voucher.on <= s.termin.end + _SETTLEMENT_WINDOW
         ]
+        # As booked: the old program's voucher moved 2700 and 2710 in øre and
+        # put its own rounding on 7740.
         exact = [
             s
             for s in candidates
-            if (s.melding.output_vat, s.melding.input_vat) == (voucher.output, voucher.input)
+            if (s.melding.booked_output_vat, s.melding.booked_input_vat)
+            == (voucher.output, voucher.input)
         ]
         if exact:
             chosen = min(

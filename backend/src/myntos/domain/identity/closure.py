@@ -71,7 +71,7 @@ from myntos.domain.identity.models import (
 # Models only, never services, for the reason erasure gives: deleting books
 # means naming every table that holds them.
 from myntos.domain.ledger.errors import CompanyNotFoundError
-from myntos.domain.ledger.models import Company, Journal, Party, Transaction
+from myntos.domain.ledger.models import Company, Journal, Party, Transaction, TransactionLine
 from myntos.domain.mva.models import MvaFiling, MvaFilingDocument
 from myntos.saft.models import ImportedDocument, ImportStatus, SaftImport, SaftImportFile
 from myntos.skattemelding.models import SkattemeldingFiling, SkattemeldingFilingDocument
@@ -434,6 +434,15 @@ async def _delete_books(db: AsyncSession, company_id: int) -> None:
     halves go explicitly, referrers first.
     """
     documents = SalesDocument.company_id == company_id
+    # A customer's payment names the invoice it paid on its 1500 line, and the
+    # invoice names its own voucher: RESTRICT both ways, so neither the
+    # invoices nor the vouchers could go first. The payment's link goes, then
+    # the invoices, then every voucher with its lines.
+    await db.execute(
+        update(TransactionLine)
+        .where(TransactionLine.settles_document_pk.in_(select(SalesDocument.id).where(documents)))
+        .values(settles_document_pk=None)
+    )
     # A kreditnota names the faktura it reverses, so kreditnotaer first.
     await db.execute(
         delete(SalesDocument).where(documents, SalesDocument.credits_document_pk.is_not(None))

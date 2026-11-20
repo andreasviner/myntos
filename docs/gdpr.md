@@ -255,6 +255,9 @@ company past its date it deletes the stored files first (bilag and their
 thumbnails, bank statements, MVA receipts, the documents kept from an old
 program's export: `DocumentStorage.delete`, which nothing else calls), then the rows, referrers first, because a few links
 inside the books are RESTRICT on purpose and PostgreSQL checks those at once.
+A customer's payment and the invoice it paid point at each other through RESTRICT
+links (the invoice at its voucher, the payment's 1500 line at the invoice), so
+the payment's link is cleared first and then the rows go in order.
 One commit per company. Files before rows, because a failure halfway then
 leaves rows pointing at missing files in books past retention, which is
 harmless, rather than files nothing names, which nothing would ever delete. An

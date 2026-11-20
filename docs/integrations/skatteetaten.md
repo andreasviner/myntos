@@ -352,6 +352,92 @@ digdir-samarbeid.slack.com.
 3. Altinn systembruker against `app_skd_formueinntekt-skattemelding-v2`
 4. Tenor synthetic test users; full flow against `…test.sits.no` + TT02
 
+### The second application: the aksjonærregisteroppgave, and what comes after
+
+Decided 2026-11-03: the application for the aksjonærregisteroppgave also asks
+for what Myntos is expected to need next, so the slow step is waited on once.
+This reverses "only what is in scope" from the first application. A longer
+application may take longer to review, but a second review months later, with a
+finished feature waiting on it, costs more. Every line below names the
+FEATURES.md row it is for, so a reviewer asking what it is for gets an answer.
+
+| Scope | Service | For (FEATURES.md) | What the system and each systembruker need |
+| --- | --- | --- | --- |
+| `skatteetaten:innrapporteringaksjonaerregisteroppgave` | RF-1086 | 3 | resource `ske-innrapportering-aksjonaerregisteroppgave` |
+| `skatteetaten:innrapporteringamelding` | A-melding, and its avstemmingsrapport (A07) | 14, 43 | resources `ske-innrapportering-amelding`, `ske-avstemmingsinformasjon-amelding` |
+| `skatteetaten:skattekorttilarbeidsgiver` | Tax cards for payroll | 14 | resource `ske-skattekort-til-arbeidsgiver` |
+| `skatteetaten:innrapporteringbetalingerselvstendignaeringsdrivende` | RF-1321, payments to sole traders | not ranked yet; the API is ready if the duty turns out to apply to Myntos's customers | resource `ske-innrapportering-betalinger-selvstendig-naeringsdrivende` |
+| `skatteetaten:kravogbetalinger` | Krav og betalinger: what a company owes Skatteetaten, has paid and has been repaid | 41, 43, 45 | access package `krav-og-utlegg` |
+| `skatteetaten:frister` | Frister: a company's own deadlines | 22 | access package `krav-og-utlegg` |
+| `skatteetaten:skattdialogdokument` | Skatteetaten's letters and the skatteoppgjør, through Dialogporten | 41 | the resource the dialog belongs to. `formueinntekt/skattemelding` reaches it today only for a transition period |
+
+**Krav og betalinger and Frister are sharing APIs, but not the kind refused
+above.** Rettighetspakke `regnskapssystem` gives an end-user system a
+company's *own* data on three conditions, quoted from Skatteetaten:
+- Myntos must be integrated with at least one reporting API (A-melding, MVA
+  innsending or skattemelding innlevering; Myntos has two).
+- The company must have filed through Myntos at least once.
+- The data may be used for nothing but showing it to that company.
+
+Myntos is the company's databehandler for it (personvern § 3d). These two are
+ordered through the brukerstøtte form, not on the scope application.
+
+**Where it stands (2026-11-06).** Skatteetaten granted Lindeman Technologies AS
+«Frister API - Regnskapssystem» and «Krav og betalinger API - Regnskapssystem»,
+in test and production, on the brukerstøtte case. The case's system description
+also named the other four scopes still marked «Tilgang mangler»
+(aksjonærregisteroppgave, skattekort, RF-1321, skattdialogdokument), and
+Skatteetaten answered that it will come back about those. `innrapporteringamelding`
+was not asked for, because Samarbeidsportalen already showed it granted on
+2026-11-03. What the grant does not do by itself:
+- Neither scope reaches a token until it is ticked onto each Maskinporten client
+  (below).
+- **In production, Krav og betalinger may answer for nothing but Lindeman
+  Technologies AS during Skatteetaten's pilot.** Its test tab says a
+  regnskapssystem may look up every test company in test, "selv om de i
+  pilotperioden kun kan gjøre oppslag for egen virksomhet i Prod" (read
+  2026-11-03). Read that as the vendor's own company until Skatteetaten says
+  otherwise, so a page that shows a customer its krav is not promised before
+  the pilot ends. Frister's documentation has no such note.
+- **`/frister/` does not use the Frister API yet** (built 2026-11-06,
+  `domain/frister/`). It works the dates out from the law, never later than
+  the law's, and says so on the page. When the API is reached through the
+  company's systembruker, Skatteetaten's date wins over the computed one,
+  because Skatteetaten knows what the law cannot: an extension granted to this
+  company, a holiday, a deadline Myntos has no rule for. The computed list
+  stays as the answer for a company with no systembruker, and for one that has
+  not filed through Myntos yet (the second condition above).
+- Which rettighetspakker the organization holds can be checked at
+  rettighetspakke-innsyn.skatteetaten.no.
+
+Left out on purpose:
+- **Sharing APIs that need hjemmel i lov** (aksjonær and aksjebeholdning,
+  restanser, MVA-meldingsopplysning, the MVA register, skattemeldingupersonlig
+  and the rest): closed to an end-user system, for the reason in step 2 above.
+- **Third-party reporting that belongs to someone else.** Banks, insurers and
+  funds report their own customers. A farm's milk, grain, slaughter, timber and
+  eggs are reported by its buyers (Tine, Nortura and the others), not by the
+  farm.
+- **RF-1199** (foreign contractors, OAR): nothing in FEATURES.md asks for it
+  yet.
+
+In the same round, outside Skatteetaten:
+- **Maskinporten clients.** Tick each scope onto test `f8293b48` and production
+  `a7693ab9` as it is granted. A grant to the organization does nothing until
+  each client has it. `digdir:dialogporten` is granted but not yet on the test
+  client (maskinporten.md).
+- **The system `938193045_myntos`.** One `PUT` of the whole document adds the
+  resources above and the `krav-og-utlegg` package.
+  - `registration_payload` and `request_system_user` send `rights` only, so
+    `accessPackages` has to be added to both first.
+  - The system is registered only in TT02: production's `.env` has no
+    `ALTINN_VENDOR_ORGNR`.
+  - The system's list is a ceiling, and each company's request still names only
+    what that company uses. A company that needs more later approves again, so
+    the first request should ask for what the company will use within the year.
+- **ID-porten client.** Add `altinn:clientdelegations/myclients.read`, for the
+  regnskapsfører's client list (FEATURES.md 23).
+
 ## Gotchas
 
 - Everything submitted to test becomes **searchable in Tenor** — never send

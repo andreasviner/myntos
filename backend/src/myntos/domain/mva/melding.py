@@ -8,10 +8,21 @@ owes are testable without a database and live in one place.
 the period's taxed lines (:mod:`.codes` says how each kind of code is reported).
 A reversal mirrors its original's tax amounts onto the other side, so the pair
 nets to zero here without any special-casing; the same goes for a kreditnota.
-What is *not* done is rounding. The ledger holds øre and the melding reports
-øre: Skatteetaten compares ``grunnlag * sats`` to ``merverdiavgift`` under its
-own tolerance, and rounding to kroner first is how a correct melding ends up
-outside it.
+
+**Whole kroner.** The ledger holds øre and the melding may not: rule R082
+refuses any ``grunnlag``, ``merverdiavgift`` or ``fastsattMerverdiavgift`` with
+decimals («Innsendte beløp skal ikke inneholde desimaler», ugyldig), and has
+since December 2021. An earlier version of this module reported øre, believing
+rounding would push ``grunnlag * sats`` outside Skatteetaten's tolerance. That
+tolerance (±1 krone a line, at least ±10, in their FAQ) is there for exactly
+this rounding. The first real company's check came back «Kode 1: Innsendte
+beløp kan ikke inneholde desimaler» (2026-11-02); TT02 had passed the same code
+because its test melding happened to be in whole kroner. So each line is
+rounded on its own, half away from zero, and ``fastsattMerverdiavgift`` is the
+sum of the rounded lines, which R018 checks: the rounded sum of øre lines can
+be a krone or more off it. The VAT as booked stays on the melding beside them
+(``booked_output_vat``, ``booked_input_vat``), because the settlement moves
+that off 2700 and 2710 and books the difference on 7740 (:mod:`.service`).
 
 **Two documents.** The melding itself (``mvaMeldingDto``, namespaced, from
 ``no.skatteetaten.fastsetting.avgift.mva.skattemeldingformerverdiavgift.v1.0.xsd``)
@@ -32,9 +43,9 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from myntos.domain.mva.codes import (
     DISPLAY_ORDER,
@@ -60,6 +71,7 @@ MELDING_FILENAME = "mva-melding.xml"
 
 ZERO = Decimal("0.00")
 _ORE = Decimal("0.01")
+_KRONE = Decimal("1")
 
 
 class MeldingError(ValueError):
@@ -105,7 +117,14 @@ class Melding:
     termin: Termin
     category: Meldingskategori
     orgnr: str
+    # In whole kroner, as reported.
     lines: tuple[Spesifikasjonslinje, ...]
+    # The two totals as booked, in øre, before the lines were rounded. What the
+    # settlement moves off 2700 and 2710 and what those accounts are reconciled
+    # against: compared with the rounded figures, every term would show its
+    # rounding as something booked without a VAT code.
+    booked_output_vat: Decimal
+    booked_input_vat: Decimal
 
     @property
     def fastsatt_merverdiavgift(self) -> Decimal:
@@ -120,6 +139,15 @@ class Melding:
     def input_vat(self) -> Decimal:
         return -sum((ln.merverdiavgift for ln in self.lines if ln.is_deduction), start=ZERO)
 
+    @property
+    def booked_fastsatt(self) -> Decimal:
+        return self.booked_output_vat - self.booked_input_vat
+
+    @property
+    def rounding(self) -> Decimal:
+        """What rounding to whole kroner took off the term: booked less reported."""
+        return self.booked_fastsatt - self.fastsatt_merverdiavgift
+
 
 # --- Aggregation ------------------------------------------------------------------
 
@@ -131,7 +159,9 @@ class _Sum:
 
 
 def aggregate(lines: Iterable[TaxedLine]) -> tuple[Spesifikasjonslinje, ...]:
-    """Group the period's taxed lines into specification lines.
+    """Group the period's taxed lines into specification lines, in øre as booked.
+
+    :func:`build` rounds them to the kroner the melding reports.
 
     Codes the melding never carries must already be filtered out by the caller
     (``TaxCode.is_reportable``); a code that is reportable and still unknown
@@ -224,6 +254,27 @@ def aggregate(lines: Iterable[TaxedLine]) -> tuple[Spesifikasjonslinje, ...]:
     return tuple(result)
 
 
+def in_kroner(value: Decimal) -> Decimal:
+    """``value`` rounded to whole kroner, half away from zero, still written with øre.
+
+    ``9718.00``, not ``9718``: the snapshot and the fingerprint of a filing
+    store amounts as strings, and those of meldinger already filed in whole
+    kroner then stay what they were.
+    """
+    return value.quantize(_KRONE, rounding=ROUND_HALF_UP).quantize(_ORE)
+
+
+def _reported(line: Spesifikasjonslinje) -> Spesifikasjonslinje | None:
+    """The line in whole kroner, or ``None`` when nothing of it is left to report."""
+    grunnlag = None if line.grunnlag is None else in_kroner(line.grunnlag)
+    merverdiavgift = in_kroner(line.merverdiavgift)
+    if merverdiavgift == ZERO and (grunnlag is None or grunnlag == ZERO):
+        # Under half a krone for a whole term. Its øre are still in the booked
+        # totals, and reach 7740 with the rest of the rounding.
+        return None
+    return replace(line, grunnlag=grunnlag, merverdiavgift=merverdiavgift)
+
+
 def build(
     lines: Iterable[TaxedLine],
     *,
@@ -231,15 +282,30 @@ def build(
     category: Meldingskategori,
     orgnr: str,
 ) -> Melding:
-    return Melding(termin=termin, category=category, orgnr=orgnr, lines=aggregate(lines))
+    booked = aggregate(lines)
+    return Melding(
+        termin=termin,
+        category=category,
+        orgnr=orgnr,
+        lines=tuple(line for line in map(_reported, booked) if line is not None),
+        booked_output_vat=sum(
+            (ln.merverdiavgift for ln in booked if not ln.is_deduction), start=ZERO
+        ),
+        booked_input_vat=-sum((ln.merverdiavgift for ln in booked if ln.is_deduction), start=ZERO),
+    )
 
 
 # --- Formatting -------------------------------------------------------------------
 
 
 def format_amount(value: Decimal) -> str:
-    """An amount as the XSD's decimal, in øre and never in exponent form."""
-    return format(value.quantize(_ORE), "f")
+    """An amount as the melding takes it: whole kroner, never in exponent form.
+
+    The amounts arrive rounded already (:func:`in_kroner`); this drops the
+    ``.00``. TT02 accepted ``10000.00``, but R082 is about decimals, and a plain
+    integer leaves it nothing to read.
+    """
+    return format(value.quantize(_KRONE), "f")
 
 
 def format_sats(rate: Decimal) -> str:

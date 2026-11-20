@@ -507,6 +507,59 @@ import { LEVELS } from '../lib/datasharing';
         <ClaimedDialog />
       </section>
 
+      {/* --- E-faktura ------------------------------------------------------
+
+          Fra 2027 skal salg til andre bedrifter faktureres som EHF over
+          Peppol, og her registreres selskapet for å sende. Bare når denne
+          installasjonen har et tilgangspunkt: uten det er det ingen steg å ta,
+          og et kort som sier det, er støy.
+
+          Ett steg om gangen, det første som mangler (lib/peppol.ts). Bekreftet
+          eierskap kommer først, fordi tilgangspunktet sender i navnet til det
+          selskapet Myntos oppgir: uten bekreftelsen kunne hvem som helst som
+          skrev inn ni siffer, sende fakturaer i et annet selskaps navn.
+
+          Identitetskontrollen er tilgangspunktets egen, på deres side, og den
+          må gjøres av noen som signerer for selskapet. Det er ikke alltid den
+          som trykker, så lenken står der den kan kopieres og sendes videre.
+          Registreringen er bare for å sende: å registrere et norsk orgnr for å
+          motta tar over den innboksen selskapet får leverandørfakturaer i i dag. */}
+      <section id="efaktura" hidden>
+        <h2>E-faktura</h2>
+        <div class="card">
+          <p class="card-hint" id="efaktura-na"></p>
+          <p class="card-hint" id="efaktura-les" hidden>
+            Bare eiere og administratorer kan registrere selskapet og hente lenken til
+            identitetskontrollen.
+          </p>
+          <div class="org-knapperad" id="efaktura-knapper" hidden>
+            <a class="btn btn-ghost btn-small" id="efaktura-bekreft" href="#eierskap" hidden>
+              Bekreft eierskapet
+            </a>
+            <button type="button" class="btn btn-primary" id="efaktura-registrer" hidden>
+              Registrer for e-faktura
+            </button>
+            <button type="button" class="btn btn-primary" id="efaktura-lenke" hidden>
+              Fullfør identitetskontrollen
+            </button>
+          </div>
+          <div class="org-lenke" id="efaktura-lenke-boks" hidden>
+            <p class="card-hint">
+              Åpne lenken selv hvis du signerer for selskapet, eller send den til den som gjør det.
+              Når kontrollen er fullført, kan selskapet sende fakturaer som EHF.
+            </p>
+            <div class="org-kopirad">
+              <input type="text" id="efaktura-url" readonly />
+              <a class="btn btn-primary" id="efaktura-apne" href="#" target="_blank" rel="noopener"
+                >Åpne</a
+              >
+              <button class="btn btn-ghost" type="button" id="efaktura-kopier">Kopier</button>
+            </div>
+          </div>
+          <p class="status" id="efaktura-status" role="status" hidden></p>
+        </div>
+      </section>
+
       {/* --- Fra Enhetsregisteret --------------------------------------------
 
           Hentet i stedet for skrevet inn. Rollene står øverst, fordi det er dem
@@ -1596,6 +1649,7 @@ import { LEVELS } from '../lib/datasharing';
     inviteMember,
     listInvitations,
     getCompanyRegister,
+    getPeppol,
     createAgentKey,
     listAgentKeys,
     listApprovals,
@@ -1604,6 +1658,7 @@ import { LEVELS } from '../lib/datasharing';
     setDataSharing,
     stopAgentKey,
     refreshCompany,
+    registerPeppol,
     removeMember,
     resendInvitation,
     revokeInvitation,
@@ -1617,6 +1672,7 @@ import { LEVELS } from '../lib/datasharing';
     type Invitation,
     type Member,
     type Membership,
+    type PeppolStanding,
     type RegisterAccess,
     type RegisterAnswer,
     type RegisteredRoleWithAccess,
@@ -1638,6 +1694,7 @@ import { LEVELS } from '../lib/datasharing';
   import { clearStatus, el, setStatus, show } from '../lib/dom';
   import { isoDate, kontonummer, kroner, orgnummer } from '../lib/format';
   import { confirmOwnership } from '../lib/ownership';
+  import { standingSentence } from '../lib/peppol';
   import { canInCompany, loadSession, redirectToLogin, setActiveCompany } from '../lib/session';
 
   /**
@@ -2530,6 +2587,7 @@ import { LEVELS } from '../lib/datasharing';
     showDatadeling(selskap);
     showEierskap();
     showRegisterAge();
+    efakturaTegnet = showEfaktura(selskap);
   }
 
   {/* Her var det en selskapsvelger i overskriften på Selskapet-kortet. Den er
@@ -3841,6 +3899,104 @@ import { LEVELS } from '../lib/datasharing';
     });
   }
 
+  // --- E-faktura ------------------------------------------------------------------
+  //
+  // Spurt hver gang selskapet tegnes, aldri husket: bekreftelsen over kan
+  // nettopp ha skjedd, og identitetskontrollen skjer på tilgangspunktets side,
+  // så det eneste som vet om den er fullført, er backend, som spør dem.
+
+  const efakturaStatus = el<HTMLParagraphElement>('#efaktura-status');
+  /** The last answer, so a returning tab knows whether there is anything to ask about. */
+  let efaktura: PeppolStanding | null = null;
+  /** The card's latest drawing, for the #efaktura anchor to wait for. */
+  let efakturaTegnet: Promise<void> = Promise.resolve();
+
+  async function showEfaktura(company: Company): Promise<void> {
+    let answer: PeppolStanding;
+    try {
+      answer = await getPeppol(company.id);
+    } catch {
+      // Ingenting å si er bedre enn et steg som kanskje er feil.
+      show(el('#efaktura'), false);
+      return;
+    }
+    // Byttet selskap mens svaret var underveis: dette svaret hører til et annet.
+    if (selskap?.id !== company.id) return;
+    efaktura = answer;
+    drawEfaktura(answer);
+  }
+
+  function drawEfaktura(answer: PeppolStanding): void {
+    const sentence = standingSentence(answer);
+    show(el('#efaktura'), sentence !== null);
+    if (sentence === null) return;
+    el('#efaktura-na').textContent = sentence;
+    const may = mayAdmin();
+    const missing = !answer.verified;
+    show(el('#efaktura-les'), missing && !may && answer.company_confirmed);
+    const bekreft = !answer.company_confirmed;
+    const registrer = may && answer.company_confirmed && !answer.registered;
+    const lenke = may && answer.registered && !answer.verified;
+    show(el('#efaktura-bekreft'), bekreft);
+    show(el('#efaktura-registrer'), registrer);
+    show(el('#efaktura-lenke'), lenke);
+    show(el('#efaktura-knapper'), bekreft || registrer || lenke);
+    if (answer.verified) show(el('#efaktura-lenke-boks'), false);
+  }
+
+  /**
+   * Register, or ask for a fresh link to the identity check: one call does both.
+   *
+   * The link is shown rather than opened. The person pressing the button is an
+   * admin, and the one who has to prove who they are signs for the company;
+   * often the same person, but not always, and a link that opened in their own
+   * browser would be no use to the daglig leder it was meant for.
+   */
+  function wireEfaktura(): void {
+    const url = el<HTMLInputElement>('#efaktura-url');
+    const run = (button: HTMLButtonElement): void => {
+      button.disabled = true;
+      clearStatus(efakturaStatus);
+      void registerPeppol(bokene().id)
+        .then((answer) => {
+          efaktura = answer;
+          drawEfaktura(answer);
+          if (answer.verification_url !== null) {
+            url.value = answer.verification_url;
+            el<HTMLAnchorElement>('#efaktura-apne').href = answer.verification_url;
+            show(el('#efaktura-lenke-boks'), true);
+          }
+        })
+        .catch((error: unknown) => {
+          setStatus(
+            efakturaStatus,
+            error instanceof ApiError ? error.message : 'Fikk ikke registrert selskapet. Prøv igjen.',
+          );
+        })
+        .finally(() => {
+          button.disabled = false;
+        });
+    };
+    const registrer = el<HTMLButtonElement>('#efaktura-registrer');
+    const lenke = el<HTMLButtonElement>('#efaktura-lenke');
+    registrer.addEventListener('click', () => run(registrer));
+    lenke.addEventListener('click', () => run(lenke));
+    el<HTMLButtonElement>('#efaktura-kopier').addEventListener('click', () => {
+      void navigator.clipboard.writeText(url.value).then(
+        () => setStatus(efakturaStatus, 'Lenken er kopiert.', 'ok'),
+        // Clipboard access can be refused; selecting the text still works.
+        () => url.select(),
+      );
+    });
+    // Kontrollen fullføres i en annen fane. Når denne fanen får fokus igjen og
+    // selskapet ventet på den, spør vi på nytt, så siden ikke står og sier at
+    // noe gjenstår som nettopp ble gjort.
+    window.addEventListener('focus', () => {
+      if (selskap === null || efaktura === null) return;
+      if (efaktura.registered && !efaktura.verified) void showEfaktura(selskap);
+    });
+  }
+
   // --- Del data med Myntos ----------------------------------------------------------
   //
   // Valgene lages fra lib/datasharing.ts når siden bygges; her tegnes det
@@ -4018,6 +4174,7 @@ import { LEVELS } from '../lib/datasharing';
     wireVarsel();
     wireRegister();
     wireAgents();
+    wireEfaktura();
     wireDatadeling();
 
     applyPermissions();
@@ -4052,6 +4209,13 @@ import { LEVELS } from '../lib/datasharing';
       // teksten agenten får sender folk hit for å se nøklene, ikke selskapet.
       if (window.location.hash === '#tilgang') {
         el('#tilgang').scrollIntoView({ block: 'start' });
+      }
+      // /faktura/ og hjelpeartikkelen sender folk hit for å registrere selskapet.
+      // Kortet tegnes når svaret om e-faktura kommer, som kan være etter dette.
+      if (window.location.hash === '#efaktura') {
+        void efakturaTegnet.then(() => {
+          if (!el('#efaktura').hidden) el('#efaktura').scrollIntoView({ block: 'start' });
+        });
       }
       // /datadeling/ og hjelpeartikkelen sender folk hit for å velge.
       if (window.location.hash === '#datadeling' && !el('#datadeling').hidden) {

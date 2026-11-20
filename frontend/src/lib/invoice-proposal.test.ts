@@ -18,6 +18,7 @@ function proposal(overrides: Partial<FakturaDraft> = {}): FakturaDraft {
     party_match: null,
     buyer_name: null,
     buyer_orgnr: null,
+    buyer_orgnr_source: null,
     buyer_address_line: null,
     buyer_postal_code: null,
     buyer_city: null,

@@ -467,6 +467,52 @@ async def lookup_unit(orgnr: str) -> RegisteredUnit:
     raise UnitNotFoundError("fant ingen enhet med dette organisasjonsnummeret")
 
 
+# How many of the register's best matches a name search reads. The register has
+# no exact-name search: ``navn`` is ranked free text, so «Bygg AS» answers some
+# 447 000 units, and ``navnMetodeForSoek=FORTLOEPENDE`` sorts its thousands
+# alphabetically. A unit whose name is the whole query ranks at the top, though:
+# checked 2026-11-19 with DNB Bank ASA, Telenor ASA, Coop Norge SA, Rema 1000 AS
+# and Tine SA (first), Bygg AS (second, behind «+BYGG AS»), and the three live
+# units that are all called «ELEKTRO AS» (first, second and third). So the first
+# page holds every exact match there is, and 100 is also the register's default.
+_SEARCH_PAGE = 100
+# The register refuses a longer ``navn`` with a 400. No registered name is that
+# long, so a longer one is a name nobody has, not a failure to ask.
+_SEARCH_MAX_CHARS = 180
+
+
+async def search_by_name(name: str) -> list[RegisteredUnit]:
+    """The register's best matches for ``name``, hovedenheter only, best first.
+
+    A ranked search rather than a lookup: most of what comes back only shares a
+    word with ``name``, and deciding which entry, if any, *is* that name belongs
+    to the caller (:func:`myntos.domain.faktura.drafting.match_register`).
+
+    Hovedenheter only. An invoice is to the legal entity, and its branches are
+    often registered under its name, so including them would turn every company
+    with a branch into two answers to choose between.
+    """
+    if len(name) > _SEARCH_MAX_CHARS:
+        return []
+    base = get_settings().brreg_api_base_url.rstrip("/")
+    url = httpx.URL(f"{base}/enheter", params={"navn": name, "size": _SEARCH_PAGE})
+    async with _client() as http:
+        payload = await _fetch(http, str(url))
+    embedded = (payload or {}).get("_embedded")
+    rows = embedded.get("enheter") if isinstance(embedded, dict) else None
+    units: list[RegisteredUnit] = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            units.append(_unit_from(row))
+        except RegisterUnavailableError:
+            # One entry without a name or a number is that entry's problem. The
+            # rest of the page is still the register's answer.
+            continue
+    return units
+
+
 def _roles_from(payload: dict[str, Any]) -> list[Role]:
     """Flatten the register's rollegrupper into one list.
 

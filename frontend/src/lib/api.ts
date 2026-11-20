@@ -1642,6 +1642,15 @@ export interface CashFlowPart {
 /** The voucher type of a composite entry, as the register reads it back. */
 export const COMPOSITE_TYPE = 'sammensatt';
 
+/**
+ * The voucher type of a customer's payment of an invoice, registered on
+ * /faktura/ or from a bank line. Its 1500 line names the invoice, and a
+ * correction would have to carry that name through a form that does not know
+ * invoices exist, so the server refuses one: the register offers «Reverser»
+ * only, and the payment is registered again where it came from.
+ */
+export const INVOICE_PAYMENT_TYPE = 'innbetaling_faktura';
+
 /** What a composite entry is posted with. */
 export interface CompositeEntry {
   occurred_on: string;
@@ -2332,6 +2341,52 @@ export interface Faktura {
   credits_document_id: number | null;
   credited_by_document_id: number | null;
   has_ehf: boolean;
+  /** The latest send of the EHF over Peppol, as last stored; null if never sent. */
+  ehf_sending: EhfSending | null;
+
+  /**
+   * Whether the customer has paid, read by the server off the ledger. Null on a
+   * draft and on a kreditnota, which nobody owes anything on. Never worked out
+   * here from the due date: an invoice is paid when the money came, and only
+   * the books know that.
+   */
+  payment_state: PaymentState | null;
+  paid_amount: string | null;
+  /** What is still owed. Negative only on a credited invoice paid before the credit. */
+  outstanding: string | null;
+  /** Past the due date with something still owed, by Norway's calendar. */
+  overdue: boolean;
+  /** The payments that stand, each its own voucher in «Inn- og utbetalinger». */
+  payments: InvoicePayment[];
+}
+
+export type PaymentState = 'ubetalt' | 'delvis_betalt' | 'betalt' | 'kreditert';
+
+export interface InvoicePayment {
+  /** Reversing this voucher is how a payment registered by mistake is undone. */
+  voucher_id: number;
+  voucher_no: string;
+  paid_on: string;
+  amount: string;
+  /** 1920 for the bank, 1900 for cash. */
+  payment_account: string;
+}
+
+/**
+ * One send of an invoice's EHF over Peppol and where it stands.
+ *
+ * `pending` is handed to the network with no receipt from the customer's side
+ * yet; `delivered` is the customer's access point acknowledging it; `failed`
+ * did not arrive, and is the only state that may be sent again.
+ */
+export interface EhfSending {
+  status: 'pending' | 'delivered' | 'failed';
+  /** `0192:` and the customer's orgnr, which is their address on Peppol. */
+  recipient: string;
+  sent_at: string;
+  status_checked_at: string | null;
+  failure_category: string | null;
+  failure_message: string | null;
 }
 
 export interface LinePayload {
@@ -2412,10 +2467,15 @@ export interface FakturaDraft {
   party_match: PartyMatch | null;
   buyer_name: string | null;
   buyer_orgnr: string | null;
+  /**
+   * Where `buyer_orgnr` came from: the text, by its check digit, or
+   * Enhetsregisteret, because exactly one unit there has the name the text gave.
+   */
+  buyer_orgnr_source: 'tekst' | 'enhetsregisteret' | null;
   buyer_address_line: string | null;
   buyer_postal_code: string | null;
   buyer_city: string | null;
-  /** True for an orgnr in the text or on the matched customer; null proves nothing. */
+  /** True for an orgnr in the text or the register, or on the matched customer; null proves nothing. */
   buyer_is_business: boolean | null;
   /** Where the text asks for the invoice to be sent. Not on the invoice. */
   invoice_email: string | null;
@@ -2504,6 +2564,18 @@ export const creditFaktura = (
     note: note ?? null,
   });
 
+/**
+ * The customer paid, in full or in part, on `paid_on`. Final: undone only by
+ * reversing the payment's voucher (`reverseCashFlow`). The amount is the
+ * string the person typed, never a number, for the reason lib/format.ts gives.
+ */
+export const registerInvoicePayment = (
+  companyId: number,
+  documentId: number,
+  payload: { paid_on: string; amount: string; payment_method: 'bank' | 'kontant' },
+): Promise<Faktura> =>
+  json<Faktura>(`/api/v1/companies/${companyId}/faktura/${documentId}/innbetalinger`, 'POST', payload);
+
 export const fakturaPdfUrl = (companyId: number, documentId: number): string =>
   `${API_BASE_URL}/api/v1/companies/${companyId}/faktura/${documentId}/pdf`;
 
@@ -2546,6 +2618,65 @@ export const fetchFakturaPdf = async (
 
 export const fakturaEhfUrl = (companyId: number, documentId: number): string =>
   `${API_BASE_URL}/api/v1/companies/${companyId}/faktura/${documentId}/ehf`;
+
+/**
+ * Sends the issued document's frozen EHF to the customer over Peppol.
+ *
+ * Nothing is e-mailed: a customer who cannot receive over Peppol is refused
+ * with `recipient_not_on_peppol`, and the seller sends the PDF themselves.
+ */
+export const sendFaktura = (companyId: number, documentId: number): Promise<EhfSending> =>
+  request<EhfSending>(`/api/v1/companies/${companyId}/faktura/${documentId}/send`, {
+    method: 'POST',
+  });
+
+/** The latest send, asking the access point again while it is pending. */
+export const getForsendelse = (companyId: number, documentId: number): Promise<EhfSending> =>
+  request<EhfSending>(`/api/v1/companies/${companyId}/faktura/${documentId}/forsendelse`);
+
+// --- E-faktura over Peppol -----------------------------------------------------------
+
+/** Each step on the way to sending EHF, in the order they have to happen. */
+export interface PeppolStanding {
+  /** This Myntos has an access point at all. */
+  available: boolean;
+  /** Confirmed through Altinn, which registering needs. */
+  company_confirmed: boolean;
+  registered: boolean;
+  /** The access point's identity check is done. */
+  verified: boolean;
+  can_send: boolean;
+}
+
+export interface PeppolRegistration extends PeppolStanding {
+  /** The access point's page for the identity check. Null once it is done; never stored. */
+  verification_url: string | null;
+}
+
+export const getPeppol = (companyId: number): Promise<PeppolStanding> =>
+  request<PeppolStanding>(`/api/v1/companies/${companyId}/peppol`);
+
+export const registerPeppol = (companyId: number): Promise<PeppolRegistration> =>
+  request<PeppolRegistration>(`/api/v1/companies/${companyId}/peppol`, { method: 'POST' });
+
+export interface PeppolRecipient {
+  orgnr: string;
+  /** Registered on Peppol to receive this kind of document. */
+  can_receive: boolean;
+}
+
+/** Whether a customer can receive an invoice (or credit note) as EHF. Sends nothing. */
+export const getPeppolRecipient = (
+  companyId: number,
+  orgnr: string,
+  creditNote = false,
+): Promise<PeppolRecipient> =>
+  request<PeppolRecipient>(
+    `/api/v1/companies/${companyId}/peppol/mottaker?${new URLSearchParams({
+      orgnr,
+      kreditnota: String(creditNote),
+    })}`,
+  );
 
 // --- MVA-melding -------------------------------------------------------------------
 
@@ -2623,6 +2754,14 @@ export interface MvaFiling {
   payment_due: string | null;
   payment_account: string | null;
   settlement_voucher_id: number | null;
+  /**
+   * What the books have not yet paid of this melding (negative: a refund still
+   * to come in; `0.00` once settled), and the voucher that settled it, both
+   * recognised by amounts on 2740. After a correction `unpaid` is the
+   * difference. Both null on a melding not filed, or replaced by a correction.
+   */
+  unpaid: string | null;
+  paid_by: MvaPayment | null;
   documents: MvaDocument[];
   /** On the period page: whether the ledger still says what this filing says. */
   matches_ledger: boolean | null;
@@ -2630,6 +2769,13 @@ export interface MvaFiling {
   category: string;
   /** Set on a termin recorded as filed from another program. */
   elsewhere: MvaElsewhere | null;
+}
+
+/** The voucher in the books that paid a filed melding. */
+export interface MvaPayment {
+  voucher_id: number;
+  voucher_no: string;
+  date: string;
 }
 
 /** «Sendt fra et annet program»: the person's statement, not a filing. */
@@ -2673,6 +2819,10 @@ export interface MvaPeriodRow {
   filed_fastsatt: string | null;
   /** Filed, and the ledger for the period has moved since. */
   changed_since_filed: boolean;
+  /** The melding last filed from Myntos, and the voucher that paid it. */
+  filed_id: number | null;
+  unpaid: string | null;
+  paid_by: MvaPayment | null;
   /** Past the deadline with nothing filed or recorded as filed elsewhere. */
   is_overdue: boolean;
   filed_elsewhere: boolean;
@@ -2761,6 +2911,49 @@ export const getMvaOverview = (
   naering?: string | null,
 ): Promise<MvaOverview> =>
   request<MvaOverview>(`/api/v1/companies/${companyId}/mva?aar=${year}${naeringQuery(naering)}`);
+
+/** What a row of `/frister/` is about. */
+export type FristKind =
+  | 'mva_melding'
+  | 'skattemelding'
+  | 'arsregnskap'
+  | 'aksjonaerregisteroppgave'
+  | 'forskuddsskatt';
+
+/** One deadline with Skatteetaten or Brønnøysund. */
+export interface Frist {
+  kind: FristKind;
+  label: string;
+  deadline: string;
+  /** The year the duty is about (income year or VAT term's year), not the deadline's year. */
+  year: number;
+  recipient: 'skatteetaten' | 'bronnoysund';
+  files_from_myntos: boolean;
+  /** True met, false known not met, null not known to Myntos. Null is never «missed». */
+  done: boolean | null;
+  done_by: 'myntos' | 'annet_program' | 'regnskapsregisteret' | null;
+  is_overdue: boolean;
+  note: string | null;
+  termin: number | null;
+  naering: string | null;
+}
+
+export interface Frister {
+  company_id: number;
+  /** Today in Norway, by the backend's clock: what `is_overdue` was decided against. */
+  today: string;
+  until: string;
+  organisation_form: string | null;
+  /** False: only the VAT terms are listed, because the form's yearly deadlines are not known. */
+  covers_yearly: boolean;
+  vat_registered: boolean;
+  register_checked_at: string | null;
+  wound_up_on: string | null;
+  frister: Frist[];
+}
+
+export const getFrister = (companyId: number): Promise<Frister> =>
+  request<Frister>(`/api/v1/companies/${companyId}/frister`);
 
 export const getMvaPeriod = (
   companyId: number,
@@ -2861,6 +3054,10 @@ export const mvaPeriodXmlUrl = (
 
 export const mvaFiledXmlUrl = (companyId: number, filingId: number): string =>
   `${API_BASE_URL}/api/v1/companies/${companyId}/mva/innsendinger/${filingId}/melding.xml`;
+
+/** One filing, with `unpaid` and `paid_by` answered. 404 `filing_not_found` for another company's. */
+export const getMvaFiling = (companyId: number, filingId: number): Promise<MvaFiling> =>
+  request<MvaFiling>(`/api/v1/companies/${companyId}/mva/innsendinger/${filingId}`);
 
 export const mvaDocumentUrl = (companyId: number, filingId: number, dataType: string): string =>
   `${API_BASE_URL}/api/v1/companies/${companyId}/mva/innsendinger/${filingId}/dokument?type=${encodeURIComponent(dataType)}`;
@@ -3195,7 +3392,14 @@ export interface BankLine {
   /** The matched voucher has been reversed since; the line is no longer explained. */
   voucher_reversed: boolean;
   suggestions: BankSuggestion[];
-  invoice: { document_id: number; document_number: string | null; buyer_name: string } | null;
+  /** The line's KID belongs to an issued invoice: a customer paying it, as the invoice stands now. */
+  invoice: {
+    document_id: number;
+    document_number: string | null;
+    buyer_name: string;
+    outstanding: string;
+    payment_state: PaymentState;
+  } | null;
 }
 
 export type BankLineFilter = 'alle' | 'uavstemt' | 'avstemt';
@@ -3239,6 +3443,19 @@ export const createFromBankLine = (
   payload: { type_code: string; description: string; tax_code?: string | null; party_id?: number | null },
 ): Promise<BankLine> =>
   json<BankLine>(`/api/v1/companies/${companyId}/bank/linjer/${lineId}/bilag`, 'POST', payload);
+
+/**
+ * Register an incoming line as the customer's payment of an invoice, and
+ * reconcile it. The line's date and amount are the payment's; nothing else is sent.
+ */
+export const settleInvoiceFromBankLine = (
+  companyId: number,
+  lineId: number,
+  documentId: number,
+): Promise<BankLine> =>
+  request<BankLine>(`/api/v1/companies/${companyId}/bank/linjer/${lineId}/faktura/${documentId}`, {
+    method: 'POST',
+  });
 
 // --- Inngående balanse og årsavslutning --------------------------------------------
 //

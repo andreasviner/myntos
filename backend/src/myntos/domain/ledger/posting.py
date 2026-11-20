@@ -419,6 +419,10 @@ def _reverse_line(line: TransactionLine) -> TransactionLine:
         # A composite entry reads back line by line, and so must its reversal,
         # or the register shows the cancelling voucher as lines of nothing.
         entry_type=line.entry_type,
+        # A payment of an invoice undone has to stop counting as paid, and it
+        # does by netting: the reversal's debit on 1500 names the same invoice
+        # as the payment's credit (myntos.domain.faktura.payments).
+        settles_document_pk=line.settles_document_pk,
     )
     # Copy the relationships too, and only when they are actually set: on a
     # transaction that has not been flushed the foreign key columns are still

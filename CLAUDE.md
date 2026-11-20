@@ -26,7 +26,7 @@ paragraph explaining why is the part worth keeping.
 | [docs/feedback.md](docs/feedback.md) | The feedback box (`/tilbakemelding/`, `/api/v1/tilbakemeldinger`) and anything that might log, store or mail who sent it. Anonymous by construction: four things keep it so, and the access log is one of them |
 | [docs/operator.md](docs/operator.md) | The operator's page (`/drift/`, `/api/v1/drift`), its key, and **any log call at ERROR**: what fails is kept without its data, which only works while every log line is a template with its values as arguments |
 | [docs/frontend-conventions.md](docs/frontend-conventions.md) | Adding or changing a page. `hidden`, session and chrome, forms, the text rules |
-| [docs/integrations/](docs/integrations/) | Maskinporten, ID-porten, Altinn, MVA, SAF-T, EHF, bank statements, BankID login (Idura), Landbrukets Dataflyt. One file per counterparty |
+| [docs/integrations/](docs/integrations/) | Maskinporten, ID-porten, Altinn, MVA, SAF-T, EHF, sending EHF over Peppol (Recommand), bank statements, BankID login (Idura), Landbrukets Dataflyt. One file per counterparty |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Deciding what to build next: what is being built, phase by phase |
 | [docs/FEATURES.md](docs/FEATURES.md) | Choosing what to build after that: everything Fiken, Tripletex and the rest have that Myntos lacks, ranked, with sources |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Commits, style, running the checks |

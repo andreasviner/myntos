@@ -24,7 +24,8 @@ be sent.
 - The role «Medlem», «Administrator» or «Eier».
 - The termin has ended, and nothing on the page stops it (no red lines above
   the table).
-- They are logged in with ID-porten:
+- An ID-porten login. They need not log in first: pressing the button goes
+  through ID-porten when needed, and the check runs when they are back.
   [Log in with ID-porten to file the VAT return](https://myntos.no/llms/help/vat/log-in-with-id-porten-for-the-vat-return.md).
 - They have looked through the lines and the total:
   [See what is owed for a VAT period](https://myntos.no/llms/help/vat/see-what-is-owed-for-a-termin.md).
@@ -35,7 +36,9 @@ be sent.
 2. Optional: write in «Merknad til Skatteetaten (valgfritt)». Only when a
    figure needs explaining; the check says so when it wants one.
 3. Press «Kontroller hos Skatteetaten». The page says «Sender meldingen til
-   kontroll …».
+   kontroll …». Without a login, it says «Du logger inn med ID-porten først,
+   og kontrollen fortsetter når du er tilbake.» under the button, and the
+   press goes to ID-porten first.
 4. A box «Send inn» appears with Skatteetaten's answer:
    - «Skatteetaten fant ingenting å utsette på meldingen.»: it can be sent.
    - «Skatteetaten sier «avvikende skattemelding». Meldingen kan sendes, men
@@ -52,7 +55,9 @@ be sent.
 | What they see | Why | What to do |
 | --- | --- | --- |
 | «Skatteetatens kontroll av mva-meldingen svarte ikke. Prøv igjen om litt.» | Skatteetaten did not answer | Try again in a while |
-| «logg inn med ID-porten for å kontrollere og sende mva-meldingen» | The ID-porten login has run out | Reload the page and log in again |
+| «logg inn med ID-porten for å kontrollere og sende mva-meldingen» | The login did not take, even after the trip through ID-porten | Reload the page and press again |
+| «Meldingen for terminen er sendt. …» and no button | The termin is sent, and the books still say what was sent | Nothing to check. Change the books first if the melding was wrong: [Correct a VAT return already sent](https://myntos.no/llms/help/vat/correct-a-vat-return-already-sent.md) |
+| «meldingen for … er sendt, og regnskapet sier det samme som da. …» | The same, from a page opened before it was sent | Reload; nothing to check |
 | «terminen slutter …; meldingen kan sendes fra dagen etter» | The termin has not ended | Wait until the day after |
 
 ## Good to know
@@ -60,7 +65,8 @@ be sent.
 - Nothing is sent by checking. The person sees the answer before deciding.
 - If anything is entered or reversed in the termin after the check, the
   checked melding can no longer be sent; check again.
-- A check can be repeated as often as needed.
+- A check can be repeated as often as needed, until the termin is sent. After
+  that, only when the books for the termin have changed.
 
 ## Related
 

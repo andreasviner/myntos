@@ -578,3 +578,96 @@ def test_a_new_invoice_address_for_a_registered_customer_is_pointed_out() -> Non
     # A postnummer alone says nothing about the street.
     only_code = drafting.DraftedHeader(buyer_postal_code="6601")
     assert drafting.differs_from(only_code, address_line="Storgata 1", postal_code="6601") is None
+
+
+# --- Which unit in Enhetsregisteret -----------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Entry:
+    name: str
+    orgnr: str
+    deleted_on: str | None = None
+
+
+@pytest.mark.parametrize(
+    ("name", "looked_up"),
+    [
+        ("Hapro AS", True),
+        ("Coop Norge SA", True),
+        ("Hansen Bygg ANS", True),
+        ("Equinor ASA", True),
+        # A person, or somebody's enkeltpersonforetak: no way to tell, so neither.
+        ("Ola Hansen", False),
+        # The text wrote the name without its form, and the form is the evidence.
+        ("Hapro", False),
+        # A form alone is not a name.
+        ("AS", False),
+        ("Acme Ltd", False),
+    ],
+)
+def test_only_a_name_written_with_its_legal_form_is_looked_up(name: str, looked_up: bool) -> None:
+    assert drafting.names_a_registered_unit(name) is looked_up
+
+
+def test_the_one_unit_with_exactly_that_name_is_chosen_and_said() -> None:
+    """The register answers by rank: what only shares a word is passed over."""
+    found = [
+        Entry("+BYGG AS", "922828822"),
+        Entry("BYGG AS", "829405482"),
+        Entry("AT-BYGG AS", "920349536"),
+        Entry("BYGG OG ANLEGG AS", "910000047"),
+    ]
+
+    unit, said = drafting.match_register("Bygg AS", found)
+
+    assert unit == found[1]
+    assert len(said) == 1
+    assert "Enhetsregisteret" in said[0] and "829405482" in said[0]
+    assert "Kontroller at det er riktig kjøper" in said[0]
+
+
+@pytest.mark.parametrize("name", ["hapro as", "HAPRO  AS", "Hapro AS"])
+def test_case_and_spacing_do_not_make_another_name(name: str) -> None:
+    unit, _ = drafting.match_register(name, [Entry("HAPRO AS", "923609016")])
+    assert unit is not None
+
+
+def test_a_hyphen_is_spacing_but_the_legal_form_is_part_of_the_name() -> None:
+    assert drafting.match_register("At Bygg AS", [Entry("AT-BYGG AS", "920349536")])[0] is not None
+    assert drafting.match_register("Hapro SA", [Entry("HAPRO AS", "923609016")])[0] is None
+
+
+def test_two_units_with_the_same_name_choose_neither() -> None:
+    """The register holds three live «ELEKTRO AS» (2026-11-19), whatever the law says."""
+    found = [
+        Entry("ELEKTRO AS", "925215996"),
+        Entry("ELEKTRO AS", "937719523"),
+        Entry("ELEKTRO AS", "953785250"),
+        Entry("ELEKTRO SERVICE AS", "910000020"),
+    ]
+
+    unit, said = drafting.match_register("Elektro AS", found)
+
+    assert unit is None
+    assert "925215996, 937719523 og 953785250" in said[0]
+    assert "Skriv inn organisasjonsnummeret" in said[0]
+
+
+def test_a_deleted_unit_is_no_buyer() -> None:
+    gone = Entry("HAPRO AS", "923609016", deleted_on="2025-06-01")
+
+    unit, said = drafting.match_register("Hapro AS", [gone])
+    assert unit is None
+    assert "slettet" in said[0]
+
+    # Nor is it a second candidate beside a live one with the same name.
+    live = Entry("HAPRO AS", "910000039")
+    assert drafting.match_register("Hapro AS", [gone, live])[0] == live
+
+
+def test_no_unit_with_the_name_says_so() -> None:
+    unit, said = drafting.match_register("Hapro AS", [Entry("HAPRO ELEKTRO AS", "923609016")])
+
+    assert unit is None
+    assert said[0].startswith("Fant ingen enhet i Enhetsregisteret som heter «Hapro AS»")

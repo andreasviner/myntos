@@ -57,10 +57,12 @@ from myntos.domain.ledger.chart import (
     DEPRECIATION_JOURNAL_ID,
     IMPORT_JOURNAL_ID,
     INPUT_VAT_ACCOUNT,
+    INVOICE_PAYMENT_VOUCHER_TYPE,
     LANDBRUK_ACCOUNTS_BY_NUMBER,
     MANUAL_JOURNAL_ID,
     OPENING_JOURNAL_ID,
     OUTPUT_VAT_ACCOUNT,
+    RECEIVABLES_ACCOUNT,
     SETTLEMENT_JOURNAL_ID,
     SETTLEMENT_VOUCHER_TYPE,
     STANDARD_ACCOUNTS,
@@ -1436,6 +1438,88 @@ async def record_cash_flow(
     return transaction
 
 
+async def record_invoice_payment(
+    db: AsyncSession,
+    *,
+    company: Company,
+    document_pk: int,
+    party_pk: int | None,
+    occurred_on: date,
+    amount: Decimal,
+    description: str,
+    payment_method: PaymentMethod = PaymentMethod.BANK,
+    created_by_user_id: int | None = None,
+) -> Transaction:
+    """Post a customer's payment of an issued invoice: money in, 1500 down.
+
+    Two lines and no VAT. The VAT was the invoice's, on the day it was issued;
+    the payment only turns the receivable into money, so it has no tax
+    information to carry and nothing here reaches the MVA-melding. The 1500
+    line carries the customer, as the invoice's own 1500 line does, so the
+    customer's sub-ledger nets to what is still owed, and it names the invoice
+    (``settles_document_pk``), which is what the invoice reads its payments off.
+
+    Only the ledger half. Whether the invoice may be paid at all, and how much,
+    is :func:`myntos.domain.faktura.payments.register_payment`'s to decide; this
+    is here because the cash journal, its numbering and the payment accounts
+    are.
+
+    In the cash journal, beside every other payment, so it counts in the year's
+    «inn», shows in the register and can be matched to a bank line like any
+    other. The register reverses it like any other entry too, but does not
+    correct it: a correction there posts one of its categories, and none of
+    them pays an invoice (:func:`reverse_cash_flow`).
+    """
+    gross = _check_gross(amount)
+    financial_year = await ensure_financial_year(db, company, occurred_on.year, on=occurred_on)
+    journal = await _cash_journal(db, company)
+    accounts = await _accounts_by_number(db, company)
+    for number in (payment_method.account_number, RECEIVABLES_ACCOUNT):
+        if number not in accounts:
+            raise ChartIncompleteError(f"kontoplanen mangler konto {number}")
+    # Through the company, like record_cash_flow, so a party id from another
+    # tenant is not found rather than attached.
+    party = (
+        None
+        if party_pk is None
+        else await parties.get_party(db, company=company, party_pk=party_pk)
+    )
+    text = description.strip()
+    transaction = Transaction(
+        journal_id=journal.id,
+        transaction_id=await _next_voucher_number(db, journal.id, financial_year.year),
+        financial_year=financial_year.year,
+        period=occurred_on.month,
+        transaction_date=occurred_on,
+        gl_posting_date=occurred_on,
+        description=text,
+        voucher_type=INVOICE_PAYMENT_VOUCHER_TYPE,
+        created_by_user_id=created_by_user_id,
+    )
+    transaction.lines = _numbered(
+        [
+            TransactionLine(
+                account=accounts[payment_method.account_number],
+                description=text,
+                debit=gross,
+                credit=ZERO,
+            ),
+            TransactionLine(
+                account=accounts[RECEIVABLES_ACCOUNT],
+                party=party,
+                description=text,
+                debit=ZERO,
+                credit=gross,
+                settles_document_pk=document_pk,
+            ),
+        ]
+    )
+    posting.post(transaction)
+    db.add(transaction)
+    await db.flush()
+    return transaction
+
+
 # --- Composite entries ------------------------------------------------------------
 
 #: The voucher type (SAF-T TransactionType) of a composite entry. Not a category:
@@ -1611,6 +1695,7 @@ async def reverse_cash_flow(
     company: Company,
     voucher_pk: int,
     created_by_user_id: int | None = None,
+    replacing: bool = False,
 ) -> Transaction:
     """Reverse a posted entry.
 
@@ -1624,8 +1709,19 @@ async def reverse_cash_flow(
     people — the entry a colleague got wrong is exactly the one somebody else
     reverses — so copying the original's author would name the wrong person for
     the one action a reader most wants attributed.
+
+    ``replacing`` is set by the register's corrections, which post one of its
+    categories in the original's place straight after. A payment of an invoice
+    is reversed from there like anything else, but not replaced: none of the
+    categories pays an invoice, so the correction would leave the invoice
+    unpaid and its money booked as something else.
     """
     original = await get_voucher(db, company=company, voucher_pk=voucher_pk)
+    if replacing and original.voucher_type == INVOICE_PAYMENT_VOUCHER_TYPE:
+        raise CannotReverseHereError(
+            "en innbetaling på en faktura rettes ikke i registeret: reverser den, og "
+            "registrer den riktige innbetalingen på fakturaen"
+        )
     # The opening balance and the year-end closing have corrections of their
     # own (myntos.domain.arsoppgjor): replacing an opening balance reverses and
     # reposts in one step, and a closing is undone only by reopening the year,

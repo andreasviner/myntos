@@ -47,6 +47,17 @@ class FilingNotSubmittableError(MvaError):
     """The filing is not one that may be submitted: refused, or already sent."""
 
 
+class NothingNewToFileError(MvaError):
+    """The term is filed, and the books still say exactly what was filed.
+
+    A second melding for a term replaces the first at Skatteetaten, which is
+    how a correction is made. With the same figures it corrects nothing, and
+    the page went on offering «Kontroller» and «Send inn» for a term that was
+    sent and received: on 2026-11-02 the owner checked a filed term again
+    without meaning to file it twice, and one tick and one press would have.
+    """
+
+
 class MeldingChangedError(MvaError):
     """The ledger moved between validation and submission.
 

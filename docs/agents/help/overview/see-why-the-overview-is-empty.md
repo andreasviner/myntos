@@ -36,8 +36,8 @@ They need to be signed in.
    exists.
 4. **«Ingen betalinger registrert i Myntos ennå.»** under «Siste bevegelser»,
    and «Ingen tall å vise for i år.» under «Største poster i år»: no payment
-   has been registered in Myntos this year. Click «Registrer betaling» to
-   register the first one. Vouchers brought over from another program, the
+   has been registered in Myntos this year. Click «Registrer inntekt» or
+   «Registrer betaling» to register the first one. Vouchers brought over from another program, the
    opening balance and manual vouchers are never listed there: «alle bilag» in
    the same line, or «Se alle bilag →», opens «Bilag», where they are:
    [See every voucher in the books](https://myntos.no/llms/help/vouchers/see-every-voucher.md).

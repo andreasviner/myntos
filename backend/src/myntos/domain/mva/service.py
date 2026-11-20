@@ -34,20 +34,22 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import ColumnElement, Select, func, select
+from sqlalchemy import ColumnElement, CompoundSelect, Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from myntos.core.clock import utc_now
-from myntos.domain.ledger import posting
+from myntos.domain.ledger import kontoplan, posting
 from myntos.domain.ledger import service as ledger_service
 from myntos.domain.ledger.chart import (
     INPUT_VAT_ACCOUNT,
     OUTPUT_VAT_ACCOUNT,
+    ROUNDING_ACCOUNT,
     SETTLEMENT_JOURNAL_DESCRIPTION,
     SETTLEMENT_JOURNAL_ID,
     SETTLEMENT_JOURNAL_TYPE,
     SETTLEMENT_VOUCHER_TYPE,
+    VAT_SETTLEMENT_ACCOUNT,
 )
 from myntos.domain.ledger.models import (
     Account,
@@ -449,6 +451,38 @@ async def year_overview(
     return summaries
 
 
+async def closing_filings(
+    db: AsyncSession,
+    company: Company,
+    naering: naering_module.Naering,
+    setup: naering_module.Naeringer,
+    years: Sequence[int],
+) -> dict[tuple[int, int], MvaFiling]:
+    """The row that closes each term of ``naering`` in ``years``, keyed by (year, index).
+
+    Without building a melding: the deadline list asks only whether each term
+    is done, and computing every term's figures from the ledger to answer that
+    would cost the whole year's lines per year asked. A filing from Myntos is
+    preferred over a statement that another program filed it, because it is
+    the one with a receipt.
+    """
+    filings = list(
+        await db.scalars(
+            select(MvaFiling)
+            .where(*_filings_where(company, naering, setup), MvaFiling.year.in_(list(years)))
+            .order_by(MvaFiling.id.desc())
+        )
+    )
+    closing: dict[tuple[int, int], MvaFiling] = {}
+    for key in {(f.year, f.period_index) for f in filings}:
+        mine = standing([f for f in filings if (f.year, f.period_index) == key])
+        found = next((f for f in mine if FilingStatus(f.status).is_filed), None)
+        found = found or standing_elsewhere(mine)
+        if found is not None:
+            closing[key] = found
+    return closing
+
+
 async def filings_for(
     db: AsyncSession,
     company: Company,
@@ -609,17 +643,15 @@ def _side(
     )
 
 
-async def _settled_already(
-    db: AsyncSession, company: Company, termin: Termin, category: Meldingskategori
-) -> VatBalances:
-    """What earlier filings of this term of this melding already moved onto 2740.
+def _settlement_vouchers(
+    company: Company, termin: Termin, category: Meldingskategori
+) -> CompoundSelect[tuple[int | None]]:
+    """The vouchers that earlier filings of this term of this melding settled it with.
 
-    Read from the settlement vouchers those filings point at, not from the VAT
-    accounts: with two meldinger the accounts hold both meldingers' VAT for the
-    same dates and cannot say whose a krone is. A term recorded as filed from
-    another program counts the old program's own settlement, when the statement
-    was made from the voucher the import brought over: that voucher moved the
-    term's VAT onto 2740 as surely as one of Myntos's.
+    A term recorded as filed from another program counts the old program's own
+    settlement, when the statement was made from the voucher the import brought
+    over: that voucher moved the term's VAT onto 2740 as surely as one of
+    Myntos's.
     """
     term = (
         MvaFiling.company_id == company.id,
@@ -640,7 +672,18 @@ async def _settled_already(
             MvaFilingElsewhere.voucher_pk.is_not(None),
         )
     )
-    vouchers = own.union(theirs)
+    return own.union(theirs)
+
+
+async def _settled_already(
+    db: AsyncSession, company: Company, termin: Termin, category: Meldingskategori
+) -> VatBalances:
+    """What earlier filings of this term of this melding already moved onto 2740.
+
+    Read from the settlement vouchers those filings point at, not from the VAT
+    accounts: with two meldinger the accounts hold both meldingers' VAT for the
+    same dates and cannot say whose a krone is.
+    """
     rows = await db.execute(
         select(
             Account.account_number,
@@ -650,7 +693,7 @@ async def _settled_already(
         .join(TransactionLine, TransactionLine.account_id == Account.id)
         .where(
             Account.company_id == company.id,
-            TransactionLine.transaction_pk.in_(vouchers),
+            TransactionLine.transaction_pk.in_(_settlement_vouchers(company, termin, category)),
             Account.account_number.in_((OUTPUT_VAT_ACCOUNT, INPUT_VAT_ACCOUNT)),
         )
         .group_by(Account.account_number)
@@ -665,6 +708,38 @@ async def _settled_already(
         else:
             input_ = (credit or ZERO) - (debit or ZERO)
     return VatBalances(output=output, input=input_)
+
+
+async def _rounding_to_settle(
+    db: AsyncSession,
+    company: Company,
+    termin: Termin,
+    naering: naering_module.Naering,
+    setup: naering_module.Naeringer,
+) -> Decimal:
+    """What a settlement of this term puts on 7740 now, credited when positive.
+
+    The melding's rounding to whole kroner, less what this term's earlier
+    settlements already put there. Then 2740 holds, after every filing of the
+    term, exactly what the newest one reported, which is what Skatteetaten
+    assesses and what the payment clears. That includes an earlier settlement
+    by the previous program: its own rounding on 7740 is counted like Myntos's.
+    """
+    melding = await build_melding(db, company, termin, naering, setup)
+    debit, credit = (
+        await db.execute(
+            select(func.sum(TransactionLine.debit), func.sum(TransactionLine.credit))
+            .join(Account, Account.id == TransactionLine.account_id)
+            .where(
+                Account.company_id == company.id,
+                TransactionLine.transaction_pk.in_(
+                    _settlement_vouchers(company, termin, naering.category)
+                ),
+                Account.account_number == ROUNDING_ACCOUNT,
+            )
+        )
+    ).one()
+    return melding.rounding - ((credit or ZERO) - (debit or ZERO))
 
 
 async def to_settle(
@@ -682,11 +757,13 @@ async def to_settle(
     and an amount booked on a VAT account without a code is swept along with
     the rest.
 
-    **Two meldinger:** the melding's own output and input VAT, less what this
-    melding's earlier settlements of the term moved. The accounts hold both
-    meldingers' VAT and cannot be split, so the melding is the only thing that
-    can say what is this melding's; an amount booked on 2700 without a code
-    stays there, where the reconciliation on the MVA page shows it.
+    **Two meldinger:** the melding's own output and input VAT as booked, less
+    what this melding's earlier settlements of the term moved. The accounts
+    hold both meldingers' VAT and cannot be split, so the melding is the only
+    thing that can say what is this melding's; an amount booked on 2700
+    without a code stays there, where the reconciliation on the MVA page shows
+    it. As booked, in øre, and not as reported: the kroner would leave the
+    øre on 2700 and 2710 for good.
     """
     if setup is None:
         setup = await naering_module.load(db, company)
@@ -696,7 +773,8 @@ async def to_settle(
     melding = await build_melding(db, company, termin, chosen, setup)
     already = await _settled_already(db, company, termin, chosen.category)
     return VatBalances(
-        output=melding.output_vat - already.output, input=melding.input_vat - already.input
+        output=melding.booked_output_vat - already.output,
+        input=melding.booked_input_vat - already.input,
     )
 
 
@@ -721,14 +799,22 @@ async def post_settlement(
     that clear 2740 (``mva_oppgjor``, ``mva_tilgode``) then need no choice of
     melding. What 2740 holds is what the company owes or is owed in VAT, in
     total, which is the figure the balance sheet wants.
+
+    The melding is in whole kroner and 2700 and 2710 are not, so 2740 is
+    credited with what was reported and the øre between the two go on 7740
+    (:func:`_rounding_to_settle`). Without that the payment, which is in
+    kroner, would leave a few øre on 2740 every term.
     """
     if setup is None:
         setup = await naering_module.load(db, company)
     chosen = naering if naering is not None else setup.main
     balances = await to_settle(db, company, termin, chosen, setup)
-    if balances.output == ZERO and balances.input == ZERO:
+    rounding = await _rounding_to_settle(db, company, termin, chosen, setup)
+    if balances.output == ZERO and balances.input == ZERO and rounding == ZERO:
         return None
 
+    if rounding != ZERO:
+        await kontoplan.ensure_seeded_account(db, company=company, number=ROUNDING_ACCOUNT)
     accounts = await ledger_service._accounts_by_number(db, company)
     # Dated on the term's last day, unless the company was wound up inside the
     # term: its books end on that day, and nothing may be dated after it
@@ -751,8 +837,14 @@ async def post_settlement(
         lines.append(
             _side("2", accounts[INPUT_VAT_ACCOUNT], balances.input, debit=False, text=text)
         )
-    if balances.net != ZERO:
-        lines.append(_side("3", accounts[SETTLEMENT_ACCOUNT], balances.net, debit=False, text=text))
+    if balances.net - rounding != ZERO:
+        lines.append(
+            _side(
+                "3", accounts[SETTLEMENT_ACCOUNT], balances.net - rounding, debit=False, text=text
+            )
+        )
+    if rounding != ZERO:
+        lines.append(_side("4", accounts[ROUNDING_ACCOUNT], rounding, debit=False, text=text))
     if len(lines) < 2:
         # Output and input equal and opposite on a single account is not a
         # shape the two-account sum can produce; refusing beats posting a
@@ -812,3 +904,130 @@ def is_past(termin: Termin, today: date) -> bool:
 
 def latest_filed(filings: Sequence[MvaFiling]) -> MvaFiling | None:
     return next((f for f in filings if FilingStatus(f.status).is_filed), None)
+
+
+# --- Payment ------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Payment:
+    """The voucher that paid what a filed melding owed, or took its refund in."""
+
+    voucher_pk: int
+    voucher_no: str
+    date: date
+
+
+@dataclass(frozen=True)
+class Settlement:
+    """What the books have paid of a term's latest filed melding.
+
+    ``unpaid`` is what is still to pay, signed as a melding is (negative: a
+    refund still to come in), and zero once it is settled. ``paid_by`` is the
+    voucher that settled it, set only then.
+    """
+
+    unpaid: Decimal
+    paid_by: Payment | None
+
+
+async def payments(
+    db: AsyncSession, company: Company, filed: Sequence[MvaFiling]
+) -> dict[int, Settlement]:
+    """``{filing id: what the books have paid of it}`` for the filed meldinger given.
+
+    Nothing links a payment to the melding it pays. It is booked like any other
+    payment («Oppgjør av mva-melding til Skatteetaten» in the register), on the
+    day the money left, or arrives from a bank import or the previous
+    program's books. So it is recognised by what it does: a voucher outside
+    the settlement itself that moves an expected amount on 2740 the right way
+    (debit for a payment, credit for a refund), dated after the term ended,
+    neither reversed nor a reversal. Each voucher is used once, the earliest
+    term first, so two terms with the same figure are not both paid by one
+    payment.
+
+    The expected amount follows the term's filed meldinger in the order they
+    were sent. A correction replaces the melding, not the payment already
+    made: a term filed at 10 000, paid, and corrected to 12 000 owes 2 000,
+    and a correction down to 8 000 has 2 000 coming back. Matched against the
+    latest figure alone, the paid first melding stopped counting the moment
+    the correction went in, and «Før betalingen» came back offering the whole
+    12 000 a second time.
+
+    Only the latest filed melding of a term gets an answer; one a correction
+    replaced has none, since what it owed is now the latest's to say. Pass any
+    filed melding of the terms wanted: the ones before it are fetched here.
+    Built 2026-11-02, so that the button goes away once the payment is in the
+    books rather than inviting a second one. A payment split in two that
+    matches neither step is not recognised, and the page goes on offering it.
+    """
+    if not filed:
+        return {}
+    wanted = {(f.year, f.period_type, f.period_index, f.category) for f in filed}
+    every = await db.scalars(
+        select(MvaFiling)
+        .where(
+            MvaFiling.company_id == company.id,
+            MvaFiling.year.in_(sorted({key[0] for key in wanted})),
+            MvaFiling.status.in_([s.value for s in FilingStatus if s.is_filed]),
+        )
+        .order_by(MvaFiling.id)
+    )
+    chains: dict[tuple[int, str, int, str], list[MvaFiling]] = {}
+    for filing in every:
+        key = (filing.year, filing.period_type, filing.period_index, filing.category)
+        if key in wanted:
+            chains.setdefault(key, []).append(filing)
+    terms = sorted(chains.values(), key=lambda chain: termin_of_filing(chain[0]).end)
+    if not terms:
+        return {}
+    reversed_ = select(Transaction.reverses_transaction_pk).where(
+        Transaction.reverses_transaction_pk.is_not(None)
+    )
+    rows = await db.execute(
+        select(
+            Transaction.id,
+            Transaction.transaction_id,
+            Transaction.transaction_date,
+            TransactionLine.debit,
+            TransactionLine.credit,
+        )
+        .join(TransactionLine, TransactionLine.transaction_pk == Transaction.id)
+        .join(Account, Account.id == TransactionLine.account_id)
+        .join(Journal, Journal.id == Transaction.journal_id)
+        .where(
+            Journal.company_id == company.id,
+            Account.account_number == VAT_SETTLEMENT_ACCOUNT,
+            Transaction.posted_at.is_not(None),
+            Transaction.transaction_date > termin_of_filing(terms[0][0]).end,
+            Transaction.reverses_transaction_pk.is_(None),
+            Transaction.id.not_in(reversed_),
+            *ledger_service.not_a_settlement(),
+        )
+        .order_by(Transaction.transaction_date, Transaction.id)
+    )
+    # Signed as a melding is: a debit on 2740 pays what is owed (positive), a
+    # credit takes a refund in (negative).
+    moved = [
+        (pk, no, day, (debit or ZERO) - (credit or ZERO)) for pk, no, day, debit, credit in rows
+    ]
+    found: dict[int, Settlement] = {}
+    used: set[int] = set()
+    for chain in terms:
+        end = termin_of_filing(chain[0]).end
+        paid = ZERO
+        last: Payment | None = None
+        for filing in chain:
+            due = filing.fastsatt_merverdiavgift - paid
+            if due == ZERO:
+                continue
+            for pk, no, day, amount in moved:
+                if pk not in used and day > end and amount == due:
+                    used.add(pk)
+                    paid += amount
+                    last = Payment(voucher_pk=pk, voucher_no=no, date=day)
+                    break
+        latest = chain[-1]
+        unpaid = latest.fastsatt_merverdiavgift - paid
+        found[latest.id] = Settlement(unpaid=unpaid, paid_by=last if unpaid == ZERO else None)
+    return found

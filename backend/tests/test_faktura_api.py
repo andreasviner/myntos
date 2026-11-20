@@ -13,12 +13,13 @@ from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from myntos.core.clock import utc_now
 from myntos.domain.faktura import kid
-from myntos.integrations import loynd
+from myntos.integrations import brreg, loynd
 from tests.conftest import join_company, register, write
 from tests.test_faktura_drafting import CUSTOMER_EMAIL, CUSTOMER_EMAIL_REPLY
 
@@ -1038,6 +1039,8 @@ def test_a_customers_email_and_a_described_sale_become_an_issued_invoice(
     assert buyer["party_match"] is None
     assert buyer["buyer_name"] == "Fjord Aluminium AS"
     assert buyer["buyer_orgnr"] == "910000039"
+    # Read out of the e-mail, so the register was never asked for it by name.
+    assert buyer["buyer_orgnr_source"] == "tekst"
     assert buyer["buyer_address_line"] == "Postboks 53"
     assert buyer["buyer_postal_code"] == "6601"
     assert buyer["buyer_city"] == "Sunndalsøra"
@@ -1208,6 +1211,152 @@ def test_a_text_with_nothing_in_it_says_so(
     assert proposal["lines"] == []
     assert proposal["buyer_name"] is None
     assert proposal["warnings"][0].startswith("Vi fant verken kjøper eller fakturalinjer")
+
+
+# --- The buyer's number from Enhetsregisteret ------------------------------------------
+#
+# A text that names a company and gives no number: the number, and with it the
+# address and the Peppol address, comes from the register when exactly one unit
+# there has the name. Fictional names; the orgnrs only have valid check digits.
+
+REGISTERED_ORGNR = "910000055"
+
+
+def register_answering(
+    monkeypatch: pytest.MonkeyPatch, *entries: tuple[str, str]
+) -> list[httpx.Request]:
+    """A stub Brønnøysund answering every name search with ``entries``, in that order."""
+    asked: list[httpx.Request] = []
+
+    def search(request: httpx.Request) -> httpx.Response:
+        asked.append(request)
+        units = [
+            {
+                "organisasjonsnummer": orgnr,
+                "navn": name,
+                "organisasjonsform": {"kode": "AS", "beskrivelse": "Aksjeselskap"},
+                "forretningsadresse": {
+                    "adresse": ["Kaigata 4"],
+                    "postnummer": "7010",
+                    "poststed": "TRONDHEIM",
+                },
+            }
+            for name, orgnr in entries
+        ]
+        return httpx.Response(200, json={"_embedded": {"enheter": units}})
+
+    monkeypatch.setattr(
+        brreg, "_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(search))
+    )
+    return asked
+
+
+SALE_TO_A_COMPANY = (
+    f"Faktura til Nordlys Elektro AS for 10 timer rådgivning levert 14. mars {THIS_YEAR}"
+)
+SALE_TO_A_COMPANY_REPLY = "kunde: Nordlys Elektro AS\nRådgivning | 10 | timer | 1500 | 1"
+
+
+def test_a_company_named_without_a_number_gets_the_registers_number(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "complete", answering(SALE_TO_A_COMPANY_REPLY))
+    company = signed_in_company(client)
+    asked = register_answering(
+        monkeypatch,
+        ("NORDLYS ELEKTRO SERVICE AS", "910000063"),
+        ("NORDLYS ELEKTRO AS", REGISTERED_ORGNR),
+    )
+
+    proposal = draft_invoice(client, company["id"], SALE_TO_A_COMPANY).json()
+
+    assert proposal["buyer_name"] == "Nordlys Elektro AS"
+    assert proposal["buyer_orgnr"] == REGISTERED_ORGNR
+    assert proposal["buyer_orgnr_source"] == "enhetsregisteret"
+    assert proposal["buyer_is_business"] is True
+    assert any("hentet fra Enhetsregisteret" in w for w in proposal["warnings"])
+    # The address is the register's to give, through GET /enhetsregisteret/{orgnr}
+    # as for a number the text gave, and not the proposal's to copy.
+    assert proposal["buyer_address_line"] is None
+    # Hovedenheter, searched by the name exactly as the text wrote it.
+    assert [request.url.path.rsplit("/", 1)[-1] for request in asked] == ["enheter"]
+    assert asked[0].url.params["navn"] == "Nordlys Elektro AS"
+
+    # And it makes a draft that can be issued.
+    body = as_draft(proposal, delivery_place="Trondheim", buyer_address_line="Kaigata 4")
+    created = write(client, "POST", f"/api/v1/companies/{company['id']}/faktura", json=body)
+    assert created.status_code == 201, created.text
+    assert created.json()["buyer_orgnr"] == REGISTERED_ORGNR
+
+
+def test_two_units_with_the_buyers_name_leave_the_number_to_the_person(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "complete", answering("kunde: Nordlys Elektro AS"))
+    company = signed_in_company(client)
+    register_answering(
+        monkeypatch,
+        ("NORDLYS ELEKTRO AS", REGISTERED_ORGNR),
+        ("NORDLYS ELEKTRO AS", "910000063"),
+    )
+
+    proposal = draft_invoice(client, company["id"], SALE_TO_A_COMPANY).json()
+
+    assert proposal["buyer_orgnr"] is None
+    assert proposal["buyer_orgnr_source"] is None
+    assert proposal["buyer_is_business"] is None
+    assert any(f"{REGISTERED_ORGNR} og 910000063" in w for w in proposal["warnings"])
+
+
+def test_a_name_without_its_legal_form_is_never_sent_to_the_register(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """«Ola Hansen» may be a private person, and somebody else's enkeltpersonforetak."""
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "complete", answering("kunde: Ola Hansen"))
+    company = signed_in_company(client)
+    asked = register_answering(monkeypatch, ("OLA HANSEN", REGISTERED_ORGNR))
+
+    proposal = draft_invoice(client, company["id"], "Maling av stua til Ola Hansen, 9 000").json()
+
+    assert proposal["buyer_name"] == "Ola Hansen"
+    assert proposal["buyer_orgnr"] is None
+    assert asked == []
+
+
+def test_a_registered_customer_is_not_looked_up_again(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "complete", answering("kunde: Nordlys Elektro AS"))
+    company = signed_in_company(client)
+    customer = make_customer(client, company["id"], name="Nordlys Elektro AS")
+    asked = register_answering(monkeypatch, ("NORDLYS ELEKTRO AS", REGISTERED_ORGNR))
+
+    proposal = draft_invoice(client, company["id"], SALE_TO_A_COMPANY).json()
+
+    assert proposal["party_id"] == customer["id"]
+    assert asked == []
+
+
+def test_an_unreachable_register_costs_the_number_not_the_proposal(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The suite's default register refuses every request (conftest)."""
+    monkeypatch.setattr(loynd, "is_configured", lambda: True)
+    monkeypatch.setattr(loynd, "complete", answering(SALE_TO_A_COMPANY_REPLY))
+    company = signed_in_company(client)
+
+    response = draft_invoice(client, company["id"], SALE_TO_A_COMPANY)
+
+    assert response.status_code == 200
+    proposal = response.json()
+    assert proposal["buyer_name"] == "Nordlys Elektro AS"
+    assert proposal["buyer_orgnr"] is None
+    assert len(proposal["lines"]) == 1
+    assert any("fikk ikke slått opp" in w for w in proposal["warnings"])
 
 
 def test_a_company_that_switched_ki_off_is_not_asked_about(

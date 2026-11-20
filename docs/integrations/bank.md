@@ -162,8 +162,25 @@ A matched voucher that is reversed later keeps its link, and the line says
 worth showing.
 
 **KID → invoice.** When an incoming line's KID equals an issued invoice's
-`payment_reference`, the line names the invoice. Settling the receivable from
-the line is not built: there is no voucher type for a customer paying 1500 yet.
+`payment_reference`, the line names the invoice, with what is left on it
+(`outstanding`) and whether it is paid (`payment_state`).
+
+**Settling the invoice from the line** (`POST .../linjer/{line_id}/faktura/
+{document_id}`, since 2026-11-19) posts an `innbetaling_faktura` voucher with
+the line's date and amount, debit the bank and credit 1500 naming the invoice
+(`domain/faktura/payments.py`), and links the line `opprettet`, in one
+transaction. The invoice is named in the request rather than taken from the
+KID, so a payment without a KID, or with a mistyped one, goes the same way
+once the person has said which invoice it was. Refused: a line going out
+(`bank_match_mismatch`), a line already matched, an invoice that is not owed
+anything (`not_payable`) and a line larger than what is left
+(`payment_exceeds_outstanding`), which stays unmatched; the excess is the
+customer's money or another invoice's, and which is the person's call. Both
+ids are looked up in the caller's company before either is judged, so another
+company's invoice is "not found" whatever state the line is in. The same
+payment registered by hand on `/faktura/` before the statement arrived is a
+voucher like any other, and the line is confirmed against it (`bekreftet`)
+rather than settled a second time.
 
 ## Not done
 
@@ -174,8 +191,9 @@ the line is not built: there is no voucher type for a customer paying 1500 yet.
   reuse everything after it. Not started.
 - Foreign-currency accounts and entries.
 - One bank line settling several vouchers, or one voucher split across lines
-  (a batch payment of three invoices). Matching is one to one.
-- Settling a kundefordring (1500) from an incoming payment with an invoice KID.
+  (a batch payment of three invoices). Matching is one to one; a transfer that
+  paid three invoices is registered on each invoice by hand and the line is
+  left unmatched.
 - Comparing the statement's closing balance with the ledger's 1920 balance:
   every bank account posts to 1920 today, so per-account balances are not in
   the books to compare against.

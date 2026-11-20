@@ -14,8 +14,9 @@
  *
  * - **A field is the form's to fill only while it holds what the form put
  *   there.** Empty, the default the form starts with (today's date, the
- *   company's town), or what an earlier proposal wrote. Anything else the
- *   person typed, and it stays.
+ *   company's town), what an earlier proposal wrote, or what Enhetsregisteret
+ *   filled in for an organisasjonsnummer. Anything else the person typed, and
+ *   it stays.
  * - **The buyer is one thing.** Either the whole buyer is filled in, or none of
  *   it: if the person has chosen a customer or typed any part of a buyer, the
  *   proposal's buyer is left out entirely and the page says so.

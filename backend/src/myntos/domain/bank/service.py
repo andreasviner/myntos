@@ -45,7 +45,9 @@ from myntos.domain.bank.models import BankStatement, BankStatementFile, BankStat
 from myntos.domain.bilag.errors import DocumentTooLargeError
 from myntos.domain.bilag.models import MAX_ATTACHMENT_BYTES
 from myntos.domain.bilag.service import sanitise_filename
+from myntos.domain.faktura import payments as faktura_payments
 from myntos.domain.faktura.models import SalesDocument
+from myntos.domain.faktura.service import get_document
 from myntos.domain.ledger import cashflow
 from myntos.domain.ledger import service as ledger_service
 from myntos.domain.ledger.bankkonto import format_bank_account
@@ -381,11 +383,15 @@ async def reversed_vouchers(db: AsyncSession, voucher_pks: Sequence[int]) -> set
 
 @dataclass(frozen=True)
 class InvoiceHint:
-    """An issued invoice whose KID a bank line carries."""
+    """An issued invoice whose KID a bank line carries, and what is left on it."""
 
     document_id: int
     document_number: str | None
     buyer_name: str
+    # What the customer still owes, so the page offers to register the line as
+    # a payment only while there is something to pay.
+    outstanding: Decimal
+    state: faktura_payments.PaymentState
 
 
 async def invoices_by_kid(
@@ -395,27 +401,39 @@ async def invoices_by_kid(
 
     A KID is the one piece of a bank line that identifies a document rather
     than resembling one, so when an incoming payment carries an invoice's KID
-    the page says which invoice. Settling the receivable from here is not built
-    yet (there is no voucher type for a customer paying 1500), so this is a
-    pointer, not a posting.
+    the page says which invoice, and offers to register the line as its
+    payment (:func:`settle_invoice_from_line`). A pointer, not a posting: the
+    person presses the button, because a KID typed by hand can be on two
+    invoices and a customer can pay the wrong one.
     """
     wanted = sorted({kid for kid in kids if kid})
     if not wanted:
         return {}
-    rows = await db.scalars(
-        select(SalesDocument).where(
-            SalesDocument.company_id == company.id,
-            SalesDocument.payment_reference.in_(wanted),
-            SalesDocument.document_number.is_not(None),
+    documents = list(
+        await db.scalars(
+            select(SalesDocument)
+            .where(
+                SalesDocument.company_id == company.id,
+                SalesDocument.payment_reference.in_(wanted),
+                SalesDocument.document_number.is_not(None),
+            )
+            .options(selectinload(SalesDocument.lines))
         )
     )
-    return {
-        doc.payment_reference: InvoiceHint(
-            document_id=doc.id, document_number=doc.document_number, buyer_name=doc.buyer_name
+    settled = await faktura_payments.settlements(db, company=company, documents=documents)
+    hints: dict[str, InvoiceHint] = {}
+    for doc in documents:
+        settlement = settled.get(doc.id)
+        if doc.payment_reference is None or settlement is None:
+            continue
+        hints[doc.payment_reference] = InvoiceHint(
+            document_id=doc.id,
+            document_number=doc.document_number,
+            buyer_name=doc.buyer_name,
+            outstanding=settlement.outstanding,
+            state=settlement.state,
         )
-        for doc in rows
-        if doc.payment_reference is not None
-    }
+    return hints
 
 
 # --- Suggestions -------------------------------------------------------------------
@@ -656,3 +674,49 @@ async def create_entry_from_line(
     )
     await _link(db, line, transaction, kind=MATCH_CREATED, user_id=created_by_user_id)
     return line, transaction
+
+
+async def settle_invoice_from_line(
+    db: AsyncSession,
+    *,
+    company: Company,
+    line_pk: int,
+    document_pk: int,
+    created_by_user_id: int | None,
+) -> tuple[BankStatementLine, SalesDocument, Transaction]:
+    """Register a customer's payment of an invoice from the bank line that shows it.
+
+    Through :func:`myntos.domain.faktura.payments.register_payment`, the same
+    function the invoice's own «Registrer innbetaling» uses, so the same
+    refusals hold: an invoice not issued, credited or already paid, and more
+    than is left on it. The line gives the date and the amount, as it does for
+    :func:`create_entry_from_line`: what the bank states is not the person's
+    to change. The person gives only which invoice. The line's KID usually says
+    that already (:func:`invoices_by_kid`), but a customer who left the KID out
+    still paid, so any incoming line may pay any open invoice.
+
+    The line is linked to the voucher as ``opprettet``, as a voucher posted
+    from it always is.
+    """
+    line = await get_line(db, company=company, line_pk=line_pk)
+    # Both ids are looked up before either is judged, so another company's
+    # invoice is "not found" whatever state this company's line is in, rather
+    # than refused as a mismatch that says nothing about whose invoice it was.
+    await get_document(db, company=company, document_pk=document_pk)
+    if line.transaction_pk is not None:
+        raise BankLineAlreadyMatchedError("banklinjen er allerede avstemt")
+    if line.direction is not CashFlowDirection.INN:
+        raise BankMatchMismatchError(
+            "banklinjen er en utbetaling, og en kunde som betaler en faktura, gir penger inn"
+        )
+    document, transaction = await faktura_payments.register_payment(
+        db,
+        company=company,
+        document_pk=document_pk,
+        paid_on=line.booking_date,
+        amount=line.amount,
+        payment_method=PaymentMethod.BANK,
+        created_by_user_id=created_by_user_id,
+    )
+    await _link(db, line, transaction, kind=MATCH_CREATED, user_id=created_by_user_id)
+    return line, document, transaction

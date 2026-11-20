@@ -4,7 +4,8 @@ What these hold: a failure is kept as its code (types, frames, the log line's
 template, the route's template) and never as its data (the message, the logged
 values, the address asked for); the same failure is counted rather than
 repeated; a resolved one opens again when it happens again; nothing is lost
-when the database is down; and old ones are purged.
+when the database is down; old ones are purged; and the operator is mailed,
+once an hour at most, the code of a failure that is news and never its values.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Iterator
 from dataclasses import asdict
 from datetime import timedelta
 from typing import Any
@@ -22,11 +24,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from myntos.core.clock import utc_now
+from myntos.core.config import get_settings
 from myntos.domain.server_errors import recorder, service
 from myntos.domain.server_errors.models import ServerError
 from myntos.domain.server_errors.recorder import RECORDER, Occurrence, boil_down
 from myntos.domain.server_errors.service import ServerErrorStatus
-from tests.conftest import TEST_ORIGIN
+from tests.conftest import TEST_ORIGIN, RecordingMailer
 
 # What a failure's data looks like: a company's name, which must never be kept.
 NAME = "Ola Nordmann AS"
@@ -66,11 +69,13 @@ def _in_database(database_url: str, work: Any) -> Any:
     return asyncio.run(go())
 
 
-def _store_pending(database_url: str) -> int:
+def _store_pending(database_url: str, mailer: RecordingMailer | None = None) -> int:
     async def go() -> int:
         engine = create_async_engine(database_url)
         try:
-            return await recorder.store_pending(async_sessionmaker(engine, expire_on_commit=False))
+            return await recorder.store_pending(
+                async_sessionmaker(engine, expire_on_commit=False), mailer
+            )
         finally:
             await engine.dispose()
 
@@ -260,3 +265,112 @@ def test_failures_not_seen_for_the_retention_are_deleted(database_url: str) -> N
 
     assert _in_database(database_url, purge) == 1
     assert [row.template for row in _rows(database_url)] == ["recent"]
+
+
+# --- The operator is told -------------------------------------------------------------
+
+OPERATOR = "drift@example.test"
+
+
+@pytest.fixture
+def notify(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """A deployment that mails the operator; the settings cache is cleared both ways."""
+    monkeypatch.setenv("SERVER_ERROR_NOTIFY_TO", OPERATOR)
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.mark.usefixtures("notify")
+def test_a_new_failure_mails_the_operator_its_code_and_not_its_values(
+    database_url: str,
+) -> None:
+    outbox = RecordingMailer()
+    try:
+        raise KeyError(NAME)
+    except KeyError:
+        log.exception("could not read the books of %s", NAME)
+
+    _store_pending(database_url, outbox)
+
+    mail = outbox.only
+    [row] = _rows(database_url)
+    assert mail.to == OPERATOR
+    assert f"nr. {row.id}:" in mail.text
+    assert "«could not read the books of %s»" in mail.text
+    assert "KeyError" in mail.text
+    assert "/drift/" in mail.text
+    assert NAME not in mail.text + mail.subject
+
+
+@pytest.mark.usefixtures("notify")
+def test_a_failure_that_is_still_open_is_not_news(database_url: str) -> None:
+    outbox = RecordingMailer()
+    log.error("the same thing")
+    _store_pending(database_url, outbox)
+    recorder.RECORDER.notified_at = None
+
+    log.error("the same thing")
+    _store_pending(database_url, outbox)
+
+    assert len(outbox.sent) == 1
+    assert [row.count for row in _rows(database_url)] == [2]
+
+
+@pytest.mark.usefixtures("notify")
+def test_one_mail_an_hour_however_much_breaks(database_url: str) -> None:
+    outbox = RecordingMailer()
+    log.error("first")
+    _store_pending(database_url, outbox)
+    log.error("second, a minute later")
+    _store_pending(database_url, outbox)
+
+    assert len(outbox.sent) == 1
+
+    recorder.RECORDER.notified_at = utc_now() - recorder.QUIET
+    log.error("third, after a quiet hour")
+    _store_pending(database_url, outbox)
+
+    assert len(outbox.sent) == 2
+    assert "«third, after a quiet hour»" in outbox.sent[1].text
+    assert "3 er åpne nå." in outbox.sent[1].text
+
+
+@pytest.mark.usefixtures("notify")
+def test_a_failure_that_opens_again_mails_again(database_url: str) -> None:
+    outbox = RecordingMailer()
+    log.error("fixed, or so it seemed")
+    _store_pending(database_url, outbox)
+
+    async def resolve(db: AsyncSession) -> None:
+        [row] = await service.listing(db)
+        service.set_status(row, ServerErrorStatus.RESOLVED, now=utc_now() - timedelta(minutes=1))
+
+    _in_database(database_url, resolve)
+    recorder.RECORDER.notified_at = None
+    log.error("fixed, or so it seemed")
+    _store_pending(database_url, outbox)
+
+    assert len(outbox.sent) == 2
+
+
+def test_nobody_is_mailed_unless_somebody_is_named(database_url: str) -> None:
+    outbox = RecordingMailer()
+    log.error("nobody to tell")
+
+    assert _store_pending(database_url, outbox) == 1
+    assert outbox.sent == []
+
+
+@pytest.mark.usefixtures("notify")
+def test_a_burst_names_a_few_and_counts_the_rest(database_url: str) -> None:
+    outbox = RecordingMailer()
+    for number in range(8):
+        log.error(f"route {number} broke")  # noqa: G004 - eight templates on purpose
+
+    _store_pending(database_url, outbox)
+
+    mail = outbox.only
+    assert mail.subject == "8 nye feil på serveren i Myntos"
+    assert mail.text.count("nr. ") == 5
+    assert "… og 3 til" in mail.text

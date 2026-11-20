@@ -36,8 +36,8 @@ entries, then check and send the termin again.
    meldingen ble sendt. Tallene under er slik de er nå. Send en ny melding for
    terminen, så erstatter den den forrige.»
 3. Click «Se meldingen» and read the new lines and total.
-4. Log in with ID-porten, press «Kontroller hos Skatteetaten», tick the box
-   and send: [Send the MVA-melding](https://myntos.no/llms/help/vat/send-the-vat-return.md).
+4. Press «Kontroller hos Skatteetaten» (it goes through ID-porten if needed),
+   tick the box and send: [Send the MVA-melding](https://myntos.no/llms/help/vat/send-the-vat-return.md).
 5. Both meldinger stay listed under «Meldinger for terminen»; the newest is
    the one that counts.
 
@@ -47,6 +47,7 @@ entries, then check and send the termin again.
 | --- | --- | --- |
 | «regnskapsåret … er avsluttet» when correcting the entry | The year is closed | An administrator must reopen the year under «Årsavslutning» first |
 | «Endret etter innsending» on a termin they did not mean to change | Something dated in that termin was entered or reversed later | Find the entry; if it belongs there, send a new melding; if not, correct its date |
+| «Meldingen for terminen er sendt. Endrer du regnskapet for terminen senere, kan du sende en ny melding her, og den erstatter den forrige.» and no «Kontroller hos Skatteetaten» | The books still say exactly what was sent, so a new melding would correct nothing | Correct the entry first; the button comes back when the figures differ |
 
 ## Good to know
 
@@ -54,7 +55,11 @@ entries, then check and send the termin again.
 - Myntos's settlement against 2740 moves only the difference, so the books
   stay right without anything posted by hand.
 - If the correction means more to pay, the extra amount is paid like the
-  first; the new payment details come with the new receipt.
+  first; the new payment details come with the new receipt. When the first
+  melding was already paid in the books, the new one says «Det som alt er
+  betalt for terminen er trukket fra: … gjenstår å betale.», and «Før
+  betalingen» fills in only that difference (or «skal tilbake til
+  selskapet» and «Før tilbakebetalingen» for a correction downwards).
 
 ## Related
 

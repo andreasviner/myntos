@@ -19,9 +19,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
  * publiseres. Se docs/gdpr.md. Det samme gjelder avsnittet om nøkler for
  * KI-agenter (3e2), som er skrevet ut fra docs/agents-and-api.md regel 8, og
  * avsnittet om deling for å gjøre Myntos bedre (3d3), som er skrevet ut fra
- * docs/data-sharing.md.
+ * docs/data-sharing.md, og avsnittet om e-faktura (3f2), som er skrevet ut fra
+ * docs/integrations/peppol.md og Recommands personvernerklæring og liste over
+ * underleverandører (lest 1. november 2026).
  */
-const oppdatert = '28. oktober 2026';
+const oppdatert = '1. november 2026';
 
 const grunnlag = [
   {
@@ -109,6 +111,15 @@ const underleverandorer = [
     navn: 'Idura (Idura ApS, del av Stø AS, som driver BankID)',
     rolle: 'Innlogging med BankID, kun hvis du velger det. Ser at du logger inn hos Myntos med BankID, og gir oss en fast brukeridentifikator og navnet ditt. Vi ber ikke om fødselsnummeret ditt',
     sted: 'EU. Selskapet er i Danmark, og lover i sin databehandleravtale å ikke overføre personopplysninger ut av EU',
+  },
+  {
+    // Bare for selskaper som registrerer seg for e-faktura. Myntos sender aldri
+    // e-postfeltet deres, så underleverandøren som sender e-post for dem
+    // (Postmark, USA) får ingenting fra oss. Se avsnitt 3f2 og
+    // docs/integrations/peppol.md.
+    navn: 'Recommand (BRBX BV)',
+    rolle: 'Tilgangspunkt for e-faktura over Peppol, bare for selskaper som registrerer seg for det. Får selskapets navn, organisasjonsnummer og forretningsadresse, kundens organisasjonsnummer når vi spør om kunden kan ta imot EHF, og hver faktura som sendes, med kundens navn, adresse og fakturalinjene. Identitetskontrollen ved registreringen gjøres hos dem, av underleverandøren Didit',
+    sted: 'EØS. Selskapet er i Belgia og oppgir at driften er i EØS; identitetskontrollen behandles og lagres i EU',
   },
   {
     navn: 'Skatteetaten, Altinn, Digitaliseringsdirektoratet',
@@ -477,6 +488,25 @@ const underleverandorer = [
     <a href="/funksjoner/">funksjonssiden</a>.
   </p>
 
+  <h3 id="efaktura">f2. E-faktura over Peppol</h3>
+  <p>
+    Når et selskap registreres for e-faktura, sender vi selskapets navn, organisasjonsnummer,
+    forretningsadresse, og mva-nummeret hvis det er mva-registrert, til tilgangspunktet
+    <strong>Recommand</strong>, som
+    frakter fakturaene over Peppol-nettverket. Vi sender ingen e-postadresse eller telefonnummer.
+    Identitetskontrollen som følger, gjøres på Recommands egen side av den som signerer for
+    selskapet. Vi ser ikke det som vises der, og lagrer det ikke.
+  </p>
+  <p>
+    Før en faktura til en kunde med organisasjonsnummer utstedes, spør vi Recommand om kunden kan
+    ta imot EHF over Peppol. Da sender vi bare kundens organisasjonsnummer og hva slags dokument
+    det gjelder. Når en faktura sendes, går EHF-filen til Recommand og derfra til tilgangspunktet
+    kunden har valgt. Den inneholder det fakturaen inneholder: kundens navn, organisasjonsnummer og adresse,
+    linjene og beløpene, og en referanse hvis du har skrevet inn en. Med regnskapet lagrer vi at
+    fakturaen ble sendt, til hvilken Peppol-adresse, og svaret om den kom fram. Fakturaer sendes
+    aldri på e-post.
+  </p>
+
   <h2>4. Behandlingsgrunnlag</h2>
   <div class="table-scroll">
     <table class="data">
@@ -558,6 +588,10 @@ const underleverandorer = [
     norske bokføringsregler stiller krav til hvor
     regnskapsmateriale kan oppbevares, ikke som en preferanse. Vi overfører ikke personopplysninger
     ut av EØS for egne formål.
+  </p>
+  <p>
+    En faktura du sender som EHF, går gjennom tilgangspunktet vårt i EØS til kundens tilgangspunkt.
+    Det har kunden valgt selv, slik kunden også velger hvor e-posten sin ligger.
   </p>
 
   <h2>8. Hvor lenge vi lagrer</h2>

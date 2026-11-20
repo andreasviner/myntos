@@ -266,8 +266,11 @@ registration and access, which cannot be done from a repository.
       suggested matches the user confirms, or a new voucher from a line through
       the register's own path. See docs/integrations/bank.md — migration
       `c3e8a5f1d207`
-- [ ] PSD2 feed, foreign-currency accounts, one-to-many matches, and posting a
-      KID payment against kundefordringer
+- [x] A customer's payment of an invoice, registered on `/faktura/` by hand
+      (in full or in part) or from the bank line its KID names, crediting
+      1500 with the invoice named on the line; never on the due date. See
+      `domain/faktura/payments.py` — migration `6ad191291425`
+- [ ] PSD2 feed, foreign-currency accounts, one-to-many matches
 
 ## Phase 1d — Fakturering og e-faktura (legal deadline: 2027-01-01)
 
@@ -315,9 +318,15 @@ and full digital bokføring from 2030-01-01. See docs/integrations/efaktura.md.
       (`SalesDocument.bank_account_id`). The column it replaced could hold one
       account, so a business keeping its skattetrekk apart — skattebetalingsloven
       § 5-12 — had nowhere to put the second one
-- [ ] **Peppol access point.** Myntos produces the EHF file but does not send
-      it. This is the remaining blocker for the 2027 requirement — everything
-      else is in place. Either contract an access point or become one
+- [x] **Peppol access point: Recommand** (BRBX BV, Belgium), contracted
+      2026-11-01 in place of invoice.be, the earlier plan. Sending only, never
+      by e-mail, and the default on `/faktura/`: the review's main button
+      issues and sends to a customer who can receive
+      (docs/integrations/peppol.md). Migration `8d7b599c0754`
+- [ ] **The first real send**, and what is owed before a customer relies on
+      it: a test run against a separate Recommand team, one invoice between
+      two of the owner's companies, the data processing agreement, and the
+      privacy notice by e-mail (peppol.md «Before the first customer»)
 - [ ] Foreign-currency invoicing: needs the § 5-1-1 nr. 6 restatement of VAT in
       NOK plus `TaxCurrencyCode` and a second `TaxTotal` in the XML. Refused
       outright until then, rather than issued without it

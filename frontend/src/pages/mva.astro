@@ -228,7 +228,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           Innsending fra Myntos er ikke satt opp her. Last ned meldingen som XML og last den opp i
           Skatteetatens portal for mva-meldingen.
         </p>
-        <a class="btn btn-primary" id="login" href="#" hidden>Logg inn med ID-porten</a>
+        {/* En sendt termin sendes på nytt bare for å rette den: en ny melding
+            erstatter den forrige hos Skatteetaten, og med de samme tallene
+            retter den ingenting. Kontrollen sto likevel framme, og 2. november
+            2026 ble en sendt termin kontrollert igjen uten at noen mente å
+            sende den to ganger. */}
+        <p class="card-hint" id="filed-note" hidden>
+          Meldingen for terminen er sendt. Endrer du regnskapet for terminen senere, kan du sende en
+          ny melding her, og den erstatter den forrige.
+        </p>
         <form id="check-form" novalidate hidden>
           <label class="field">
             <span>Merknad til Skatteetaten <span class="muted">(valgfritt)</span></span>
@@ -239,6 +247,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           </label>
           <button class="btn btn-primary" type="submit" id="check">Kontroller hos Skatteetaten</button>
           <p class="card-hint">Kontrollen sender ingenting inn. Du ser svaret før du bestemmer deg.</p>
+          {/* Ingen egen innloggingsknapp: trykket går innom ID-porten og
+              fortsetter når du er tilbake (lib/errand.ts). */}
+          <p class="card-hint" id="check-login-hint" hidden>
+            Du logger inn med ID-porten først, og kontrollen fortsetter når du er tilbake.
+          </p>
         </form>
         <p class="status" id="action-status" hidden></p>
       </div>
@@ -510,6 +523,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   import { el, setStatus, show } from '../lib/dom';
   import { isoDate, kroner, orgnummer, todayIso } from '../lib/format';
   import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+  import { forgetErrand, needsGovernmentLogin, rememberErrand, takeErrand, type Errand } from '../lib/errand';
+  import { CALLBACK_ERRORS } from '../lib/providers';
+  import { errorText } from '../lib/submission';
 
   const pageStatus = el<HTMLParagraphElement>('#page-status');
   const settingsStatus = el<HTMLParagraphElement>('#settings-status');
@@ -766,6 +782,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     const wrap = document.createElement('span');
     if (row.status !== null) {
       wrap.append(badge(STATUS_TEXT[row.status], STATUS_TONE[row.status]));
+      if (row.paid_by !== null) wrap.append(' ', badge(owes(row.filed_fastsatt ?? '0') ? 'Betalt' : 'Tilbakebetalt', 'ok'));
       if (row.changed_since_filed) wrap.append(' ', badge('Endret etter innsending', 'error'));
       if (row.filed_elsewhere && row.elsewhere_difference !== null && !agrees(row.elsewhere_difference)) {
         wrap.append(' ', badge('Avvik mot Myntos', 'error'));
@@ -810,6 +827,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       link.href = hashFor(row.termin, row.year);
       link.textContent = 'Se meldingen';
       action.append(link);
+      if (row.filed_id !== null && row.unpaid !== null && row.unpaid !== '0.00' && mayWrite()) {
+        const pay = document.createElement('a');
+        pay.className = 'btn-link';
+        pay.href = `/kontantstrom/?mva=${row.filed_id}`;
+        pay.textContent = owes(row.unpaid) ? 'Før betalingen' : 'Før tilbakebetalingen';
+        action.append(document.createElement('br'), pay);
+      }
       tr.append(cell(row.label), cell(isoDate(row.deadline)), amount, status, action);
       body.append(tr);
     }
@@ -962,17 +986,32 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       });
   });
 
+  /** Sendt fra Myntos, og regnskapet sier fortsatt det samme: ingenting nytt å sende. */
+  function filedAsItStands(current: MvaPeriod): boolean {
+    const filed = current.filings.find((filing) => filing.status === 'sendt' || filing.status === 'mottatt');
+    return filed !== undefined && !current.changed_since_filed;
+  }
+
   function renderActions(current: MvaPeriod): void {
-    const here = `/mva/${hashFor(current.termin, current.year)}`;
     const canAct = mayWrite() && current.blockers.length === 0;
     // Begge må være på plass: ID-porten for å vite hvem som sender, og
     // Skatteetatens app for å ha noe å sende til.
     const configured = government.available && current.submission_available;
-    show(el('#not-configured'), !configured);
-    const login = el<HTMLAnchorElement>('#login');
-    login.href = governmentLoginStartUrl(here);
-    show(login, canAct && configured && !government.logged_in);
-    show(checkForm, canAct && configured && government.logged_in);
+    const settled = filedAsItStands(current);
+    show(el('#not-configured'), !configured && !settled);
+    show(el('#filed-note'), settled);
+    show(checkForm, canAct && configured && !settled);
+    show(el('#check-login-hint'), !government.logged_in);
+  }
+
+  /**
+   * Gå innom ID-porten og gjør det som ble trykket på når nettleseren er
+   * tilbake. Lappen ligger i fanen (lib/errand.ts); terminen står i adressen,
+   * så siden åpner den samme terminen igjen.
+   */
+  function loginThen(action: string, data: Errand['data'], at: { year: number; termin: number }): void {
+    rememberErrand({ page: '/mva/', companyId: company.id, action, data });
+    window.location.href = governmentLoginStartUrl(`/mva/${hashFor(at.termin, at.year)}`);
   }
 
   function findingsList(target: HTMLElement, filing: MvaFiling): void {
@@ -990,8 +1029,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   function renderReview(current: MvaPeriod): void {
     const latest = current.filings[0];
     const review = el('#review');
+    // En kontroll fra før terminen ble sendt, eller fra en annen fane, står
+    // som «Kontrollert, ikke sendt» og ville sendt de samme tallene en gang til.
     const ready =
-      latest !== undefined && latest.status === 'validert' && latest.matches_ledger === true && mayWrite();
+      latest !== undefined &&
+      latest.status === 'validert' &&
+      latest.matches_ledger === true &&
+      !filedAsItStands(current) &&
+      mayWrite();
     show(review, ready || (latest !== undefined && latest.status === 'avvist'));
     if (latest === undefined) return;
     findingsList(el('#review-findings'), latest);
@@ -1059,7 +1104,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       meta.textContent = parts.join(', ');
       item.append(meta);
 
-      if (filing.payment_kid !== null || filing.payment_due !== null) {
+      const paymentShown = filing.payment_kid !== null || filing.payment_due !== null;
+      const owing = owes(filing.fastsatt_merverdiavgift);
+      if (paymentShown) {
         const pay = document.createElement('p');
         pay.className = 'filing-meta';
         const bits: string[] = [];
@@ -1067,15 +1114,36 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         if (filing.payment_due !== null) bits.push(`frist ${isoDate(filing.payment_due)}`);
         if (filing.payment_account !== null) bits.push(`til konto ${filing.payment_account}`);
         if (filing.payment_kid !== null) bits.push(`KID ${filing.payment_kid}`);
-        pay.textContent = `${bits.join(', ')}. Betalingen føres som «Oppgjør av mva-melding til Skatteetaten».`;
+        pay.textContent =
+          filing.paid_by !== null
+            ? `${bits.join(', ')}.`
+            : `${bits.join(', ')}. Betalingen føres som «Oppgjør av mva-melding til Skatteetaten».`;
         item.append(pay);
       }
-      if (filing.error !== null) {
+      // Etter en korrigering er det bare forskjellen som gjenstår, når den
+      // første meldingen alt er betalt.
+      const unpaid = filing.unpaid;
+      if (unpaid !== null && unpaid !== '0.00' && unpaid !== filing.fastsatt_merverdiavgift) {
+        const left = document.createElement('p');
+        left.className = 'filing-meta';
+        left.textContent =
+          `Det som alt er betalt for terminen er trukket fra: ${unsigned(unpaid)} ` +
+          `${owes(unpaid) ? 'gjenstår å betale' : 'skal tilbake til selskapet'}.`;
+        item.append(left);
+      }
+      if (filing.paid_by !== null) {
+        const paid = document.createElement('p');
+        paid.className = 'filing-meta';
+        paid.textContent =
+          `${owing ? 'Betalt' : 'Tilbakebetalt'} ${isoDate(filing.paid_by.date)}, ` +
+          `bilag ${filing.paid_by.voucher_no}.`;
+        item.append(paid);
+      }
+      const problem = errorText(filing, 'meldingen');
+      if (problem !== null) {
         const error = document.createElement('p');
         error.className = 'filing-meta';
-        error.textContent =
-          'Innsendingen stoppet underveis. Sjekk i Altinn om meldingen ligger der før du prøver igjen. ' +
-          `Feilen: ${filing.error}`;
+        error.textContent = problem;
         item.append(error);
       }
 
@@ -1090,31 +1158,32 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         links.append(xml);
       }
       for (const document_ of filing.documents) {
+        // Betalingsinformasjonen er en XML-fil som bare sier det linjen over
+        // allerede sier, og en person får ingenting ut av å laste den ned
+        // (2026-11-02). Lenken står bare når Myntos ikke fikk lest den.
+        if (document_.data_type === 'betalingsinformasjon' && paymentShown) continue;
         links.append(documentLink(filing, document_.data_type, document_.filename));
       }
-      if (filing.status === 'sendt' && mayWrite()) {
-        if (government.logged_in) {
-          const fetch = document.createElement('button');
-          fetch.type = 'button';
-          fetch.className = 'btn-link';
-          fetch.textContent = 'Hent kvittering';
-          fetch.addEventListener('click', () => {
-            fetch.disabled = true;
-            void fetchMvaFeedback(company.id, filing.id)
-              .then(() => openPeriod(filing.year, filing.termin))
-              .catch((error: unknown) => {
-                setStatus(actionStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet kvitteringen.');
-                fetch.disabled = false;
-              });
-          });
-          links.append(fetch);
-        } else if (government.available) {
-          const login = document.createElement('a');
-          login.className = 'btn-link';
-          login.href = governmentLoginStartUrl(`/mva/${hashFor(filing.termin, filing.year)}`);
-          login.textContent = 'Logg inn med ID-porten for å hente kvitteringen';
-          links.append(login);
-        }
+      // Ett trykk, innlogget eller ikke: uten innlogging går trykket innom
+      // ID-porten og henter kvitteringen når du er tilbake.
+      if (filing.status === 'sendt' && mayWrite() && government.available) {
+        const fetch = document.createElement('button');
+        fetch.type = 'button';
+        fetch.className = 'btn-link';
+        fetch.textContent = 'Hent kvittering';
+        fetch.addEventListener('click', () => fetchReceipt(filing, fetch));
+        links.append(fetch);
+      }
+      // Bare den sist sendte meldingen er det som skyldes, og bare den har
+      // `unpaid`. Skjemaet i kontantstrømmen fylles ut med det som gjenstår,
+      // teksten og kvitteringen, og betalingen føres derfra som alle andre, på
+      // dagen pengene gikk.
+      if (unpaid !== null && unpaid !== '0.00' && mayWrite()) {
+        const pay = document.createElement('a');
+        pay.className = 'btn btn-primary btn-small';
+        pay.href = `/kontantstrom/?mva=${filing.id}`;
+        pay.textContent = owes(unpaid) ? 'Før betalingen' : 'Før tilbakebetalingen';
+        links.append(pay);
       }
       item.append(links);
       list.append(item);
@@ -1154,12 +1223,42 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   }
 
   // --- Kontroll og innsending ----------------------------------------------------
+  //
+  // Alle tre går med personens egen ID-porten-innlogging, som går ut. Et trykk
+  // uten innlogging, eller et som får 409 uten kode fordi den gikk ut mens
+  // siden sto åpen, går innom ID-porten og fortsetter på vei tilbake
+  // (lib/errand.ts). `resumed` er det trykket som kommer tilbake: det går ikke
+  // en runde til, men sier hva som er galt.
 
-  checkForm.addEventListener('submit', (event) => {
-    event.preventDefault();
-    if (period === null) return;
-    const current = period;
-    const merknad = String(new FormData(checkForm).get('merknad') ?? '').trim();
+  function fetchReceipt(filing: MvaFiling, button: HTMLButtonElement | null, resumed = false): void {
+    const at = { year: filing.year, termin: filing.termin };
+    if (!government.logged_in && !resumed) {
+      loginThen('kvittering', { filing: filing.id }, at);
+      return;
+    }
+    if (button !== null) button.disabled = true;
+    setStatus(actionStatus, 'Henter kvitteringen …', 'ok');
+    void fetchMvaFeedback(company.id, filing.id)
+      .then(async () => {
+        setStatus(actionStatus, '');
+        await openPeriod(filing.year, filing.termin);
+      })
+      .catch((error: unknown) => {
+        if (needsGovernmentLogin(error) && !resumed) {
+          loginThen('kvittering', { filing: filing.id }, at);
+          return;
+        }
+        setStatus(actionStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet kvitteringen.');
+        if (button !== null) button.disabled = false;
+      });
+  }
+
+  function runCheck(current: MvaPeriod, merknad: string, resumed = false): void {
+    const at = { year: current.year, termin: current.termin };
+    if (!government.logged_in && !resumed) {
+      loginThen('kontroll', { merknad }, at);
+      return;
+    }
     checkButton.disabled = true;
     setStatus(actionStatus, 'Sender meldingen til kontroll …', 'ok');
     void checkMvaPeriod(company.id, current.year, current.termin, merknad === '' ? null : merknad, naering)
@@ -1169,22 +1268,39 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         el('#review').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       })
       .catch((error: unknown) => {
+        if (needsGovernmentLogin(error) && !resumed) {
+          loginThen('kontroll', { merknad }, at);
+          return;
+        }
         setStatus(actionStatus, error instanceof ApiError ? error.message : 'Kontrollen feilet.');
       })
       .finally(() => {
         checkButton.disabled = false;
       });
+  }
+
+  checkForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (period === null) return;
+    runCheck(period, String(new FormData(checkForm).get('merknad') ?? '').trim());
   });
 
   confirmBox.addEventListener('change', () => {
     submitButton.disabled = !confirmBox.checked;
   });
 
-  submitButton.addEventListener('click', () => {
-    if (period === null || !confirmBox.checked) return;
-    const current = period;
-    const filingId = Number(submitButton.dataset.filing);
-    const amount = submitButton.dataset.amount ?? '';
+  /**
+   * Send den kontrollerte meldingen. Personens ja er avkrysningen og trykket;
+   * går trykket innom ID-porten, er det det samme ja-et som sendes på vei
+   * tilbake, for den samme meldingen og det samme beløpet, og backend nekter
+   * hvis regnskapet har flyttet seg i mellomtiden.
+   */
+  function runSend(current: MvaPeriod, filingId: number, amount: string, resumed = false): void {
+    const at = { year: current.year, termin: current.termin };
+    if (!government.logged_in && !resumed) {
+      loginThen('send', { filing: filingId, amount }, at);
+      return;
+    }
     submitButton.disabled = true;
     confirmBox.disabled = true;
     setStatus(submitStatus, 'Sender inn …', 'ok');
@@ -1200,6 +1316,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         await refresh();
       })
       .catch(async (error: unknown) => {
+        if (needsGovernmentLogin(error) && !resumed) {
+          loginThen('send', { filing: filingId, amount }, at);
+          return;
+        }
         setStatus(submitStatus, error instanceof ApiError ? error.message : 'Innsendingen feilet.');
         // Uansett hva som gikk galt, er det backend som vet hvor langt den
         // kom. Terminen hentes på nytt så skjermen viser det.
@@ -1208,7 +1328,58 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       .finally(() => {
         confirmBox.disabled = false;
       });
+  }
+
+  submitButton.addEventListener('click', () => {
+    if (period === null || !confirmBox.checked) return;
+    runSend(period, Number(submitButton.dataset.filing), submitButton.dataset.amount ?? '');
   });
+
+  /**
+   * Gjør ferdig det som ble trykket på før ID-porten, når nettleseren er
+   * tilbake. Kom den tilbake med en feil, ble det ingen innlogging, og lappen
+   * kastes: et trykk som går en runde til, ville bare møtt den samme feilen.
+   */
+  function resumeAfterLogin(): void {
+    const marker = new URLSearchParams(window.location.search).get('error');
+    if (marker !== null) {
+      forgetErrand();
+      setStatus(pageStatus, CALLBACK_ERRORS[marker] ?? 'Innloggingen feilet. Prøv en gang til.');
+      const url = new URL(window.location.href);
+      url.searchParams.delete('error');
+      window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+      return;
+    }
+    const errand = takeErrand('/mva/', company.id);
+    if (errand === null || period === null) return;
+    const current = period;
+    if (errand.action === 'kvittering') {
+      const filing = current.filings.find((item) => item.id === errand.data.filing);
+      if (filing !== undefined && filing.status === 'sendt') fetchReceipt(filing, null, true);
+      return;
+    }
+    if (errand.action === 'kontroll') {
+      const merknad = String(errand.data.merknad ?? '');
+      checkForm.querySelector<HTMLTextAreaElement>('textarea[name="merknad"]')!.value = merknad;
+      // Bare der knappen fortsatt står: terminen kan ha blitt sendt fra en
+      // annen fane mens du var hos ID-porten.
+      if (!checkForm.hidden) runCheck(current, merknad, true);
+      return;
+    }
+    if (errand.action === 'send') {
+      // Den samme meldingen må fortsatt stå klar til sending, ellers sendes
+      // ingenting, og kortet viser hvorfor.
+      const still = !submitButton.hidden && submitButton.dataset.filing === String(errand.data.filing) &&
+        submitButton.dataset.amount === String(errand.data.amount);
+      if (still) {
+        confirmBox.checked = true;
+        el('#review').scrollIntoView({ block: 'nearest' });
+        runSend(current, Number(errand.data.filing), String(errand.data.amount), true);
+      } else {
+        setStatus(pageStatus, 'Du er logget inn, men meldingen ble ikke sendt: den står ikke lenger klar. Se over terminen.');
+      }
+    }
+  }
 
   // --- År og adresse -----------------------------------------------------------
 
@@ -1280,6 +1451,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       await refresh();
       el('#loading').hidden = true;
       el('#content').hidden = false;
+      resumeAfterLogin();
     } catch (error: unknown) {
       el('#loading').hidden = true;
       setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet mva-meldingene.');

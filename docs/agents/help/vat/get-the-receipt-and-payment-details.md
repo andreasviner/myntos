@@ -23,7 +23,7 @@ account, with which KID and by when.
 
 - Any role can see and download what has been fetched.
 - Fetching a receipt that has not arrived needs «Medlem» or above and an
-  ID-porten login.
+  ID-porten login, which the button asks for itself.
 
 ## Steps
 
@@ -32,11 +32,18 @@ account, with which KID and by when.
    or «Sendt, venter på kvittering».
 3. The payment details are in a line «Beløp …, frist …, til konto …, KID …».
    Pay that amount to that account with that KID by that date, from the bank.
-4. The documents are links under it: «Kvittering (PDF)», «Betalingsinformasjon»
-   and «Kontrollresultat». «Meldingen (XML)» is the melding exactly as sent.
-5. If it says «Sendt, venter på kvittering», press «Hent kvittering». If the
-   link says «Logg inn med ID-porten for å hente kvitteringen», log in first;
-   they come back to the same termin.
+4. The documents are links under it: «Kvittering (PDF)» and
+   «Kontrollresultat». «Meldingen (XML)» is the melding exactly as sent.
+   «Betalingsinformasjon» is only there when Myntos could not read it into
+   the line above; it is an XML file, not something to read.
+5. If it says «Sendt, venter på kvittering», press «Hent kvittering». Without
+   an ID-porten login, the press goes through ID-porten and fetches the
+   receipt when they are back: one press.
+6. Once paid from the bank, press «Før betalingen» (or «Før
+   tilbakebetalingen» for a refund) to record it in the books:
+   [Record the VAT payment or refund](https://myntos.no/llms/help/vat/record-the-vat-payment-or-refund.md).
+   When it is recorded, the melding says «Betalt …, bilag …» and the termin
+   is marked «Betalt» in the table.
 
 ## If something stops them
 
@@ -45,11 +52,12 @@ account, with which KID and by when.
 | No «Hent kvittering» | Their role is «Leser», or everything has been fetched already | Ask a «Medlem» or above, or use the links that are there |
 | «Vi fikk ikke hentet kvitteringen.» or a message from Altinn | Skatteetaten has not produced it yet, or Altinn did not answer | Try again later |
 | No payment line | The payment information has not been fetched yet | Press «Hent kvittering» |
+| «Innloggingen ble avbrutt.» or another line about the login, after ID-porten | The login did not go through | Press «Hent kvittering» again |
 
 ## Good to know
 
-- The line under the payment details says it: «Betalingen føres som «Oppgjør
-  av mva-melding til Skatteetaten».» See
+- Until the payment is in the books, the line under the payment details
+  says: «Betalingen føres som «Oppgjør av mva-melding til Skatteetaten».» See
   [Record the VAT payment or refund](https://myntos.no/llms/help/vat/record-the-vat-payment-or-refund.md).
 - The receipt is evidence that the melding was filed. Keep it with the books;
   Myntos already does.

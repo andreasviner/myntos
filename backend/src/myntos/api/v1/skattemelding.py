@@ -655,14 +655,16 @@ async def validate_year(
             today=today,
         )
     except (skattemelding_integration.SkatteetatenError, envelope.EnvelopeError) as error:
-        logger.warning("skattemelding fetch failed for company %s: %s", company.id, error)
+        # At ERROR, as every failure on the way to Skatteetaten in this file,
+        # so the operator's page and mail have it (docs/operator.md).
+        logger.error("skattemelding fetch failed for company %s: %s", company.id, error)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Skatteetaten svarte ikke med skattemeldingen for året. Prøv igjen om litt.",
         ) from error
     partsnummer = fetched.partsnummer
     if partsnummer is None or fetched.personal:
-        logger.warning(
+        logger.error(
             "company %s: Skatteetaten served %s without a partsnummer", company.id, fetched.type
         )
         raise HTTPException(
@@ -703,7 +705,7 @@ async def validate_year(
         )
         result = envelope.parse_validation(answer.content)
     except (skattemelding_integration.SkatteetatenError, envelope.EnvelopeError) as error:
-        logger.warning("skattemelding validation failed for company %s: %s", company.id, error)
+        logger.error("skattemelding validation failed for company %s: %s", company.id, error)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Skatteetatens kontroll av skattemeldingen svarte ikke. Prøv igjen om litt.",
@@ -793,13 +795,22 @@ def _failed(filing: SkattemeldingFiling, message: str) -> JSONResponse:
     """A 502 that keeps the row: see the module docstring."""
     filing.status = SkattemeldingStatus.FEILET.value
     filing.error = message[:1000]
+    # Without an instance nothing can have been sent, since sending is two more
+    # calls on it, and there is nothing in Altinn to look for; with one, the
+    # company's inbox is where it would be. A bare «sjekk Altinn» left a person
+    # not knowing where to look (2026-11-02).
+    detail = (
+        "Ingenting ble sendt: Altinn fikk ikke opprettet innsendingen. "
+        "Kontroller skattemeldingen på nytt og send igjen."
+        if filing.altinn_instance_id is None
+        else "Innsendingen stoppet underveis. Ingenting er bekreftet sendt. "
+        "Se i innboksen til selskapet på altinn.no før du prøver igjen, "
+        "og kontroller skattemeldingen på nytt."
+    )
     return JSONResponse(
         status_code=status.HTTP_502_BAD_GATEWAY,
         content={
-            "detail": (
-                "Innsendingen stoppet underveis. Ingenting er bekreftet sendt. "
-                "Sjekk Altinn før du prøver igjen, og kontroller skattemeldingen på nytt."
-            ),
+            "detail": detail,
             "code": "submission_failed",
             "filing": _filing_response(filing).model_dump(mode="json"),
         },
@@ -899,7 +910,7 @@ async def submit_filing(
             skal_bekreftes_av_revisor=filing.has_auditor,
         )
     except AltinnInstanceError as error:
-        logger.warning("skattemelding instance failed for company %s: %s", company.id, error)
+        logger.error("skattemelding instance failed for company %s: %s", company.id, error)
         return _failed(filing, f"opprettelse av instans: {error}")
     filing.altinn_instance_id = instance.ref.path
     try:
@@ -913,7 +924,7 @@ async def submit_filing(
         else:
             await client.submit(instance.ref, id_porten_altinn_token=altinn_token)
     except AltinnInstanceError as error:
-        logger.warning("skattemelding submission failed for company %s: %s", company.id, error)
+        logger.error("skattemelding submission failed for company %s: %s", company.id, error)
         return _failed(filing, str(error))
 
     filing.status = (

@@ -20,12 +20,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from myntos.core.clock import utc_now
+from myntos.domain.faktura.payments import today_in_norway
 from myntos.domain.identity import closure
 from myntos.domain.ledger import service as ledger_service
 from myntos.storage.local import LocalDocumentStorage
 from tests.conftest import PASSWORD, agent_header, join_company, register, write
 from tests.test_cashflow_api import PDF_BYTES, create_company, record, upload
-from tests.test_faktura_api import create_draft, issue, make_company
+from tests.test_faktura_api import DUE, create_draft, issue, make_company
 
 KARI = "kari@example.no"
 OLA = "ola@example.no"
@@ -498,9 +499,12 @@ def test_the_purge_deletes_the_books_and_their_files_the_day_after(
 ) -> None:
     session = register(client, KARI, full_name="Kari Nordmann")
     company = make_company(client, session["memberships"][0]["organization_id"])
-    # An invoice and its kreditnota, a payment with a receipt: every RESTRICT
-    # inside the books (an invoice's voucher, a kreditnota's invoice, a line's
-    # account and party) has to be undone in the right order.
+    # An invoice and its kreditnota, an invoice the customer paid, a payment
+    # with a receipt: every RESTRICT inside the books (an invoice's voucher, a
+    # kreditnota's invoice, a payment's invoice, a line's account and party)
+    # has to be undone in the right order. The paid invoice is the one that
+    # cannot simply be ordered: it points at its voucher, and its payment's
+    # 1500 line points back at it.
     invoice = issue(client, company["id"], create_draft(client, company["id"])["id"]).json()
     credit = write(
         client,
@@ -509,6 +513,14 @@ def test_the_purge_deletes_the_books_and_their_files_the_day_after(
         json={},
     )
     assert credit.status_code == 201, credit.text
+    paid = issue(client, company["id"], create_draft(client, company["id"])["id"]).json()
+    payment = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company['id']}/faktura/{paid['id']}/innbetalinger",
+        json={"paid_on": min(DUE, today_in_norway()).isoformat(), "amount": paid["gross_total"]},
+    )
+    assert payment.status_code == 201, payment.text
     entry = record(client, company["id"], type_code="varekjop", gross_amount="100.00").json()
     assert (
         upload(client, company["id"], entry["id"], PDF_BYTES, "kvittering.pdf").status_code == 201

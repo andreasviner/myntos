@@ -22,12 +22,14 @@ what it does.
 > and export, and an aksjeselskap's skattemelding with næringsspesifikasjon
 > work end to end. The skattemelding has been filed through Altinn in
 > Skatteetaten's test environment (2026-10-22) and is switched on in
-> production. The MVA-melding is checked by Skatteetaten's validation and can
-> be uploaded as XML in Skatteetaten's portal; filing it directly from Myntos
-> is built but not yet proven. Not built: payroll and the a-melding, the
-> årsregnskap to Regnskapsregisteret, the aksjonærregisteroppgave, an
-> enkeltpersonforetak's næringsspesifikasjon, recording a customer's payment
-> against an invoice, and sending EHF over Peppol. See
+> production. The MVA-melding is checked by Skatteetaten's validation and
+> filed through Altinn from Myntos, the first from production on 2026-11-02.
+> Sending an issued invoice as EHF over Peppol, through Recommand's access
+> point, is switched on in production and not yet proven against a real
+> recipient. Not built: payroll and the a-melding, the årsregnskap to
+> Regnskapsregisteret, the aksjonærregisteroppgave, an enkeltpersonforetak's
+> næringsspesifikasjon, recording a customer's payment against an invoice,
+> receiving EHF over Peppol, and a direct bank connection. See
 > [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Features
@@ -37,7 +39,7 @@ what it does.
 | Accounts and access | Email and password, or a federated provider: Google, Microsoft, and BankID through a broker (built, not yet switched on; an account that signs in with BankID signs in with nothing else, as BankID's terms require) ([docs/ARCHITECTURE.md § Federated providers](docs/ARCHITECTURE.md#federated-providers)); the address is confirmed by mail, a forgotten password is reset by mail, and `/konto/` lists where you are signed in and deletes the account while keeping the books ([docs/gdpr.md](docs/gdpr.md)). One account keeps books for as many companies as it likes, switched from any page, so a regnskapsfører holds one company per client. **Access is per company**: a colleague is invited to one set of books with a role, sees nothing of the account's other clients, and a subscription attaches to the books rather than to a person | Working |
 | Cash-flow register | Money in and out with a category that decides account and VAT code, gross-to-net split, immediate posting, corrections by reversal | Working |
 | Fakturering | Salgsdokument checked against bokføringsforskriften § 5-1 before it is issued, with each finding naming its paragraph; gapless machine numbering (a draft has no number, so discarding one leaves no hole); posted and archived on issue; corrected only by kreditnota | Working |
-| E-faktura (EHF / Peppol BIS Billing 3.0) | Generated and frozen at issue, ahead of the 2027-01-01 requirement in lov 19. juni 2026 nr. 39. **Transmission is not built** — that needs a Peppol access point; see [docs/integrations/efaktura.md](docs/integrations/efaktura.md) | Partly |
+| E-faktura (EHF / Peppol BIS Billing 3.0) | Generated and frozen at issue, ahead of the 2027-01-01 requirement in lov 19. juni 2026 nr. 39, and sent over Peppol through Recommand's access point in the same press that issues it, once the company is registered for e-invoicing; a credit note follows its invoice. Send only: **receiving is not built**. See [docs/integrations/efaktura.md](docs/integrations/efaktura.md) and [docs/integrations/peppol.md](docs/integrations/peppol.md) | Working (sending) |
 | Double-entry ledger (hovedbok) | SAF-T-aligned data model from day one | Working |
 | Bilagsføring with document archive | PDFs and photos (PNG, JPEG, WebP, GIF and HEIC) attached to a posted voucher; append-only, validated by magic number, digest stored, original kept byte for byte; a photo's thumbnail is made from a copy stripped of EXIF and GPS | Working |
 | Faktura read into the entry form | Upload the bilag first, a PDF or a photo, or several files for one bilag: date, amount, VAT, invoice number and counterparty are read out of the text layer, and photos and screenshots are transcribed by Løynd; the category is chosen from a numbered menu by a small model hosted in Norway ([Løynd](https://loynd.no)), optional and off without a key. Nothing posts until the user confirms — see [/ki](https://myntos.no/ki/) | Working |
@@ -47,7 +49,7 @@ what it does.
 | Opening balance and årsavslutning | `/inngaende-balanse/` brings books from another system in as one voucher (typed or a saldobalanse CSV, open items per party); `/arsavslutning/` closes a year for an AS or ENK, with tax and disposition, and reopens it only with a logged reason | Working |
 | Kontoplan | `/kontoplan/`: add, rename, deactivate and regroup accounts per year, and the VAT registration with the date it took effect, read on each entry's own date | Working |
 | Document storage | Local filesystem for development, Cloudflare R2 (`jurisdiction=eu`) for production | Working |
-| MVA-håndtering | VAT calculation on the standard SAF-T mva codes, the MVA-melding per period at `/mva/`, uttak, tap på krav, justering and tilbakeføring at `/mva-justeringer/`, and the melding as XML for upload by hand. Skatteetaten's validation answered it in TT02 on 2026-10-10; filing through Altinn is built and not yet proven. See [docs/integrations/mva.md](docs/integrations/mva.md) | Working |
+| MVA-håndtering | VAT calculation on the standard SAF-T mva codes, the MVA-melding per period at `/mva/`, uttak, tap på krav, justering and tilbakeføring at `/mva-justeringer/`, filing through Altinn on the person's ID-porten login, and the melding as XML for upload by hand. Skatteetaten's validation answered it in TT02 on 2026-10-10, and the first melding was filed from production on 2026-11-02. See [docs/integrations/mva.md](docs/integrations/mva.md) | Working |
 | SAF-T Financial export | Required by law (bokføringsforskriften) for electronic bookkeeping. v1.30 and v1.40 at `/saft/`, behind a cross-reference check of our own. See [docs/integrations/saf-t.md](docs/integrations/saf-t.md) | Working |
 | Skattemelding + næringsspesifikasjon | For an aksjeselskap: built from a closed year at `/skattemelding/`, checked by Skatteetaten, filed through Altinn on the person's ID-porten login, and the answer kept with the year; a dissolved company's last year as a forhåndsfastsetting. Filed end to end in TT02. An enkeltpersonforetak's is not built. See [docs/integrations/skatteetaten.md](docs/integrations/skatteetaten.md) | Working (AS) |
 | Årsregnskap to Regnskapsregisteret | Machine filing via Brønnøysundregistrene's Altinn 3 apps (system fills, user signs with ID-porten) | Planned |

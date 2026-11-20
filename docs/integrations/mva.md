@@ -19,9 +19,22 @@ them. Root element `mvaMeldingDto`; categories (`meldingskategori`):
 
 Each line: `mvaKode`, optional `spesifikasjon`, optional
 `mvaKodeRegnskapsystem` (your internal code; one "s", as the XSD spells it),
-`grunnlag`, `sats`, `merverdiavgift`, optional `merknad`. Amounts are decimals
-(øre allowed): **don't round**; validation compares `grunnlag × sats` vs
-`merverdiavgift` with tolerance rules. `sats` is a *string* from
+`grunnlag`, `sats`, `merverdiavgift`, optional `merknad`. **Amounts are whole
+kroner.** The XSD types them as decimals, but forretningsregel R082 («Innsendte
+beløp skal ikke inneholde desimaler», added 2021-12) rejects any øre in
+`grunnlag`, `merverdiavgift` or `fastsattMerverdiavgift` as `ugyldig`, which
+blocks the filing. R018 wants `fastsattMerverdiavgift` to equal the sum of the
+lines, and R019 compares `grunnlag × sats` with `merverdiavgift`; the FAQ gives
+the tolerance as ±1 kr per line, never less than ±10 kr, which is there for
+exactly this rounding. Myntos rounds each line to the nearest krone (half away
+from zero; Fiken cuts the øre off, either passes) and sums the rounded lines
+for `fastsattMerverdiavgift`, so R018 holds exactly.
+
+This file said «øre allowed: don't round» until 2026-11-02, when the first real
+check in production came back «Kode 1: Innsendte beløp kan ikke inneholde
+desimaler» on 9 717,96 kr. TT02 had passed because the test meldinger had round
+amounts and were written `100.00`, which has no øre to object to. `sats` is a
+*string* from
 `kodelister/sats.xml` and is written with a comma: `25`, `15`, `12`, `11,11`.
 
 `spesifikasjon` values, spelled exactly as `kodelister/mvaSpesifikasjon.xml`
@@ -209,6 +222,19 @@ UI requirement: the user must see the full aggregated melding (all lines +
   The sums include earlier settlements, so a correction moves only the
   difference. The year summary leaves the `MVA` journal out, so a settled
   period still shows the VAT it had.
+- **Øre go to 7740.** 2700 and 2710 are moved as booked, in øre, so they end
+  at zero; 2740 is credited what the melding reports, in whole kroner, so it
+  matches Skatteetaten's assessment and the payment clears it exactly. The
+  difference goes to 7740 Øreavrunding (NS 4102, created on first use for
+  companies seeded before it was in the chart), as Tripletex and Fiken do. A
+  correction posts only the change in the rounding. The page's reconciliation
+  and every comparison with a term filed elsewhere use the booked figures, in
+  øre, because the other program rounded by its own rule.
+- **Øre alone do not make a melding stale.** The filing's hash is over the
+  lines as reported, so a change after filing that does not move any line's
+  whole krone does not show as «endret siden innsending»; its øre stay on 2700
+  or 2710 until the next correction of that term moves them. Deliberate:
+  Skatteetaten would not see that correction either.
 - **Receipts** are stored through `myntos.storage` and listed in
   `mva_filing_document`; the KID, amount, due date and account are read out of
   `betalingsinformasjon` onto the filing.
@@ -492,6 +518,51 @@ alminnelig filing duty. Ask Skatteetaten's SBS support which test
 organisations those are, or to register one, rather than trying more Tenor
 entities at random. The answers are saved under
 `myntos-tt02/mva-validation-2026-10-10*`.
+
+**2026-11-02: the first melding filed from production.** With the amounts in
+whole kroner (above) the melding validated, and the first `POST /instances`
+answered 500 («Instantiation of appId skd/mva-melding-innsending-v1 failed
+for party …»). A 500 there is the app failing after the party lookup and the
+authorization, which answer 404 and 403. The same melding, checked again and
+sent the same evening, went through: «Sendt og mottatt», receipt and payment
+information stored. So it was transient on Altinn's side, and a ten-digit
+party id (a company registered after Altinn 2 shut down) is not a problem,
+which this file guessed at in between. What that day changed in Myntos:
+
+- **A failure is not silent any more.** Every failed check or submission is
+  logged at ERROR, which puts it on `/drift/` and, with
+  `SERVER_ERROR_NOTIFY_TO` set, in a mail to the operator
+  (docs/operator.md). The first failure was seen by nobody but the person.
+- **The failure says where to look.** Without an instance nothing can have
+  been sent (sending is two more calls on it), and the text says so: check
+  again and send. With one, it names the company's inbox on altinn.no rather
+  than «sjekk i Altinn», which the person met without knowing where.
+- **A filed term is not filed again with the same figures.** The page went on
+  offering «Kontroller hos Skatteetaten» and «Send inn» for a term sent and
+  received, and the owner checked it again without meaning to file twice.
+  A second melding replaces the first, so it is only for a correction: the
+  check and the send answer 409 `nothing_new_to_file` when the books say what
+  the latest filed melding says, and the page shows a line instead of the
+  buttons.
+- **One press through ID-porten.** «Hent kvittering» with an expired login
+  answered with an error, then a login button, then the press again. A press
+  that needs the login (check, send, receipt) now leaves a note in the tab's
+  `sessionStorage` (frontend/src/lib/errand.ts), goes to ID-porten, and is
+  carried out when the browser is back, within the ten minutes a login
+  attempt lives. Sending is resumed only for the same filing and amount the
+  box was ticked for; the backend re-checks the books either way.
+- **The payment is recognised, and booked from a button.** `service.payments`
+  finds the voucher that paid a term's latest filed melding by its amount on
+  2740 after the term ended, following the term's filed meldinger in order,
+  so that after a correction only the difference is owed. The answer is
+  `unpaid` and `paid_by` on the filing and on the overview row. «Før
+  betalingen» on `/mva/` opens `/kontantstrom/?mva=<filing>` with the
+  category, the amount still unpaid, Skatteetaten, the KID and the receipt
+  PDF filled in; the person sets the date. Nothing links a payment to the
+  melding but the amount, so a payment in two parts that matches neither
+  step is not recognised, and the button stays.
+- **Betalingsinformasjon is not a link** when Myntos read it into the payment
+  line: it is an XML file that says what the line says.
 
 The scopes and both Digdir clients are in place (ROADMAP, phase 0b). What
 remains is a TT02 test organisation the MVA register holds (above) and the

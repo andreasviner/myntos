@@ -14,6 +14,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 */
 const RECENT_SKELETON_ROWS = 6;
 const TYPE_SKELETON_ROWS = 4;
+/* «Neste frister» shows at most this many (DEADLINE_LIMIT below), and almost
+   every company has that many in the coming year. */
+const DEADLINE_SKELETON_ROWS = 3;
 
 /* Widths that read as amounts and dates rather than as identical grey bars. */
 const RECENT_WIDTHS = ['6.5rem', '11rem', '7rem', '5.5rem'];
@@ -122,7 +125,7 @@ const questions = [
   },
   {
     q: 'Passer Myntos for et aksjeselskap?',
-    a: 'Ja, det er først og fremst laget for små aksjeselskaper. Du fører bilag, sender faktura med EHF, avslutter året og leverer både mva-melding og skattemelding for AS gratis, rett fra regnskapet. Et enkeltpersonforetak kan også føre regnskapet her, men næringsspesifikasjonen for enkeltpersonforetak lages ikke i Myntos ennå.',
+    a: 'Ja, det er først og fremst laget for små aksjeselskaper. Du fører bilag, sender faktura med EHF, avslutter året og leverer både mva-melding og skattemelding for AS gratis, rett fra regnskapet. Årsregnskapet til Regnskapsregisteret og aksjonærregisteroppgaven sendes ikke herfra ennå, og Myntos kjører ikke lønn. Et enkeltpersonforetak kan også føre regnskapet her, men næringsspesifikasjonen for enkeltpersonforetak lages ikke i Myntos ennå.',
     href: '/funksjoner/',
     link: 'Se alle funksjonene',
   },
@@ -342,6 +345,13 @@ const questions = [
             hentet fra et annet program, står på en egen side, og veien dit
             står her fordi det er her man ser at «i år» ikke er hele bildet. */}
         <a class="btn btn-ghost" href="/regnskap/">Regnskapet år for år</a>
+        {/* Inntekt har sin egen knapp fordi «Registrer betaling» leses som
+            penger ut, og den som har solgt noe med Vipps eller kontant lette
+            etter et sted å føre det inn. Begge går til samme skjema. Denne
+            sier også hvilken vei pengene gikk: personen svarte ved å velge
+            knappen, så skjemaet tar det som deres svar og ikke som en
+            standard, og leser bilaget som penger inn. */}
+        <a class="btn btn-primary" href="/kontantstrom/?retning=inn">Registrer inntekt</a>
         <a class="btn btn-primary" href="/kontantstrom/">Registrer betaling</a>
       </div>
     </header>
@@ -466,6 +476,29 @@ const questions = [
         </div>
       </div>
 
+      {/* Neste frister: det som er over fristen først, så det som gjenstår.
+          Hele listen står på /frister/, som nås herfra og ikke fra menyen av
+          samme grunn som mva-meldingen. Kortet står over betalingene fordi en
+          frist som er passert, koster penger; det gjør ikke en betaling man
+          ikke har sett. */}
+      <h2>Neste frister</h2>
+      <div class="card">
+        <ul class="deadlines" id="deadlines">
+          {
+            Array.from({ length: DEADLINE_SKELETON_ROWS }, () => (
+              <li data-skeleton-row>
+                <span class="skeleton" style="--skeleton-width: 6rem" />
+                <span class="skeleton" style="--skeleton-width: 16rem" />
+              </li>
+            ))
+          }
+        </ul>
+        <p class="empty" id="deadlines-empty" hidden>
+          Ingen frister Myntos kjenner til det neste året.
+        </p>
+        <p class="card-hint see-all"><a href="/frister/" id="deadlines-all">Alle frister →</a></p>
+      </div>
+
       <h2>Siste bevegelser</h2>
       <div class="card">
         <div class="table-scroll">
@@ -569,6 +602,9 @@ const questions = [
             hjemme her ved årets tall, ikke i menyen. */}
         Skattemeldingen for et avsluttet år kontrollerer og sender du under
         <a href="/skattemelding/">Skattemelding</a>.
+        {/* Kortet over viser de tre neste; hele året står på en egen side. */}
+        Alle fristene hos Skatteetaten og Brønnøysund det neste året ser du under
+        <a href="/frister/">Frister</a>.
       </p>
     </div>
   </template>
@@ -875,6 +911,39 @@ const questions = [
     font-size: 0.85rem;
     color: var(--muted);
   }
+  .deadlines {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  /* Radene lages av skriptet; :global() for å nå dem. */
+  .deadlines :global(li) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.2rem 1rem;
+    padding: 0.45rem 0;
+  }
+  .deadlines :global(li + li) {
+    border-top: 1px solid var(--border);
+  }
+  .deadlines :global(.deadline-when) {
+    min-width: 7.5rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .deadlines :global(.deadline-label) {
+    flex: 1 1 14rem;
+  }
+  .deadlines :global(.deadline-distance) {
+    color: var(--muted);
+    font-size: 0.85rem;
+    white-space: nowrap;
+  }
+  .deadlines :global(.badge[data-tone='over']) {
+    background: var(--danger-bg);
+    color: var(--negative);
+  }
   .see-all {
     display: flex;
     flex-wrap: wrap;
@@ -919,11 +988,13 @@ const questions = [
 <script>
   import {
     ApiError,
+    getFrister,
     getSummary,
     listCashFlow,
     listSaftImports,
     type CashFlowEntry,
     type Company,
+    type Frister,
     type Session,
     type Summary,
   } from '../lib/api';
@@ -932,11 +1003,13 @@ const questions = [
   import { foldCorrections, foldNote } from '../lib/corrections';
   import { el, setStatus, show } from '../lib/dom';
   import { isoDate, kroner, orgnummer } from '../lib/format';
+  import { distance, nextUp } from '../lib/frister';
   import { booksBehind, type BooksBehind } from '../lib/regnskap';
   import { currentImport, isWorking } from '../lib/saftimport';
   import { can, canInCompany, loadSession, setActiveCompany } from '../lib/session';
 
   const RECENT_LIMIT = 6;
+  const DEADLINE_LIMIT = 3;
 
   /*
     The placeholder shapes the *markup* ships with are still there, above, and
@@ -1125,6 +1198,36 @@ const questions = [
     show(el('#recent-empty'), rows.length === 0);
   }
 
+  function renderDeadlines(found: Frister): void {
+    const rows = nextUp(found.frister, DEADLINE_LIMIT).map((frist) => {
+      const item = document.createElement('li');
+      const when = document.createElement('span');
+      when.className = 'deadline-when';
+      when.textContent = isoDate(frist.deadline);
+      const label = document.createElement('span');
+      label.className = 'deadline-label';
+      label.textContent = frist.label;
+      const after = document.createElement('span');
+      if (frist.is_overdue) {
+        after.className = 'badge';
+        after.dataset.tone = 'over';
+        after.textContent = 'Over fristen';
+      } else {
+        after.className = 'deadline-distance';
+        after.textContent = distance(frist.deadline, found.today);
+      }
+      item.append(when, label, after);
+      return item;
+    });
+    el('#deadlines').replaceChildren(...rows);
+    show(el('#deadlines-empty'), rows.length === 0);
+    // Flere over fristen enn kortet har plass til: lenken sier hvor mange, så de
+    // som ikke vises, ikke er glemt.
+    const missed = found.frister.filter((frist) => frist.is_overdue).length;
+    el('#deadlines-all').textContent =
+      missed > DEADLINE_LIMIT ? `Alle frister, ${missed} over fristen →` : 'Alle frister →';
+  }
+
   async function showCompany(company: Company): Promise<void> {
     // The heading, the header at the top of every page, and the id the two
     // requests below are built from: one call, one record. This is what makes
@@ -1140,6 +1243,15 @@ const questions = [
     // Together, not one after the other. Neither answer depends on the other,
     // and asked in single file the second request could not even leave the
     // browser until the first had crossed the country and come back.
+    // Fristene ved siden av, ikke foran: kortet er ikke det oversikten venter
+    // på, og et svar som ikke kommer, skal ikke stå i veien for tallene.
+    void getFrister(company.id)
+      .then(renderDeadlines)
+      .catch(() => {
+        el('#deadlines').replaceChildren();
+        el('#deadlines-empty').textContent = 'Fristene kunne ikke hentes nå.';
+        show(el('#deadlines-empty'), true);
+      });
     const [summary, recent] = await Promise.all([
       getSummary(company.id),
       listCashFlow(company.id, RECENT_LIMIT),
@@ -1210,7 +1322,7 @@ const questions = [
     for (const note of overview.querySelectorAll<HTMLElement>('.stat-note')) {
       if (note.querySelector('.skeleton') !== null) note.textContent = '';
     }
-    for (const row of overview.querySelectorAll('tr[data-skeleton-row]')) row.remove();
+    for (const row of overview.querySelectorAll('[data-skeleton-row]')) row.remove();
   }
 
   void loadSession().then(async (session) => {

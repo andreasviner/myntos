@@ -34,8 +34,8 @@ The role «Medlem» or above, to correct entries and check again.
    enter it again); an invoice with a credit note; a VAT adjustment by
    reversing it.
 4. Back on the MVA page, the lines and totals have changed. Press
-   «Kontroller hos Skatteetaten» again (log in with ID-porten again if the
-   button «Logg inn med ID-porten» is back).
+   «Kontroller hos Skatteetaten» again. If the ID-porten login has run out,
+   the press goes through ID-porten and the check runs when they are back.
 5. When the box says the melding can be sent, send it:
    [Send the MVA-melding](https://myntos.no/llms/help/vat/send-the-vat-return.md).
 

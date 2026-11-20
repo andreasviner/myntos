@@ -35,7 +35,9 @@ avstemmingen» on the bank page does not undo it; that only removes the link.
    entry in its place.
 3. Only if the payment should not be in the books at all, press «Reverser»
    instead and confirm. A movement that is on the bank statement nearly always
-   belongs in the books, so this is rarely right for a bank line.
+   belongs in the books, so this is rarely right for a bank line. A voucher
+   of type «Innbetaling på faktura» has no «Rediger»: it is reversed, which
+   makes the invoice owed again, and the right payment registered anew.
 4. Go back to «Bankavstemming» (`https://myntos.no/bank/`), set «Vis» to
    «Avstemt», and find the line. It now says «Bilaget er reversert, så
    bevegelsen er ikke forklart lenger.»

@@ -1,6 +1,6 @@
 ---
 title: Find the pages that are not in the menu
-description: Where a person finds the Myntos pages that are not in the top menu (which has only Oversikt, Betaling, Faktura and KI): the VAT return, SAF-T, bank reconciliation, the accounts for every year, opening balance, year-end, customers and suppliers, the chart of accounts, company settings and their own account. Use when someone asks where the MVA-melding, SAF-T, bank, kontoplan, parter, årsavslutning or settings are in Myntos.
+description: Where a person finds the Myntos pages that are not in the top menu (which has only Oversikt, Betaling, Faktura and KI): the VAT return, the deadlines, SAF-T, bank reconciliation, the accounts for every year, opening balance, year-end, customers and suppliers, the chart of accounts, company settings and their own account. Use when someone asks where the MVA-melding, the frister, SAF-T, bank, kontoplan, parter, årsavslutning or settings are in Myntos.
 pages: /
 skill: myntos-selskap
 ---
@@ -33,6 +33,7 @@ Find the page in the table and follow the path.
 | --- | --- | --- |
 | The VAT return («Mva-melding») | «Oversikt» → «Mva-meldingen →» on the card «Merverdiavgift», or «Mva-melding» in the note at the bottom | `https://myntos.no/mva/` |
 | VAT adjustments | From the VAT return page | `https://myntos.no/mva-justeringer/` |
+| Every deadline of the coming year («Frister») | «Oversikt» → «Alle frister →» under «Neste frister», or «Frister» in the note at the bottom | `https://myntos.no/frister/` |
 | SAF-T, the file Skatteetaten can ask for | «Oversikt» → «SAF-T» in the note at the bottom | `https://myntos.no/saft/` |
 | Bank reconciliation | «Oversikt» → «Bankavstemming» in the note at the bottom | `https://myntos.no/bank/` |
 | The result and balance sheet for every year («Regnskap») | «Oversikt» → «Regnskapet år for år» at the top right, or in the note at the bottom | `https://myntos.no/regnskap/` |

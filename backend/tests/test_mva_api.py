@@ -15,6 +15,7 @@ exactly the period's VAT, and that a correction moves only the difference.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -74,6 +75,8 @@ class Skatteetaten:
     process_calls: int = 0
     # Make the n-th process/next answer 409, as the app does when it refuses.
     refuse_process_at: int | None = None
+    # Make creating the instance answer 500, as production did on 2026-11-02.
+    refuse_instance: bool = False
     # Feedback documents appear once the second process/next has run.
     feedback: bool = True
 
@@ -125,6 +128,10 @@ class Skatteetaten:
             self.validated.append(request.content)
             return httpx.Response(200, content=self.validation_answer)
         if request.method == "POST" and path.endswith("/instances"):
+            if self.refuse_instance:
+                return httpx.Response(
+                    500, text='"Instantiation of appId skd/mva-melding-innsending-v1 failed"'
+                )
             return httpx.Response(201, json=self.instance())
         if request.method == "PUT" and path.endswith("/data/envelope"):
             self.envelope = request.content
@@ -535,6 +542,7 @@ def test_a_submission_that_stops_halfway_is_recorded_not_rolled_back(
     failed = send(client, company["id"], filing)
     assert failed.status_code == 502
     assert failed.json()["code"] == "submission_failed"
+    assert "innboksen til selskapet på altinn.no" in failed.json()["detail"]
 
     stored = client.get(f"/api/v1/companies/{company['id']}/mva/innsendinger/{filing['id']}")
     body = stored.json()
@@ -544,6 +552,35 @@ def test_a_submission_that_stops_halfway_is_recorded_not_rolled_back(
     assert "409" in body["error"]
     # Nothing settled: the melding was not filed.
     assert settlement_lines(client, company["id"]) == []
+
+
+def test_an_instance_altinn_will_not_create_reaches_the_operators_page(
+    client: TestClient, skatteetaten: Skatteetaten, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Logged at ERROR, which is what the error log and the operator's mail catch.
+
+    It was a warning until 2026-11-02, and the operator learnt of the first one
+    from the person who had pressed «Send inn».
+    """
+    skatteetaten.refuse_instance = True
+    company = books(client)
+    book(client, company["id"], "salg_hoy_sats", "12500.00")
+    filing = check(client, company["id"]).json()
+
+    with caplog.at_level(logging.ERROR, logger="myntos"):
+        failed = send(client, company["id"], filing)
+
+    assert failed.status_code == 502
+    # No instance, so nothing can have been sent and nothing is in Altinn to look for.
+    assert failed.json()["detail"].startswith("Ingenting ble sendt")
+    stored = client.get(f"/api/v1/companies/{company['id']}/mva/innsendinger/{filing['id']}")
+    assert stored.json()["status"] == "feilet"
+    assert stored.json()["altinn_instance_id"] is None
+    assert [
+        record.levelno
+        for record in caplog.records
+        if record.msg == "MVA instance creation failed for company %s: %s"
+    ] == [logging.ERROR]
 
 
 def test_a_filed_melding_stays_filed_when_the_settlement_cannot_be_posted(
@@ -623,6 +660,160 @@ def test_a_correction_settles_only_the_difference(
     lines = settlement_lines(client, company["id"])
     # The first settlement, then one moving the deduction that was taken back.
     assert lines[3:] == [("2710", "250.00", "0.00"), ("2740", "0.00", "250.00")]
+
+
+def test_a_filed_term_is_not_filed_again_with_the_same_figures(
+    client: TestClient, skatteetaten: Skatteetaten
+) -> None:
+    """A second melding replaces the first, so the same figures again correct nothing."""
+    company = books(client)
+    book(client, company["id"], "salg_hoy_sats", "12500.00")
+    first = check(client, company["id"]).json()
+    # Checked twice before sending, as in two tabs: both are «validert».
+    second = check(client, company["id"]).json()
+    assert send(client, company["id"], first).status_code == 200
+    calls = (len(skatteetaten.validated), skatteetaten.process_calls)
+
+    again = check(client, company["id"])
+    assert again.status_code == 409
+    assert again.json()["code"] == "nothing_new_to_file"
+    late = send(client, company["id"], second)
+    assert late.status_code == 409
+    assert late.json()["code"] == "nothing_new_to_file"
+    # Neither reached Skatteetaten.
+    assert (len(skatteetaten.validated), skatteetaten.process_calls) == calls
+
+    # A change in the books is what a correction is for, and that is checked.
+    book(client, company["id"], "varekjop", "1250.00")
+    assert check(client, company["id"]).status_code == 200
+
+
+def test_the_payment_of_a_filed_term_is_recognised_in_the_books(
+    client: TestClient, skatteetaten: Skatteetaten
+) -> None:
+    company = books(client)
+    book(client, company["id"], "salg_hoy_sats", "12500.00")
+    book(client, company["id"], "varekjop", "1250.00")
+    filed = send(client, company["id"], check(client, company["id"]).json()).json()
+    assert filed["fastsatt_merverdiavgift"] == "2250.00"
+
+    def row() -> dict[str, Any]:
+        overview = client.get(f"/api/v1/companies/{company['id']}/mva", params={"aar": LAST_YEAR})
+        first: dict[str, Any] = overview.json()["periods"][0]
+        return first
+
+    assert row()["filed_id"] == filed["id"]
+    assert row()["paid_by"] is None
+    assert row()["unpaid"] == "2250.00"
+    # Another figure, and a payment dated inside the term, pay something else.
+    book(client, company["id"], "mva_oppgjor", "2000.00", on=date(LAST_YEAR, 3, 20))
+    book(client, company["id"], "mva_oppgjor", "2250.00", on=date(LAST_YEAR, 2, 20))
+    assert row()["paid_by"] is None
+
+    paid = book(client, company["id"], "mva_oppgjor", "2250.00", on=date(LAST_YEAR, 3, 25))
+    assert row()["paid_by"]["voucher_no"] == paid["voucher_no"]
+    assert row()["paid_by"]["date"] == f"{LAST_YEAR}-03-25"
+    assert row()["unpaid"] == "0.00"
+    (shown,) = first_period(client, company["id"])["filings"]
+    assert shown["paid_by"]["voucher_id"] == paid["id"]
+    one = client.get(f"/api/v1/companies/{company['id']}/mva/innsendinger/{filed['id']}")
+    assert one.json()["paid_by"]["voucher_id"] == paid["id"]
+
+    # Reversed, it paid nothing.
+    reversed_ = write(
+        client, "POST", f"/api/v1/companies/{company['id']}/cashflow/{paid['id']}/reversal"
+    )
+    assert reversed_.status_code in (200, 201), reversed_.text
+    assert row()["paid_by"] is None
+    assert row()["unpaid"] == "2250.00"
+
+
+def test_after_a_correction_only_the_difference_is_left_to_pay(
+    client: TestClient, skatteetaten: Skatteetaten
+) -> None:
+    """The first melding's payment still counts once a correction replaces it.
+
+    Matched against the corrected figure alone, it stopped counting, and the
+    page offered the whole corrected amount as a second payment.
+    """
+    company = books(client)
+    book(client, company["id"], "salg_hoy_sats", "12500.00")
+    purchase = book(client, company["id"], "varekjop", "1250.00")
+    first = send(client, company["id"], check(client, company["id"]).json()).json()
+    book(client, company["id"], "mva_oppgjor", "2250.00", on=date(LAST_YEAR, 3, 25))
+
+    reversed_ = write(
+        client, "POST", f"/api/v1/companies/{company['id']}/cashflow/{purchase['id']}/reversal"
+    )
+    assert reversed_.status_code in (200, 201), reversed_.text
+    skatteetaten.process_calls = 0
+    skatteetaten.melding = None
+    second = send(client, company["id"], check(client, company["id"]).json()).json()
+    assert second["fastsatt_merverdiavgift"] == "2500.00"
+
+    def row() -> dict[str, Any]:
+        overview = client.get(f"/api/v1/companies/{company['id']}/mva", params={"aar": LAST_YEAR})
+        first_row: dict[str, Any] = overview.json()["periods"][0]
+        return first_row
+
+    assert row()["filed_id"] == second["id"]
+    assert row()["unpaid"] == "250.00"
+    assert row()["paid_by"] is None
+    # The replaced melding has nothing of its own left to pay.
+    replaced = client.get(f"/api/v1/companies/{company['id']}/mva/innsendinger/{first['id']}")
+    assert replaced.json()["unpaid"] is None
+
+    rest = book(client, company["id"], "mva_oppgjor", "250.00", on=date(LAST_YEAR, 4, 2))
+    assert row()["unpaid"] == "0.00"
+    assert row()["paid_by"]["voucher_id"] == rest["id"]
+    one = client.get(f"/api/v1/companies/{company['id']}/mva/innsendinger/{second['id']}")
+    assert one.json()["unpaid"] == "0.00"
+
+
+def test_the_ore_the_melding_rounds_away_are_settled_on_7740(
+    client: TestClient, skatteetaten: Skatteetaten
+) -> None:
+    """2740 holds what Skatteetaten assessed, in kroner, so the payment clears it.
+
+    2469.13 of output and 246.91 of input are reported as 2469 and -247, which
+    is 2222 to pay; 2700 and 2710 are still emptied to the øre. A correction
+    then settles only the change in the rounding, so that after both 2740 holds
+    what the newest melding reported.
+    """
+    company = books(client)
+    book(client, company["id"], "salg_hoy_sats", "12345.67")
+    purchase = book(client, company["id"], "varekjop", "1234.56")
+    period = first_period(client, company["id"])
+    assert period["fastsatt_merverdiavgift"] == "2222.00"
+    # The reconciliation is against the books, not the rounded melding.
+    assert period["reconciliation"]["difference"] == "0.00"
+
+    first = check(client, company["id"]).json()
+    assert first["fastsatt_merverdiavgift"] == "2222.00"
+    assert b"<fastsattMerverdiavgift>2222</fastsattMerverdiavgift>" in skatteetaten.validated[0]
+    assert send(client, company["id"], first).status_code == 200
+    assert settlement_lines(client, company["id"]) == [
+        ("2700", "2469.13", "0.00"),
+        ("2710", "0.00", "246.91"),
+        ("2740", "0.00", "2222.00"),
+        ("7740", "0.00", "0.22"),
+    ]
+
+    reversed_ = write(
+        client, "POST", f"/api/v1/companies/{company['id']}/cashflow/{purchase['id']}/reversal"
+    )
+    assert reversed_.status_code in (200, 201), reversed_.text
+    skatteetaten.process_calls = 0
+    skatteetaten.melding = None
+    second = check(client, company["id"]).json()
+    assert second["fastsatt_merverdiavgift"] == "2469.00"
+    assert send(client, company["id"], second).status_code == 200
+    # 0.13 is the term's rounding now and 0.22 is on 7740 already.
+    assert settlement_lines(client, company["id"])[4:] == [
+        ("2710", "246.91", "0.00"),
+        ("2740", "0.00", "247.00"),
+        ("7740", "0.09", "0.00"),
+    ]
 
 
 # --- Settings ---------------------------------------------------------------------

@@ -56,6 +56,11 @@ INPUT_VAT_ACCOUNT = "2710"
 # names it SETTLEMENT_ACCOUNT, as do the SAF-T readers). Named here for the
 # overview, which reads what is owed now off the three VAT accounts together.
 VAT_SETTLEMENT_ACCOUNT = "2740"
+# Where a filed term's øre go. The MVA-melding is whole kroner and the books are
+# not, so the settlement puts the difference here and 2740 holds exactly what
+# Skatteetaten assessed (myntos.domain.mva.melding). NS 4102's own number, the
+# one Tripletex and Fiken settle against too.
+ROUNDING_ACCOUNT = "7740"
 
 # SAF-T BalanceAccountStructure: the GL account a party's sub-ledger settles
 # against. Required on every customer and supplier, which is why the two are
@@ -159,6 +164,16 @@ DEPRECIATION_JOURNAL_ID = "AVSKR"
 DEPRECIATION_JOURNAL_DESCRIPTION = "Avskrivninger"
 DEPRECIATION_JOURNAL_TYPE = "avskr"
 DEPRECIATION_VOUCHER_TYPE = "avskrivning"
+
+# A customer paying an issued invoice (myntos.domain.faktura.payments): the bank
+# or cash account debited, 1500 credited, the 1500 line naming the invoice. In
+# the cash journal with every other payment, because it is money that moved and
+# belongs in the year's «inn» and in the bank reconciliation like the rest. Not
+# a register category: the catalogue is what the KI reads a bilag into, and a
+# category for 1500 would let it book a customer's payment without saying which
+# invoice it paid, which is the half of the entry that matters.
+INVOICE_PAYMENT_VOUCHER_TYPE = "innbetaling_faktura"
+INVOICE_PAYMENT_VOUCHER_LABEL = "Innbetaling på faktura"
 
 # VAT code meaning "no VAT treatment" — the default for wages, interest,
 # insurance and everything else outside the VAT system. Excluded from the
@@ -350,6 +365,10 @@ STANDARD_ACCOUNTS: tuple[SeedAccount, ...] = (
         "7320", "Reklame og markedsføring", AccountType.KOSTNAD, "annenDriftskostnad", "7330"
     ),
     SeedAccount("7500", "Forsikringspremie", AccountType.KOSTNAD, "annenDriftskostnad", "7500"),
+    # The MVA settlement's rounding to whole kroner (ROUNDING_ACCOUNT). A
+    # company seeded before it existed gets it from this row the first time a
+    # settlement has øre to put on it.
+    SeedAccount("7740", "Øreavrunding", AccountType.KOSTNAD, "annenDriftskostnad", "7700"),
     SeedAccount("7770", "Bank- og kortgebyr", AccountType.KOSTNAD, "annenDriftskostnad", "7700"),
     SeedAccount("7790", "Annen driftskostnad", AccountType.KOSTNAD, "annenDriftskostnad", "7700"),
     # Where a customer's unpaid invoice goes when it is given up on, and where

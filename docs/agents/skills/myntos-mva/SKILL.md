@@ -58,7 +58,8 @@ defaults to this year). The answer has `vat_registered`, the `settings`
 the year, which every other call takes), `label` («5. termin 2026
 (september-oktober)», say this to the person), `start`, `end`, `deadline`,
 `is_over`, `is_overdue`, `fastsatt_merverdiavgift`, `status`,
-`filed_fastsatt`, `changed_since_filed`, and the «filed from another program»
+`filed_fastsatt`, `changed_since_filed`, `filed_id`, `unpaid` and `paid_by`
+(see «Recording the payment» in step 4), and the «filed from another program»
 fields (`filed_elsewhere`, `filed_elsewhere_amount`, `elsewhere_difference`,
 `elsewhere_proposal`; see «Filed from another program» below). `naeringer`
 lists the company's meldinger; almost every company has one (see «Two
@@ -80,7 +81,10 @@ filed and nothing recorded as filed elsewhere.
 
 `changed_since_filed: true` («Endret etter innsending») means the books for a
 filed termin have changed since. A new melding for that termin is due, and it
-replaces the earlier one at Skatteetaten.
+replaces the earlier one at Skatteetaten. On a filed termin where it is false
+there is nothing to file: the check and the filing are refused with 409
+`nothing_new_to_file`, because a second melding with the same figures would
+replace the first and correct nothing.
 
 If `vat_registered` is false, the company files no MVA-melding at all. Tell
 the person; if that is wrong, an «Administrator» or «Eier» corrects it in
@@ -110,6 +114,12 @@ reverse charge shows on both sides. `output_vat` and `input_vat` are the two
 totals, and `fastsatt_merverdiavgift` is the result. A termin with no lines is
 still filed, with zero: say so, because people assume a quiet period needs no
 melding.
+
+All of these are in whole kroner (`"9718.00"`), because Skatteetaten rejects
+øre in the melding. Each line is rounded to the nearest krone and the total is
+the sum of the rounded lines, so it can differ by a krone or two from the VAT
+accounts. That is expected: the settlement puts the øre on 7740 (step 4), and
+`reconciliation` compares the books in øre, so it is not a reason to stop.
 
 Before you call it ready, check:
 
@@ -173,8 +183,9 @@ mva-meldingen» themselves. Tell the person in one sentence that each waits
 for them under «Godkjenning». When an approved request runs it can still be
 refused, and is then `failed` with the route's answer: 409 `melding_changed`
 (the books moved since the check: check again), 409 `filing_not_submittable`
-(refused in the check, or sent already), 422 `confirmation_required` (the
-amount differs from the check's).
+(refused in the check, or sent already), 409 `nothing_new_to_file` (the
+termin was filed since, with the same figures), 422 `confirmation_required`
+(the amount differs from the check's).
 
 **A key without `post`** asks the person to do it on the page instead:
 `POST /api/v1/companies/{company_id}/godkjenninger/innsending` with
@@ -227,15 +238,26 @@ From the filing (`GET /api/v1/companies/{company_id}/mva/innsendinger/{filing_id
   filed, Myntos posts one voucher (journal `MVA`, dated the last day of the
   termin) that moves the termin's balances on 2700 (output VAT) and 2710
   (input VAT) onto 2740, the VAT settlement account. 2740 then holds what is
-  owed to or by Skatteetaten. A corrected melding moves only the difference.
-  Never post anything to 2700, 2710 or 2740 by hand. If the filing has
+  owed to or by Skatteetaten, in whole kroner as filed, and the øre the
+  melding rounded away go to 7740 Øreavrunding in the same voucher. A
+  corrected melding moves only the difference, rounding included.
+  Never post anything to 2700, 2710, 2740 or 7740 by hand. If the filing has
   `error` while its status is `sendt` or `mottatt`, the melding is filed but
   that voucher was not posted; tell the person.
 - **Recording the payment:** once the person has paid, it is recorded as a
   payment out of the type «Oppgjør av mva-melding til Skatteetaten»
   (`mva_oppgjor`); a refund received is «Utbetaling av mva-melding fra
   Skatteetaten» (`mva_tilgode`). Both go to 2740 and carry no VAT of their
-  own. See myntos-kontantstrom.
+  own. See myntos-kontantstrom. Book `unpaid` from the termin's latest filed
+  melding (on the overview row, or on the filing): what is still to pay
+  (negative: a refund still to come in), dated the day the money moved.
+  After a correction of a melding already paid it is only the difference,
+  not the new `fastsatt_merverdiavgift`. Once a voucher on 2740 after the
+  termin's end settles it, `unpaid` is `"0.00"` and `paid_by` names the
+  voucher (`voucher_id`, `voucher_no`, `date`). Nothing links the two but the
+  amount, so check `unpaid` before booking: a second payment is what you are
+  avoiding. Both are null on a melding not filed, or replaced by a correction.
+  On the page, «Før betalingen» opens «Betaling» with all of this filled in.
 
 ### Two meldinger: a farm with other business beside it
 
@@ -357,6 +379,7 @@ it will do.
 | 409 `filed_lines_would_move` | The change would move VAT into or out of a termin already filed or recorded | Leave the setup; correct a wrongly booked entry with a reversal and a new entry |
 | 409 `filed_elsewhere` | The termin is recorded as filed from another program (also when asking the person to file) | Nothing to file; see «Filed from another program» |
 | 409 `already_filed` | Marking a termin Myntos filed itself, or asking to file one already filed | Read `filings`; for a correction, tell the person |
+| 409 `nothing_new_to_file` | Checking or filing a termin already filed, whose books still say what was filed | Nothing to do. A correction needs a change in the books first |
 | 409 `not_filed_elsewhere` | Taking back something that is not a standing statement | Only `annet_program` filings can be taken back |
 | 409 `not_vat_registered`, `period_not_over` | Marking a termin of a company that files no melding, or one not over | As the blockers in step 2 |
 | 422 `invalid_filing_date` | `filed_on` before the termin ended or in the future | Ask the person for the day it was filed |

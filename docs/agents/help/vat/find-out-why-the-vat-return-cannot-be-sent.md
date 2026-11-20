@@ -35,7 +35,8 @@ lines in red, or the buttons are simply not there. Each cause has its own fix.
 | «Meldingen og mva-kontoene 2700 og 2710 er ikke enige: de skiller seg med …» | Something was booked to a VAT account without a VAT code | Find that entry before sending; it does not stop the button, but the melding would be wrong |
 | «Innsending fra Myntos er ikke satt opp her. …» | This installation cannot file | [File the VAT return by uploading the XML](https://myntos.no/llms/help/vat/file-the-vat-return-by-uploading-the-xml.md) |
 | No buttons, no red lines | Their role is «Leser» | Someone with «Medlem» or above must send it |
-| «Logg inn med ID-porten» instead of «Kontroller hos Skatteetaten» | Not logged in with ID-porten | [Log in with ID-porten to file the VAT return](https://myntos.no/llms/help/vat/log-in-with-id-porten-for-the-vat-return.md) |
+| «Meldingen for terminen er sendt. …» instead of «Kontroller hos Skatteetaten» | The termin is sent, and the books still say the same | Nothing to send: [Correct a VAT return already sent](https://myntos.no/llms/help/vat/correct-a-vat-return-already-sent.md) |
+| Pressing «Kontroller hos Skatteetaten» opens ID-porten | Not logged in with ID-porten | Log in; the check runs when they are back: [Log in with ID-porten to file the VAT return](https://myntos.no/llms/help/vat/log-in-with-id-porten-for-the-vat-return.md) |
 | The box «Send inn» was there and has gone | Something was entered in the termin after the check | Press «Kontroller hos Skatteetaten» again |
 
 ## Good to know

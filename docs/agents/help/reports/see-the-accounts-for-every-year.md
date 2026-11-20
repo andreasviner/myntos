@@ -28,7 +28,7 @@ Anyone with access to the company can see it, whatever their role.
 ## Steps
 
 1. On the overview (`https://myntos.no/`), press «Regnskapet år for år» at the
-   top right, beside «Registrer betaling». It is also linked in the note at the
+   top right, beside «Registrer inntekt» and «Registrer betaling». It is also linked in the note at the
    bottom of the overview, and from the card «Ingenting er ført i … ennå» when
    the current year is empty. The page is `https://myntos.no/regnskap/`.
 2. Each year is a column, newest first. Under each year it says what state the

@@ -29,7 +29,7 @@ const sections = [
     id: 'faktura',
     kicker: 'Salg',
     title: 'Faktura og e-faktura',
-    body: 'Fakturaen kontrolleres mot bokføringsforskriften § 5-1 før den utstedes, og får først da et nummer. Et utkast som slettes etterlater ingen luke i serien. Utstedelsen bokfører fordringen og utgående mva, fryser EHF-filen og legger en lesbar PDF i bilagsarkivet. En utstedt faktura kan bare rettes med kreditnota, slik § 5-2-7 krever.',
+    body: 'Fakturaen kontrolleres mot bokføringsforskriften § 5-1 før den utstedes, og får først da et nummer. Et utkast som slettes etterlater ingen luke i serien. Utstedelsen bokfører fordringen og utgående mva, fryser EHF-filen og legger en lesbar PDF i bilagsarkivet. Når selskapet er registrert for e-faktura, sendes EHF-en over Peppol i samme trykk som utsteder fakturaen, til hver kunde som kan ta imot den, adressert til kundens organisasjonsnummer. En utstedt faktura kan bare rettes med kreditnota, slik § 5-2-7 krever.',
     points: [
       'Kontrollen sier hvilken paragraf som mangler noe, ikke bare at noe mangler',
       'Kjøperen hentes fra Enhetsregisteret på organisasjonsnummeret, og KID tildeles ved utstedelse',
@@ -177,8 +177,11 @@ const notYet = [
     text: 'At en kunde har betalt fakturaen, kan ikke registreres mot den ennå, så kundefordringen står åpen i regnskapet.',
   },
   {
-    title: 'Sending av e-faktura',
-    text: 'EHF-filen lages for hver faktura, men Myntos sender den ikke gjennom Peppol ennå.',
+    // Sendingen er bygget; mottaket venter fordi en registrering for å motta
+    // tar over innboksen selskapet får leverandørfakturaer i i dag
+    // (docs/integrations/peppol.md).
+    title: 'Mottak av e-faktura',
+    text: 'Myntos sender EHF over Peppol, men tar ikke imot. Leverandørfakturaer kommer fram dit de kommer i dag, og føres som bilag.',
   },
   {
     title: 'Kobling direkte mot banken',

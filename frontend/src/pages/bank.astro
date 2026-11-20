@@ -189,6 +189,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     listBankLines,
     listBankStatements,
     removeBankMatch,
+    settleInvoiceFromBankLine,
     type BankLine,
     type BankLineFilter,
     type BankStatement,
@@ -366,6 +367,62 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     return wrapper;
   }
 
+  /** Hva KID-en på linjen sier om fakturaen den hører til, slik serveren leste det. */
+  function invoiceNote(line: BankLine): string {
+    const invoice = line.invoice;
+    if (invoice === null) return '';
+    const which = `KID-en hører til faktura ${invoice.document_number ?? ''} til ${invoice.buyer_name}.`;
+    if (line.voucher_id !== null) return which;
+    switch (invoice.payment_state) {
+      case 'ubetalt':
+        return `${which} Den er ikke betalt.`;
+      case 'delvis_betalt':
+        return `${which} Den er delvis betalt, og det står ${kroner(invoice.outstanding)} igjen.`;
+      case 'betalt':
+        // Typisk registrert for hånd på fakturaen før kontoutskriften kom: da er
+        // bilaget allerede der, og linjen skal avstemmes mot det, ikke føres på nytt.
+        return `${which} Den er betalt fra før. Er det denne innbetalingen, bekrefter du bilaget den ble ført på.`;
+      case 'kreditert':
+        return `${which} Den er kreditert, så kunden skylder ingenting på den.`;
+    }
+  }
+
+  /**
+   * «Før som innbetaling på faktura»: linjen ført som kundens betaling.
+   *
+   * Bare for penger inn til en faktura som fortsatt skyldes. Om beløpet går
+   * opp i det som står igjen, avgjør serveren med Decimal, ikke siden med et
+   * flyttall; en linje som betaler mer enn det som står igjen, avvises med
+   * grunnen og blir stående uavstemt.
+   */
+  function invoiceSettle(line: BankLine): HTMLElement | null {
+    const invoice = line.invoice;
+    if (invoice === null || line.direction !== 'inn' || !mayWrite()) return null;
+    if (invoice.payment_state !== 'ubetalt' && invoice.payment_state !== 'delvis_betalt') return null;
+    const row = node('div', undefined, 'match');
+    const number = invoice.document_number ?? '';
+    const settle = node('button', `Før som innbetaling på faktura ${number}`, 'btn btn-primary btn-small');
+    settle.type = 'button';
+    settle.addEventListener('click', () => {
+      const confirmed = window.confirm(
+        `Føre ${kroner(line.amount)} fra ${isoDate(line.booking_date)} som innbetaling på faktura ` +
+          `${number} til ${invoice.buyer_name}?\n\n` +
+          'Det føres et bilag på datoen og beløpet fra banken, og linjen blir avstemt mot det. ' +
+          'Er det feil, reverserer du bilaget.',
+      );
+      if (!confirmed) return;
+      settle.disabled = true;
+      settleInvoiceFromBankLine(company.id, line.id, invoice.document_id)
+        .then(() => refreshLines())
+        .catch((error: unknown) => {
+          settle.disabled = false;
+          setStatus(linesStatus, message(error, 'Vi fikk ikke ført innbetalingen.'));
+        });
+    });
+    row.append(settle);
+    return row;
+  }
+
   function lineItem(line: BankLine): HTMLLIElement {
     const item = node('li', undefined, 'line');
     const top = node('div', undefined, 'line-top');
@@ -375,16 +432,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     if (line.remittance && line.counterparty_name) meta.push(line.remittance);
     if (line.kid) meta.push(`KID ${line.kid}`);
     what.append(node('div', meta.join(' · '), 'muted line-meta'));
-    if (line.invoice !== null) {
-      what.append(
-        node(
-          'div',
-          `KID-en hører til faktura ${line.invoice.document_number ?? ''} til ${line.invoice.buyer_name}. ` +
-            'Innbetaling på faktura føres ikke herfra ennå.',
-          'muted line-meta',
-        ),
-      );
-    }
+    if (line.invoice !== null) what.append(node('div', invoiceNote(line), 'muted line-meta'));
     const amount = node('span', signed(line), `line-amount ${line.direction === 'inn' ? 'amount-in' : 'amount-out'}`);
     top.append(what, amount);
     item.append(top);
@@ -393,6 +441,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       item.append(matchedRow(line));
       return item;
     }
+    const invoice = invoiceSettle(line);
+    if (invoice !== null) item.append(invoice);
     if (line.suggestions.length > 0) {
       item.append(suggestionList(line));
     } else {

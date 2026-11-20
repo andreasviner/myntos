@@ -141,6 +141,10 @@ class Settings(BaseSettings):
     operator_key_sha256: str | None = None
     # How long a kind of failure is kept after it last happened.
     server_error_retention_days: int = 90
+    # Who is mailed when a kind of failure is new or open again; unset, nobody
+    # is, and the page has to be opened to be read. The mail carries the code
+    # that failed and never its values (domain/server_errors/mail.py).
+    server_error_notify_to: str | None = None
 
     # --- Outgoing email (optional; nothing below is required to run) ---
     #
@@ -388,6 +392,18 @@ class Settings(BaseSettings):
     loynd_key: SecretStr | None = None
     loynd_base_url: str = "https://api.loynd.no"
     loynd_model: str = "loynd-lite"
+
+    # --- Recommand (the Peppol access point that carries an EHF out) ---
+    # Optional like Løynd: without both halves of the key nothing is sent and
+    # the invoice page offers the XML to download, as it did before. One key
+    # for the whole deployment; each company is a company under it, created
+    # when an admin registers it (myntos.api.v1.peppol). Recommand is
+    # BRBX BV in Belgium and hosts in the EU, but its mail goes through
+    # Postmark in the USA, so Myntos never asks it to e-mail anything:
+    # docs/integrations/peppol.md.
+    recommand_api_key: SecretStr | None = None
+    recommand_api_secret: SecretStr | None = None
+    recommand_api_base_url: str = "https://app.recommand.eu"
 
     # --- Enhetsregisteret (Brønnøysundregistrene) ---
     # Open data, no credentials. Configurable only so tests can point it at a

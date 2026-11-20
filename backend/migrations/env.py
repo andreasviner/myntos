@@ -24,6 +24,7 @@ from myntos.domain.feedback import models as _feedback_models  # noqa: F401
 from myntos.domain.identity import models as _identity_models  # noqa: F401
 from myntos.domain.ledger import models as _ledger_models  # noqa: F401
 from myntos.domain.mva import models as _mva_models  # noqa: F401
+from myntos.domain.peppol import models as _peppol_models  # noqa: F401
 from myntos.domain.server_errors import models as _server_error_models  # noqa: F401
 from myntos.saft import models as _saft_models  # noqa: F401
 from myntos.skattemelding import models as _skattemelding_models  # noqa: F401

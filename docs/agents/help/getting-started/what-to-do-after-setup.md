@@ -50,8 +50,8 @@ Then, in roughly this order:
 5. **Confirm the company**, if the overview shows «ubekreftet» beside the
    name (it does when the number was typed rather than picked from Altinn):
    [Confirm the company](https://myntos.no/llms/help/company-and-access/confirm-the-company.md).
-6. **Register the first payment**: «Registrer betaling» on the overview, or
-   «Betaling» in the top menu.
+6. **Register the first payment**: «Registrer inntekt» or «Registrer
+   betaling» on the overview, or «Betaling» in the top menu.
 
 ## If something stops them
 

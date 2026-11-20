@@ -50,6 +50,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     plass.
   </p>
 
+  {/* Øverst og ikke bare i notisen nederst: fra 2027 er EHF slik en faktura
+      til en bedrift blir levert, så dette gjelder hver faktura som skrives her,
+      og uten registreringen kan Myntos bare lage filen. Lenken står bare for
+      den som kan registrere selskapet; andre får vite hvem som kan. */}
+  <p class="notice" id="efaktura-missing" hidden>
+    Fra <span id="efaktura-missing-date"></span> skal fakturaer til andre bokføringspliktige sendes
+    som EHF over Peppol. Selskapet er ikke registrert for e-faktura ennå, så Myntos kan ikke sende
+    dem for deg.
+    <span id="efaktura-missing-link"
+      ><a href="/organisasjon/#efaktura">Sett opp e-faktura under Selskap</a>.</span
+    >
+    <span id="efaktura-missing-others">En administrator setter det opp under Selskap.</span>
+  </p>
+
   <div class="empty" id="loading">Henter …</div>
 
   {/* Ett steg under det andre, hvert i hele bredden. Skjemaet sto i en smal
@@ -327,7 +341,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           </div>
 
           <div class="form-actions">
+            {/* Hovedknappen sender også når kunden kan ta imot EHF, og heter da
+                «Utsted og send som EHF» (lib/peppol.ts). Den andre er for den
+                som vil utstede nå og sende senere, og står bare når det er noe
+                å la være å sende. */}
             <button class="btn btn-primary" type="button" id="issue">Utsted fakturaen</button>
+            <button class="btn btn-ghost" type="button" id="issue-only" hidden
+              >Utsted uten å sende</button
+            >
             <button class="btn btn-ghost" type="button" id="back-to-form">Tilbake og endre</button>
           </div>
           <p class="card-hint">
@@ -357,7 +378,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         <div>
           <h2 class="card-title" id="done-title"></h2>
           <p class="card-hint" id="done-hint"></p>
+          {/* Hvordan forsendelsen står, når fakturaen er sendt som EHF. Egen
+              linje fordi den endrer seg etter utstedelsen, og hintet over sier
+              hva som skjedde da. */}
+          <p class="card-hint" id="done-sending" hidden></p>
+          <p class="status" id="done-status" hidden></p>
           <div class="done-actions">
+            {/* Sendingen er hovedknappen når den finnes: fra 2027 er det slik
+                en faktura til en bedrift når fram, og PDF-en er for kunder
+                uten Peppol. Uten tilgangspunkt er PDF-en hovedknappen. */}
+            <button class="btn btn-primary" type="button" id="done-send" hidden>Send som EHF</button>
             {/* Ingen download-attributt: API-et ligger på et annet origin, og der
                 ser nettleseren bort fra den. Det som faktisk laster ned filen er
                 Content-Disposition: attachment, som API-et sender. */}
@@ -378,6 +408,57 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           <iframe class="pdf-frame" id="done-preview-frame" title="Fakturaen som PDF" hidden
           ></iframe>
         </div>
+      </div>
+    </div>
+
+    {/* Når kunden har betalt. Aldri av seg selv på forfallsdatoen: forfall er
+        når pengene skal komme, ikke når de kom, og en kunde som betaler sent,
+        betaler en del eller ikke betaler i det hele tatt, ville stått som
+        betalt. Datoen og beløpet er det kontoutskriften viser. Se
+        backend/src/myntos/domain/faktura/payments.py. */}
+    <div class="card" id="payment-card" hidden>
+      <h2 class="card-title" id="payment-title"></h2>
+      <p class="status" id="payment-status" hidden></p>
+      <dl class="summary" id="payment-summary"></dl>
+
+      <div id="payment-history" hidden>
+        <h3 class="findings-title">Innbetalinger</h3>
+        <ul class="payments" id="payment-list"></ul>
+      </div>
+
+      <form id="payment-form" novalidate hidden>
+        <p class="card-hint">
+          Registrer innbetalingen når pengene har kommet, med datoen og beløpet slik
+          kontoutskriften viser dem. Er kontoutskriften lest inn, kan du heller føre den fra
+          linjen under <a href="/bank/">Bankavstemming</a>, så blir linjen avstemt med en gang.
+        </p>
+        <div class="field-row">
+          <label class="field">
+            <span>Dato</span>
+            <input type="date" name="paid_on" required />
+          </label>
+          <label class="field">
+            <span>Beløp</span>
+            <input type="text" name="amount" inputmode="decimal" autocomplete="off" required />
+            <span class="field-hint" id="payment-amount-hint"></span>
+          </label>
+          <label class="field">
+            <span>Betalt til</span>
+            <select name="payment_method">
+              <option value="bank">Bankkontoen (1920)</option>
+              <option value="kontant">Kontanter (1900)</option>
+            </select>
+          </label>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary" type="submit" id="payment-submit"
+            >Registrer innbetalingen</button
+          >
+          <button class="btn btn-ghost" type="button" data-payment-close>Lukk</button>
+        </div>
+      </form>
+      <div class="form-actions" id="payment-closed" hidden>
+        <button class="btn btn-ghost" type="button" data-payment-close>Lukk</button>
       </div>
     </div>
 
@@ -877,13 +958,42 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     margin: 0 0 1.1rem;
     font-size: 0.92rem;
   }
-  #review-summary :global(dt) {
+  #review-summary :global(dt),
+  #payment-summary :global(dt) {
     color: var(--muted);
   }
-  #review-summary :global(dd) {
+  #review-summary :global(dd),
+  #payment-summary :global(dd) {
     margin: 0;
   }
-  #review-summary :global(dd[data-tone='warn']) {
+  #payment-summary :global(dd.grand) {
+    font-weight: 700;
+  }
+  .payments {
+    list-style: none;
+    margin: 0 0 1.1rem;
+    padding: 0;
+  }
+  #payment-list :global(li) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.8rem;
+    align-items: baseline;
+    border-left: 3px solid var(--border-strong);
+    padding: 0.4rem 0 0.4rem 0.7rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+  }
+  #payment-list :global(.amount) {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  #faktura-list :global(td[data-tone='warn']) {
+    color: #c0392b;
+    font-weight: 600;
+  }
+  #review-summary :global(dd[data-tone='warn']),
+  #payment-summary :global(dd[data-tone='warn']) {
     color: #c0392b;
     font-weight: 600;
   }
@@ -964,22 +1074,32 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     fakturaPdfUrl,
     fetchFakturaPdf,
     getFakturaCatalogue,
+    getForsendelse,
     getNextFakturaNumber,
+    getPeppol,
+    getPeppolRecipient,
     issueFaktura,
     listFaktura,
     listParties,
     lookupUnit,
+    registerInvoicePayment,
+    reverseCashFlow,
+    sendFaktura,
     updateFaktura,
     type Company,
+    type EhfSending,
     type Faktura,
     type FakturaCatalogue,
     type LinePayload,
     type Party,
+    type PaymentState,
+    type PeppolStanding,
     type SalesTaxOption,
     type RegisteredUnit,
     type Violation,
   } from '../lib/api';
   import { currentCompany, loadCompanies } from '../lib/company';
+  import { normaliseAmount } from '../lib/amount';
   import { el, setStatus, show } from '../lib/dom';
   import { isoDate, kontonummer, kroner, todayIso } from '../lib/format';
   import {
@@ -990,6 +1110,18 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     type FillPlan,
     type FormState,
   } from '../lib/invoice-proposal';
+  import {
+    ISSUE_AND_SEND_LABEL,
+    ISSUE_ONLY_LABEL,
+    SEND_AGAIN_LABEL,
+    SEND_LABEL,
+    delivery,
+    deliverySentence,
+    sendable,
+    sendingLabel,
+    sendingSentence,
+    type Delivery,
+  } from '../lib/peppol';
   import { standing } from '../lib/register';
   import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
 
@@ -1000,12 +1132,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   const listBody = el<HTMLTableSectionElement>('#faktura-list');
   const partySelect = el<HTMLSelectElement>('#party-select');
   const issueButton = el<HTMLButtonElement>('#issue');
+  const issueOnlyButton = el<HTMLButtonElement>('#issue-only');
   const reviewButton = el<HTMLButtonElement>('#review');
   const partyNote = el<HTMLParagraphElement>('#party-note');
   const copyButton = el<HTMLButtonElement>('#copy-previous');
   const orgnrHint = el<HTMLSpanElement>('#orgnr-hint');
 
   const ORGNR_HINT = 'Skriv nummeret, så henter vi navn og adresse fra Enhetsregisteret.';
+  /** The review's main button when nothing is sent with it, as the markup has it. */
+  const ISSUE_LABEL = 'Utsted fakturaen';
 
   /**
    * The catalogue's code for "ikke mva-registrert". See
@@ -1026,6 +1161,24 @@ import BaseLayout from '../layouts/BaseLayout.astro';
    * also what "the previous invoice to this customer" is looked up in.
    */
   let documents: Faktura[] = [];
+  /**
+   * Whether the company can send EHF, as the backend said when the page loaded.
+   * Null when it could not be asked: then nothing is offered, and the PDF is
+   * the way the invoice goes, as it was before there was an access point.
+   */
+  let peppol: PeppolStanding | null = null;
+  /** The document on the done card, so a send from there can redraw it. */
+  let shown: Faktura | null = null;
+  /** How the document on the done card was meant to reach the customer. */
+  let shownDelivery: Delivery = 'pdf';
+  /**
+   * How the draft under review reaches the customer, which decides what the
+   * main button does. Set from the access point's answer about the customer;
+   * the buttons wait until it is in.
+   */
+  let reviewDelivery: Delivery = 'pdf';
+  /** Counts the lookups, so an answer about an earlier review is dropped. */
+  let deliveryAsk = 0;
   /** The last unit Enhetsregisteret answered with, so we know what we filled in. */
   let registered: RegisteredUnit | null = null;
   /**
@@ -1038,7 +1191,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   let kidManual = false;
   /**
    * Det skjemaet selv satte i et felt: standardverdiene en ny faktura starter
-   * med, og det boksen øverst fylte inn. Et felt som fortsatt står slik, kan
+   * med, det boksen øverst fylte inn, og adressen Enhetsregisteret ga for et
+   * organisasjonsnummer. Et felt som fortsatt står slik, kan
    * boksen fylle på nytt; alt annet har personen skrevet. Se
    * lib/invoice-proposal.ts.
    */
@@ -1498,12 +1652,18 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   }
 
   function fillFromRegister(unit: RegisteredUnit): void {
-    const fill = (name: string, value: string | null, ours: string | null): void => {
+    const fill = (name: FillableField, value: string | null, ours: string | null): void => {
       if (value === null) return;
       const node = form.querySelector<HTMLInputElement>(`[name="${name}"]`);
       // An empty field, or one still holding what a previous lookup put there,
       // is ours to fill. Anything else the user typed deliberately.
-      if (node !== null && (node.value.trim() === '' || node.value === ours)) node.value = value;
+      if (node !== null && (node.value.trim() === '' || node.value === ours)) {
+        node.value = value;
+        // The form wrote it, so the box at the top may write over it too. Without
+        // this, pasting a second text after the register filled the address
+        // answered «Kjøperen sto allerede i skjemaet» about an address nobody typed.
+        untouched[name] = value;
+      }
     };
     fill('buyer_name', unit.name, registered?.name ?? null);
     fill('buyer_address_line', unit.address_line, registered?.address_line ?? null);
@@ -1744,8 +1904,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     if (plan.business !== null) setChecked('buyer_is_business', plan.business);
     // Slått opp i Enhetsregisteret som om nummeret var skrevet: registeret
     // fyller bare felt som står tomme, og linjen under nummeret sier om
-    // kjøperen er slettet eller konkurs. Før merkingen, fordi skrivingen tar
-    // merket av feltet den skjer i.
+    // kjøperen er slettet eller konkurs. Nummeret kan stå i teksten, eller
+    // backend kan ha funnet det i registeret på navnet alene
+    // (buyer_orgnr_source), og adressen fylles likt for begge. Før merkingen,
+    // fordi skrivingen tar merket av feltet den skjer i.
     if (plan.fields.buyer_orgnr !== undefined) {
       form
         .querySelector('[name="buyer_orgnr"]')
@@ -1917,20 +2079,56 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         ? `${blocking.length} ting må rettes først`
         : `${warnings} ting er verdt å vite`;
 
-    issueButton.disabled = blocking.length > 0;
     el('#review-lead').textContent =
       blocking.length > 0
         ? 'Utkastet er lagret. Fakturaen kan ikke utstedes slik den står nå.'
         : 'Utkastet er lagret. Les gjennom, så utsteder du den herfra.';
-    el('#review-note').textContent =
-      blocking.length > 0
-        ? 'Gå tilbake og rett det som står over. Ingenting er utstedt, og utkastet ligger trygt.'
-        : 'Utstedelse er endelig: fakturaen får nummer i en ubrutt serie, bokføres, og kan ' +
-          'etterpå bare rettes med kreditnota.';
+    void renderDelivery(saved, blocking.length > 0);
     // Shown before it is scrolled to: scrollIntoView on a hidden element does
     // nothing at all, and the card is hidden until this line runs.
     showStep('review');
     el('#review-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  /**
+   * Ask whether the customer can receive this invoice over Peppol, and set the
+   * review's buttons and note by the answer.
+   *
+   * Asked here rather than at the press: the review is the only confirmation
+   * an EHF send gets, so it has to say where the invoice goes before the
+   * button that sends it can be pressed. Until the answer is in, the buttons
+   * say what the answer usually is, and wait.
+   */
+  async function renderDelivery(saved: Faktura, blocked: boolean): Promise<void> {
+    const ask = ++deliveryAsk;
+    const orgnr = saved.buyer_orgnr;
+    const asking = !blocked && peppol?.can_send === true && Boolean(orgnr);
+    drawDelivery(saved, blocked, delivery(saved, peppol, null), asking);
+    if (!asking || !orgnr) return;
+    let receives: boolean | null = null;
+    try {
+      receives = (await getPeppolRecipient(company.id, orgnr)).can_receive;
+    } catch {
+      // Not asked is not a no; delivery() explains why the send then goes.
+    }
+    if (ask !== deliveryAsk) return;
+    drawDelivery(saved, blocked, delivery(saved, peppol, receives), false);
+  }
+
+  function drawDelivery(saved: Faktura, blocked: boolean, how: Delivery, waiting: boolean): void {
+    reviewDelivery = how;
+    const sends = how === 'ehf';
+    issueButton.textContent = sends ? ISSUE_AND_SEND_LABEL : ISSUE_LABEL;
+    issueButton.disabled = blocked || waiting;
+    issueOnlyButton.textContent = ISSUE_ONLY_LABEL;
+    issueOnlyButton.disabled = waiting;
+    show(issueOnlyButton, sends && !blocked);
+    const where = deliverySentence(how, saved, catalogue.e_invoice_mandatory_from);
+    el('#review-note').textContent = blocked
+      ? 'Gå tilbake og rett det som står over. Ingenting er utstedt, og utkastet ligger trygt.'
+      : 'Utstedelse er endelig: fakturaen får nummer i en ubrutt serie, bokføres, og kan ' +
+        'etterpå bare rettes med kreditnota.' +
+        (where === null ? '' : ` ${where}`);
   }
 
   // --- The PDF in the page -------------------------------------------------------
@@ -2064,8 +2262,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     }
   }
 
-  /** The issued document, with its two files, where the person who issued it is looking. */
-  function renderDone(issued: Faktura): void {
+  /**
+   * The issued document, with its two files, where the person who issued it is looking.
+   *
+   * `how` is how the review said it would reach the customer, and `sending`
+   * whether it is on its way now; what came of the send is the line and the
+   * status under the hint, which change after it is drawn.
+   */
+  function renderDone(issued: Faktura, how: Delivery, sending: boolean): void {
     el('#done-title').textContent = `Faktura ${issued.document_number ?? ''} er utstedt`;
     el('#done-hint').textContent =
       `${kroner(issued.gross_total)} til ${issued.buyer_name}, forfall ` +
@@ -2074,10 +2278,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       // Said only when the answer carries the voucher, so the page never claims
       // a posting it was not told about.
       (issued.voucher_id === null ? '' : 'Den er bokført i regnskapet. ') +
-      (issued.has_ehf
-        ? 'EHF-filen er laget og lagret sammen med PDF-en. Forsendelsen krever et ' +
-          'Peppol-aksesspunkt, som ennå ikke er koblet på, så filene sendes for hånd.'
-        : 'PDF-en er lagret sammen med bilaget.');
+      doneFiles(issued, how, sending);
+    shown = issued;
+    shownDelivery = how;
+    renderDoneSending(issued);
+    setStatus(el('#done-status'), '');
     el<HTMLAnchorElement>('#done-pdf').href = fakturaPdfUrl(company.id, issued.id);
     const ehf = el<HTMLAnchorElement>('#done-ehf');
     ehf.href = fakturaEhfUrl(company.id, issued.id);
@@ -2102,6 +2307,70 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     el('#done-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
+  /** The second half of the note at the bottom, by how far the company has come. */
+  function efakturaNote(state: PeppolStanding | null): string {
+    if (state === null || !state.available) {
+      return 'Denne installasjonen av Myntos har ikke et tilgangspunkt for Peppol, så filen sendes for hånd.';
+    }
+    if (state.can_send) {
+      return (
+        'Fakturaer til kunder på Peppol sendes som EHF når de utstedes, rett inn i kundens ' +
+        'regnskapssystem, adressert til kundens organisasjonsnummer. Kunder som ikke kan ta ' +
+        'imot EHF, får PDF-en fra deg.'
+      );
+    }
+    return (
+      'Før fakturaene kan sendes over Peppol, må selskapet registreres for e-faktura under ' +
+      'Selskap. Til da sendes filene for hånd.'
+    );
+  }
+
+  /** What the hint says about the files, by how the invoice was to reach the customer. */
+  function doneFiles(issued: Faktura, how: Delivery, sending: boolean): string {
+    if (!issued.has_ehf) return 'PDF-en er lagret sammen med bilaget.';
+    // Only what is stored: whether the send went is the line below, and a
+    // hint that said «sendt» would be wrong the moment the send failed.
+    if (sending) return 'PDF-en og EHF-filen er lagret sammen med bilaget.';
+    if (how === 'ehf') {
+      return (
+        'EHF-filen er laget, men ikke sendt. Send den over Peppol med «Send som EHF» ' +
+        'når du er klar.'
+      );
+    }
+    if (how === 'not-on-peppol') {
+      return 'Kunden kan ikke ta imot EHF over Peppol, så last ned PDF-en og send den selv.';
+    }
+    if (peppol?.can_send) {
+      return 'EHF-filen er laget, men kunden har ikke organisasjonsnummer, så send PDF-en selv.';
+    }
+    // Uten tilgangspunkt, eller før selskapet er registrert: filene finnes, og
+    // det eneste som mangler er forsendelsen. Notisen øverst sier hva som gjenstår.
+    return 'EHF-filen er laget og lagret sammen med PDF-en. Filene sendes for hånd.';
+  }
+
+  /**
+   * The send button and the sending line on the done card.
+   *
+   * The button takes over as the primary action when it is there, and hands it
+   * back to the PDF when it is not, so the card never has two primary buttons.
+   */
+  function renderDoneSending(issued: Faktura): void {
+    // Not for a customer the access point just said has no Peppol address: the
+    // send would only be refused, and the PDF is the way this one goes. The list
+    // still offers it, for the day the customer gets one.
+    const offered = mayWrite && sendable(issued, peppol) && shownDelivery !== 'not-on-peppol';
+    const sendButton = el<HTMLButtonElement>('#done-send');
+    sendButton.textContent = issued.ehf_sending === null ? SEND_LABEL : SEND_AGAIN_LABEL;
+    sendButton.disabled = false;
+    show(sendButton, offered);
+    const pdf = el('#done-pdf');
+    pdf.classList.toggle('btn-primary', !offered);
+    pdf.classList.toggle('btn-ghost', offered);
+    const line = el('#done-sending');
+    line.textContent = issued.ehf_sending === null ? '' : sendingSentence(issued.ehf_sending);
+    show(line, issued.ehf_sending !== null);
+  }
+
   // --- The list ---------------------------------------------------------------------
 
   function render(documents: Faktura[]): void {
@@ -2120,6 +2389,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           button('Slett', () => void discard(item)),
         );
       }
+      if (mayWrite && owing(item)) {
+        actions.append(button('Registrer innbetaling', () => openPayment(item)));
+      } else if (item.payments.length > 0) {
+        // Betalt eller kreditert etter betaling: det som er kommet inn, skal
+        // fortsatt kunne ses, og en innbetaling ført feil, reverseres derfra.
+        actions.append(button('Innbetalinger', () => openPayment(item)));
+      }
       if (
         mayWrite &&
         item.status === 'utstedt' &&
@@ -2128,13 +2404,17 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       ) {
         actions.append(button('Krediter', () => void credit(item)));
       }
+      if (mayWrite && sendable(item, peppol)) {
+        const label = item.ehf_sending === null ? SEND_LABEL : SEND_AGAIN_LABEL;
+        actions.append(button(label, () => void sendEhf(item, pageStatus)));
+      }
 
       row.append(
         cell(item.document_number ?? 'utkast'),
         cell(item.issue_date === null ? '-' : isoDate(item.issue_date)),
         cell(item.buyer_name || '-'),
         cell(kroner(item.gross_total), 'num'),
-        cell(statusLabel(item)),
+        statusCell(item),
         actions,
       );
       listBody.append(row);
@@ -2143,9 +2423,46 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   }
 
   function statusLabel(item: Faktura): string {
+    const sending = sendingLabel(item.ehf_sending);
+    return sending === null ? documentLabel(item) : `${documentLabel(item)} · ${sending}`;
+  }
+
+  function documentLabel(item: Faktura): string {
     if (item.document_type === 'kreditnota') return 'Kreditnota';
     if (item.status === 'utkast') return 'Utkast';
-    return item.credited_by_document_id === null ? 'Utstedt' : 'Kreditert';
+    if (item.payment_state === null) {
+      return item.credited_by_document_id === null ? 'Utstedt' : 'Kreditert';
+    }
+    return paymentLabel(item.payment_state, item.overdue);
+  }
+
+  /**
+   * Om kunden har betalt, slik serveren leste det av regnskapet.
+   *
+   * «Forfalt» bare fra serverens `overdue`, aldri ved å sammenligne
+   * forfallsdatoen her: nettleserens klokke er ikke Norges, og hva som står
+   * igjen, er det regnskapet som sier.
+   */
+  function paymentLabel(state: PaymentState, overdue: boolean): string {
+    const labels: Record<PaymentState, string> = {
+      ubetalt: 'Ubetalt',
+      delvis_betalt: 'Delvis betalt',
+      betalt: 'Betalt',
+      kreditert: 'Kreditert',
+    };
+    if (!overdue) return labels[state];
+    return state === 'ubetalt' ? 'Forfalt' : `${labels[state]}, forfalt`;
+  }
+
+  function statusCell(item: Faktura): HTMLTableCellElement {
+    const td = cell(statusLabel(item));
+    if (item.overdue) td.dataset.tone = 'warn';
+    return td;
+  }
+
+  /** En utstedt faktura kunden fortsatt skylder noe på. */
+  function owing(item: Faktura): boolean {
+    return item.payment_state === 'ubetalt' || item.payment_state === 'delvis_betalt';
   }
 
   function cell(text: string, className?: string): HTMLTableCellElement {
@@ -2249,18 +2566,328 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     }
   }
 
-  async function credit(item: Faktura): Promise<void> {
+  // --- Innbetalinger -----------------------------------------------------------------
+
+  const paymentCard = el<HTMLDivElement>('#payment-card');
+  const paymentForm = el<HTMLFormElement>('#payment-form');
+  const paymentStatus = el<HTMLParagraphElement>('#payment-status');
+  const paymentSubmit = el<HTMLButtonElement>('#payment-submit');
+  /** Fakturaen kortet gjelder, slik serveren sist ga den. */
+  let paying: Faktura | null = null;
+
+  function openPayment(item: Faktura): void {
+    paying = item;
+    show(paymentStatus, false);
+    renderPayment(item);
+    const today = todayIso();
+    const date = paymentForm.querySelector<HTMLInputElement>('[name="paid_on"]');
+    if (date !== null) {
+      date.value = today;
+      // Ikke etter i dag: en innbetaling registreres når pengene har kommet.
+      date.max = today;
+    }
+    const amount = paymentForm.querySelector<HTMLInputElement>('[name="amount"]');
+    if (amount !== null) amount.value = item.outstanding ?? '';
+    show(paymentCard, true);
+    paymentCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function closePayment(): void {
+    paying = null;
+    show(paymentCard, false);
+  }
+
+  function renderPayment(item: Faktura): void {
+    el('#payment-title').textContent =
+      `Innbetaling på faktura ${item.document_number ?? ''} til ${item.buyer_name}`;
+    const rows: [string, string, 'grand' | 'warn' | null][] = [
+      ['Å betale', kroner(item.gross_total), null],
+      ['Forfallsdato', item.due_date === null ? '-' : isoDate(item.due_date), null],
+      ['Betalt', kroner(item.paid_amount ?? '0'), null],
+    ];
+    if (item.payment_state === 'kreditert') {
+      rows.push(['Status', 'Kreditert', null]);
+    } else {
+      rows.push(['Står igjen', kroner(item.outstanding ?? '0'), item.overdue ? 'warn' : 'grand']);
+      if (item.payment_state !== null) {
+        rows.push(['Status', paymentLabel(item.payment_state, item.overdue), null]);
+      }
+    }
+    const box = el<HTMLDListElement>('#payment-summary');
+    box.replaceChildren();
+    for (const [label, value, tone] of rows) {
+      const dt = document.createElement('dt');
+      dt.textContent = label;
+      const dd = document.createElement('dd');
+      dd.textContent = value;
+      if (tone === 'grand') dd.className = 'grand';
+      if (tone === 'warn') dd.dataset.tone = 'warn';
+      box.append(dt, dd);
+    }
+
+    const list = el<HTMLUListElement>('#payment-list');
+    list.replaceChildren();
+    for (const payment of item.payments) {
+      const li = document.createElement('li');
+      const amount = document.createElement('span');
+      amount.className = 'amount';
+      amount.textContent = kroner(payment.amount);
+      const where = payment.payment_account === '1900' ? 'kontant' : 'til banken';
+      li.append(
+        amount,
+        `${isoDate(payment.paid_on)}, ${where}, bilag ${payment.voucher_no}`,
+      );
+      if (mayWrite) li.append(button('Reverser', () => void undoPayment(item, payment.voucher_id)));
+      list.append(li);
+    }
+    show(el('#payment-history'), item.payments.length > 0);
+
+    const open = mayWrite && owing(item);
+    show(paymentForm, open);
+    show(el('#payment-closed'), !open);
+    el('#payment-amount-hint').textContent =
+      item.payment_state === 'delvis_betalt' || item.payment_state === 'ubetalt'
+        ? `Står igjen ${kroner(item.outstanding ?? '0')}. Mindre er en delbetaling, og resten står åpen.`
+        : '';
+  }
+
+  async function submitPayment(): Promise<void> {
+    if (paying === null) return;
+    const data = new FormData(paymentForm);
+    const paidOn = String(data.get('paid_on') ?? '');
+    const amount = normaliseAmount(String(data.get('amount') ?? ''));
+    if (paidOn === '') {
+      setStatus(paymentStatus, 'Skriv datoen pengene kom.');
+      return;
+    }
+    // Fortegn og null lest av teksten, ikke av et tall: lib/amount.ts gjør aldri
+    // et flyttall av et beløp, og denne siden skal heller ikke. Er det mer enn
+    // det som står igjen, sier serveren det, regnet med Decimal.
+    if (amount === null || amount.startsWith('-') || !/[1-9]/.test(amount)) {
+      setStatus(paymentStatus, 'Skriv beløpet som kom inn, for eksempel 1 250,00.');
+      return;
+    }
+    const method = String(data.get('payment_method')) === 'kontant' ? 'kontant' : 'bank';
+    paymentSubmit.disabled = true;
+    try {
+      const updated = await registerInvoicePayment(company.id, paying.id, {
+        paid_on: paidOn,
+        amount,
+        payment_method: method,
+      });
+      paying = updated;
+      renderPayment(updated);
+      setStatus(
+        paymentStatus,
+        updated.payment_state === 'betalt'
+          ? `Faktura ${updated.document_number} er betalt.`
+          : `Innbetalingen er registrert. Det står ${kroner(updated.outstanding ?? '0')} igjen.`,
+        'ok',
+      );
+    } catch (error: unknown) {
+      setStatus(
+        paymentStatus,
+        error instanceof ApiError ? error.message : 'Innbetalingen ble ikke registrert.',
+      );
+      return;
+    } finally {
+      paymentSubmit.disabled = false;
+    }
+    // Utenfor try-en: er innbetalingen ført, skal en liste som ikke lot seg
+    // hente på nytt aldri få siden til å si at den ikke ble det.
+    await refreshAfterPayment();
+  }
+
+  /** Listen på nytt etter en innbetaling eller reversering som allerede er ført. */
+  async function refreshAfterPayment(): Promise<void> {
+    try {
+      await refresh();
+    } catch {
+      setStatus(
+        pageStatus,
+        'Det er ført, men listen ble ikke hentet på nytt. Last inn siden for å se den.',
+      );
+    }
+  }
+
+  /**
+   * Angre en innbetaling registrert ved en feil, ved å reversere bilaget.
+   *
+   * Den eneste måten: et ført bilag er historie (bokføringsloven), og
+   * reverseringen tar med seg hvilken faktura den gjaldt, så fakturaen står
+   * med beløpet igjen uten at noe her må si det.
+   */
+  async function undoPayment(item: Faktura, voucherId: number): Promise<void> {
+    const payment = item.payments.find((each) => each.voucher_id === voucherId);
+    if (payment === undefined) return;
     const confirmed = window.confirm(
-      `Kreditere faktura ${item.document_number}?\n\n` +
-        'Det utstedes en kreditnota som reverserer hele fakturaen, og den kan ikke angres.',
+      `Reversere innbetalingen på ${kroner(payment.amount)} fra ${isoDate(payment.paid_on)}?\n\n` +
+        'Bilaget blir stående, og det føres et bilag som nuller det ut. Fakturaen står da ' +
+        'ubetalt med beløpet igjen, og den riktige innbetalingen registreres på nytt.',
     );
     if (!confirmed) return;
     try {
-      const note = await creditFaktura(company.id, item.id);
-      setStatus(pageStatus, `Kreditnota ${note.document_number} er utstedt.`, 'ok');
-      await refresh();
+      await reverseCashFlow(company.id, voucherId);
+    } catch (error: unknown) {
+      setStatus(
+        paymentStatus,
+        error instanceof ApiError ? error.message : 'Reverseringen feilet.',
+      );
+      return;
+    }
+    await refreshAfterPayment();
+    // Kortet leses på nytt fra listen i stedet for å regnes ut her: hva som
+    // står igjen etter en reversering, er regnskapets sum, ikke sidens.
+    const updated = documents.find((each) => each.id === item.id) ?? null;
+    if (updated !== null) {
+      paying = updated;
+      renderPayment(updated);
+    }
+    setStatus(paymentStatus, 'Innbetalingen er reversert.', 'ok');
+  }
+
+  paymentForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void submitPayment();
+  });
+  for (const close of document.querySelectorAll<HTMLButtonElement>('[data-payment-close]')) {
+    close.addEventListener('click', closePayment);
+  }
+
+  async function credit(item: Faktura): Promise<void> {
+    // A customer who got the invoice in their accounting system gets the credit
+    // note the same way, or that system goes on saying they owe it. Only when
+    // the invoice went: one that failed or was sent by hand is credited by hand.
+    const sends =
+      mayWrite &&
+      peppol?.can_send === true &&
+      item.buyer_orgnr !== null &&
+      item.ehf_sending !== null &&
+      item.ehf_sending.status !== 'failed';
+    const confirmed = window.confirm(
+      `Kreditere faktura ${item.document_number}?\n\n` +
+        'Det utstedes en kreditnota som reverserer hele fakturaen, og den kan ikke angres.' +
+        (sends
+          ? `\n\nFakturaen gikk som EHF, så kreditnotaen sendes som EHF til ${item.buyer_name} ` +
+            `(${item.buyer_orgnr}) med en gang. Den kan ikke kalles tilbake.`
+          : ''),
+    );
+    if (!confirmed) return;
+    let note: Faktura;
+    try {
+      note = await creditFaktura(company.id, item.id);
     } catch (error: unknown) {
       setStatus(pageStatus, error instanceof ApiError ? error.message : 'Krediteringen feilet.');
+      return;
+    }
+    const issued = `Kreditnota ${note.document_number} er utstedt.`;
+    if (sends) {
+      // A second request, after the credit note has committed: one that could
+      // not be sent is still issued and booked, and the list offers the send.
+      await transmit(note, pageStatus, `${issued} `);
+      return;
+    }
+    setStatus(pageStatus, issued, 'ok');
+    await refresh();
+  }
+
+  /**
+   * Send an issued document as EHF, after the person has said yes to where it goes.
+   *
+   * For a document issued earlier and not sent: one that failed, or one issued
+   * with «Utsted uten å sende». A confirm() and not a review step: everything
+   * there is to check was checked when the invoice was issued, and the EHF going
+   * out is that same frozen file. What is left to decide is only whether, and to
+   * whom, and an invoice that has gone cannot be called back.
+   */
+  async function sendEhf(item: Faktura, status: HTMLElement): Promise<EhfSending | null> {
+    const confirmed = window.confirm(
+      `Sende ${item.document_type === 'kreditnota' ? 'kreditnota' : 'faktura'} ` +
+        `${item.document_number} som EHF til ${item.buyer_name} (${item.buyer_orgnr})?\n\n` +
+        'Den går over Peppol til kundens regnskapssystem og kan ikke kalles tilbake.',
+    );
+    if (!confirmed) return null;
+    return transmit(item, status);
+  }
+
+  /**
+   * Send without asking, because the person has already said yes: on the
+   * review, or in the confirm() that came before.
+   *
+   * Never throws. `lead` is what happened before the send (a credit note that
+   * was just issued), so that a failed send does not hide it.
+   */
+  async function transmit(
+    item: Faktura,
+    status: HTMLElement,
+    lead = '',
+  ): Promise<EhfSending | null> {
+    setStatus(status, `${lead}Sender EHF-en over Peppol …`, 'ok');
+    let sent: EhfSending | null = null;
+    try {
+      sent = await sendFaktura(company.id, item.id);
+      setStatus(status, lead + sendingSentence(sent), sent.status === 'failed' ? 'error' : 'ok');
+    } catch (error: unknown) {
+      const why = error instanceof ApiError ? error.message : null;
+      setStatus(
+        status,
+        lead === ''
+          ? (why ?? 'Sendingen feilet.')
+          : `${lead}Den ble ikke sendt som EHF${why === null ? '.' : `: ${why}`}`,
+      );
+    }
+    // Listed again either way: already_sent means another tab or person got
+    // there first, and the list should say so instead of offering the button
+    // again. Outside the try, so a list that fails to load is not reported as a
+    // send that failed.
+    await refresh().catch(() => undefined);
+    return sent;
+  }
+
+  /** Send the document on the done card, and redraw it as the backend now lists it. */
+  async function sendFromDone(item: Faktura, ask: boolean): Promise<void> {
+    el<HTMLButtonElement>('#done-send').disabled = true;
+    const status = el('#done-status');
+    const sent = ask ? await sendEhf(item, status) : await transmit(item, status);
+    // Also covers a send another tab got in first; the button comes back only
+    // if there is still something to send.
+    shown = documents.find((listed) => listed.id === item.id) ?? {
+      ...item,
+      ehf_sending: sent ?? item.ehf_sending,
+    };
+    renderDoneSending(shown);
+    // The sending line now says what the status said, and once is enough.
+    if (sent !== null) setStatus(status, '');
+  }
+
+  /**
+   * Ask once more about every send still waiting for a receipt.
+   *
+   * Each ask goes to the access point, so it is done after the list is on
+   * screen, never before, and the list is drawn again only if something
+   * changed. A send that cannot be asked about keeps the status it had.
+   */
+  async function refreshPending(): Promise<void> {
+    const pending = documents.filter((item) => item.ehf_sending?.status === 'pending');
+    if (pending.length === 0) return;
+    let changed = false;
+    await Promise.all(
+      pending.map(async (item) => {
+        try {
+          const fresh = await getForsendelse(company.id, item.id);
+          if (fresh.status !== item.ehf_sending?.status) changed = true;
+          item.ehf_sending = fresh;
+        } catch {
+          // The stored status is still the last true thing known.
+        }
+      }),
+    );
+    if (!changed) return;
+    render(documents);
+    const current = shown === null ? undefined : documents.find((item) => item.id === shown?.id);
+    if (current !== undefined) {
+      shown = current;
+      renderDoneSending(current);
     }
   }
 
@@ -2291,11 +2918,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   });
 
   // No confirm(): the review *is* the confirmation, and it says more than a
-  // dialog could. What is left is to do it.
-  issueButton.addEventListener('click', () => {
+  // dialog could, including where an EHF goes. What is left is to do it.
+  function issue(send: boolean): void {
     const draft = editing;
     if (draft === null) return;
+    const how = reviewDelivery;
     issueButton.disabled = true;
+    issueOnlyButton.disabled = true;
     setStatus(el('#review-status'), 'Utsteder …', 'ok');
     void issueFaktura(company.id, draft.id)
       .then(async (issued) => {
@@ -2307,7 +2936,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         // renderDone() has to come after.
         resetForm();
         await refreshKidPreview();
-        renderDone(issued);
+        renderDone(issued, how, send);
+        // A second request, after the issue has committed: issuing and booking
+        // is one transaction in our database, and handing a file to an access
+        // point abroad cannot be part of it. An invoice that could not be sent
+        // is still issued, and the done card offers the send again.
+        if (send) await sendFromDone(issued, false);
       })
       .catch(async (error: unknown) => {
         setStatus(
@@ -2315,6 +2949,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           error instanceof ApiError ? error.message : 'Utstedelsen feilet.',
         );
         issueButton.disabled = false;
+        issueOnlyButton.disabled = false;
         // Re-read the checks so what is listed matches what the backend just
         // refused on, rather than what it said a moment earlier.
         try {
@@ -2324,6 +2959,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           // here would only replace it with a less useful one.
         }
       });
+  }
+
+  issueButton.addEventListener('click', () => issue(reviewDelivery === 'ehf'));
+  issueOnlyButton.addEventListener('click', () => issue(false));
+
+  el('#done-send').addEventListener('click', () => {
+    if (shown !== null) void sendFromDone(shown, true);
   });
 
   el('#done-new').addEventListener('click', () => {
@@ -2393,10 +3035,17 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       el<HTMLTextAreaElement>('#ki-text').maxLength = catalogue.ai_max_chars;
       el<HTMLTextAreaElement>('#fill-text').maxLength = catalogue.ai_max_chars;
 
+      try {
+        peppol = await getPeppol(company.id);
+      } catch {
+        // Without the answer nothing is offered, and the page works as it did
+        // before there was an access point: the PDF is how the invoice goes.
+        peppol = null;
+      }
       el('#efaktura-note').textContent =
         `Fra ${isoDate(catalogue.e_invoice_mandatory_from)} skal salg til andre bokføringspliktige ` +
         'faktureres elektronisk (EHF/Peppol). Myntos lager EHF-filen for hver utstedte faktura. ' +
-        'Selve forsendelsen krever et Peppol-aksesspunkt, som ennå ikke er koblet på.';
+        efakturaNote(peppol);
 
       // Spurt om selskapet, ikke om kontoen som eier det. Tilgang er en rad per
       // person per selskap, så en kollega invitert til bare dette selskapet har
@@ -2404,6 +3053,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       // (2026-10-23).
       mayWrite = canInCompany(company, 'ledger:write');
       show(el('#readonly'), !mayWrite);
+
+      // Bare for den som skriver fakturaer, og bare når det finnes et
+      // tilgangspunkt å registrere seg hos. Lenken bare for den som kan
+      // registrere selskapet: den går til en knapp som er der for en
+      // administrator, og andre ville møtt en side som sier at noen andre må
+      // gjøre det.
+      el('#efaktura-missing-date').textContent = isoDate(catalogue.e_invoice_mandatory_from);
+      const mayRegister = canInCompany(company, 'organization:manage');
+      show(el('#efaktura-missing-link'), mayRegister);
+      show(el('#efaktura-missing-others'), !mayRegister);
+      show(
+        el('#efaktura-missing'),
+        mayWrite && peppol !== null && peppol.available && !peppol.can_send,
+      );
 
       // Both notices are only worth showing to someone who can act on them, and
       // both name the place they are acted on. The VAT one is no longer only a
@@ -2422,6 +3085,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       // The list first, so "copy the previous invoice" knows whether there is
       // one before the form is drawn.
       await refresh();
+      void refreshPending();
       if (mayWrite) {
         await refreshKidPreview();
         // resetForm() puts the form step on screen; a viewer gets neither it nor

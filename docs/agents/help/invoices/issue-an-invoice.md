@@ -1,6 +1,6 @@
 ---
 title: Issue an invoice
-description: How a person writes, checks and issues a sales invoice (faktura) on the Faktura page in Myntos, from the empty form to the PDF. Use when someone asks how to invoice or bill a customer, or how to send an invoice in Myntos.
+description: How a person writes, checks and issues a sales invoice (faktura) on the Faktura page in Myntos, from the empty form to an invoice sent as EHF or downloaded as a PDF. Use when someone asks how to invoice or bill a customer, or how to send an invoice in Myntos.
 pages: /faktura/
 skill: myntos-faktura
 ---
@@ -11,8 +11,11 @@ An invoice is written in one form, looked over in a review, and then issued
 with one button. Until it is issued it is a draft: it has no number, is not in
 the books, and can be changed or deleted. **Issuing is final.** The invoice
 gets the next number in an unbroken series, is posted to the books, and can
-afterwards only be corrected with a credit note (kreditnota). Myntos does not
-send the invoice to the customer; the person downloads it and sends it.
+afterwards only be corrected with a credit note (kreditnota). To a business
+on Peppol, once the company is registered for e-invoicing, the same press
+sends it as EHF, straight into the customer's accounting system; that is the
+default because from 1 January 2027 the law requires it for sales to other
+businesses. Anyone else gets the PDF, which the person downloads and sends.
 
 ## They might ask
 
@@ -67,13 +70,27 @@ send the invoice to the customer; the person downloads it and sends it.
 7. If it says «… ting må rettes først», press «Tilbake og endre», fix what is
    listed, and press «Se over fakturaen» again:
    [Fix an invoice that cannot be issued](https://myntos.no/llms/help/invoices/fix-an-invoice-that-cannot-be-issued.md).
-8. When nothing blocks it, read it through and press «Utsted fakturaen». This
+8. When nothing blocks it, read it through and press the main button. This
    is the step that cannot be undone; there is no extra confirmation, because
-   the review is the confirmation.
+   the review is the confirmation. The button says what it will do, and the
+   text under it says where the invoice goes:
+   - **«Utsted og send som EHF»**: the customer can receive EHF over Peppol.
+     The text under it names the customer and the organisation number it is
+     sent to. Pressing it issues the invoice and sends it at once; a sent
+     invoice cannot be called back. To issue now and send later, press
+     «Utsted uten å sende» beside it instead.
+   - **«Utsted fakturaen»**: nothing is sent. The text under it says why when
+     there is a reason: the customer cannot receive EHF over Peppol, or the
+     company is not registered for e-invoicing yet. A private customer gets
+     no extra text.
+
+   The buttons stay grey for a moment after the review opens, while Myntos
+   asks whether the customer can receive EHF.
 9. The card «Faktura … er utstedt» shows the amount, due date and KID, and the
-   issued invoice as a PDF beside them. Press
-   «Last ned PDF» (and «Last ned EHF» for a business customer) and send the
-   file to the customer:
+   issued invoice as a PDF beside them. If it was sent, the card says «Sender
+   EHF-en over Peppol …» and then «EHF-en er sendt over Peppol. Vi venter på
+   kvittering fra kundens system.» If not, press «Last ned PDF» and send the
+   file, or «Send som EHF» when it was issued with «Utsted uten å sende»:
    [Send an invoice to the customer](https://myntos.no/llms/help/invoices/send-an-invoice-to-the-customer.md).
    The invoice is already in the books: issuing posted it, so there is
    nothing more to do to «legge den inn i regnskapet». «Se bilaget i
@@ -86,7 +103,9 @@ send the invoice to the customer; the person downloads it and sends it.
 | --- | --- | --- |
 | «Du har lesetilgang» and no form | Their role is «Leser» | Ask an «Administrator» or «Eier» for a role that may write |
 | «Selskapet har ikke noe kontonummer, så ingen faktura kan utstedes.» | The company has no bank account number | An «Administrator» or «Eier» adds one: [Add a bank account](https://myntos.no/llms/help/company-and-access/add-a-bank-account.md) |
-| «Utsted fakturaen» is greyed out | The review found something that must be fixed | [Fix an invoice that cannot be issued](https://myntos.no/llms/help/invoices/fix-an-invoice-that-cannot-be-issued.md) |
+| «Utsted fakturaen» or «Utsted og send som EHF» is greyed out and «… ting må rettes først» is shown | The review found something that must be fixed | [Fix an invoice that cannot be issued](https://myntos.no/llms/help/invoices/fix-an-invoice-that-cannot-be-issued.md) |
+| A yellow notice at the top: «Fra … skal fakturaer til andre bokføringspliktige sendes som EHF over Peppol. Selskapet er ikke registrert for e-faktura ennå …» | The company cannot send EHF yet, so invoices to businesses have to be sent by hand | An «Administrator» or «Eier» follows «Sett opp e-faktura under Selskap»: [Register for e-invoicing](https://myntos.no/llms/help/company-and-access/register-for-e-invoicing.md) |
+| After «Utsted og send som EHF», the card shows a message instead of «EHF-en er sendt over Peppol …» | The invoice was issued, but the send did not go; it is issued and in the books either way | Read the message: [Send an invoice to the customer](https://myntos.no/llms/help/invoices/send-an-invoice-to-the-customer.md) says what each one means |
 | «Vi fikk ikke lagret.» or another message under the form | The draft could not be saved, often a line with a number that is not a number | Check «Antall», «Pris» and «Rabatt %» on every line, and try again |
 
 ## Good to know

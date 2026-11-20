@@ -26,14 +26,22 @@ The role «Medlem» or above, and an ID-porten login, to check and send again.
 
 1. Open `https://myntos.no/mva/` and click «Se meldingen» on the termin.
 2. Under «Meldinger for terminen», the melding is marked «Stoppet underveis»,
-   with «Innsendingen stoppet underveis. Sjekk i Altinn om meldingen ligger der
-   før du prøver igjen. Feilen: …».
-3. Log in to Altinn (`altinn.no`) for the company and look for the
-   MVA-melding for that termin.
+   with one of two lines:
+   - «Ingenting ble sendt: Altinn fikk ikke opprettet innsendingen. Kontroller
+     på nytt og send igjen. Feilen: …». Nothing reached Altinn. Go to step 5.
+   - «Innsendingen stoppet underveis. Se i innboksen til selskapet på
+     altinn.no om meldingen ligger der som sendt, før du prøver igjen.
+     Feilen: …». Go on to step 3.
+3. Log in to `altinn.no`, choose to act for the company, and open its inbox.
+   Look for the MVA-melding for that termin.
 4. If it is there and sent, it was filed. Do not send again.
 5. If it is not there, or it is there unfinished, go back to the MVA page,
    press «Kontroller hos Skatteetaten» again, and send the new check:
    [Send the MVA-melding](https://myntos.no/llms/help/vat/send-the-vat-return.md).
+   The pressed button on the page said the same right away: «Ingenting ble
+   sendt: …» or «Innsendingen stoppet underveis. Ingenting er bekreftet
+   sendt. Se i innboksen til selskapet på altinn.no før du prøver igjen, og
+   kontroller meldingen på nytt.»
 
 ## If something stops them
 

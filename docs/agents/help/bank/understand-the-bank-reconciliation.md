@@ -67,7 +67,7 @@ it never changes what has been entered.
 | «Ingen bevegelser å vise. Importer en kontoutskrift først.» | Nothing imported yet, or nothing under this filter | Import a statement, or choose «Alle» under «Vis» |
 | «Alt som er importert, er avstemt.» | Every imported movement is explained | Nothing to do until the next statement |
 | «Bilaget er reversert, så bevegelsen er ikke forklart lenger.» | The voucher it was matched to has been reversed since | Remove the match and match or enter the right one: [Remove a bank match](https://myntos.no/llms/help/bank/remove-a-bank-match.md) |
-| «KID-en hører til faktura … til …. Innbetaling på faktura føres ikke herfra ennå.» | A customer paid an invoice the company issued | [Handle an invoice payment in the bank](https://myntos.no/llms/help/bank/handle-an-invoice-payment-in-the-bank.md) |
+| «KID-en hører til faktura … til ….» | A customer paid an invoice the company issued. The note goes on to say whether the invoice is paid; «Før som innbetaling på faktura …» posts the payment | [Handle an invoice payment in the bank](https://myntos.no/llms/help/bank/handle-an-invoice-payment-in-the-bank.md) |
 | No buttons on the lines, no import box | Their role is «Leser» | Ask a «Medlem» or more to do it |
 
 ## Good to know
@@ -77,7 +77,8 @@ it never changes what has been entered.
   the bank's date. «Trolig» is still a guess: two equal payments close
   together look the same, so the person decides.
 - Matching is one bank line to one voucher. A single transfer that paid
-  several invoices cannot be matched yet.
+  several invoices cannot be matched yet: register each invoice's share on
+  «Faktura» and leave the line unreconciled.
 - The page does not yet compare the statement's closing balance with the
   books' bank balance.
 

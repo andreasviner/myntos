@@ -1183,13 +1183,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     documentUrl,
     fetchThumbnail,
     getCompanyCatalogue,
+    getMvaFiling,
     getSummary,
     listDimensions,
     interpretDocumentStreaming,
     listCashFlow,
     listParties,
     createParty,
+    mvaDocumentUrl,
     COMPOSITE_TYPE,
+    INVOICE_PAYMENT_TYPE,
     editCashFlow,
     editComposite,
     recordCashFlow,
@@ -1208,6 +1211,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     type AttachmentInfo,
     type DocumentRead,
     type InvoiceSuggestion,
+    type MvaFiling,
     type Party,
     type SuggestionAnswer,
     type SuggestionOption,
@@ -3167,7 +3171,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       button.addEventListener('click', () => {
         void undo(entry);
       });
-      actions.append(fix, button);
+      // En innbetaling på en faktura rettes ikke her: skjemaet vet ikke hvilken
+      // faktura den betaler, og serveren avviser rettingen. Reverser den, og
+      // registrer den riktige på fakturaen eller fra banklinjen.
+      if (entry.type_code === INVOICE_PAYMENT_TYPE) actions.append(button);
+      else actions.append(fix, button);
     }
 
     const when = cell(isoDate(entry.occurred_on));
@@ -3519,6 +3527,115 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         }),
       );
     }
+  }
+
+  /**
+   * Fyll skjemaet med betalingen av en sendt mva-melding («Før betalingen» på
+   * /mva/).
+   *
+   * Den sendte meldingen sier allerede alt som skal føres: beløpet, kategorien,
+   * hvem som får pengene og KID-en, og kvitteringen fra Skatteetaten er bilaget.
+   * Beløpet er det som gjenstår (`unpaid`), ikke meldingens tall: etter en
+   * korrigering av en betalt melding er det bare forskjellen.
+   * Før 2026-11-02 måtte eieren skrive det av selv og laste ned PDF-en for å
+   * legge den ved igjen. KI leser ingenting her: det er ingenting å gjette.
+   *
+   * Feltene som kommer fra meldingen, regnes som rørt, så et bilag fra banken
+   * lagt ved etterpå kan foreslå datoen uten å skrive over beløpet. Datoen er
+   * dagens: den skal være dagen pengene gikk, og det vet bare personen.
+   */
+  async function fillFromMva(filingId: number): Promise<void> {
+    let filing: MvaFiling;
+    try {
+      filing = await getMvaFiling(company.id, filingId);
+    } catch (error: unknown) {
+      setStatus(
+        formStatus,
+        error instanceof ApiError ? error.message : 'Vi fikk ikke hentet mva-meldingen.',
+      );
+      return;
+    }
+    if (filing.paid_by !== null) {
+      setStatus(
+        formStatus,
+        `Betalingen for ${filing.period_label} er allerede ført, som bilag ` +
+          `${filing.paid_by.voucher_no} ${isoDate(filing.paid_by.date)}.`,
+        'ok',
+      );
+      return;
+    }
+    // Null på en melding som ikke er sendt, og på en som en korrigering har
+    // erstattet: det er den nyeste meldingen som sier hva som skyldes.
+    if (filing.unpaid === null || filing.unpaid === '0.00') {
+      setStatus(formStatus, `Denne meldingen for ${filing.period_label} har ingen betaling å føre.`);
+      return;
+    }
+    const unpaid = filing.unpaid;
+    const refund = unpaid.startsWith('-');
+
+    clearFile();
+    closeSplit();
+    revealFields();
+    const direction = form.querySelector<HTMLInputElement>(
+      `input[name="direction"][value="${refund ? 'inn' : 'ut'}"]`,
+    );
+    if (direction !== null) direction.checked = true;
+    fillTypes();
+    fillParties();
+    typeSelect.value = refund ? 'mva_tilgode' : 'mva_oppgjor';
+    applyType();
+    const amount = form.querySelector<HTMLInputElement>('input[name="gross_amount"]');
+    // Det som gjenstår etter meldingen, ikke det betalingsinformasjonen sier:
+    // det er dette 2740 står med, og det er dette /mva/ kjenner igjen
+    // betalingen på.
+    if (amount !== null) amount.value = unpaid.replace('-', '');
+    el<HTMLInputElement>('#date-input').value = todayIso();
+    descriptionBox.value = refund
+      ? `Tilbakebetaling av mva for ${filing.period_label}`
+      : `Betaling av mva for ${filing.period_label}` +
+        (filing.payment_kid !== null ? `, KID ${filing.payment_kid}` : '');
+    readWith = descriptionBox.value;
+    ownDescription = true;
+    setPartyText(
+      'Skatteetaten',
+      resolveParty('Skatteetaten', parties, preferredPartyType()),
+    );
+    for (const name of ['direction', 'type_code', 'tax_code', 'gross_amount', 'party_id']) {
+      touched.add(name);
+    }
+    for (const name of ['type_code', 'gross_amount', 'description']) {
+      markField(name, 'Fra mva-meldingen');
+    }
+
+    const receipt = filing.documents.find((document_) => document_.data_type === 'kvittering');
+    let attached = false;
+    if (receipt !== undefined) {
+      try {
+        const response = await fetch(mvaDocumentUrl(company.id, filing.id, 'kvittering'), {
+          credentials: 'include',
+        });
+        if (response.ok) {
+          const blob = await response.blob();
+          chosen = [new File([blob], receipt.filename, { type: receipt.content_type })];
+          showFiles();
+          attached = true;
+        }
+      } catch {
+        // Skjemaet står fylt ut likevel; linjen under sier at PDF-en mangler.
+      }
+    }
+    setStatus(
+      formStatus,
+      (attached
+        ? 'Fylt ut fra mva-meldingen, med kvitteringen fra Skatteetaten som bilag. '
+        : 'Fylt ut fra mva-meldingen. Kvitteringen er ikke hentet, så legg ved ' +
+          'kvitteringen fra banken. ') +
+        (refund
+          ? 'Sett datoen til dagen pengene kom inn på kontoen.'
+          : 'Sett datoen til dagen pengene gikk fra kontoen.'),
+      'ok',
+    );
+    formCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   async function refresh(): Promise<void> {
@@ -3911,6 +4028,47 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
       loading.hidden = true;
       content.hidden = false;
+
+      // «Før betalingen» på /mva/. Fjernes fra adressen, så en ny lasting av
+      // siden ikke fyller skjemaet en gang til over det personen har skrevet.
+      const params = new URLSearchParams(window.location.search);
+      const filingId = Number(params.get('mva'));
+      if (params.has('mva')) {
+        params.delete('mva');
+        const rest = params.toString();
+        history.replaceState(
+          null,
+          '',
+          `${window.location.pathname}${rest ? `?${rest}` : ''}${window.location.hash}`,
+        );
+      }
+      // «Registrer inntekt» på oversikten. Retningen er personens eget svar,
+      // gitt med knappen de valgte, så den merkes som rørt: bilaget leses da
+      // som penger inn, og forslaget overstyrer den ikke. Skjemaet forblir
+      // uten standard for alle som kommer hit på annet vis. Fjernes fra
+      // adressen av samme grunn som `mva` over.
+      const retning = params.get('retning');
+      if (params.has('retning')) {
+        params.delete('retning');
+        const rest = params.toString();
+        history.replaceState(
+          null,
+          '',
+          `${window.location.pathname}${rest ? `?${rest}` : ''}${window.location.hash}`,
+        );
+      }
+      if (mayWrite && (retning === 'inn' || retning === 'ut')) {
+        const chosenDirection = form.querySelector<HTMLInputElement>(
+          `input[name="direction"][value="${retning}"]`,
+        );
+        if (chosenDirection !== null) {
+          chosenDirection.checked = true;
+          touched.add('direction');
+          fillTypes();
+          fillParties();
+        }
+      }
+      if (mayWrite && Number.isInteger(filingId) && filingId > 0) await fillFromMva(filingId);
     } catch (error: unknown) {
       loading.hidden = true;
       setStatus(

@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from myntos import __version__
-from myntos.api.deps import get_document_storage, get_working_files
+from myntos.api.deps import get_document_storage, get_mailer, get_working_files
 from myntos.api.errors import (
     approval_held_handler,
     domain_error_handler,
@@ -36,6 +36,7 @@ from myntos.domain.feedback.errors import FeedbackError
 from myntos.domain.identity import closure
 from myntos.domain.identity.errors import IdentityError
 from myntos.domain.ledger.errors import LedgerError
+from myntos.domain.peppol.errors import PeppolError
 from myntos.domain.server_errors import recorder
 from myntos.domain.server_errors import service as server_error_service
 from myntos.domain.server_errors.errors import ServerErrorLogError
@@ -123,12 +124,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     purging = loop.create_task(_purge_daily(sessions, storage, working))
     # The error log's counts are written every few seconds and once more on
     # the way out, so a restart loses none of what was counted
-    # (docs/operator.md).
-    recording = loop.create_task(recorder.store_regularly(sessions()))
+    # (docs/operator.md). The mailer through the dependencies too, so a test's
+    # outbox gets the operator's notice and no real mail leaves a test run.
+    mailer = app.dependency_overrides.get(get_mailer, get_mailer)()
+    recording = loop.create_task(recorder.store_regularly(sessions(), mailer))
     yield
     purging.cancel()
     recording.cancel()
-    await recorder.store_pending(sessions())
+    await recorder.store_pending(sessions(), mailer)
 
 
 async def _purge_daily(
@@ -283,6 +286,7 @@ def create_app() -> FastAPI:
     app.add_exception_handler(IdentityError, domain_error_handler)
     app.add_exception_handler(LedgerError, domain_error_handler)
     app.add_exception_handler(FakturaError, domain_error_handler)
+    app.add_exception_handler(PeppolError, domain_error_handler)
     app.add_exception_handler(BrregError, domain_error_handler)
     app.add_exception_handler(FeedbackError, domain_error_handler)
     app.add_exception_handler(OperatorError, domain_error_handler)

@@ -131,6 +131,37 @@ A failure the operator marked resolved opens again by itself when it happens
 again after that moment. Kinds not seen for `SERVER_ERROR_RETENTION_DAYS` (90)
 are deleted by the daily purge in `main.py`, resolved or not.
 
+### The mail: a ping, never the data
+
+The page has to be opened to be read, and nobody opens it on a hunch. On
+2026-11-02 an MVA-melding stopped at Altinn with a 500, and the operator
+learnt it from the person who had pressed the button. So, with
+`SERVER_ERROR_NOTIFY_TO=<address>` in `.env`, the write that stores the
+counts also mails that address when a kind of failure is **new, or open
+again** after being marked resolved. A kind already open does not mail again.
+
+- **What it carries:** the page's own columns for up to five kinds (number,
+  route template, exception type, logger, log template), how many are open,
+  and the link to `/drift/`. Code, never values: mail leaves through
+  Cloudflare without an EEA promise (ARCHITECTURE.md § What the mail provider
+  sees), which is the same reason the row keeps what it keeps.
+  `server_errors/mail.py` builds it, and the tests hold that a value logged as
+  an argument is not in it.
+- **One an hour at most.** The quiet hour starts when a mail goes, and news
+  inside it is not mailed later either: the page lists it, and the mail that
+  went said how many were open. The hour is the process's (`notified_at` in
+  memory), so a restart can mail sooner.
+- **Unset, nothing is sent**, and nothing else changes: the failures are
+  stored and on the page either way. A mail that fails to go is a WARNING,
+  never an ERROR, for the reason the recorder's own complaints are.
+
+Mail to any `@myntos.no` address reaches the owner on the hosted deployment,
+so `drift@myntos.no` needs no setup there.
+
+What goes wrong in the filings is logged at ERROR since 2026-11-02 (a check
+or a submission that failed at Skatteetaten or Altinn, for both the
+MVA-melding and the skattemelding), so it lands here and in the mail.
+
 ## Tests
 
 `tests/test_server_errors.py` holds what is kept and what is not, grouping,
@@ -143,10 +174,6 @@ written into the next test's database by its lifespan.
 
 ## Gaps
 
-- **Nothing tells the operator that something failed.** The page has to be
-  opened. A mail per new kind of failure would be the obvious next step, and
-  it may carry only the type and the route template, for the reason feedback's
-  notice carries no text (feedback.md, rule 4).
 - **The frontend's own failures are not here.** A page that throws in the
   browser leaves nothing on the server. Sending those would need the same
   boiling down in the browser, and a public route that takes them without

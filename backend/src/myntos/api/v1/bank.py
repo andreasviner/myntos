@@ -2,11 +2,14 @@
 
 Upload a camt.053 file, see each movement of money it holds next to the voucher
 that books it, and for the ones nothing books yet, either confirm the voucher
-Myntos suggests or post a new one from the line.
+Myntos suggests, post a new one from the line, or register it as a customer's
+payment of an invoice (usually the one whose KID it carries).
 
 Nothing here edits a voucher. Confirming a match writes a link on the bank
 line; posting from a line goes through the register's own
-:func:`~myntos.domain.ledger.service.record_cash_flow`. A posted voucher is
+:func:`~myntos.domain.ledger.service.record_cash_flow`, and paying an invoice
+from one through the invoice's own
+:func:`~myntos.domain.faktura.payments.register_payment`. A posted voucher is
 history, and the bank agreeing with it is not a reason to touch it.
 """
 
@@ -29,6 +32,7 @@ from myntos.api.deps import (
 from myntos.domain.bank import matching
 from myntos.domain.bank import service as bank_service
 from myntos.domain.bank.models import BankStatement, BankStatementLine
+from myntos.domain.faktura.payments import PaymentState
 from myntos.domain.identity.access import Permission, require_permission
 from myntos.domain.ledger.cashflow import CASH_FLOW_TYPES, CashFlowDirection
 
@@ -82,6 +86,11 @@ class InvoiceHintResponse(BaseModel):
     document_id: int
     document_number: str | None
     buyer_name: str
+    # What is still owed on it, and whether it is paid: the line can be
+    # registered as its payment (POST …/linjer/{line_id}/faktura/{document_id})
+    # while ``outstanding`` is above zero.
+    outstanding: Decimal
+    payment_state: PaymentState
 
 
 class LineResponse(BaseModel):
@@ -201,6 +210,8 @@ def _line_response(
                 document_id=hint.document_id,
                 document_number=hint.document_number,
                 buyer_name=hint.buyer_name,
+                outstanding=hint.outstanding,
+                payment_state=hint.state,
             )
             if hint is not None
             else None
@@ -395,3 +406,57 @@ async def create_from_line(
         created_by_user_id=user.id,
     )
     return _line_response(line)
+
+
+@router.post(
+    "/companies/{company_id}/bank/linjer/{line_id}/faktura/{document_id}",
+    status_code=status.HTTP_201_CREATED,
+    openapi_extra=key_post("føre en banklinje som innbetaling på en faktura"),
+)
+async def settle_invoice_from_line(
+    line_id: int,
+    document_id: int,
+    context: CurrentCompany,
+    db: DbSession,
+    user: CurrentUser,
+) -> LineResponse:
+    """Register an incoming bank line as the customer's payment of an invoice.
+
+    The same posting as ``POST
+    /api/v1/companies/{company_id}/faktura/{document_id}/innbetalinger``
+    (bank 1920 debited, kundefordringer 1500 credited with the invoice's
+    customer, the 1500 line naming the invoice), with the date and the amount
+    taken from the bank line rather than typed, and the line then linked to the
+    voucher as ``opprettet``. No body.
+
+    When an incoming line carries the KID of an issued invoice, ``GET
+    …/bank/linjer`` says which in ``invoice``, with what is still
+    ``outstanding``; that is the usual pair to send here. A customer who left
+    the KID out still paid, so any incoming line may pay any open invoice of
+    this company. Both ids are in the path so a person approving a key's
+    request sees the bank line and the invoice described from the books.
+
+    Refuses a line already reconciled (409 ``bank_line_already_matched``), an
+    outgoing line (422 ``bank_match_mismatch``), an invoice that is a draft, a
+    kreditnota or credited (409 ``not_payable``), a line for more than is still
+    owed (422 ``payment_exceeds_outstanding``: book the excess some other way,
+    or pay the invoices it covers by hand), a closed financial year (409
+    ``closed_financial_year``), and ids that are not this company's (404
+    ``bank_line_not_found``, ``invoice_not_found``). Needs the role Medlem or
+    above.
+    """
+    require_permission(context.membership.role, Permission.LEDGER_WRITE)
+    line, _, _ = await bank_service.settle_invoice_from_line(
+        db,
+        company=context.company,
+        line_pk=line_id,
+        document_pk=document_id,
+        # From the session, never the payload, for the reason record_entry gives.
+        created_by_user_id=user.id,
+    )
+    # The hint as the list would show it now, so the page that pressed the
+    # button sees the invoice paid without fetching the list again.
+    invoices = await bank_service.invoices_by_kid(
+        db, company=context.company, kids=[line.kid] if line.kid else []
+    )
+    return _line_response(line, invoices=invoices)

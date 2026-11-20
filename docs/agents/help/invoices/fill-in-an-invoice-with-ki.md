@@ -1,6 +1,6 @@
 ---
 title: Let KI fill in the invoice from the customer's e-mail
-description: How a person pastes the customer's e-mail with invoice details, or a sentence about the sale, into the box at the top of the Faktura page in Myntos and gets the buyer, the dates, the reference and the lines filled in by KI. Use when someone asks whether Myntos can fill in an invoice from an e-mail, read the customer's invoice address for them, or where the KI box on the invoice is.
+description: How a person pastes the customer's e-mail with invoice details, or a sentence about the sale, into the box at the top of the Faktura page in Myntos and gets the buyer, the dates, the reference and the lines filled in by KI. Use when someone asks whether Myntos can fill in an invoice from an e-mail, read the customer's invoice address for them, find the customer's organisation number and address from the company name, or where the KI box on the invoice is.
 pages: /faktura/
 skill: myntos-faktura
 ---
@@ -22,11 +22,20 @@ names that day. The organisation number is read from the text by its check
 digit. If the buyer is already a registered customer, Myntos chooses them in
 «Kunde» itself, from the company's own customer list.
 
+If the text names the buyer as a company, with its company form («Hapro AS»,
+«Coop Norge SA»), but gives no organisation number, Myntos looks the name up
+in Enhetsregisteret. When exactly one company there has that name, its
+organisation number goes into «Organisasjonsnummer», and «Adresse»,
+«Postnummer» and «Poststed» are filled in from the register. A name written
+without a company form («Hapro», «Ola Hansen») is not looked up, because it
+may be a private person.
+
 ## They might ask
 
 - «Kan Myntos fylle ut fakturaen fra e-posten fra kunden?»
 - «Kunden sendte fakturaadressen på e-post, må jeg skrive den inn selv?»
 - «Hvor er KI-feltet på fakturaen?»
+- «KI fant navnet på kunden, hvorfor kom ikke adressen med?»
 - "Can Myntos fill in an invoice from the customer's e-mail?"
 
 ## Before they start
@@ -47,7 +56,10 @@ digit. If the buyer is already a registered customer, Myntos chooses them in
 4. Every field it filled in is tinted and marked «KI» after its label, and a
    message under the box says what it filled in, such as «Fylte inn kjøperen
    og referansen.». The mark goes away from a field when they change it.
-   Lines it added are marked «KI» the same way.
+   Lines it added are marked «KI» the same way. When there is an
+   organisation number, the line under «Organisasjonsnummer» shows the
+   registered name and company form, and the address fields fill in from
+   Enhetsregisteret a moment later. Check that it is the right company.
 5. If the text had no lines in it, as a customer's e-mail usually does,
    describe the sale in the second box, under «Linjer»:
    [Let KI write the lines](https://myntos.no/llms/help/invoices/add-lines-with-ki.md).
@@ -63,8 +75,13 @@ digit. If the buyer is already a registered customer, Myntos chooses them in
 | «Kjøperen sto allerede i skjemaet, så den er ikke endret.» | A customer was chosen, or part of a buyer was typed, before they pressed the button. The KI never changes a buyer someone wrote | Set «Kunde» back to «Skriv inn kjøperen selv» and clear the buyer fields, then press «Fyll ut fakturaen» again |
 | «Kunden er satt til «…», fordi det er den eneste kunden som passer til «…». Kontroller at det er riktig kunde.» | The text named the customer by part of their name | Check «Kunde», and choose another if it is wrong |
 | «Flere kunder passer til «…»: …» | More than one registered customer fits the name | Choose the right one in «Kunde» |
+| «Organisasjonsnummeret er hentet fra Enhetsregisteret, der … (…) er den eneste enheten med dette navnet. Kontroller at det er riktig kjøper.» | The text gave the company's name but no number, and Myntos found the number in Enhetsregisteret by the name | Check the name under «Organisasjonsnummer». If it is the wrong company, type the right number over it |
+| «Flere enheter i Enhetsregisteret heter «…»: …. Skriv inn organisasjonsnummeret til den riktige.» | More than one company in Enhetsregisteret has exactly that name, so Myntos chose none | Ask the customer for their organisation number, or look it up, and type it in «Organisasjonsnummer» |
+| «Fant ingen enhet i Enhetsregisteret som heter «…». …» | No company in Enhetsregisteret has exactly the name the text gives. Often the e-mail spells it differently from the register | Type the organisation number in «Organisasjonsnummer» |
+| ««…» er slettet fra Enhetsregisteret (…). …» | The only company with that name has been deleted from the register | Check who the invoice is really to before going on |
+| «Vi fikk ikke slått opp «…» i Enhetsregisteret nå. …» | Enhetsregisteret did not answer | Type the organisation number, or press «Fyll ut fakturaen» again in a moment |
 | «Teksten har en annen fakturaadresse enn kunden har i registeret: …» | The customer is registered with another address than the e-mail gives. The invoice uses the registered one | Correct the customer: [Correct a customer's or supplier's orgnr or address](https://myntos.no/llms/help/customers-and-suppliers/correct-an-orgnr-or-address.md) |
-| «Teksten sier at fakturaen skal sendes til …» | The e-mail gives an address for the invoice. Myntos does not send invoices yet | After issuing, download the PDF and send it there: [Send an invoice to the customer](https://myntos.no/llms/help/invoices/send-an-invoice-to-the-customer.md) |
+| «Teksten sier at fakturaen skal sendes til …» | The e-mail gives an address for the invoice. Myntos never e-mails invoices | After issuing, send it as EHF if the customer is a business on Peppol, or download the PDF and send it there: [Send an invoice to the customer](https://myntos.no/llms/help/invoices/send-an-invoice-to-the-customer.md) |
 | «Teksten sier ikke hva som er solgt, så fakturaen har ingen linjer ennå.» | Normal for a customer's e-mail | Describe the sale under «Linjer», or type the lines |
 | «Vi fant verken kjøper eller fakturalinjer i teksten. …» | Nothing in the text could be used | Paste the part with the invoice details, or fill in the form by hand |
 | «Vi fikk ikke svar fra Løynd nå. Fyll ut selv, eller prøv igjen.» | The model did not answer | Try again in a moment, or fill in the form |
@@ -77,9 +94,12 @@ digit. If the buyer is already a registered customer, Myntos chooses them in
 - A date or a place the form filled in by itself (today, 14 days ahead, the
   company's town) is replaced if the text names another. Anything they typed
   is never replaced.
-- With an organisation number, Myntos also looks the buyer up in
-  Enhetsregisteret as if it were typed, and says under the number if the
-  company is deleted or bankrupt. The address from the e-mail is kept.
+- With an organisation number, from the text or found by the name, Myntos
+  looks the buyer up in Enhetsregisteret as if it were typed, and says under
+  the number if the company is deleted or bankrupt. An address the e-mail
+  gives is kept; the register only fills in the fields that are empty.
+- Only a company's name is sent to Enhetsregisteret, never a private
+  person's: that is why the name has to carry its company form.
 - The person issuing the invoice is responsible for what it says, whoever
   filled it in.
 

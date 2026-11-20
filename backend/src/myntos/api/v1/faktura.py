@@ -6,6 +6,11 @@ changed and thrown away freely. Issuing is one irreversible call. After it there
 is no PATCH and no DELETE, only ``/kreditnota`` — which is not an API design
 preference but bokføringsforskriften § 5-2-7.
 
+``POST /faktura/{id}/innbetalinger`` is the customer paying: a voucher of its
+own, weeks after the invoice, booked from what the bank statement says. It is
+never assumed on the due date (:mod:`myntos.domain.faktura.payments`), and
+every document says what it has been paid and what is left.
+
 ``GET /faktura/{id}/kontroll`` exists so the interface can show what still stands
 between a draft and a lawful invoice *before* the user commits. Issuing checks the
 same rules and refuses; the difference is that this one is safe to call on every
@@ -45,8 +50,10 @@ from myntos.api.deps import (
     key_post,
     key_write,
 )
+from myntos.api.v1.peppol import TransmissionResponse, transmission_response
 from myntos.core.clock import utc_now
 from myntos.domain.faktura import compliance, drafting, kid
+from myntos.domain.faktura import payments as faktura_payments
 from myntos.domain.faktura import pdf as faktura_pdf
 from myntos.domain.faktura import service as faktura_service
 from myntos.domain.faktura.catalogue import SALES_TAX_OPTIONS, UNITS
@@ -65,7 +72,10 @@ from myntos.domain.identity.access import Permission, require_permission
 from myntos.domain.ledger import parties as party_service
 from myntos.domain.ledger.chart import TAX_CODES_BY_CODE
 from myntos.domain.ledger.models import Company, PartyType
-from myntos.integrations import loynd
+from myntos.domain.ledger.service import PaymentMethod
+from myntos.domain.peppol import service as peppol_service
+from myntos.domain.peppol.models import PeppolTransmission
+from myntos.integrations import brreg, loynd
 
 router = APIRouter(tags=["faktura"])
 
@@ -163,6 +173,17 @@ class ViolationResponse(BaseModel):
     severity: compliance.Severity
 
 
+class InvoicePaymentResponse(BaseModel):
+    # The payment's voucher, in «Inn- og utbetalinger»; reversing it is how a
+    # payment registered by mistake is undone.
+    voucher_id: int
+    voucher_no: str
+    paid_on: date
+    amount: Decimal
+    # 1920 (bank) or 1900 (cash): where the money came in.
+    payment_account: str
+
+
 class FakturaResponse(BaseModel):
     id: int
     document_type: DocumentType
@@ -220,6 +241,22 @@ class FakturaResponse(BaseModel):
     credits_document_id: int | None
     credited_by_document_id: int | None
     has_ehf: bool
+    # The latest time the EHF was sent over Peppol, as last stored; null when
+    # it never was. GET …/forsendelse asks the access point for news.
+    ehf_sending: TransmissionResponse | None = None
+
+    # Whether the customer has paid. All four are null (and ``payments`` empty)
+    # on a draft and on a kreditnota, which nobody owes anything on.
+    # ``outstanding`` is negative only on a credited invoice that was paid
+    # first: what the customer paid before the credit. Paying it back is not
+    # linked to the invoice yet, so the figure stays after a refund is booked;
+    # it says what was paid, not that the refund is still owed.
+    payment_state: faktura_payments.PaymentState | None = None
+    paid_amount: Decimal | None = None
+    outstanding: Decimal | None = None
+    # Past its due date with something still owed, counted in Norway's day.
+    overdue: bool = False
+    payments: list[InvoicePaymentResponse] = Field(default_factory=list)
 
 
 class CreateFakturaRequest(BaseModel):
@@ -293,6 +330,19 @@ class CreditNoteRequest(BaseModel):
     note: str | None = Field(default=None, max_length=1000)
 
 
+class RegisterPaymentRequest(BaseModel):
+    """A payment as the bank statement or the cash receipt shows it.
+
+    Both required, with no default to the full amount: what came in is read
+    off the statement, and a default would book the whole invoice as paid for
+    a caller that only forgot the field.
+    """
+
+    paid_on: date
+    amount: Decimal = Field(gt=0)
+    payment_method: PaymentMethod = PaymentMethod.BANK
+
+
 class NextNumberResponse(BaseModel):
     """What the next issued invoice would be numbered, and its KID.
 
@@ -343,9 +393,18 @@ class FakturaDraftResponse(BaseModel):
     ``buyer_*`` fields are what the text says about the buyer either way; a
     draft with ``party_id`` takes the customer's own details and ignores them.
 
-    ``buyer_is_business`` is true when the text carries an organisasjonsnummer
-    or the matched customer has one, and null otherwise: an orgnr proves a
-    business, and its absence proves nothing.
+    ``buyer_orgnr`` is read out of the text by its check digit. When the text
+    has none, names the buyer with its legal form («Hapro AS») and fits no
+    registered customer, it is looked up in Enhetsregisteret by that name and
+    kept only when exactly one live unit there has exactly that name;
+    ``buyer_orgnr_source`` says which of the two it was (``tekst`` or
+    ``enhetsregisteret``), and ``warnings`` says it out loud. The address is
+    not taken from the register here: ``GET /enhetsregisteret/{orgnr}`` gives
+    it, as it does for a number the text gave.
+
+    ``buyer_is_business`` is true when there is an organisasjonsnummer, from
+    the text or the register, or the matched customer has one, and null
+    otherwise: an orgnr proves a business, and its absence proves nothing.
 
     ``invoice_email`` is where the text asks for the invoice to be sent. The
     invoice has no field for it and Myntos sends nothing yet, so it is for the
@@ -356,6 +415,7 @@ class FakturaDraftResponse(BaseModel):
     party_match: drafting.MatchKind | None
     buyer_name: str | None
     buyer_orgnr: str | None
+    buyer_orgnr_source: drafting.OrgnrSource | None
     buyer_address_line: str | None
     buyer_postal_code: str | None
     buyer_city: str | None
@@ -375,6 +435,7 @@ class FakturaDraftResponse(BaseModel):
             party_match=None,
             buyer_name=None,
             buyer_orgnr=None,
+            buyer_orgnr_source=None,
             buyer_address_line=None,
             buyer_postal_code=None,
             buyer_city=None,
@@ -411,9 +472,15 @@ def _faktura_response(
     document: SalesDocument,
     *,
     credited_by: int | None = None,
+    sending: PeppolTransmission | None = None,
+    settlement: faktura_payments.Settlement | None = None,
     today: date | None = None,
 ) -> FakturaResponse:
     computed = totals(document)
+    owing = settlement is not None and settlement.state in {
+        faktura_payments.PaymentState.UBETALT,
+        faktura_payments.PaymentState.DELVIS_BETALT,
+    }
     violations = (
         [] if document.is_issued else compliance.check(document, today=today or utc_now().date())
     )
@@ -469,6 +536,25 @@ def _faktura_response(
         credits_document_id=document.credits_document_pk,
         credited_by_document_id=credited_by,
         has_ehf=document.ehf_xml is not None,
+        ehf_sending=None if sending is None else transmission_response(sending),
+        payment_state=None if settlement is None else settlement.state,
+        paid_amount=None if settlement is None else settlement.paid,
+        outstanding=None if settlement is None else settlement.outstanding,
+        overdue=(
+            owing and document.due_date is not None and document.due_date < (today or _oslo_today())
+        ),
+        payments=[]
+        if settlement is None
+        else [
+            InvoicePaymentResponse(
+                voucher_id=payment.voucher_id,
+                voucher_no=payment.voucher_no,
+                paid_on=payment.paid_on,
+                amount=payment.amount,
+                payment_account=payment.payment_account,
+            )
+            for payment in settlement.payments
+        ],
     )
 
 
@@ -526,7 +612,10 @@ async def list_faktura(
     as decimal strings), and for a draft also ``violations``, what still stands
     between it and a lawful invoice — the same findings as ``…/kontroll``. An
     issued invoice that has been credited names its credit note in
-    ``credited_by_document_id``.
+    ``credited_by_document_id``. An issued faktura says whether it is paid:
+    ``payment_state`` (``ubetalt``, ``delvis_betalt``, ``betalt`` or
+    ``kreditert``), ``paid_amount``, ``outstanding``, ``overdue`` and the
+    ``payments`` registered with ``POST …/faktura/{document_id}/innbetalinger``.
 
     ``status=utkast`` lists only drafts: no number, not in the books, free to
     change or discard. ``status=utstedt`` lists only issued documents: numbered,
@@ -541,8 +630,20 @@ async def list_faktura(
         db, company=context.company, status=status_filter, limit=limit, offset=offset
     )
     credited = await faktura_service.credited_by(db, [d.id for d in documents])
+    sent = await peppol_service.latest_transmissions(
+        db, company=context.company, document_pks=[d.id for d in documents]
+    )
+    settled = await faktura_payments.settlements(
+        db, company=context.company, documents=documents, credited=credited
+    )
     return [
-        _faktura_response(document, credited_by=credited.get(document.id)) for document in documents
+        _faktura_response(
+            document,
+            credited_by=credited.get(document.id),
+            sending=sent.get(document.id),
+            settlement=settled.get(document.id),
+        )
+        for document in documents
     ]
 
 
@@ -638,6 +739,23 @@ async def _proposal(text: str, company: Company) -> drafting.InvoiceProposal:
     )
 
 
+async def _orgnr_from_register(name: str) -> tuple[str | None, list[str]]:
+    """The orgnr Enhetsregisteret has for exactly ``name``, and what to say about it.
+
+    Best effort like every register call: a slow or unreachable Brønnøysund
+    costs the person a typed number, never the proposal.
+    """
+    try:
+        units = await brreg.search_by_name(name)
+    except brreg.BrregError:
+        return None, [
+            f"Vi fikk ikke slått opp «{name}» i Enhetsregisteret nå. Skriv inn "
+            "organisasjonsnummeret selv."
+        ]
+    unit, said = drafting.match_register(name, units)
+    return (unit.orgnr if unit is not None else None), said
+
+
 def _lines(proposal: drafting.InvoiceProposal) -> list[DraftedLineResponse]:
     return [
         DraftedLineResponse(
@@ -670,6 +788,15 @@ async def draft_faktura(
     digit rather than by the model. Which registered customer it is, is decided
     here against this company's own customer register, which the model never
     sees.
+
+    A buyer the text names as a company («Hapro AS», with its legal form) but
+    gives no number for, and who is not a registered customer, is looked up in
+    Enhetsregisteret by that name. Its orgnr is proposed only when exactly one
+    live unit there has exactly that name, with ``buyer_orgnr_source:
+    "enhetsregisteret"`` and a warning saying so; two or none, and the number
+    is left for the person, with a warning naming the candidates. A name
+    without its legal form is never looked up, because it may be a private
+    person's, and a person's name is not a company's to match.
 
     Stores nothing and posts nothing. The answer is named field for field as
     ``POST …/faktura`` takes a draft, so it can go straight into one once the
@@ -709,6 +836,24 @@ async def draft_faktura(
         if moved is not None:
             warnings.append(moved)
 
+    orgnr = header.buyer_orgnr
+    orgnr_source: drafting.OrgnrSource | None = "tekst" if orgnr is not None else None
+    # Only for a buyer this company has not registered. A customer who fits is
+    # the customer, with the details on file; and when two fit (``said``), the
+    # person is choosing between them in «Kunde», where a stranger's number from
+    # the register would only add a third answer.
+    if (
+        party is None
+        and orgnr is None
+        and not said
+        and header.buyer_name is not None
+        and drafting.names_a_registered_unit(header.buyer_name)
+    ):
+        orgnr, told = await _orgnr_from_register(header.buyer_name)
+        warnings.extend(told)
+        if orgnr is not None:
+            orgnr_source = "enhetsregisteret"
+
     if proposal.lines:
         warnings.extend(proposal.warnings)
     elif header.is_empty() and party is None:
@@ -722,14 +867,15 @@ async def draft_faktura(
     business: bool | None = None
     if party is not None:
         business = party.orgnr is not None
-    elif header.buyer_orgnr is not None:
+    elif orgnr is not None:
         business = True
 
     return FakturaDraftResponse(
         party_id=party.id if party is not None else None,
         party_match=how,
         buyer_name=header.buyer_name,
-        buyer_orgnr=header.buyer_orgnr,
+        buyer_orgnr=orgnr,
+        buyer_orgnr_source=orgnr_source,
         buyer_address_line=header.buyer_address_line,
         buyer_postal_code=header.buyer_postal_code,
         buyer_city=header.buyer_city,
@@ -809,6 +955,13 @@ async def get_faktura(document_id: int, context: CurrentCompany, db: DbSession) 
     issuing sets when ``payment_reference_auto`` is true. Amounts are decimal
     strings.
 
+    On an issued faktura, ``payment_state`` says whether the customer has paid
+    (``ubetalt``, ``delvis_betalt``, ``betalt``, or ``kreditert`` once a
+    kreditnota cancelled it), ``outstanding`` how much is left, ``overdue``
+    whether the due date has passed with money still owed, and ``payments`` the
+    payments registered, each with its voucher. Null on a draft and a
+    kreditnota.
+
     404 ``invoice_not_found`` when the id is not one of this company's
     documents: list them with ``GET …/faktura`` to find the right one.
     """
@@ -817,7 +970,18 @@ async def get_faktura(document_id: int, context: CurrentCompany, db: DbSession) 
         db, company=context.company, document_pk=document_id
     )
     credited = await faktura_service.credited_by(db, [document.id])
-    return _faktura_response(document, credited_by=credited.get(document.id))
+    sent = await peppol_service.latest_transmissions(
+        db, company=context.company, document_pks=[document.id]
+    )
+    settled = await faktura_payments.settlements(
+        db, company=context.company, documents=[document], credited=credited
+    )
+    return _faktura_response(
+        document,
+        credited_by=credited.get(document.id),
+        sending=sent.get(document.id),
+        settlement=settled.get(document.id),
+    )
 
 
 @router.patch(
@@ -913,7 +1077,11 @@ async def issue_faktura(
     document = await faktura_service.issue(
         db, storage, company=context.company, document_pk=document_id, user_id=user.id
     )
-    return _faktura_response(document)
+    # Unpaid, and said so, rather than null like a draft.
+    settlement = await faktura_payments.settlement_of(
+        db, company=context.company, document=document
+    )
+    return _faktura_response(document, settlement=settlement)
 
 
 @router.post(
@@ -945,6 +1113,65 @@ async def credit_faktura(
         user_id=user.id,
     )
     return _faktura_response(document)
+
+
+@router.post(
+    "/companies/{company_id}/faktura/{document_id}/innbetalinger",
+    status_code=status.HTTP_201_CREATED,
+    openapi_extra=key_post("registrere en innbetaling på en faktura"),
+)
+async def register_payment(
+    document_id: int,
+    payload: RegisterPaymentRequest,
+    context: CurrentCompany,
+    user: CurrentUser,
+    db: DbSession,
+) -> FakturaResponse:
+    """Register that the customer paid an issued invoice, in full or in part.
+
+    In Norwegian bookkeeping an invoice is income and a receivable (account
+    1500, kundefordringer) the day it is issued; the customer paying is a
+    second event, booked when the money arrives. This posts it: a voucher in
+    «Inn- og utbetalinger» that debits the bank (1920, ``payment_method``
+    ``bank``) or cash (1900, ``kontant``) and credits 1500 with the invoice's
+    customer, with no VAT, since the VAT was the invoice's. The voucher's 1500
+    line names the invoice, which is how the invoice knows it has been paid.
+
+    ``paid_on`` and ``amount`` are what the bank statement shows: the day the
+    money came, and how much. Less than ``outstanding`` is a part payment and
+    the invoice stays open for the rest; register each instalment as it comes.
+    Nothing is ever marked paid on the due date: a payment nobody has seen is
+    not one. When the bank statement has been imported, ``POST
+    /api/v1/companies/{company_id}/bank/linjer/{line_id}/faktura/{document_id}``
+    does the same from the bank line and links the two, which is better.
+
+    Returns the invoice with ``payment_state``, ``outstanding`` and
+    ``payments`` as they now are; the new payment's voucher is in ``payments``.
+    A payment registered by mistake is undone by reversing that voucher with
+    ``POST /api/v1/companies/{company_id}/cashflow/{voucher_id}/reversal``, and
+    is never corrected in the register.
+
+    Refuses a draft, a kreditnota and a credited invoice (409 ``not_payable``),
+    a date after today in Norway (422 ``payment_in_future``), more than is
+    still owed (422 ``payment_exceeds_outstanding``; the excess is not a
+    payment of this invoice), a closed financial year (409
+    ``closed_financial_year``), and an id that is not this company's (404
+    ``invoice_not_found``). Needs the role Medlem or above.
+    """
+    require_permission(context.membership.role, Permission.LEDGER_WRITE)
+    document, _ = await faktura_payments.register_payment(
+        db,
+        company=context.company,
+        document_pk=document_id,
+        paid_on=payload.paid_on,
+        amount=payload.amount,
+        payment_method=payload.payment_method,
+        created_by_user_id=user.id,
+    )
+    settlement = await faktura_payments.settlement_of(
+        db, company=context.company, document=document
+    )
+    return _faktura_response(document, settlement=settlement)
 
 
 @router.get("/companies/{company_id}/faktura/{document_id}/ehf", openapi_extra=KEY_READ)

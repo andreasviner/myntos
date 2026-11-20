@@ -53,6 +53,10 @@ probably be.
 - The KID is the same whichever customer the invoice is to: the invoice
   number already says who it is.
 - A credit note never gets a KID: nothing is paid on it.
+- When the customer pays with the KID and the bank statement is imported,
+  the bank line names the invoice, and «Før som innbetaling på faktura …»
+  registers the payment from it:
+  [Handle an invoice payment in the bank](https://myntos.no/llms/help/bank/handle-an-invoice-payment-in-the-bank.md).
 
 ## Related
 

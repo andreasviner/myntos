@@ -1,0 +1,248 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+{/*
+    Fristene selskapet har hos Skatteetaten og Brønnøysund det neste året, og
+    det Myntos vet er gjort. Nås fra oversikten og ikke fra toppmenyen: man ser
+    hit når kortet «Neste frister» får en til det, ikke flere ganger om dagen
+    (se kommentaren om menyen i BaseLayout).
+
+    Datoene regner backend ut av loven og det Myntos vet om selskapet. Siden
+    sier aldri «over fristen» om noe Myntos ikke kan vite er gjort: det står
+    bare tomt. Se lib/frister.ts.
+*/}
+<BaseLayout
+  title="Frister | Myntos"
+  description="Fristene selskapet har hos Skatteetaten og Brønnøysundregistrene det neste året."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Frister</p>
+      <h1 data-session-company></h1>
+      <p class="muted orgnr" id="orgnr"></p>
+    </div>
+  </header>
+
+  <p class="lead">
+    Fristene selskapet har hos Skatteetaten og Brønnøysundregistrene det neste året, og det Myntos
+    vet er gjort. Myntos regner ut datoene fra loven og innstillingene for selskapet.
+  </p>
+
+  <p class="status" id="page-status" hidden></p>
+  <div class="empty" id="loading">Henter fristene …</div>
+
+  <section id="content" hidden>
+    {/* Det listen ikke dekker, før listen: en tom liste skal ikke se fullstendig ut. */}
+    <p class="notice" id="not-covered" hidden></p>
+    <p class="notice" id="not-vat" hidden>
+      Selskapet er ikke registrert i Merverdiavgiftsregisteret, så det har ingen mva-frister.
+    </p>
+    <p class="notice" id="wound-up" hidden></p>
+
+    <div class="card">
+      <div class="table-scroll">
+        <table class="data">
+          <thead>
+            <tr>
+              <th>Frist</th>
+              <th>Hva</th>
+              <th>Status</th>
+              <th><span class="visually-hidden">Hvor</span></th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="none" hidden>Ingen frister Myntos kjenner til det neste året.</p>
+    </div>
+
+    <p class="meta-note" id="register-note" hidden></p>
+    <p class="meta-note">
+      {/* Det listen ikke har, sagt rett ut, så ingen tror den er hele bildet. */}
+      Ikke med her: a-meldingen, som har frist den 5. hver måned for selskaper som betaler lønn, og
+      frister Skatteetaten har flyttet for selskapet. Er forskuddsskatten for et år null, er det
+      ingenting å betale på de datoene. Faller en frist på en helligdag, kan den være litt senere
+      enn datoen her, aldri tidligere.
+    </p>
+  </section>
+</BaseLayout>
+
+<style>
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .orgnr {
+    margin: 0.2rem 0 0;
+  }
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--muted);
+    margin: 0 0 0.4rem;
+  }
+  .notice {
+    margin: 0 0 1rem;
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius-small);
+    background: var(--gold-soft);
+    color: var(--fg);
+  }
+  .meta-note {
+    margin-top: 1rem;
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  /* Radene lages av skriptet; :global() for å nå dem. */
+  #rows :global(.when) {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  #rows :global(.distance),
+  #rows :global(.note) {
+    display: block;
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  #rows :global(.note) {
+    margin-top: 0.2rem;
+    max-width: 38rem;
+  }
+  #rows :global(.badge[data-tone='over']) {
+    background: var(--danger-bg);
+    color: var(--negative);
+  }
+  #rows :global(.badge[data-tone='done']) {
+    background: var(--accent-soft);
+    color: var(--positive);
+  }
+  #rows :global(tr[data-tone='done'] td) {
+    color: var(--muted);
+  }
+  #rows :global(.place) {
+    white-space: nowrap;
+  }
+</style>
+
+<script>
+  import { ApiError, getFrister, type Frist, type Frister } from '../lib/api';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import { isoDate, orgnummer } from '../lib/format';
+  import { distance, placeFor, statusText, toneOf } from '../lib/frister';
+  import { loadSession, redirectToLogin } from '../lib/session';
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+
+  function span(className: string, text: string): HTMLSpanElement {
+    const node = document.createElement('span');
+    node.className = className;
+    node.textContent = text;
+    return node;
+  }
+
+  function row(frist: Frist, today: string): HTMLTableRowElement {
+    const tr = document.createElement('tr');
+    tr.dataset.tone = toneOf(frist);
+
+    const when = document.createElement('td');
+    when.className = 'when';
+    when.append(isoDate(frist.deadline), span('distance', distance(frist.deadline, today)));
+
+    const what = document.createElement('td');
+    what.append(frist.label);
+    if (frist.note !== null) what.append(span('note', frist.note));
+
+    const state = document.createElement('td');
+    const text = statusText(frist);
+    if (text !== '') {
+      const badge = span('badge', text);
+      badge.dataset.tone = toneOf(frist);
+      state.append(badge);
+    }
+
+    const where = document.createElement('td');
+    where.className = 'place';
+    const place = placeFor(frist);
+    // Ingen lenke på det som er gjort: den ville bare sendt folk dit for å se det igjen.
+    if (place !== null && frist.done !== true) {
+      const link = document.createElement('a');
+      link.href = place.href;
+      link.textContent = `${place.text} →`;
+      where.append(link);
+    }
+
+    tr.append(when, what, state, where);
+    return tr;
+  }
+
+  function render(found: Frister): void {
+    el('#rows').replaceChildren(...found.frister.map((frist) => row(frist, found.today)));
+    show(el('#none'), found.frister.length === 0);
+
+    const notCovered = el('#not-covered');
+    notCovered.textContent = found.covers_yearly
+      ? ''
+      : `Myntos viser foreløpig bare mva-fristene for organisasjonsformen «${
+          found.organisation_form ?? 'ukjent'
+        }». Skattemeldingen og de andre årlige fristene står ikke her ennå.`;
+    show(notCovered, !found.covers_yearly);
+    show(el('#not-vat'), !found.vat_registered);
+
+    const woundUp = el('#wound-up');
+    if (found.wound_up_on !== null) {
+      woundUp.replaceChildren(
+        `Regnskapet slutter ${isoDate(found.wound_up_on)}. Skattemeldingen for det siste året sendes før ` +
+          'selskapet slettes, uten en fast dato, og står derfor ikke i listen. Den sendes under ',
+        Object.assign(document.createElement('a'), { href: '/skattemelding/', textContent: 'Skattemelding' }),
+        '.',
+      );
+    }
+    show(woundUp, found.wound_up_on !== null);
+
+    // Hvor ferskt svaret om årsregnskapet er: det er Enhetsregisterets, fra sist Myntos spurte.
+    const registerNote = el('#register-note');
+    const asksRegister = found.frister.some((frist) => frist.kind === 'arsregnskap');
+    if (asksRegister && found.register_checked_at !== null) {
+      registerNote.textContent =
+        'Om årsregnskapet er mottatt, ser Myntos i Enhetsregisteret, sist ' +
+        `${isoDate(found.register_checked_at.slice(0, 10))}.`;
+    }
+    show(registerNote, asksRegister && found.register_checked_at !== null);
+  }
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      const company = currentCompany(companies);
+      if (company === undefined) return;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      render(await getFrister(company.id));
+      show(el('#content'), true);
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet fristene.');
+    } finally {
+      el('#loading').hidden = true;
+    }
+  });
+</script>

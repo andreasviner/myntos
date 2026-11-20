@@ -81,6 +81,9 @@ from myntos.domain.faktura.errors import (
     InvoiceNotFoundError,
     NotACustomerError,
     NotCreditableError,
+    NotPayableError,
+    PaymentExceedsOutstandingError,
+    PaymentInFutureError,
     UnsupportedCurrencyError,
 )
 from myntos.domain.faktura.vat import UnsupportedSalesTaxCodeError
@@ -194,10 +197,25 @@ from myntos.domain.mva.errors import (
     InvalidPeriodError,
     MeldingChangedError,
     MeldingNotBuildableError,
+    NothingNewToFileError,
     NotVatRegisteredError,
     PeriodNotOverError,
     SubmissionFailedError,
     UnsupportedCategoryError,
+)
+from myntos.domain.peppol.errors import (
+    AccessPointRefusedError,
+    AccessPointUnavailableError,
+    AlreadySentError,
+    CompanyAddressMissingError,
+    CompanyNotConfirmedError,
+    NotRegisteredError,
+    NotSendableError,
+    PeppolError,
+    PeppolNotAvailableError,
+    RecipientNotOnPeppolError,
+    SendUncertainError,
+    TransmissionNotFoundError,
 )
 from myntos.domain.server_errors.errors import ServerErrorLogError, ServerErrorNotFoundError
 from myntos.domain.server_errors.recorder import ROUTE_ATTRIBUTE
@@ -236,6 +254,7 @@ HandledError = (
     IdentityError
     | LedgerError
     | FakturaError
+    | PeppolError
     | BrregError
     | FeedbackError
     | OperatorError
@@ -323,6 +342,30 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     # items. 503 for the second, because waiting the hour does not help.
     FeedbackBusyError: status.HTTP_429_TOO_MANY_REQUESTS,
     FeedbackInboxFullError: status.HTTP_503_SERVICE_UNAVAILABLE,
+    # --- E-faktura over Peppol (docs/integrations/peppol.md) ---
+    # 503: the deployment has no access point, which no retry will change and
+    # no person using Myntos can fix.
+    PeppolNotAvailableError: status.HTTP_503_SERVICE_UNAVAILABLE,
+    # 404 like every sub-resource: the invoice exists, a send of it does not.
+    TransmissionNotFoundError: status.HTTP_404_NOT_FOUND,
+    # 409 for every step still missing on the way to a send: the company not
+    # confirmed or registered, the document a draft or without a buyer orgnr,
+    # sent once already, a customer the network cannot reach. Each is the
+    # state of the books or of the customer, not a malformed request, and each
+    # message says what to do instead.
+    CompanyNotConfirmedError: status.HTTP_409_CONFLICT,
+    CompanyAddressMissingError: status.HTTP_409_CONFLICT,
+    NotRegisteredError: status.HTTP_409_CONFLICT,
+    NotSendableError: status.HTTP_409_CONFLICT,
+    AlreadySentError: status.HTTP_409_CONFLICT,
+    RecipientNotOnPeppolError: status.HTTP_409_CONFLICT,
+    # 502: the access point refused what Myntos wrote, could not be reached,
+    # or did not answer a send in time. The request was fine; what we asked on
+    # its behalf was not, and the uncertain one is said apart because sending
+    # again might send twice.
+    AccessPointRefusedError: status.HTTP_502_BAD_GATEWAY,
+    AccessPointUnavailableError: status.HTTP_502_BAD_GATEWAY,
+    SendUncertainError: status.HTTP_502_BAD_GATEWAY,
     # --- The operator's page and the error log (docs/operator.md) ---
     # 404 when the deployment has no operator key: there is no page to open.
     OperatorPageOffError: status.HTTP_404_NOT_FOUND,
@@ -439,6 +482,12 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     InvoiceNotDraftError: status.HTTP_409_CONFLICT,
     AlreadyCreditedError: status.HTTP_409_CONFLICT,
     NotCreditableError: status.HTTP_409_CONFLICT,
+    # 409: a draft, a kreditnota or a credited invoice is owed nothing, and no
+    # payment changes that. 422 for the two that are about the payment itself:
+    # another date or another amount is the fix.
+    NotPayableError: status.HTTP_409_CONFLICT,
+    PaymentExceedsOutstandingError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    PaymentInFutureError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     # 422: the invoice does not meet bokføringsforskriften § 5-1. The body
     # carries the prose; the interface shows the per-field list from
     # /faktura/{id}/kontroll rather than parsing this one.
@@ -466,6 +515,7 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     PeriodNotOverError: status.HTTP_409_CONFLICT,
     FilingNotSubmittableError: status.HTTP_409_CONFLICT,
     MeldingChangedError: status.HTTP_409_CONFLICT,
+    NothingNewToFileError: status.HTTP_409_CONFLICT,
     # 502: Skatteetaten or Altinn refused or could not be reached.
     SubmissionFailedError: status.HTTP_502_BAD_GATEWAY,
     # --- Skattemelding ---

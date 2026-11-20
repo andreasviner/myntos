@@ -155,10 +155,49 @@ def test_lines_at_different_rates_under_one_code_are_kept_apart() -> None:
     assert sorted(line.sats or Decimal(0) for line in lines) == [Decimal("0.15"), Decimal("0.25")]
 
 
-def test_amounts_are_reported_in_ore_not_rounded() -> None:
-    (line,) = m.aggregate([sale("3", "0.25", "123.45", "30.86")])
-    assert line.grunnlag == Decimal("123.45")
-    assert m.format_amount(line.merverdiavgift) == "30.86"
+def _built(*lines: m.TaxedLine) -> m.Melding:
+    return m.build(lines, termin=TERMIN, category=Meldingskategori.ALMINNELIG, orgnr=ORGNR)
+
+
+def test_amounts_are_reported_in_whole_kroner() -> None:
+    """R082: «Innsendte beløp skal ikke inneholde desimaler», and the melding is refused."""
+    melding = _built(sale("3", "0.25", "123.45", "30.86"))
+    (line,) = melding.lines
+    assert (line.grunnlag, line.merverdiavgift) == (Decimal("123.00"), Decimal("31.00"))
+    assert m.format_amount(line.merverdiavgift) == "31"
+    # What was booked is kept beside it, for the settlement and the reconciliation.
+    assert melding.booked_output_vat == Decimal("30.86")
+    assert melding.rounding == Decimal("-0.14")
+
+
+def test_each_line_is_rounded_half_away_from_zero() -> None:
+    melding = _built(
+        sale("3", "0.25", "122.00", "30.50"), purchase("1", "0.25", "1002.00", "250.50")
+    )
+    assert by_code(melding.lines) == [("3", "122.00", "31.00"), ("1", None, "-251.00")]
+
+
+def test_the_total_is_the_sum_of_the_rounded_lines_not_the_rounded_total() -> None:
+    """R018 compares fastsattMerverdiavgift with the lines it was sent with.
+
+    1000.40 and 120.40 round to 1000 and 120; the total of the two, 1120.80,
+    would round to 1121, a krone the lines do not add up to.
+    """
+    melding = _built(
+        sale("3", "0.25", "4001.60", "1000.40"), sale("33", "0.12", "1003.33", "120.40")
+    )
+    assert melding.fastsatt_merverdiavgift == Decimal("1120.00")
+    assert melding.booked_fastsatt == Decimal("1120.80")
+    assert melding.rounding == Decimal("0.80")
+
+
+def test_a_line_under_half_a_krone_is_left_out_and_its_ore_stay_booked() -> None:
+    melding = _built(
+        sale("3", "0.25", "4000.00", "1000.00"), purchase("13", "0.12", "3.33", "0.40")
+    )
+    assert by_code(melding.lines) == [("3", "4000.00", "1000.00")]
+    assert melding.booked_input_vat == Decimal("0.40")
+    assert melding.rounding == Decimal("-0.40")
 
 
 def test_a_whole_period_owes_output_minus_input() -> None:
@@ -251,17 +290,29 @@ def test_the_melding_says_what_the_lines_say() -> None:
         == "mars-april"
     )
     assert root.findtext(f"{period}/m:aar", namespaces=NS) == "2026"
+    # 5000 - 1000 + 200 - 200 + 100: the fish line's 99.99 is reported as 100.
     assert (
         root.findtext("m:skattegrunnlagOgBeregnetSkatt/m:fastsattMerverdiavgift", namespaces=NS)
-        == "4099.99"
+        == "4100"
     )
     lines = root.findall("m:skattegrunnlagOgBeregnetSkatt/m:mvaSpesifikasjonslinje", NS)
     fish = next(line for line in lines if line.findtext("m:mvaKode", namespaces=NS) == "32")
     assert fish.findtext("m:sats", namespaces=NS) == "11,11"
+    assert fish.findtext("m:merverdiavgift", namespaces=NS) == "100"
     deduction = next(line for line in lines if line.findtext("m:mvaKode", namespaces=NS) == "1")
     assert deduction.find("m:grunnlag", NS) is None
-    assert deduction.findtext("m:merverdiavgift", namespaces=NS) == "-1000.00"
+    assert deduction.findtext("m:merverdiavgift", namespaces=NS) == "-1000"
     assert root.findtext("m:merknad/m:beskrivelse", namespaces=NS) == "Hei"
+    # R082, on every amount the melding carries.
+    amounts = [
+        element.text or ""
+        for element in root.iter()
+        if element.tag.rsplit("}", 1)[-1]
+        in ("grunnlag", "merverdiavgift", "fastsattMerverdiavgift")
+    ]
+    # The total, three bases (3, 86 and 32) and five lines' VAT.
+    assert len(amounts) == 1 + 3 + 5
+    assert not [amount for amount in amounts if "." in amount or "," in amount]
 
 
 @pytest.mark.skipif(shutil.which("xmllint") is None, reason="xmllint is not installed")

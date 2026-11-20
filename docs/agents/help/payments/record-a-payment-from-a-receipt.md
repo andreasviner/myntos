@@ -38,7 +38,8 @@ counts.
 
 1. Open «Betaling» in the top menu (`https://myntos.no/kontantstrom/`). The
    page is headed «Inn og ut», and the form on the left «Registrer en
-   betaling».
+   betaling». For money that came in, «Registrer inntekt» on the overview opens
+   the same form with «Penger inn» chosen, and the bilag is read as money in.
 2. Optional, and often worth it: type one sentence in the «Beskrivelse» box
    about what the payment was for, such as «Skjerm til kontoret». Myntos reads
    the bilag with that sentence in mind. See

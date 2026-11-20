@@ -500,6 +500,61 @@ def test_unreachable_register_is_a_bad_gateway_not_a_server_error(
     assert response.json()["code"] == "register_unavailable"
 
 
+# --- Searching by name -------------------------------------------------------------
+#
+# Only the invoice proposal searches, for a buyer the text names without a
+# number. Which of the answers *is* the name is decided in drafting; these are
+# about reading the register's page of answers.
+
+
+async def test_a_name_search_reads_the_page_of_hovedenheter(
+    brreg_answers: Callable[[Handler], list[str]],
+) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        broken = {"organisasjonsnummer": "910000039"}  # no name: skipped, not fatal
+        return httpx.Response(200, json={"_embedded": {"enheter": [UNIT, broken, FULL_UNIT]}})
+
+    brreg_answers(handler)
+
+    units = await brreg.search_by_name("Equinor ASA")
+
+    assert [unit.name for unit in units] == ["EQUINOR ASA", "EQUINOR ASA"]
+    assert units[0].address_line == "Forusbeen 50"
+    assert seen[0].url.path.endswith("/enheter")
+    assert seen[0].url.params["navn"] == "Equinor ASA"
+    assert seen[0].url.params["size"] == "100"
+
+
+async def test_a_name_search_with_no_answers_is_an_empty_list(
+    brreg_answers: Callable[[Handler], list[str]],
+) -> None:
+    brreg_answers(lambda _request: httpx.Response(200, json={"page": {"totalElements": 0}}))
+
+    assert await brreg.search_by_name("Finnes Ikke AS") == []
+
+
+async def test_a_name_longer_than_the_register_takes_is_not_asked_about(
+    brreg_answers: Callable[[Handler], list[str]],
+) -> None:
+    """The register answers 400 past 180 characters; no registered name is that long."""
+    asked = brreg_answers(lambda _request: httpx.Response(400))
+
+    assert await brreg.search_by_name("A" * 181 + " AS") == []
+    assert asked == []
+
+
+async def test_a_name_search_the_register_cannot_answer_raises(
+    brreg_answers: Callable[[Handler], list[str]],
+) -> None:
+    brreg_answers(lambda _request: httpx.Response(503))
+
+    with pytest.raises(brreg.RegisterUnavailableError):
+        await brreg.search_by_name("Equinor ASA")
+
+
 # --- Copying the register onto a company -----------------------------------------
 #
 # The lookup above is advisory: it fills a form somebody is looking at. These

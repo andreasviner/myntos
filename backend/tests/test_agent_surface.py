@@ -111,6 +111,12 @@ _DATA_SHARING = (
     "anonymised: the company's decision about what leaves its books, and not one its tools "
     "may make (docs/data-sharing.md)."
 )
+_PEPPOL_REGISTRATION = (
+    "Registering the company with the Peppol access point decides which business invoices go "
+    "out in the name of, and hands out the link where the person who signs for the company "
+    "proves who they are. That proof is the person's own act, like the ID-porten login, and "
+    "the decision is the company's, not one its tools may make (rule 5)."
+)
 _OPERATOR = (
     "The operator's page: every stranger's feedback in their own words and the server's "
     "failures, which belong to no company. Opened by the operator key alone, never by a "
@@ -177,6 +183,7 @@ _NOT_FOR_AGENTS: dict[str, str] = {
     "PATCH /api/v1/companies/{company_id}/bankkontoer/{bank_account_id}": _MONEY,
     "DELETE /api/v1/companies/{company_id}/bankkontoer/{bank_account_id}": _MONEY,
     "POST /api/v1/companies/{company_id}/bekreft": _GOVERNMENT,
+    "POST /api/v1/companies/{company_id}/peppol": _PEPPOL_REGISTRATION,
     "GET /api/v1/skatt/altinn/authorized-parties": _GOVERNMENT,
     "GET /api/v1/skatt/idporten/callback": _GOVERNMENT,
     "GET /api/v1/skatt/idporten/start": _GOVERNMENT,

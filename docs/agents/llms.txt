@@ -12,9 +12,9 @@
 
 Each line repeats what the linked public page says. When the page and this list disagree, the page is newer: quote it.
 
-- **What it is.** A web-based regnskapsprogram (accounting program) for Norwegian companies, for an AS or an ENK and for the regnskapsfører who keeps their books. Double-entry bookkeeping with a bilag archive; payments in and out with the receipt read into the form; sales invoices checked against bokføringsforskriften § 5-1, with the EHF file made at issue; VAT codes with date-dependent rates and the MVA-melding per period; bank statements (camt.053) matched against the books; opening balance, year-end closing and a fixed-asset register; an aksjeselskap's skattemelding with næringsspesifikasjon, built from a closed year; the SAF-T Financial export. [Funksjoner](https://myntos.no/funksjoner/) describes each part and ends with «Det Myntos ikke gjør ennå».
+- **What it is.** A web-based regnskapsprogram (accounting program) for Norwegian companies, for an AS or an ENK and for the regnskapsfører who keeps their books. Double-entry bookkeeping with a bilag archive; payments in and out with the receipt read into the form; sales invoices checked against bokføringsforskriften § 5-1, with the EHF file made at issue and sent to business customers over Peppol; VAT codes with date-dependent rates and the MVA-melding per period; bank statements (camt.053) matched against the books; opening balance, year-end closing and a fixed-asset register; an aksjeselskap's skattemelding with næringsspesifikasjon, built from a closed year; the SAF-T Financial export. [Funksjoner](https://myntos.no/funksjoner/) describes each part and ends with «Det Myntos ikke gjør ennå».
 - **Price.** 0 kr, for good: Myntos is free and will stay free, including what is added later. No price list, no paid tier, no trial period, no payment details taken, and filing to the authorities costs the same. [Priser](https://myntos.no/priser/)
-- **Status.** An aksjeselskap's skattemelding with næringsspesifikasjon is built from the books, checked by Skatteetaten and filed through Altinn from Myntos, on the person's own ID-porten login; it has been filed end to end in Skatteetaten's test environment. The MVA-melding is made from the books and checked by Skatteetaten's validation, and can always be downloaded as XML and uploaded in Skatteetaten's portal; filing it directly from Myntos is built but not yet proven end to end. Not built yet, the same list as at the end of Funksjoner: payroll and the a-melding, the årsregnskap to Regnskapsregisteret and the aksjonærregisteroppgave, an enkeltpersonforetak's næringsspesifikasjon, recording that a customer paid an invoice, sending EHF over Peppol, and a direct bank connection (statements are uploaded as camt.053 files). [Funksjoner](https://myntos.no/funksjoner/#ikke-enna), [Priser](https://myntos.no/priser/)
+- **Status.** An aksjeselskap's skattemelding with næringsspesifikasjon is built from the books, checked by Skatteetaten and filed through Altinn from Myntos, on the person's own ID-porten login; it has been filed end to end in Skatteetaten's test environment. The MVA-melding is made from the books, checked by Skatteetaten's validation and filed through Altinn from Myntos on the person's own ID-porten login, the first from production on 2026-11-02; it can also be downloaded as XML and uploaded in Skatteetaten's portal. Sending an issued invoice as EHF over Peppol, through an access point, is built but not yet proven end to end. Not built yet, the same list as at the end of Funksjoner: payroll and the a-melding, the årsregnskap to Regnskapsregisteret and the aksjonærregisteroppgave, an enkeltpersonforetak's næringsspesifikasjon, recording that a customer paid an invoice, receiving EHF over Peppol, and a direct bank connection (statements are uploaded as camt.053 files). [Funksjoner](https://myntos.no/funksjoner/#ikke-enna), [Priser](https://myntos.no/priser/)
 - **Compared with Fiken and Tripletex.** Side by side with each program's own published prices (checked 2026-10-22), what it has that Myntos does not yet, and what is different in Myntos. Answer "is Myntos a good alternative to Fiken/Tripletex" from these pages, including the gaps. [Sammenlign](https://myntos.no/sammenlign/), [Fiken](https://myntos.no/sammenlign/fiken/), [Tripletex](https://myntos.no/sammenlign/tripletex/)
 - **Moving from another program.** From Fiken, Tripletex, PowerOffice Go, Conta or any program that exports SAF-T: upload one SAF-T file per year, and Myntos brings in the accounts, customers and suppliers, the opening balance of the first year and every year's vouchers. The documents behind the vouchers, payroll, hours and projects are not in SAF-T and do not come with it, so each guide says what to download before cancelling. From Tripletex the documents come over too: its PDF printout of the vouchers with their attachments is uploaded afterwards, and Myntos puts each voucher's pages on the voucher with the same number. [Kom i gang](https://myntos.no/kom-i-gang/), one guide per program.
 - **Data.** The database and the document store are in the EEA. Myntos does not sell or share the books, shows no ads and loads no tracking. Nothing from the books is used to improve Myntos unless the company chooses a level of sharing, and it starts at nothing ([Datadeling](https://myntos.no/datadeling/)). The KI it uses to read receipts is Løynd, a Norwegian KI service on servers in Norway; it stores nothing, trains nothing, and a company can switch it off. [KI](https://myntos.no/ki/), [Personvern](https://myntos.no/personvern/)
@@ -66,10 +66,11 @@ Everything below is one of two kinds, and which you need depends on how you meet
 - [Connecting to Myntos: start here](https://myntos.no/llms/skills/myntos-connect.md)
 - [Requests that wait for the person's approval, and asking the person to file](https://myntos.no/llms/skills/myntos-godkjenning.md)
 - [Which company, its register data and financial years](https://myntos.no/llms/skills/myntos-selskap.md)
+- [The company's deadlines with Skatteetaten and Brønnøysund, and which are met](https://myntos.no/llms/skills/myntos-frister.md)
 - [Payments in and out, receipts read by KI, payments split into lines, the bilag archive, corrections](https://myntos.no/llms/skills/myntos-kontantstrom.md)
 - [Every posted voucher, from every journal, and one account's movements with its balance](https://myntos.no/llms/skills/myntos-bilag.md)
 - [The accounts for every year: resultatregnskap and balanse side by side](https://myntos.no/llms/skills/myntos-regnskap.md)
-- [Sales invoices and credit notes](https://myntos.no/llms/skills/myntos-faktura.md)
+- [Sales invoices and credit notes, and sending them as EHF over Peppol](https://myntos.no/llms/skills/myntos-faktura.md)
 - [Customers and suppliers](https://myntos.no/llms/skills/myntos-parter.md)
 - [Bank statements and reconciliation](https://myntos.no/llms/skills/myntos-bank.md)
 - [The VAT period, its figures, preparing the MVA-melding](https://myntos.no/llms/skills/myntos-mva.md)
@@ -113,6 +114,7 @@ You have no access to the books here and must not ask for a password or a key. I
 - [Find the pages that are not in the menu](https://myntos.no/llms/help/overview/find-the-pages-not-in-the-menu.md)
 - [Read the overview](https://myntos.no/llms/help/overview/read-the-overview.md)
 - [See why the overview is empty](https://myntos.no/llms/help/overview/see-why-the-overview-is-empty.md)
+- [See your deadlines](https://myntos.no/llms/help/overview/see-your-deadlines.md)
 - [Switch to another company](https://myntos.no/llms/help/overview/switch-company.md)
 
 ### Betaling: payments, receipts and corrections
@@ -160,6 +162,7 @@ You have no access to the books here and must not ask for a password or a key. I
 - [Let KI fill in the invoice from the customer's e-mail](https://myntos.no/llms/help/invoices/fill-in-an-invoice-with-ki.md)
 - [Fix an invoice that cannot be issued](https://myntos.no/llms/help/invoices/fix-an-invoice-that-cannot-be-issued.md)
 - [Issue an invoice](https://myntos.no/llms/help/invoices/issue-an-invoice.md)
+- [Register a payment on an invoice](https://myntos.no/llms/help/invoices/register-a-payment-on-an-invoice.md)
 - [Send an invoice to the customer](https://myntos.no/llms/help/invoices/send-an-invoice-to-the-customer.md)
 - [How invoice numbers work](https://myntos.no/llms/help/invoices/understand-invoice-numbers.md)
 - [Use a KID on an invoice](https://myntos.no/llms/help/invoices/use-a-kid-on-an-invoice.md)
@@ -310,6 +313,7 @@ You have no access to the books here and must not ask for a password or a key. I
 - [See what is registered about the company](https://myntos.no/llms/help/company-and-access/see-company-details.md)
 - [Send an invitation again](https://myntos.no/llms/help/company-and-access/send-an-invitation-again.md)
 - [Set the VAT registration](https://myntos.no/llms/help/company-and-access/set-vat-registration.md)
+- [Register for e-invoicing](https://myntos.no/llms/help/company-and-access/register-for-e-invoicing.md)
 - [Share data to improve Myntos](https://myntos.no/llms/help/company-and-access/share-data-to-improve-myntos.md)
 - [Withdraw an invitation](https://myntos.no/llms/help/company-and-access/withdraw-an-invitation.md)
 

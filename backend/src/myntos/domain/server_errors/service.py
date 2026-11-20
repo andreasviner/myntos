@@ -35,31 +35,36 @@ def status_of(row: ServerError) -> ServerErrorStatus:
     return ServerErrorStatus.OPEN if row.resolved_at is None else ServerErrorStatus.RESOLVED
 
 
-async def store(db: AsyncSession, occurrences: Iterable[Occurrence]) -> None:
+async def store(db: AsyncSession, occurrences: Iterable[Occurrence]) -> list[ServerError]:
     """Add each occurrence to its kind of failure, or start one.
 
     A failure the operator had resolved and that happens again is open again:
     the fix did not hold, or was not deployed.
+
+    Returns the kinds that are news to the operator, the new ones and the
+    reopened ones, flushed so they have their numbers: what the notice names
+    (``recorder.store_pending``). One that was already open is not news.
     """
+    news: list[ServerError] = []
     for seen in occurrences:
         row = await db.scalar(
             select(ServerError).where(ServerError.fingerprint == seen.fingerprint)
         )
         if row is None:
-            db.add(
-                ServerError(
-                    fingerprint=seen.fingerprint,
-                    logger=seen.logger,
-                    template=seen.template,
-                    route=seen.route,
-                    exception=seen.exception,
-                    causes=seen.causes,
-                    frames=seen.frames,
-                    count=seen.count,
-                    first_seen_at=seen.first_seen_at,
-                    last_seen_at=seen.last_seen_at,
-                )
+            row = ServerError(
+                fingerprint=seen.fingerprint,
+                logger=seen.logger,
+                template=seen.template,
+                route=seen.route,
+                exception=seen.exception,
+                causes=seen.causes,
+                frames=seen.frames,
+                count=seen.count,
+                first_seen_at=seen.first_seen_at,
+                last_seen_at=seen.last_seen_at,
             )
+            db.add(row)
+            news.append(row)
             continue
         row.count += seen.count
         if seen.last_seen_at >= as_utc(row.last_seen_at):
@@ -67,6 +72,9 @@ async def store(db: AsyncSession, occurrences: Iterable[Occurrence]) -> None:
             row.frames = seen.frames
         if row.resolved_at is not None and seen.last_seen_at > as_utc(row.resolved_at):
             row.resolved_at = None
+            news.append(row)
+    await db.flush()
+    return news
 
 
 async def listing(

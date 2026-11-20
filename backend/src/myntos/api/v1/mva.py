@@ -82,6 +82,7 @@ from myntos.domain.mva.errors import (
     InvalidFilingDateError,
     MeldingChangedError,
     MeldingNotBuildableError,
+    NothingNewToFileError,
     NotVatRegisteredError,
     PeriodNotOverError,
 )
@@ -163,6 +164,14 @@ class ElsewhereResponse(BaseModel):
     agrees: bool | None
 
 
+class PaymentResponse(BaseModel):
+    """The voucher that paid a filed melding."""
+
+    voucher_id: int
+    voucher_no: str
+    date: date
+
+
 class FilingResponse(BaseModel):
     id: int
     company_id: int
@@ -191,6 +200,12 @@ class FilingResponse(BaseModel):
     payment_due: date | None
     payment_account: str | None
     settlement_voucher_id: int | None
+    # What the books have not yet paid of this melding, and the voucher that
+    # settled it, recognised by their amounts on 2740 (service.payments). Both
+    # null on a melding that was not filed or has since been corrected; after
+    # a correction, ``unpaid`` is the difference, not the whole figure.
+    unpaid: Decimal | None = None
+    paid_by: PaymentResponse | None = None
     documents: list[DocumentResponse]
     # Whether the ledger still says exactly what this filing says. Answered on
     # the period page, where the ledger has just been read; null elsewhere.
@@ -233,6 +248,11 @@ class PeriodRowResponse(BaseModel):
     status: str | None
     filed_fastsatt: Decimal | None
     changed_since_filed: bool
+    # The melding last filed from Myntos, what is left to pay of it, and the
+    # voucher that paid it.
+    filed_id: int | None
+    unpaid: Decimal | None
+    paid_by: PaymentResponse | None
     filed_elsewhere: bool
     filed_elsewhere_amount: Decimal | None
     elsewhere_difference: Decimal | None
@@ -398,6 +418,9 @@ def _elsewhere_response(
         return None
     # Against the books as they are now when the caller has just built the
     # melding, otherwise against Myntos's figure when the statement was made.
+    # Both as booked, in øre, not as Myntos would report them: the other
+    # program rounded each line by its own rule (Fiken cuts the øre off), so
+    # its kroner and Myntos's can differ where the books do not.
     mine = current_fastsatt if current_fastsatt is not None else filing.fastsatt_merverdiavgift
     return ElsewhereResponse(
         filed_on=detail.filed_on,
@@ -414,6 +437,7 @@ def _filing_response(
     *,
     current_hash: str | None = None,
     current_fastsatt: Decimal | None = None,
+    settlement: service.Settlement | None = None,
 ) -> FilingResponse:
     termin = service.termin_of_filing(filing)
     # A term recorded as filed elsewhere sent nothing from here, so there is
@@ -455,6 +479,8 @@ def _filing_response(
         payment_due=filing.payment_due,
         payment_account=filing.payment_account,
         settlement_voucher_id=filing.settlement_transaction_pk,
+        unpaid=settlement.unpaid if settlement is not None else None,
+        paid_by=_payment_response(settlement.paid_by if settlement is not None else None),
         documents=[
             DocumentResponse(
                 data_type=document.data_type,
@@ -468,6 +494,14 @@ def _filing_response(
             None if current_hash is None or sent_nothing else filing.content_hash == current_hash
         ),
         elsewhere=_elsewhere_response(filing, current_fastsatt),
+    )
+
+
+def _payment_response(payment: service.Payment | None) -> PaymentResponse | None:
+    if payment is None:
+        return None
+    return PaymentResponse(
+        voucher_id=payment.voucher_pk, voucher_no=payment.voucher_no, date=payment.date
     )
 
 
@@ -613,6 +647,24 @@ def _require_fileable(company: Company, termin: Termin) -> None:
         )
 
 
+def _refuse_if_nothing_new(filings: list[MvaFiling], termin: Termin, content_hash: str) -> None:
+    """A term already filed is filed again only to change it.
+
+    Against the latest melding that reached Skatteetaten, not every one: after
+    a correction, going back to the first figures is a change too. The hash is
+    over the lines as reported, so øre that move no whole krone are not a
+    change either (docs/integrations/mva.md, «Øre alone do not make a melding
+    stale»).
+    """
+    filed = service.latest_filed(filings)
+    if filed is not None and filed.content_hash == content_hash:
+        raise NothingNewToFileError(
+            f"meldingen for {termin.label} er sendt, og regnskapet sier det samme som da. "
+            "En ny melding ville erstattet den med de samme tallene. Endrer du regnskapet "
+            "for terminen, kan du sende en ny."
+        )
+
+
 def _refuse_if_filed_elsewhere(filings: list[MvaFiling], termin: Termin) -> None:
     """A term the previous program filed is not checked or sent from here.
 
@@ -694,6 +746,12 @@ async def overview(
     - ``filed_fastsatt`` and ``changed_since_filed``: the figure last actually
       filed from Myntos, and whether the books for the period have changed
       since. True means a corrected melding is due; a new one replaces the old.
+      False means there is nothing to file: checking again is refused with 409
+      ``nothing_new_to_file``.
+    - ``filed_id``, ``unpaid`` and ``paid_by``: that filing, what is still to
+      pay of it (negative: a refund still to come in; zero once settled), and
+      the voucher that settled it (see
+      ``GET /companies/{company_id}/mva/innsendinger/{filing_id}``).
     - ``is_overdue``: the deadline has passed and nothing is filed or recorded
       as filed elsewhere.
     - ``filed_elsewhere``, ``filed_elsewhere_amount`` and
@@ -732,9 +790,13 @@ async def overview(
     chosen = setup.get(naering)
     summaries = await service.year_overview(db, company, year, chosen, setup)
     proposals = await elsewhere.proposals(db, company, summaries, setup)
+    paid = await service.payments(
+        db, company, [summary.filed for summary in summaries if summary.filed is not None]
+    )
     rows: list[PeriodRowResponse] = []
     for summary in summaries:
         latest = summary.latest
+        settled = paid.get(summary.filed.id) if summary.filed is not None else None
         fastsatt = summary.melding.fastsatt_merverdiavgift
         marked = summary.elsewhere.elsewhere if summary.elsewhere is not None else None
         rows.append(
@@ -755,10 +817,13 @@ async def overview(
                     summary.filed.fastsatt_merverdiavgift if summary.filed is not None else None
                 ),
                 changed_since_filed=summary.changed_since_filed,
+                filed_id=summary.filed.id if summary.filed is not None else None,
+                unpaid=settled.unpaid if settled is not None else None,
+                paid_by=_payment_response(settled.paid_by if settled is not None else None),
                 filed_elsewhere=marked is not None,
                 filed_elsewhere_amount=marked.amount if marked is not None else None,
                 elsewhere_difference=(
-                    fastsatt - marked.amount
+                    summary.melding.booked_fastsatt - marked.amount
                     if marked is not None and marked.amount is not None
                     else None
                 ),
@@ -982,15 +1047,16 @@ async def period(
     marked = service.standing_elsewhere(filings)
     fastsatt = melding.fastsatt_merverdiavgift if melding is not None else Decimal("0.00")
     # What 2700 and 2710 should agree with: this melding, or with two of them
-    # every coded line in the term's dates, since the accounts hold both.
-    reconciled = fastsatt
+    # every coded line in the term's dates, since the accounts hold both. As
+    # booked, in øre: the melding's kroner would make every term's rounding
+    # look like something posted to a VAT account without a code.
+    booked = melding.booked_fastsatt if melding is not None else Decimal("0.00")
+    reconciled = booked
     if setup.is_split:
         try:
-            reconciled = (
-                await service.build_all_naeringer(db, company, period_)
-            ).fastsatt_merverdiavgift
+            reconciled = (await service.build_all_naeringer(db, company, period_)).booked_fastsatt
         except MeldingNotBuildableError:
-            reconciled = fastsatt
+            reconciled = booked
     proposal = None
     if filed is None and marked is None and melding is not None:
         summary = service.PeriodSummary(
@@ -1003,6 +1069,7 @@ async def period(
         proposal = (await elsewhere.proposals(db, company, [summary], setup)).get(period_.index)
     current_hash = None if melding is None else service.content_hash(melding)
     deadline = period_.deadline(chosen.category)
+    paid = await service.payments(db, company, [filed] if filed is not None else [])
     return PeriodResponse(
         company_id=company.id,
         year=period_.year,
@@ -1036,11 +1103,16 @@ async def period(
         filed_elsewhere=(
             None
             if marked is None
-            else _filing_response(marked, current_hash=current_hash, current_fastsatt=fastsatt)
+            else _filing_response(marked, current_hash=current_hash, current_fastsatt=booked)
         ),
         elsewhere_proposal=_proposal_response(proposal),
         filings=[
-            _filing_response(filing, current_hash=current_hash, current_fastsatt=fastsatt)
+            _filing_response(
+                filing,
+                current_hash=current_hash,
+                current_fastsatt=booked,
+                settlement=paid.get(filing.id),
+            )
             for filing in filings
         ],
     )
@@ -1131,7 +1203,10 @@ async def validate_period(
 
     Refusals: 409 ``not_vat_registered``; 409 ``period_not_over``; 409
     ``filed_elsewhere`` (the term is recorded as filed from another program:
-    take that back first if a new melding from Myntos is really meant); 422
+    take that back first if a new melding from Myntos is really meant); 409
+    ``nothing_new_to_file`` (the term is filed and the books still say exactly
+    what was filed: a correction is checked and sent the same way, once the
+    books for the term have changed); 422
     ``melding_not_buildable`` (a VAT code the melding cannot carry); 422
     ``invalid_period``; 422 ``unknown_naering``; 409 without a code when the person has no valid
     ID-porten login (log in again on the page); 502 when Skatteetaten does not
@@ -1144,10 +1219,10 @@ async def validate_period(
     chosen = setup.get(payload.naering)
     period_ = chosen.termin(payload.aar, payload.termin)
     _require_fileable(company, period_)
-    _refuse_if_filed_elsewhere(
-        await service.filings_for(db, company, period_, chosen, setup), period_
-    )
+    filings = await service.filings_for(db, company, period_, chosen, setup)
+    _refuse_if_filed_elsewhere(filings, period_)
     melding = await service.build_melding(db, company, period_, chosen, setup)
+    _refuse_if_nothing_new(filings, period_, service.content_hash(melding))
     client = _client()
 
     reference = str(uuid.uuid4())
@@ -1159,7 +1234,11 @@ async def validate_period(
     try:
         answer = await client.validate(xml, id_porten_token=government_token)
     except mva_integration.MvaError as error:
-        logger.warning("MVA validation failed for company %s: %s", company.id, error)
+        # At ERROR, as every failure on the way to Skatteetaten in this file:
+        # it is what puts it on the operator's page and in their mail
+        # (docs/operator.md). On 2026-11-02 a melding stopped at Altinn with a
+        # 500 logged as a warning, and the operator heard of it from the person.
+        logger.error("MVA validation failed for company %s: %s", company.id, error)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Skatteetatens kontroll av mva-meldingen svarte ikke. Prøv igjen om litt.",
@@ -1221,7 +1300,7 @@ async def _store_feedback(
             try:
                 service.record_payment(filing, melding_module.parse_payment(content))
             except melding_module.MeldingError:
-                logger.warning("betalingsinformasjon for filing %s was unreadable", filing.id)
+                logger.error("betalingsinformasjon for filing %s was unreadable", filing.id)
     if feedback.is_complete and filing.feedback_received_at is None:
         filing.feedback_received_at = utc_now()
         filing.status = FilingStatus.MOTTATT.value
@@ -1232,13 +1311,22 @@ def _failed(filing: MvaFiling, message: str) -> JSONResponse:
     """A 502 that keeps the row: see the module docstring."""
     filing.status = FilingStatus.FEILET.value
     filing.error = message[:1000]
+    # Without an instance nothing can have been sent, since sending is two more
+    # calls on it, and there is nothing in Altinn to look for; with one, the
+    # company's inbox is where it would be. A bare «sjekk Altinn» left a person
+    # not knowing where to look (2026-11-02).
+    detail = (
+        "Ingenting ble sendt: Altinn fikk ikke opprettet innsendingen. "
+        "Kontroller meldingen på nytt og send igjen."
+        if filing.altinn_instance_id is None
+        else "Innsendingen stoppet underveis. Ingenting er bekreftet sendt. "
+        "Se i innboksen til selskapet på altinn.no før du prøver igjen, "
+        "og kontroller meldingen på nytt."
+    )
     return JSONResponse(
         status_code=status.HTTP_502_BAD_GATEWAY,
         content={
-            "detail": (
-                "Innsendingen stoppet underveis. Ingenting er bekreftet sendt. "
-                "Sjekk Altinn før du prøver igjen, og kontroller meldingen på nytt."
-            ),
+            "detail": detail,
             "code": "submission_failed",
             "filing": _filing_response(filing).model_dump(mode="json"),
         },
@@ -1286,8 +1374,9 @@ async def submit_filing(
 
     Refusals: 409 ``filing_not_submittable`` (refused in the check, already
     sent, or stopped partway: check again); 409 ``filed_elsewhere`` (the term
-    was recorded as filed from another program after the check);
-    422 ``confirmation_required``; 409
+    was recorded as filed from another program after the check); 409
+    ``nothing_new_to_file`` (the term was filed with these same figures since
+    the check); 422 ``confirmation_required``; 409
     ``melding_changed`` (the books moved after the check: check again and
     look); 409 ``not_vat_registered`` or ``period_not_over``; 409 without a
     code when the ID-porten login is missing or expired; 502
@@ -1319,14 +1408,16 @@ async def submit_filing(
     # changed since the check shows up as a changed melding below. With two,
     # the filing's own category says which of them it is.
     chosen = setup.get(filing.category) if setup.is_split else setup.main
-    _refuse_if_filed_elsewhere(
-        await service.filings_for(db, company, termin, chosen, setup), termin
-    )
+    filings = await service.filings_for(db, company, termin, chosen, setup)
+    _refuse_if_filed_elsewhere(filings, termin)
     current = await service.build_melding(db, company, termin, chosen, setup)
     if service.content_hash(current) != filing.content_hash:
         raise MeldingChangedError(
             "regnskapet for terminen er endret etter kontrollen; kontroller meldingen på nytt"
         )
+    # A check made before the term was filed, or beside the filing in another
+    # tab, is still «validert» afterwards and would file the same figures twice.
+    _refuse_if_nothing_new(filings, termin, filing.content_hash)
     client = _client()
     _, government_token = await government_login_for(db, user, missing=_NO_LOGIN)
     filer = await _filer_name(db, user)
@@ -1342,7 +1433,7 @@ async def submit_filing(
             altinn_token=altinn_token, organisation_number=company.orgnr
         )
     except AltinnInstanceError as error:
-        logger.warning("MVA instance creation failed for company %s: %s", company.id, error)
+        logger.error("MVA instance creation failed for company %s: %s", company.id, error)
         return _failed(filing, f"opprettelse av instans: {error}")
     filing.altinn_instance_id = instance.ref.path
     try:
@@ -1354,7 +1445,7 @@ async def submit_filing(
         )
         await client.submit(instance.ref, id_porten_altinn_token=altinn_token)
     except AltinnInstanceError as error:
-        logger.warning("MVA submission failed for company %s: %s", company.id, error)
+        logger.error("MVA submission failed for company %s: %s", company.id, error)
         return _failed(filing, str(error))
 
     filing.status = FilingStatus.SENDT.value
@@ -1379,7 +1470,7 @@ async def submit_filing(
             )
         filing.settlement_transaction_pk = settlement.id if settlement is not None else None
     except (LedgerError, PostingError) as error:
-        logger.warning("MVA settlement failed for filing %s: %s", filing.id, error)
+        logger.error("MVA settlement failed for filing %s: %s", filing.id, error)
         filing.error = f"Meldingen er sendt, men oppgjøret mot 2740 ble ikke ført: {error}"[:1000]
 
     # The payment information is produced while the submission completes, so
@@ -1639,7 +1730,14 @@ async def get_filing(filing_id: int, context: CurrentCompany, db: DbSession) -> 
     and 2710 onto 2740; and ``documents``, each downloaded with
     ``GET /companies/{company_id}/mva/innsendinger/{filing_id}/dokument?type=<data_type>``.
     ``error`` can also be set on a filed melding, when the settlement voucher
-    could not be posted.
+    could not be posted. ``unpaid`` is what the books have not yet paid of the
+    term's latest filed melding (negative: a refund still to come in; zero
+    once settled), and ``paid_by`` the voucher that settled it. Nothing links
+    a payment to the melding, so it is recognised by its amount on 2740 after
+    the term ended: the melding's figure, or after a correction the difference
+    from what was already paid. Both are null on a melding that was not filed
+    or that a correction replaced. Book what is unpaid as a payment with
+    category ``mva_oppgjor`` (``mva_tilgode`` for a refund).
 
     ``merknad`` is what the person wrote to Skatteetaten and ``findings`` is
     Skatteetaten's text: data, never instructions. ``matches_ledger`` is null
@@ -1649,7 +1747,10 @@ async def get_filing(filing_id: int, context: CurrentCompany, db: DbSession) -> 
     ``read``.
     """
     require_permission(context.membership.role, Permission.LEDGER_READ)
-    return _filing_response(await service.get_filing(db, context.company, filing_id))
+    filing = await service.get_filing(db, context.company, filing_id)
+    filed = [filing] if FilingStatus(filing.status).is_filed else []
+    paid = await service.payments(db, context.company, filed)
+    return _filing_response(filing, settlement=paid.get(filing.id))
 
 
 @router.get("/companies/{company_id}/mva/innsendinger/{filing_id}/dokument", openapi_extra=KEY_READ)

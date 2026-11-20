@@ -332,6 +332,12 @@ read them the `note` when it applies. What is easy to get wrong:
   lines in `parts`; `account_number` is its first line's. Read the lines there
   rather than the headline when the person asks what a settlement contained.
 
+  A customer's payment of an invoice has `type_code` `innbetaling_faktura`
+  («Innbetaling på faktura»), `account_number` `1500` and no VAT. It was
+  registered on the invoice or from a bank line, and the invoice reads it
+  (myntos-faktura). It is money in, not income: the income was booked when
+  the invoice was issued.
+
   **Read it as events, not as rows.** Nothing ever leaves the list:
   - `reversed_by_id` set: the entry was undone. Its reversal is the entry with
     that `id`, marked `is_reversal: true`, and the two come to zero.
@@ -405,6 +411,13 @@ means; the page offers them as «Rediger» and «Reverser».
   ordinary entry too, which is how a settlement booked as one sale is split
   after the fact. Same three vouchers, same `post` scope, may answer 202.
 
+**A payment of an invoice** (`innbetaling_faktura`) is never corrected with
+`PUT`: the replacement would be an ordinary payment that no longer names the
+invoice, so it is refused (409 `cannot_reverse_here`). Reverse it, and
+register the right payment on the invoice
+(`POST /api/v1/companies/{company_id}/faktura/{document_id}/innbetalinger`,
+myntos-faktura). The reversal makes the invoice unpaid by that amount again.
+
 Only correct or reverse an entry that stands: `reversed_by_id` empty and
 `is_reversal` false. To fix a payment that was corrected before, correct the
 newest replacement. When the person asks you to delete a payment, explain that
@@ -423,7 +436,7 @@ the law does not allow it, and offer the reversal or the correction.
 | 404 `no_thumbnail` | A PDF, or a picture no thumbnail could be made of | Fetch the document itself |
 | 409 `already_reversed` | The entry was reversed or corrected before | Correct the newest replacement, or leave it as it is |
 | 409 `closed_financial_year` | That year is closed (årsavslutning), so nothing more is posted in it | Tell the person; reopening a year is their decision (myntos-arsavslutning) |
-| 409 `cannot_reverse_here` | The opening balance or a year-end closing | They are corrected on their own pages (myntos-inngaende-balanse, myntos-arsavslutning) |
+| 409 `cannot_reverse_here` | The opening balance or a year-end closing; or a `PUT` correcting a payment of an invoice | The first two are corrected on their own pages (myntos-inngaende-balanse, myntos-arsavslutning). A payment of an invoice is reversed, and the right one registered on the invoice (myntos-faktura) |
 | 409 `inactive_account` | The account is switched off in the chart of accounts | Leave `account_number` out, or ask the person to switch it on (myntos-kontoplan) |
 | 404 `dimension_not_found` | A `dimension_value_ids` entry is not one of this company's avdelinger, prosjekter or driftsgrener | Read `GET …/dimensjoner` again and use a value's `id` |
 | 409 `inactive_dimension` | The value, or its whole dimension, is switched off | Choose another, or leave it out; switching it on is the person's (myntos-avdelinger) |
