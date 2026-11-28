@@ -1,4 +1,5 @@
 ---
+import KiInput from '../components/KiInput.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 ---
 
@@ -18,6 +19,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
   <p class="status" id="page-status" hidden></p>
   <div class="empty" id="loading">Henter registeret …</div>
+
+  <div class="inbox-tip" id="inbox-tip" hidden>
+    <p class="inbox-tip-text">
+      <strong>Tips:</strong> Du kan også sende fakturaer og kvitteringer til
+      <code class="inbox-tip-addr" id="inbox-tip-addr"></code>, så dukker de opp under
+      <a href="/innkommende/">Mottatt</a>.
+    </p>
+    <button type="button" class="btn btn-ghost btn-small" id="inbox-tip-copy">Kopier</button>
+  </div>
 
   <div class="split" id="content" hidden>
     <!-- ---------------------------------------------------------------- -->
@@ -138,32 +148,41 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           Skriver de ingenting, fyller modellen det ut selv. Begge veier
           fungerer, og feltet sier hvilken det er på vei ned.
         */}
-        <label class="field explain" data-field="description" for="description-input">
-          <span class="explain-label">
+        {/*
+          Boksen er KI-boksen som står likt på hver side (components/KiInput.astro),
+          med nivåvalget under. Bildeknappen er etiketten til bilagsvelgeren
+          under, ikke en egen: her er et bilde et bilag, som skal lagres i
+          bilagsarkivet og leses som bilag, ikke bli tekst i beskrivelsen.
+          Nivået gjelder lesingen av bilaget og svarene på spørsmålene om det.
+        */}
+        <div class="field explain" data-field="description">
+          <label class="explain-label" for="description-input">
             Beskrivelse <span class="muted">(valgfritt)</span>
             <span class="tag" data-tag hidden></span>
-          </span>
-          {/*
-            Feltet er låst mens modellen er på vei til å skrive i det, og bare
-            da. Å taste i en boks som er i ferd med å bli overskrevet er å miste
-            det man skrev, og en boks som ser tom og redigerbar ut mens den
-            venter, ser ut som en boks som ikke kommer til å bli fylt ut.
-            Skrev brukeren noe selv, står feltet åpent: da er det ingen som skal
-            overskrive det.
-          */}
-          <span class="description-wrap">
-            <textarea
-              id="description-input"
-              name="description"
-              rows="2"
-              maxlength="255"
-              placeholder="Hva gjaldt betalingen?"
-            ></textarea>
-            <span class="description-busy" id="description-busy" hidden aria-hidden="true">
-              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          </label>
+          <KiInput id="bilag" attachFor="file-input" attachLabel="Legg ved bilag">
+            {/*
+              Feltet er låst mens modellen er på vei til å skrive i det, og bare
+              da. Å taste i en boks som er i ferd med å bli overskrevet er å miste
+              det man skrev, og en boks som ser tom og redigerbar ut mens den
+              venter, ser ut som en boks som ikke kommer til å bli fylt ut.
+              Skrev brukeren noe selv, står feltet åpent: da er det ingen som skal
+              overskrive det.
+            */}
+            <span class="description-wrap">
+              <textarea
+                id="description-input"
+                name="description"
+                rows="2"
+                maxlength="255"
+                placeholder="Hva gjaldt betalingen?"
+              ></textarea>
+              <span class="description-busy" id="description-busy" hidden aria-hidden="true">
+                <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+              </span>
             </span>
-          </span>
-        </label>
+          </KiInput>
+        </div>
 
         {/*
           Flere filer, fordi et bilag ofte ikke er én fil. Et kjøp fra en privat
@@ -193,7 +212,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             </svg>
             <strong>Last opp faktura, kvittering eller skjermbilder</strong>
             <span class="dropzone-hint" id="file-hint">
-              Dra filene hit, eller velg dem. PDF og bilder, så mange som bilaget trenger.
+              Dra filene hit, velg dem, eller lim inn bilder i boksen over. PDF og bilder, så mange
+              som bilaget trenger.
             </span>
           </label>
 
@@ -285,7 +305,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             </p>
             <p class="lines-sum" id="lines-sum" role="status"></p>
             <p class="lines-actions">
-              <button type="button" class="btn-link" id="split-close">Tilbake til én linje</button>
+              <button type="button" class="btn-link" id="split-close">Tilbake til en linje</button>
             </p>
           </fieldset>
 
@@ -467,7 +487,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           <p>
             <strong>Rediger</strong> gjør derfor to ting når du lagrer: motposterer den
             opprinnelige føringen og legger inn den rettede. Alle tre bilagene blir stående i
-            regnskapet, men registeret viser dem som én linje: den som gjelder nå. Trekanten
+            regnskapet, men registeret viser dem som en linje: den som gjelder nå. Trekanten
             foran datoen henter fram de to eldre.
           </p>
           <p>
@@ -683,6 +703,32 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     font-size: 0.84rem;
     color: var(--muted);
   }
+  .inbox-tip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 0.9rem;
+    margin: 0 0 1rem;
+    padding: 0.65rem 0.95rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    background: var(--surface, var(--bg));
+    font-size: 0.92rem;
+  }
+  .inbox-tip[hidden] {
+    display: none;
+  }
+  .inbox-tip-text {
+    margin: 0;
+  }
+  .inbox-tip-addr {
+    font-weight: 700;
+    padding: 0.1rem 0.4rem;
+    border-radius: var(--radius-small);
+    background: var(--accent-soft);
+    word-break: break-all;
+  }
   .dropzone-camera {
     margin: 0;
     padding: 0 0.8rem 0.6rem;
@@ -802,8 +848,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   }
   .explain textarea:disabled {
     /* Låst, ikke avslått. Standardstilen for disabled gjør feltet grått og
-       dødt, og dette feltet er verken. */
-    background: var(--surface, #fff);
+       dødt, og dette feltet er verken. Bakgrunnen er KI-boksens rundt det. */
+    background: transparent;
     opacity: 1;
     cursor: progress;
   }
@@ -1183,6 +1229,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     documentUrl,
     fetchThumbnail,
     getCompanyCatalogue,
+    getInboundEmailSettings,
     getMvaFiling,
     getSummary,
     listDimensions,
@@ -1230,6 +1277,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   } from '../lib/corrections';
   import { normaliseAmount } from '../lib/amount';
   import { el, setStatus, show } from '../lib/dom';
+  import { forwardFilesToInput, mountKiInputs, pastedFiles } from '../lib/kiinput';
   import { netOf } from '../lib/lines';
   import {
     AMOUNT_KEY,
@@ -1307,6 +1355,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
   let catalogue: CompanyCatalogue;
   let company: Company;
+  // KI-boksen ved beskrivelsen. Selskapet spørres på stedet, aldri en kopi.
+  const ki = mountKiInputs(() => company.id);
   let parties: Party[] = [];
   // Feltene brukeren har endret selv siden bilaget ble valgt. En ny lesing
   // fyller ikke disse: å svare på spørsmålet i beskrivelsen leser bilaget på
@@ -2505,6 +2555,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     answerTyped();
   });
   askInput.addEventListener('input', () => askInput.setCustomValidity(''));
+  askInput.addEventListener('paste', (event) => {
+    const images = pastedFiles(event.clipboardData);
+    if (images.length === 0) return;
+    event.preventDefault();
+    forwardFilesToInput(fileInput, images);
+  });
   askOther.addEventListener('click', () => {
     askOther.hidden = true;
     askReply.hidden = false;
@@ -2565,12 +2621,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     showQuestion();
     submit.disabled = true;
     try {
+      const level = ki.level('bilag');
       const suggestion = await answerSuggestion(
         company.id,
         readingId,
         answers,
         keepDescription ? descriptionBox.value : undefined,
+        level,
       );
+      ki.answered(level, suggestion.ki_level);
       if (read !== reads) return;
       applySuggestion(suggestion, { keepDescription });
       sending = false;
@@ -2704,6 +2763,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     // Only a direction the user clicked. One a previous read proposed is the
     // backend's own reading, and sending it back would present it as theirs.
     const retning = touched.has('direction') ? (currentDirection() ?? undefined) : undefined;
+    const niva = ki.level('bilag');
     try {
       const suggestion = await interpretDocumentStreaming(
         company.id,
@@ -2711,6 +2771,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         keepDescription ? descriptionBox.value : undefined,
         {
           retning,
+          niva,
           onDocuments: (documents) => {
             if (read !== reads) return;
             markRead(documents);
@@ -2737,6 +2798,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           },
         },
       );
+      ki.answered(niva, suggestion.ki_level);
       if (read !== reads) return;
       applySuggestion(suggestion, { keepDescription });
       markUnread(suggestion);
@@ -3999,6 +4061,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       mayWrite = canInCompany(company, 'ledger:write');
       show(el('#form-card'), mayWrite);
       show(el('#readonly'), !mayWrite);
+      // Hvilke KI-nivåer selskapet har nå. Ikke ventet på: lesingen virker på
+      // «Gratis» til svaret kommer.
+      if (mayWrite) void ki.refresh();
 
       fillTaxSelect(taxSelect, catalogue.tax_codes);
 
@@ -4015,9 +4080,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       // written.
       // Dimensjonene i samme slengen. En liste som ikke kom, stopper ikke
       // registeret: skjemaet tilbyr da ingen, og føringen går fint uten.
-      const [loadedParties, loadedDimensions] = await Promise.all([
+      const [loadedParties, loadedDimensions, inboxSettings] = await Promise.all([
         listParties(company.id),
         listDimensions(company.id).catch((): Dimension[] => []),
+        getInboundEmailSettings(company.id).catch(() => null),
         refresh(),
       ]);
       parties = loadedParties;
@@ -4025,6 +4091,21 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       dimensionList = loadedDimensions;
       dimensionSelects(dimensionFields, []);
       show(dimensionFields, !splitting && activeDimensions().length > 0);
+
+      if (inboxSettings !== null && inboxSettings.enabled) {
+        const tipAddr = el('#inbox-tip-addr');
+        const tipCopy = el<HTMLButtonElement>('#inbox-tip-copy');
+        tipAddr.textContent = inboxSettings.address;
+        tipCopy.addEventListener('click', () => {
+          void navigator.clipboard.writeText(inboxSettings.address).then(() => {
+            tipCopy.textContent = 'Kopiert!';
+            window.setTimeout(() => {
+              tipCopy.textContent = 'Kopier';
+            }, 1800);
+          });
+        });
+        show(el('#inbox-tip'), true);
+      }
 
       loading.hidden = true;
       content.hidden = false;

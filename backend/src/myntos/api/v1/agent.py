@@ -46,7 +46,7 @@ from myntos.domain.identity.errors import (
     AgentKeyRequiredError,
     InvalidGrantError,
 )
-from myntos.domain.identity.models import AgentKey, AgentKeyStop
+from myntos.domain.identity.models import AgentKey, AgentKeyKind, AgentKeyStop
 from myntos.domain.ledger import service as ledger_service
 
 router = APIRouter(tags=["agent"])
@@ -275,7 +275,7 @@ async def who_am_i(caller: CurrentCaller, db: DbSession) -> AgentSelfResponse:
         orgnr=company.orgnr,
         person_name=caller.key.user.full_name,
         role=membership.role.value,
-        expires_at=as_utc(key.expires_at),
+        expires_at=agent_keys.year_end(key),
     )
 
 
@@ -322,8 +322,8 @@ def _key_response(key: AgentKey, *, user_id: int) -> AgentKeyResponse:
         person_name=key.user.full_name,
         is_own=key.user_id == user_id,
         created_at=as_utc(key.created_at),
-        expires_at=as_utc(key.expires_at),
-        connection_key_expires_at=as_utc(key.connection_key_expires_at),
+        expires_at=agent_keys.year_end(key),
+        connection_key_expires_at=agent_keys.connection_deadline(key),
         exchanged_at=_optional(key.exchanged_at),
         last_used_at=_optional(key.last_used_at),
         last_used_client=agent_keys.client_name(key.last_used_client),
@@ -470,11 +470,19 @@ async def set_agent_access(
 
     Switching off stops every key at once, for good. Switching on again later
     brings none of them back, so nobody's forgotten key wakes up with it.
+
+    Integration keys are not this switch's (rule 15): an owner made each one on
+    its own, for a server, and stops each one on its own under Integrasjoner.
     """
     require_permission(context.membership.role, Permission.MEMBER_MANAGE)
     company = context.company
     if company.agent_access_enabled and not payload.enabled:
-        await agent_keys.stop_keys(db, reason=AgentKeyStop.ACCESS_OFF, company_id=company.id)
+        await agent_keys.stop_keys(
+            db,
+            reason=AgentKeyStop.ACCESS_OFF,
+            company_id=company.id,
+            kind=AgentKeyKind.AGENT,
+        )
     company.agent_access_enabled = payload.enabled
     await db.flush()
     return _company_response(company, context.membership)

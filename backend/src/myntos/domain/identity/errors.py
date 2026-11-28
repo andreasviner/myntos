@@ -358,6 +358,36 @@ class AgentRateLimitedError(AgentKeyError):
     """Too many requests with one key in the last minute."""
 
 
+# --- A server's integration key (docs/agents-and-api.md rule 15) ------------------
+#
+# Read by whoever runs the server, from its log, usually long after the request.
+# So each says what to change and where: the address, the route, a new key.
+
+
+class InvalidIntegrationKeyError(AgentKeyError):
+    """An integration key (``myntos_ik_``) that is unknown: mistyped or never made."""
+
+
+class IntegrationKeyStoppedError(InvalidIntegrationKeyError):
+    """An integration key that was stopped, or whose owner is no longer an owner."""
+
+
+class IntegrationKeyWrongAddressError(AgentKeyError):
+    """An integration key used from an address its owner did not list."""
+
+
+class NotForIntegrationKeysError(AgentKeyError):
+    """A route that is not part of what the integration key was made for.
+
+    An integration key reaches the routes of its purpose and nothing else,
+    whatever its person may do.
+    """
+
+
+class InvalidIntegrationAddressError(AgentKeyError):
+    """An IP address or range for an integration key that cannot be used."""
+
+
 # --- Requests that wait for a person's approval -----------------------------------
 
 

@@ -95,6 +95,62 @@ def truncate(text: str, size: float, limit: float) -> str:
     return text.rstrip() + ellipsis
 
 
+def _split_token(token: str, size: float, limit: float) -> list[str]:
+    """Break a single whitespace-free token that is wider than ``limit``.
+
+    Prefers breaking after a hyphen or slash — Norwegian cost-centre and project
+    references often carry no spaces — and falls back to a character cut so
+    nothing is dropped or overruns its column.
+    """
+    chunks: list[str] = []
+    while token and text_width(token, size) > limit:
+        end = 1
+        while end < len(token) and text_width(token[: end + 1], size) <= limit:
+            end += 1
+        cut = end
+        for index in range(end - 1, 0, -1):
+            if token[index] in "-/":
+                cut = index + 1
+                break
+        chunks.append(token[:cut])
+        token = token[cut:]
+    if token:
+        chunks.append(token)
+    return chunks
+
+
+def wrap(text: str, size: float, limit: float) -> list[str]:
+    """Break ``text`` into lines that each fit within ``limit`` points.
+
+    Used instead of :func:`truncate` where every character matters: a cut-off
+    buyer reference, order number or free-text note drops information the
+    customer was meant to read or route the invoice by.
+    """
+    lines: list[str] = []
+    for paragraph in text.splitlines():
+        words = paragraph.split()
+        if not words:
+            continue
+        current = ""
+        for word in words:
+            candidate = f"{current} {word}" if current else word
+            if text_width(candidate, size) <= limit:
+                current = candidate
+                continue
+            if current:
+                lines.append(current)
+                current = ""
+            if text_width(word, size) <= limit:
+                current = word
+            else:
+                parts = _split_token(word, size, limit)
+                lines.extend(parts[:-1])
+                current = parts[-1]
+        if current:
+            lines.append(current)
+    return lines
+
+
 # Letters that carry a stroke or a bar rather than a detachable accent. NFKD
 # does not decompose these — ``ł`` has no canonical "l plus combining stroke"
 # form — so decomposition alone leaves them to become "?". Polish, Croatian,
@@ -348,6 +404,7 @@ def _header(page: _Page, document: SalesDocument, *, page_no: int, page_count: i
     y = min(y, meta_y) - 14
     page.text(MARGIN, y, "Faktureres til", size=7.5)
     y -= 13
+    buyer_y = y
     page.text(MARGIN, y, document.buyer_name, size=10, bold=True)
     y -= 12
     for value in (
@@ -366,11 +423,20 @@ def _header(page: _Page, document: SalesDocument, *, page_no: int, page_count: i
         details.append(("Ordrenummer", document.order_reference))
     if document.delivery_place:
         details.append(("Leveringssted", document.delivery_place))
-    detail_y = y + 11 + 12 * len(details)
+    # Top-aligned with the buyer block rather than computed upwards from its
+    # bottom: wrapped values grow downwards and push the line table with them,
+    # and can never climb up into the date block above.
+    detail_y = buyer_y
     for label, value in details:
+        wrapped = wrap(value, 8.5, 130)
+        if not wrapped:
+            continue
         page.text(right - 200, detail_y, label, size=7.5)
-        page.right(right, detail_y, truncate(value, 8.5, 130), size=8.5)
-        detail_y -= 12
+        for index, line in enumerate(wrapped):
+            if index:
+                detail_y -= 10.5
+            page.right(right, detail_y, line, size=8.5)
+        detail_y -= 13
 
     return min(y, detail_y) - 16
 
@@ -419,9 +485,13 @@ def _foot(page: _Page, document: SalesDocument, computed: DocumentTotals, y: flo
         page.text(MARGIN, y, reason, size=7.5)
         y -= 10
 
-    if document.note:
+    note_lines = _note_lines(document)
+    if note_lines:
         y -= 6
-        page.text(MARGIN, y, truncate(document.note, 8.5, PAGE_WIDTH - 2 * MARGIN), size=8.5)
+        for index, line in enumerate(note_lines):
+            if index:
+                y -= 11
+            page.text(MARGIN, y, line, size=8.5)
         y -= 12
 
     if document.is_credit_note:
@@ -436,6 +506,12 @@ def _foot(page: _Page, document: SalesDocument, computed: DocumentTotals, y: flo
     if payment:
         y -= 6
         page.text(MARGIN, y, "   ".join(payment), size=9, bold=True)
+
+
+def _note_lines(document: SalesDocument) -> list[str]:
+    if not document.note:
+        return []
+    return wrap(document.note, 8.5, PAGE_WIDTH - 2 * MARGIN)
 
 
 def _subtotal_label(category: VatCategory, rate_percent: Decimal) -> str:
@@ -461,9 +537,17 @@ def _exemption_reasons(computed: DocumentTotals) -> list[str]:
 
 
 # How much vertical room the foot needs. Lines stop above it and continue on a
-# new page rather than being drawn over the totals.
-def _foot_height(computed: DocumentTotals) -> float:
-    return 150 + 12 * len(computed.subtotals) + 10 * len(_exemption_reasons(computed))
+# new page rather than being drawn over the totals. The base height already
+# budgets for one note line; further wrapped lines lift the foot so the payment
+# line underneath cannot be pushed into the bottom margin.
+def _foot_height(document: SalesDocument, computed: DocumentTotals) -> float:
+    extra_note_lines = max(0, len(_note_lines(document)) - 1)
+    return (
+        150
+        + 12 * len(computed.subtotals)
+        + 10 * len(_exemption_reasons(computed))
+        + 11 * extra_note_lines
+    )
 
 
 def _row_height(line: SalesDocumentLine) -> float:
@@ -485,8 +569,9 @@ def _paginate(document: SalesDocument, computed: DocumentTotals) -> list[list[Sa
     """
     probe = _Page()
     start = _table_head(probe, _header(probe, document, page_no=1, page_count=2))
+    foot_height = _foot_height(document, computed)
     line_floor = MARGIN + 24
-    foot_floor = MARGIN + _foot_height(computed)
+    foot_floor = MARGIN + foot_height
 
     pages: list[list[SalesDocumentLine]] = [[]]
     y = start
@@ -507,7 +592,7 @@ def _paginate(document: SalesDocument, computed: DocumentTotals) -> list[list[Sa
 
     # An empty document still gets one page, and a full last page still needs
     # somewhere to put the totals.
-    if y - _foot_height(computed) < MARGIN and pages[-1]:
+    if y - foot_height < MARGIN and pages[-1]:
         pages.append([])
     return pages
 
@@ -521,6 +606,7 @@ def render(document: SalesDocument) -> bytes:
     """
     computed = totals(document)
     chunks = _paginate(document, computed)
+    foot_height = _foot_height(document, computed)
     pages: list[_Page] = []
 
     for index, chunk in enumerate(chunks):
@@ -545,7 +631,7 @@ def render(document: SalesDocument) -> bytes:
                 )
                 y -= 10
         if index == len(chunks) - 1:
-            _foot(page, document, computed, min(y, MARGIN + _foot_height(computed)))
+            _foot(page, document, computed, min(y, MARGIN + foot_height))
 
     return _build_pdf(pages)
 

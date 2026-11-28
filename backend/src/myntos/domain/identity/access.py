@@ -45,6 +45,11 @@ class Permission(enum.StrEnum):
     # payments should not be able to move a cost account onto the balance
     # sheet's grouping by accident; whoever administers the books may.
     LEDGER_CHART = "ledger:chart"
+    # Making, seeing and stopping a server's integration keys. Owner-only, by
+    # the owner's decision of 2026-11-26 (docs/agents-and-api.md rule 15): an
+    # integration key sends invoices to customers without anybody's yes, so
+    # whoever makes one must be somebody the company chose, as for billing.
+    INTEGRATION_MANAGE = "integration:manage"
 
 
 _VIEWER: frozenset[Permission] = frozenset(
@@ -64,6 +69,7 @@ _ADMIN: frozenset[Permission] = _MEMBER | {
 _OWNER: frozenset[Permission] = _ADMIN | {
     Permission.ORGANIZATION_DELETE,
     Permission.BILLING_MANAGE,
+    Permission.INTEGRATION_MANAGE,
 }
 
 ROLE_PERMISSIONS: Mapping[OrganizationRole, frozenset[Permission]] = {

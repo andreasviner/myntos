@@ -32,11 +32,13 @@ a post Skatteetaten subtracts (``kategori`` ``negativ``: 3300 særavgifter, 2080
 udekket tap, 7099). So 2080 with a debit of 5 000 is sent as 5 000, as the
 examples send it.
 
-**What is built so far.** An aksjeselskap with full regnskapsplikt, which is
-every AS. An enkeltpersonforetak files on different terms (most have no
-regnskapsplikt, and then Skatteetaten makes several posts itself from
-specifications Myntos does not send yet), and is refused by name rather than
-sent half right; docs/integrations/skatteetaten.md says what it still needs.
+**What is built.** Aksjeselskap (AS, full regnskapsplikt) and enkeltpersonforetak
+(ENK, ingen regnskapsplikt or full regnskapsplikt above the regnskapsloven § 1-2
+asset threshold). Under ``ingenRegnskapsplikt``, Skatteetaten creates several
+result and balance posts itself from specifications (``saldoavskrevetAnleggsmiddel``,
+``gevinstOgTapskonto``, ``spesifikasjonAvOmloepsmiddel``): Myntos keeps all posts in
+the preview and omits the auto-created ones from the XML when sending the
+corresponding specification so Skatteetaten never double-counts them.
 """
 
 from __future__ import annotations
@@ -75,6 +77,27 @@ FORDELT_TOLERANCE = Decimal("1000")
 # and the third, 50 årsverk, is not in the books).
 SMALL_COMPANY_REVENUE = Decimal("70000000")
 SMALL_COMPANY_BALANCE = Decimal("35000000")
+
+# Above 20 million kroner in total assets, an ENK has full regnskapsplikt
+# (regnskapsloven § 1-2 første ledd nr. 11; the other trigger, > 20 årsverk,
+# is not in the books).
+ENK_FULL_REGNSKAPSPLIKT_ASSETS = Decimal("20000000")
+
+# Under ingenRegnskapsplikt, Skatteetaten auto-creates balance posts for each
+# saldogruppe from saldoavskrevetAnleggsmiddel (Balanse.kt).
+_SALDO_BALANCE_POST: dict[str, str] = {
+    "a": "1280",
+    "b": "1080",
+    "c": "1238",
+    "d": "1205",
+    "e": "1221",
+    "f": "1225",
+    "g": "1117",
+    "h": "1115",
+    "i": "1105",
+    "j": "1120",
+}
+_NEGATIVE_SALDO_EQUITY_GROUPS = frozenset({"a", "c", "d", "j"})
 
 # Posts the controls refuse with a minus sign (N_FEIL_NEGATIV_*). Others may be
 # negative: a bank account overdrawn at year end is a negative 1920.
@@ -241,6 +264,14 @@ class Grunnlag:
     #: The company's last year: it was wound up, and ``end`` is the last day
     #: of its books (myntos.domain.arsoppgjor.winding_up).
     wound_up: bool = False
+    #: ENK only: net private withdrawals (debit on 2060/2055) and cash injections
+    #: (credit on 2060/2055) during the year before the closing voucher, so
+    #: egenkapitalavstemming names them as ``privatkonto`` and ``kontantinnskudd``.
+    private_withdrawals: Decimal = ZERO
+    private_injections: Decimal = ZERO
+    #: ENK with landbruk add-on: closing totals from ``buskap.year_count``, keyed
+    #: by ``SpesifikasjonAvSkattemessigVarelager`` element name.
+    farm_count_totals: tuple[tuple[str, Decimal], ...] = ()
 
 
 # --- What comes out ---------------------------------------------------------------------
@@ -341,6 +372,15 @@ class Naeringsspesifikasjon:
     findings: tuple[Finding, ...] = field(default=())
     #: The company's last year (see :class:`Grunnlag`).
     wound_up: bool = False
+    #: Closing farm inventory totals from ``buskap.year_count`` for
+    #: ``SpesifikasjonAvSkattemessigVarelager``.
+    farm_count_totals: tuple[tuple[str, Decimal], ...] = ()
+    private_withdrawals: Decimal = ZERO
+    private_injections: Decimal = ZERO
+
+    @property
+    def is_enk(self) -> bool:
+        return self.business_type is Virksomhetstype.ENKELTPERSONFORETAK
 
     @property
     def blocked(self) -> bool:
@@ -369,22 +409,33 @@ def _money(value: Decimal) -> Decimal:
     return value.quantize(_CENT)
 
 
+def _asset_total(grunnlag: Grunnlag) -> Decimal:
+    return sum(
+        (
+            a.closing
+            for a in grunnlag.accounts
+            if a.category is not None and a.category.startswith("balanseverdi")
+        ),
+        ZERO,
+    )
+
+
 def _form(grunnlag: Grunnlag) -> tuple[Regnskapsplikt, Virksomhetstype] | Finding:
     form = (grunnlag.organisation_form or "").upper()
     if form == "AS":
         return Regnskapsplikt.FULL, Virksomhetstype.OEVRIG_SELSKAP
     if form == "ENK":
-        return feil(
-            "enk_ikke_ferdig",
-            "Myntos lager ennå ikke næringsspesifikasjonen for et enkeltpersonforetak. Den sendes "
-            "sammen med innehaverens egen skattemelding, og Skatteetaten lager flere poster selv "
-            "fra spesifikasjoner Myntos ikke sender ennå. Fyll den ut på skatteetaten.no, med "
-            "tallene fra Regnskap i Myntos.",
+        regnskapsplikt = (
+            Regnskapsplikt.FULL
+            if _asset_total(grunnlag) > ENK_FULL_REGNSKAPSPLIKT_ASSETS
+            else Regnskapsplikt.INGEN
         )
+        return regnskapsplikt, Virksomhetstype.ENKELTPERSONFORETAK
     return feil(
         "organisasjonsform_ikke_stottet",
-        f"Myntos lager næringsspesifikasjonen bare for aksjeselskap foreløpig, ikke for "
-        f"organisasjonsformen «{grunnlag.organisation_form or 'ukjent'}».",
+        "Myntos lager næringsspesifikasjonen bare for aksjeselskap (AS) og "
+        "enkeltpersonforetak (ENK) foreløpig, ikke for organisasjonsformen "
+        f"«{grunnlag.organisation_form or 'ukjent'}».",
     )
 
 
@@ -447,11 +498,16 @@ def _posts(
         subtracted = entry.kategori == "negativ"
         amount = -natural if subtracted else natural
         if not entry.allows(regnskapsplikt=regnskapsplikt.value, business_type=business_type.value):
+            who = (
+                f"et enkeltpersonforetak med {regnskapsplikt.text}"
+                if business_type is Virksomhetstype.ENKELTPERSONFORETAK
+                else f"et selskap med {regnskapsplikt.text}"
+            )
             findings.append(
                 feil(
                     "post_ikke_tillatt",
-                    f"Post {code} {entry.name} kan ikke brukes av et selskap med "
-                    f"{regnskapsplikt.text} (kontoene {', '.join(behind[(category, code)])}). "
+                    f"Post {code} {entry.name} kan ikke brukes av {who} "
+                    f"(kontoene {', '.join(behind[(category, code)])}). "
                     "Skatteetaten avviser den. Velg en annen post under Kontoplan.",
                 )
             )
@@ -562,12 +618,34 @@ def build(grunnlag: Grunnlag) -> Naeringsspesifikasjon:
     else:
         regnskapsplikt, business_type = decided
     if not grunnlag.year_closed:
+        if business_type is Virksomhetstype.ENKELTPERSONFORETAK:
+            findings.append(
+                feil(
+                    "aret_er_apent",
+                    f"Avslutt {grunnlag.year} under Årsavslutning først. Næringsspesifikasjonen "
+                    "lages fra et avsluttet år, fordi det er avslutningen som flytter årets "
+                    "resultat og privatkontoen til egenkapitalen.",
+                )
+            )
+        else:
+            findings.append(
+                feil(
+                    "aret_er_apent",
+                    f"Avslutt {grunnlag.year} under Årsavslutning først. Næringsspesifikasjonen "
+                    "lages fra et avsluttet år, fordi det er avslutningen som fører "
+                    "skattekostnaden og flytter årets resultat til egenkapitalen.",
+                )
+            )
+
+    if (
+        business_type is Virksomhetstype.ENKELTPERSONFORETAK
+        and regnskapsplikt is Regnskapsplikt.FULL
+    ):
         findings.append(
-            feil(
-                "aret_er_apent",
-                f"Avslutt {grunnlag.year} under Årsavslutning først. Næringsspesifikasjonen lages "
-                "fra et avsluttet år, fordi det er avslutningen som fører skattekostnaden og "
-                "flytter årets resultat til egenkapitalen.",
+            merknad(
+                "enk_full_regnskapsplikt",
+                "Eiendelene er over 20 millioner kroner, så enkeltpersonforetaket sendes med "
+                "full regnskapsplikt (regnskapsloven § 1-2).",
             )
         )
 
@@ -601,13 +679,36 @@ def build(grunnlag: Grunnlag) -> Naeringsspesifikasjon:
 
     saldi, gain_loss = _saldi(grunnlag.saldo, findings)
 
+    if regnskapsplikt is Regnskapsplikt.INGEN and saldi:
+        saldo_depreciation = _money(sum((s.depreciation for s in saldi), ZERO))
+        booked_6000 = _money(
+            sum(
+                (
+                    p.natural
+                    for p in posts
+                    if p.category == "annenDriftskostnad" and p.code == "6000"
+                ),
+                ZERO,
+            )
+        )
+        if saldo_depreciation != booked_6000:
+            findings.append(
+                merknad(
+                    "avskrivning_avviker_fra_saldo",
+                    f"Post 6000 i regnskapet ({booked_6000} kr) avviker fra årets avskrivning i "
+                    f"anleggsregisteret ({saldo_depreciation} kr). For et enkeltpersonforetak "
+                    "uten regnskapsplikt regner Skatteetaten ut post 6000 fra saldoskjemaet.",
+                )
+            )
+
     # The tax cost is not deductible, and is reversed as a permanent difference
     # for exactly the amount on the posts (N_AVVIK_TILBAKEFØRT_SKATTEKOSTNAD
-    # refuses more than 10 kroner off).
+    # refuses more than 10 kroner off). Permanent differences only exist under
+    # fullRegnskapsplikt.
     tax = sum((p.natural for p in posts if p.category == _TAX), ZERO)
     permanent: list[PermanentDifference] = []
-    types = codes.by_code(grunnlag.year, codes.PERMANENT_DIFFERENCE)
-    if tax:
+    if regnskapsplikt is Regnskapsplikt.FULL and tax:
+        types = codes.by_code(grunnlag.year, codes.PERMANENT_DIFFERENCE)
         name = "positivSkattekostnad" if tax > 0 else "negativSkattekostnad"
         entry = types[name]
         permanent.append(
@@ -627,7 +728,15 @@ def build(grunnlag: Grunnlag) -> Naeringsspesifikasjon:
     equity_opening = _money(-sum((a.opening for a in equity), ZERO))
     equity_closing = _money(-sum((a.closing for a in equity), ZERO))
     changes = _equity_changes(
-        grunnlag.year, result, equity_opening, equity_closing, findings, wound_up=grunnlag.wound_up
+        grunnlag.year,
+        result,
+        equity_opening,
+        equity_closing,
+        findings,
+        wound_up=grunnlag.wound_up,
+        is_enk=business_type is Virksomhetstype.ENKELTPERSONFORETAK,
+        private_withdrawals=_money(max(ZERO, grunnlag.private_withdrawals)),
+        private_injections=_money(max(ZERO, grunnlag.private_injections)),
     )
 
     rules: str | None = None
@@ -667,6 +776,9 @@ def build(grunnlag: Grunnlag) -> Naeringsspesifikasjon:
         taxable_result=taxable_result,
         findings=tuple(findings),
         wound_up=grunnlag.wound_up,
+        farm_count_totals=grunnlag.farm_count_totals,
+        private_withdrawals=_money(max(ZERO, grunnlag.private_withdrawals)),
+        private_injections=_money(max(ZERO, grunnlag.private_injections)),
     )
 
 
@@ -694,6 +806,9 @@ def _equity_changes(
     findings: list[Finding],
     *,
     wound_up: bool = False,
+    is_enk: bool = False,
+    private_withdrawals: Decimal = ZERO,
+    private_injections: Decimal = ZERO,
 ) -> list[EquityChange]:
     """The year's result, and whatever else moved the equity, as Skatteetaten's types.
 
@@ -721,8 +836,15 @@ def _equity_changes(
         add("aaretsOverskudd", result)
     elif result < 0:
         add("aaretsUnderskudd", result)
-    other = _money(closing - opening - result)
-    if other < 0 and wound_up:
+    if is_enk:
+        if private_injections > 0:
+            add("kontantinnskudd", private_injections)
+        if private_withdrawals > 0:
+            add("privatkonto", private_withdrawals)
+        other = _money(closing - opening - result + private_withdrawals - private_injections)
+    else:
+        other = _money(closing - opening - result)
+    if other < 0 and wound_up and not is_enk:
         add("annenNegativEndringIEgenkapital", other)
         findings.append(
             merknad(
@@ -741,15 +863,45 @@ def _equity_changes(
             "annenPositivEndringIEgenkapital" if other > 0 else "annenNegativEndringIEgenkapital",
             other,
         )
-        findings.append(
-            merknad(
-                "annen_endring_i_egenkapital",
-                f"Egenkapitalen endret seg med {other} utover årets resultat. Den står som «andre "
-                "endringer i egenkapital». Var det en kapitalforhøyelse eller et utbytte, kan "
-                "typen rettes på skatteetaten.no etter innsendingen.",
+        if is_enk:
+            findings.append(
+                merknad(
+                    "annen_endring_i_egenkapital",
+                    f"Egenkapitalen endret seg med {other} utover årets resultat og privatkontoen. "
+                    "Den står som «andre endringer i egenkapital». Var det et kontantinnskudd, "
+                    "tinginnskudd eller privat uttak, kan typen rettes på skatteetaten.no etter "
+                    "innsendingen.",
+                )
             )
-        )
+        else:
+            findings.append(
+                merknad(
+                    "annen_endring_i_egenkapital",
+                    f"Egenkapitalen endret seg med {other} utover årets resultat. Den står som "
+                    "«andre endringer i egenkapital». Var det en kapitalforhøyelse eller et "
+                    "utbytte, kan typen rettes på skatteetaten.no etter innsendingen.",
+                )
+            )
     return changes
+
+
+@dataclass(frozen=True)
+class EnkDocumentDetails:
+    """ENK-specific inputs placed into the næringsspesifikasjon XML."""
+
+    naeringstype: str = "annenNaering"
+    kommunenummer: str | None = None
+    naeringsbeskrivelse: str | None = None
+    andel_innehaver: Decimal = Decimal("100")
+    antall_maaneder: int = 12
+    skjermingsgrunnlag: tuple[tuple[str, Decimal, Decimal], ...] = ()
+    skjermingsrente: Decimal | None = None
+    rentekostnad_foretaksgjeld: Decimal = ZERO
+    kapitalinntekt: Decimal = ZERO
+    kapitalkostnad: Decimal = ZERO
+    formue_with_discount: Decimal | None = None
+    formue_without_discount: Decimal | None = None
+    formue_debt: Decimal | None = None
 
 
 # --- The document ---------------------------------------------------------------------------
@@ -771,14 +923,113 @@ def _lines(tree: dict[str, object], path: Iterable[str], item: str) -> list[obje
     return cast(list[object], node.setdefault(item, []))
 
 
-def document(nsp: Naeringsspesifikasjon, *, partsreferanse: int) -> dict[str, object]:
+def _omloepsmiddel_spec(
+    nsp: Naeringsspesifikasjon,
+) -> tuple[dict[str, object], set[tuple[str, str]]]:
+    """Build ``spesifikasjonAvOmloepsmiddel`` for ENK ``ingenRegnskapsplikt``.
+
+    Returns the XML node and the balance posts Skatteetaten auto-creates from it
+    (1500, 1400, 1401), which are omitted from ``balanseregnskap`` to avoid
+    double-counting.
+    """
+    if nsp.regnskapsplikt is not Regnskapsplikt.INGEN:
+        return {}, set()
+    by_key = {(p.category, p.code): p.natural for p in nsp.posts}
+    post_1500 = by_key.get(("balanseverdiForOmloepsmiddel", "1500"), ZERO)
+    post_1400 = by_key.get(("balanseverdiForOmloepsmiddel", "1400"), ZERO)
+    post_1401 = by_key.get(("balanseverdiForOmloepsmiddel", "1401"), ZERO)
+
+    spec: dict[str, object] = {}
+    omitted: set[tuple[str, str]] = set()
+
+    if post_1500 > 0:
+        spec["spesifikasjonAvSkattemessigVerdiPaaFordring"] = {
+            "kundefordringOgIkkeFakturertDriftsinntekt": _beloep(post_1500)
+        }
+        omitted.add(("balanseverdiForOmloepsmiddel", "1500"))
+
+    if post_1400 > 0 or post_1401 > 0:
+        varelager: dict[str, object] = {}
+        farm = dict(nsp.farm_count_totals)
+        buskap_val = _money(max(ZERO, farm.get("buskap", ZERO)))
+        raavare_val = _money(max(ZERO, farm.get("raavareOgInnkjoeptHalvfabrikata", ZERO)))
+        if post_1400 > 0:
+            counted_1400 = buskap_val + raavare_val
+            if counted_1400 > 0 and counted_1400 <= post_1400:
+                if raavare_val > 0:
+                    varelager["raavareOgInnkjoeptHalvfabrikata"] = _beloep(raavare_val)
+                remainder = _money(post_1400 - counted_1400)
+                if remainder > 0:
+                    varelager["innkjoeptVareForVideresalg"] = _beloep(remainder)
+                if buskap_val > 0:
+                    varelager["buskap"] = _beloep(buskap_val)
+            else:
+                varelager["innkjoeptVareForVideresalg"] = _beloep(post_1400)
+            omitted.add(("balanseverdiForOmloepsmiddel", "1400"))
+        if post_1401 > 0:
+            varelager["selvprodusertVareBenyttetIEgenProduksjon"] = _beloep(post_1401)
+            omitted.add(("balanseverdiForOmloepsmiddel", "1401"))
+        if varelager:
+            spec["spesifikasjonAvSkattemessigVarelager"] = varelager
+
+    return spec, omitted
+
+
+def _auto_derived_posts(
+    nsp: Naeringsspesifikasjon, omloeps_omitted: set[tuple[str, str]]
+) -> set[tuple[str, str]]:
+    """Posts Skatteetaten auto-creates under ``ingenRegnskapsplikt`` from specifications."""
+    if nsp.regnskapsplikt is not Regnskapsplikt.INGEN:
+        return set()
+    omitted = set(omloeps_omitted)
+    if nsp.saldi:
+        if sum((s.depreciation for s in nsp.saldi), ZERO) > 0:
+            omitted.add(("annenDriftskostnad", "6000"))
+        if sum((s.income for s in nsp.saldi), ZERO) > 0:
+            omitted.add(("annenDriftsinntekt", "3895"))
+        positive_by_group: dict[str, Decimal] = defaultdict(lambda: ZERO)
+        has_negative_equity_saldo = False
+        for saldo in nsp.saldi:
+            if saldo.closing > 0:
+                positive_by_group[saldo.saldogruppe] += saldo.closing
+            elif saldo.closing < 0 and saldo.saldogruppe in _NEGATIVE_SALDO_EQUITY_GROUPS:
+                has_negative_equity_saldo = True
+        for group, total in positive_by_group.items():
+            post_code = _SALDO_BALANCE_POST.get(group)
+            if total > 0 and post_code is not None:
+                omitted.add(("balanseverdiForAnleggsmiddel", post_code))
+        if has_negative_equity_saldo:
+            omitted.add(("egenkapital", "2095"))
+    if nsp.gain_loss is not None:
+        if nsp.gain_loss.income > 0:
+            omitted.add(("annenDriftsinntekt", "3890"))
+        if nsp.gain_loss.deduction > 0:
+            omitted.add(("annenDriftskostnad", "7890"))
+        if nsp.gain_loss.closing < 0:
+            omitted.add(("balanseverdiForAnleggsmiddel", "1296"))
+        elif nsp.gain_loss.closing > 0:
+            omitted.add(("egenkapital", "2096"))
+    return omitted
+
+
+def document(
+    nsp: Naeringsspesifikasjon,
+    *,
+    partsreferanse: int,
+    enk_details: EnkDocumentDetails | None = None,
+) -> dict[str, object]:
     """The tree :func:`myntos.skattemelding.xmlwriter.write` turns into the XML.
 
     ``partsreferanse`` is Skatteetaten's number for the taxpayer, read off the
-    skattemelding fetched for the year (``partsnummer`` in an upersonlig one).
+    skattemelding fetched for the year (``partsnummer`` in an upersonlig one,
+    ``partsreferanse`` in a personlig one).
     """
     tree: dict[str, object] = {"partsreferanse": partsreferanse, "inntektsaar": nsp.year}
+    omloeps_spec, omloeps_omitted = _omloepsmiddel_spec(nsp)
+    omitted = _auto_derived_posts(nsp, omloeps_omitted)
     for post in nsp.posts:
+        if (post.category, post.code) in omitted:
+            continue
         section = SECTIONS[post.category]
         _lines(tree, section.path, section.item).append(
             {
@@ -796,12 +1047,93 @@ def document(nsp: Naeringsspesifikasjon, *, partsreferanse: int) -> dict[str, ob
             spec["gevinstOgTapskonto"] = [_gain_loss_node(nsp.gain_loss)]
         tree["spesifikasjonAvAnleggsmiddel"] = spec
 
+    if omloeps_spec:
+        tree["spesifikasjonAvOmloepsmiddel"] = omloeps_spec
+
     if nsp.business_type is Virksomhetstype.OEVRIG_SELSKAP:
         tree["beregnetNaeringsinntekt"] = {
             "fordeltBeregnetNaeringsinntektForUpersonligSkattepliktig": [
                 {"id": FORDELT_ID, "fordeltSkattemessigResultat": _beloep(nsp.taxable_result)}
             ]
         }
+    elif nsp.business_type is Virksomhetstype.ENKELTPERSONFORETAK:
+        details = enk_details or EnkDocumentDetails()
+        fordelt_naering: dict[str, object] = {
+            "id": FORDELT_ID,
+            "identifikatorForFordeltBeregnetPersoninntekt": {"tekst": "1"},
+            "identifikatorForFordeltBeregnetNaeringsinntekt": {"tekst": "1"},
+            "naeringstype": {"naeringstype": details.naeringstype},
+            "fordeltSkattemessigResultat": _beloep(nsp.taxable_result),
+            "andelAvFordeltSkattemessigResultatTilordnetInnehaver": {
+                "prosent": details.andel_innehaver
+            },
+        }
+        if details.kommunenummer:
+            fordelt_naering["kommunenummer"] = {"kommunenummer": details.kommunenummer}
+        if details.naeringsbeskrivelse:
+            fordelt_naering["naeringsbeskrivelse"] = {"tekst": details.naeringsbeskrivelse}
+        tree["beregnetNaeringsinntekt"] = {
+            "fordeltBeregnetNaeringsinntektForPersonligSkattepliktigEllerSdf": [fordelt_naering]
+        }
+
+        fordelt_person: dict[str, object] = {
+            "id": "fordeltBeregnetPersoninntekt",
+            "identifikatorForFordeltBeregnetPersoninntekt": {"tekst": "1"},
+            "identifikatorForFordeltBeregnetNaeringsinntekt": {"tekst": "1"},
+            "antallMaanederDrevetIAar": {"heltall": details.antall_maaneder},
+            "andelAvPersoninntektTilordnetInnehaver": {"prosent": details.andel_innehaver},
+        }
+        if details.rentekostnad_foretaksgjeld > 0:
+            fordelt_person["rentekostnadPaaForetaksgjeld"] = _beloep(
+                details.rentekostnad_foretaksgjeld
+            )
+        if details.kapitalinntekt > 0:
+            fordelt_person["kapitalinntektTilKorrigeringAvPersoninntekt"] = _beloep(
+                details.kapitalinntekt
+            )
+        if details.kapitalkostnad > 0:
+            fordelt_person["kapitalkostnadTilKorrigeringAvPersoninntekt"] = _beloep(
+                details.kapitalkostnad
+            )
+        if details.skjermingsgrunnlag:
+            fordelt_person["spesifikasjonAvSkjermingsgrunnlag"] = [
+                {
+                    "id": stype,
+                    "skjermingsgrunnlagstype": {"skjermingsgrunnlagstype": stype},
+                    "inngaaendeVerdi": _beloep(opening),
+                    "utgaaendeVerdi": _beloep(closing),
+                }
+                for stype, opening, closing in details.skjermingsgrunnlag
+            ]
+        if details.skjermingsrente is not None:
+            fordelt_person["skjermingsrente"] = {"prosent": details.skjermingsrente}
+        tree["beregnetPersoninntekt"] = {"fordeltBeregnetPersoninntekt": [fordelt_person]}
+
+        has_formue_split = any(
+            v is not None and v > 0
+            for v in (
+                details.formue_with_discount,
+                details.formue_without_discount,
+                details.formue_debt,
+            )
+        )
+        if has_formue_split:
+            formue_item: dict[str, object] = {"id": "1"}
+            if details.kommunenummer:
+                formue_item["kommunenummer"] = {"kommunenummer": details.kommunenummer}
+            if details.formue_with_discount and details.formue_with_discount > 0:
+                formue_item[
+                    "verdiFoerVerdsettingsrabattForFormuesobjekterOmfattetAvVerdsettingsrabattTilordnetInnehaver"
+                ] = _beloep(details.formue_with_discount)
+            if details.formue_without_discount and details.formue_without_discount > 0:
+                formue_item[
+                    "formuesverdiForFormuesobjekterIkkeOmfattetAvVerdsettingsrabattTilordnetInnehaver"
+                ] = _beloep(details.formue_without_discount)
+            if details.formue_debt and details.formue_debt > 0:
+                formue_item["samletGjeldTilordnetInnehaver"] = _beloep(details.formue_debt)
+            tree["samletGjeldOgFormuesobjekter"] = {
+                "samletGjeldOgFormuesobjekterTilordnetInnehaverPerKommune": [formue_item]
+            }
 
     if nsp.permanent:
         tree["forskjellMellomRegnskapsmessigOgSkattemessigVerdi"] = {

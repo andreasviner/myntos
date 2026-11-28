@@ -102,12 +102,18 @@ def check(
     lines: Iterable[SalesDocumentLine] | None = None,
     *,
     today: date,
+    peppol_setup_required: bool = False,
 ) -> list[Violation]:
     """Every requirement ``document`` does not meet, in the order § 5-1 states them.
 
     ``today`` is passed rather than read from the clock so the caller decides
     what "now" means — the e-invoice rule changes behaviour on a date, and a test
     that cannot move the date cannot cover both sides of it.
+
+    ``peppol_setup_required`` is passed by the API layer when the deployment has
+    a Peppol access point configured and this company has not registered for
+    e-invoicing yet. Business invoices are then held until the company sets up
+    EHF sending, while private-consumer (B2C) invoices remain unaffected.
 
     § 5-1-1 nr. 1 — nummer og dokumentasjonsdato — has no check of its own. Both
     are set by :func:`~myntos.domain.faktura.service.issue` at the moment it
@@ -123,7 +129,7 @@ def check(
     found += _check_delivery(document, today=today)
     found += _check_payment(document, today=today)
     found += _check_vat(document, rows)
-    found += _check_e_invoice(document, today=today)
+    found += _check_e_invoice(document, today=today, peppol_setup_required=peppol_setup_required)
     return found
 
 
@@ -475,32 +481,56 @@ def _check_vat(document: SalesDocument, lines: list[SalesDocumentLine]) -> list[
     return found
 
 
-def _check_e_invoice(document: SalesDocument, *, today: date) -> list[Violation]:
+def _check_e_invoice(
+    document: SalesDocument,
+    *,
+    today: date,
+    peppol_setup_required: bool = False,
+) -> list[Violation]:
     """The e-invoice requirement — lov 19. juni 2026 nr. 39.
 
     An EHF invoice is addressed by the buyer's organisasjonsnummer: it becomes
     the Peppol participant identifier under scheme 0192, and without it there is
-    nowhere to send the document. So the check that matters is not "did we
-    produce XML" — we always do — but whether the XML can be delivered.
+    nowhere to send the document. When the deployment has Peppol configured and
+    the company has not activated EHF sending yet, business invoices are also
+    held until EHF is set up so e-invoicing is the default from the very first
+    business invoice.
 
     Consumers are outside the requirement entirely, which is why
     ``buyer_is_business`` is asked rather than inferred from a missing orgnr.
     """
-    if not document.buyer_is_business or document.buyer_orgnr:
+    if not document.buyer_is_business:
         return []
-    mandatory = today >= E_INVOICE_MANDATORY_FROM
-    return [
-        Violation(
-            rule="lov 19. juni 2026 nr. 39 (pliktig e-fakturering)",
-            field="buyer_orgnr",
-            message=(
-                "kjøperen er bokføringspliktig, og da skal salgsdokumentet sendes som "
-                "elektronisk faktura. Uten kjøperens organisasjonsnummer kan den ikke "
-                "adresseres i Peppol" + ("" if mandatory else ". Kravet gjelder fra 1. januar 2027")
-            ),
-            severity=Severity.BLOKKERENDE if mandatory else Severity.ADVARSEL,
+    found: list[Violation] = []
+    if peppol_setup_required and not document.is_credit_note:
+        found.append(
+            Violation(
+                rule="lov 19. juni 2026 nr. 39 (pliktig e-fakturering)",
+                field="peppol_registration",
+                message=(
+                    "selskapet må være satt opp for e-faktura (EHF) før du kan utstede "
+                    "faktura til en bedrift. Sett opp e-faktura på Faktura-siden eller under "
+                    "Organisasjon → E-faktura"
+                ),
+                severity=Severity.BLOKKERENDE,
+            )
         )
-    ]
+    if not document.buyer_orgnr:
+        mandatory = today >= E_INVOICE_MANDATORY_FROM
+        found.append(
+            Violation(
+                rule="lov 19. juni 2026 nr. 39 (pliktig e-fakturering)",
+                field="buyer_orgnr",
+                message=(
+                    "kjøperen er bokføringspliktig, og da skal salgsdokumentet sendes som "
+                    "elektronisk faktura. Uten kjøperens organisasjonsnummer kan den ikke "
+                    "adresseres i Peppol"
+                    + ("" if mandatory else ". Kravet gjelder fra 1. januar 2027")
+                ),
+                severity=Severity.BLOKKERENDE if mandatory else Severity.ADVARSEL,
+            )
+        )
+    return found
 
 
 def describe_markings(document: SalesDocument) -> list[str]:

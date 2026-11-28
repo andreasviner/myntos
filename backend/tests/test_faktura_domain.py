@@ -408,6 +408,24 @@ def test_a_consumer_sale_is_outside_the_e_invoice_requirement() -> None:
     assert found == []
 
 
+def test_peppol_setup_blocks_business_invoice_but_not_consumer_or_credit_note() -> None:
+    """When Peppol is configured, business invoices wait until EHF sending is active."""
+    business = make_document(buyer_is_business=True)
+    found = blocking(check(business, today=TODAY, peppol_setup_required=True))
+    assert [v.field for v in found] == ["peppol_registration"]
+
+    consumer = make_document(buyer_orgnr=None, buyer_is_business=False)
+    assert blocking(check(consumer, today=TODAY, peppol_setup_required=True)) == []
+
+    credit = make_document(
+        document_type=DocumentType.KREDITNOTA,
+        due_date=None,
+        seller_bank_account=None,
+        buyer_is_business=True,
+    )
+    assert blocking(check(credit, today=TODAY, peppol_setup_required=True)) == []
+
+
 def test_foreign_currency_is_refused_while_vat_cannot_be_restated_in_nok() -> None:
     """§ 5-1-1 nr. 6 wants the merverdiavgift in NOK; we do not compute that yet."""
     document = make_document(currency_code="EUR")

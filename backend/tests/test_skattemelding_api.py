@@ -23,6 +23,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -47,6 +48,7 @@ from tests.test_cashflow_api import THIS_YEAR, record
 
 LAST_YEAR = THIS_YEAR - 1
 ORGNR = "910000004"
+OWNER_PID = "08866995401"
 PARTSNUMMER = 3001570199
 API_URL = "https://api-test.sits.no"
 IDPORTEN_URL = "https://idporten-api-test.sits.no"
@@ -110,6 +112,29 @@ def _utkast(year: int, *, forhaandsfastsetting: str | None = None) -> bytes:
     ).encode()
 
 
+def _personal_utkast(year: int) -> bytes:
+    """The fetch's answer for an ENK owner: personal utkast with prefilled bank account."""
+    namespace = schema.skattemelding_personlig(year).namespace
+    melding = (
+        f'<?xml version="1.0" encoding="UTF-8"?><skattemelding xmlns="{namespace}">'
+        f"<partsreferanse>{PARTSNUMMER}</partsreferanse><inntektsaar>{year}</inntektsaar>"
+        "<bankLaanOgForsikring><konto><id>konto-privat-1</id>"
+        "<bankensNavn><tekst>SpareBank 1</tekst></bankensNavn>"
+        "<kontonummer><tekst>12345678901</tekst></kontonummer>"
+        "</konto></bankLaanOgForsikring></skattemelding>"
+    ).encode()
+    return (
+        "<skattemeldingOgNaeringsspesifikasjonforespoerselResponse "
+        'xmlns="no:skatteetaten:fastsetting:formueinntekt:skattemeldingognaeringsspesifikasjon:'
+        'forespoersel:response:v2"><dokumenter><skattemeldingdokument>'
+        "<id>SKI:755:P1</id><encoding>utf-8</encoding>"
+        f"<content>{base64.b64encode(melding).decode()}</content>"
+        "<type>skattemeldingPersonligUtkast</type>"
+        "</skattemeldingdokument></dokumenter>"
+        "</skattemeldingOgNaeringsspesifikasjonforespoerselResponse>"
+    ).encode()
+
+
 @dataclass
 class Skatteetaten:
     """Skatteetaten's skattemelding API and the Altinn app, in one stub."""
@@ -117,6 +142,8 @@ class Skatteetaten:
     validation_answer: bytes = ACCEPTED
     fetched: list[str] = field(default_factory=list)
     validated: list[bytes] = field(default_factory=list)
+    validated_paths: list[str] = field(default_factory=list)
+    pid: str | None = OWNER_PID
     created: dict[str, Any] | None = None
     uploads: list[tuple[str | None, str | None, bytes]] = field(default_factory=list)
     process_calls: int = 0
@@ -166,6 +193,7 @@ class Skatteetaten:
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if "/valider/" in path:
+            self.validated_paths.append(f"{request.url.host}{path}")
             self.validated.append(request.content)
             return httpx.Response(200, content=self.validation_answer)
         if "/klargjoerforhaandsfastsetting/" in path:
@@ -179,7 +207,11 @@ class Skatteetaten:
             )
         if path.startswith("/api/skattemelding/v2/"):
             self.fetched.append(f"{request.url.host}{path}")
-            year = int(path.rstrip("/").split("/")[-2])
+            parts = path.rstrip("/").split("/")
+            year = int(parts[-2])
+            identifier = parts[-1]
+            if len(identifier) == 11:
+                return httpx.Response(200, content=_personal_utkast(year))
             if self.prepare_answer is not None:
                 if not self.prepared or self.never_ready or self.prepare_answer != "OK":
                     return httpx.Response(403, text="Skatteplikt ikke registrert")
@@ -237,8 +269,8 @@ def skatteetaten(monkeypatch: pytest.MonkeyPatch) -> Iterator[Skatteetaten]:
         ),
     )
 
-    async def logged_in(db: Any, user: Any, *, missing: str) -> tuple[None, str]:
-        return None, "person-token"
+    async def logged_in(db: Any, user: Any, *, missing: str) -> tuple[Any, str]:
+        return SimpleNamespace(pid=stub.pid), "person-token"
 
     async def exchanged(token: str) -> AltinnToken:
         assert token == "person-token"
@@ -259,6 +291,7 @@ def _register_snapshot(
     company_id: int,
     *,
     auditor: str | None,
+    orgnr: str = ORGNR,
     unit: dict[str, Any] | None = None,
 ) -> None:
     """What the company page keeps from Enhetsregisteret: the roles, a revisor among them."""
@@ -284,7 +317,7 @@ def _register_snapshot(
             ),
             {
                 "company": company_id,
-                "orgnr": ORGNR,
+                "orgnr": orgnr,
                 "now": utc_now().isoformat(sep=" "),
                 "unit": json.dumps(unit or {}),
                 "roles": json.dumps(roles),
@@ -301,12 +334,17 @@ def books(
     auditor: str | None = None,
     register_snapshot: bool = True,
     close: bool = True,
+    unit: dict[str, Any] | None = None,
+    private_withdrawal: str | None = None,
 ) -> dict[str, Any]:
-    """An AS with a year of sales of 10 000 and costs of 1 000, closed with 1 980 in tax."""
+    """An AS or ENK with a year of sales of 10 000 and costs of 1 000, closed."""
     session = register(client)
     company = _company(client, session["memberships"][0]["organization_id"], form=form)
+    equity_account = "2050" if form == "ENK" else "2000"
     _post_opening(
-        client, company["id"], [_line("1920", debit="30000.00"), _line("2000", credit="30000.00")]
+        client,
+        company["id"],
+        [_line("1920", debit="30000.00"), _line(equity_account, credit="30000.00")],
     )
     for type_code, gross in (("salg_hoy_sats", "12500.00"), ("kontorrekvisita", "1250.00")):
         response = record(
@@ -317,6 +355,22 @@ def books(
             occurred_on=f"{LAST_YEAR}-03-14",
         )
         assert response.status_code == 201, response.text
+    if private_withdrawal is not None:
+        withdrawal = write(
+            client,
+            "POST",
+            f"/api/v1/companies/{company['id']}/manuelt-bilag",
+            json={
+                "occurred_on": f"{LAST_YEAR}-06-15",
+                "description": "Privatuttak innehaver",
+                "explanation": "Uttak til privat forbruk",
+                "lines": [
+                    {"account_number": "2060", "debit": private_withdrawal, "credit": "0.00"},
+                    {"account_number": "1920", "debit": "0.00", "credit": private_withdrawal},
+                ],
+            },
+        )
+        assert withdrawal.status_code == 201, withdrawal.text
     if close:
         closed = write(
             client,
@@ -330,7 +384,7 @@ def books(
         )
         assert closed.status_code == 201, closed.text
     if register_snapshot:
-        _register_snapshot(database_url, company["id"], auditor=auditor)
+        _register_snapshot(database_url, company["id"], auditor=auditor, unit=unit)
     return company
 
 
@@ -433,11 +487,213 @@ def test_without_the_register_myntos_does_not_guess_the_revisor(
     assert body["blocked"] is True
 
 
-def test_an_enkeltpersonforetak_is_refused_by_name(client: TestClient, database_url: str) -> None:
-    company = books(client, database_url, form="ENK")
+def test_enk_overview_check_and_submit_on_owner_pid_preserving_personal_posts(
+    client: TestClient, database_url: str, skatteetaten: Skatteetaten
+) -> None:
+    company = books(
+        client,
+        database_url,
+        form="ENK",
+        unit={
+            "municipality_number": "0301",
+            "industry_code": "62.010",
+            "industry_description": "Programmeringstjenester",
+        },
+        private_withdrawal="4000.00",
+    )
     body = overview(client, company["id"])
-    assert "enk_ikke_ferdig" in _codes(body["findings"])
-    assert body["blocked"] is True
+    assert body["er_enk"] is True
+    assert body["blocked"] is False, body["findings"]
+    assert body["regnskapsplikt"] == "ingenRegnskapsplikt"
+    assert body["forhaandsfastsetting"] is False
+    assert body["aarsresultat"] == "9000.00"
+    assert body["skattemessig_resultat"] == "9000.00"
+    assert body["naeringstype_forslag"] == "annenNaering"
+    assert body["kommunenummer_forslag"] == "0301"
+    assert body["naeringsbeskrivelse_forslag"] == "Programmeringstjenester"
+    assert body["antall_maaneder_forslag"] == 12
+    assert any(item["code"] == "annenNaering" for item in body["naeringstyper"])
+    assert body["personinntekt"] is not None
+    assert body["personinntekt"]["beregnet_personinntekt"] == "9000.00"
+    assert ("privatkonto", "4000.00") in [(c["type"], c["amount"]) for c in body["equity_changes"]]
+    assert "formue_enk_overfores" in _codes(body["findings"])
+
+    checked = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company['id']}/skattemelding/kontroll",
+        json={
+            "aar": LAST_YEAR,
+            "naeringstype": "annenNaering",
+            "kommunenummer": "0301",
+            "naeringsbeskrivelse": "Programmeringstjenester",
+        },
+    )
+    assert checked.status_code == 200, checked.text
+    filing = checked.json()
+    assert filing["status"] == "validert"
+    assert filing["innsendingstype"] == "ikkeKomplett"
+    assert filing["naeringstype"] == "annenNaering"
+    assert filing["kommunenummer"] == "0301"
+    assert filing["naeringsbeskrivelse"] == "Programmeringstjenester"
+    assert filing["antall_maaneder"] == 12
+    assert filing["andel_innehaver"] == "100"
+    assert filing["skatteetaten_portal_url"].endswith(f"/web/skattemeldingen/{LAST_YEAR}")
+    # Never expose or store raw fødselsnummer in the response or envelope.
+    assert OWNER_PID not in checked.text
+
+    # Fetch and validate use the owner's fødselsnummer, never the ENK orgnr.
+    assert skatteetaten.fetched == [
+        f"idporten-api-test.sits.no/api/skattemelding/v2/{LAST_YEAR}/{OWNER_PID}"
+    ]
+    assert skatteetaten.validated_paths == [
+        f"idporten-api-test.sits.no/api/skattemelding/v2/valider/{LAST_YEAR}/{OWNER_PID}"
+    ]
+
+    [sent_envelope] = skatteetaten.validated
+    assert OWNER_PID.encode() not in sent_envelope
+    assert b"<tin>" not in sent_envelope
+    assert b"<innsendingstype>ikkeKomplett</innsendingstype>" in sent_envelope
+    documents = _envelope_documents(sent_envelope)
+    xsd_dir = Path(schema.__file__).parent / "xsd"
+    nsp_xml = documents["naeringsspesifikasjon"]
+    etree.XMLSchema(
+        etree.parse(str(xsd_dir / schema.NAERINGSSPESIFIKASJON[LAST_YEAR]))
+    ).assertValid(etree.fromstring(nsp_xml, _PARSER))
+    personal_xml = documents["skattemeldingPersonlig"]
+    etree.XMLSchema(
+        etree.parse(str(xsd_dir / schema.SKATTEMELDING_PERSONLIG[LAST_YEAR]))
+    ).assertValid(etree.fromstring(personal_xml, _PARSER))
+    # Owner's prefilled personal bank account stays untouched.
+    assert b"<tekst>SpareBank 1</tekst>" in personal_xml
+    assert b"<tekst>12345678901</tekst>" in personal_xml
+
+    submitted = send(client, company["id"], filing)
+    assert submitted.status_code == 200, submitted.text
+    sent_body = submitted.json()
+    assert sent_body["status"] == "mottatt"
+    assert sent_body["innsendingstype"] == "ikkeKomplett"
+    assert skatteetaten.created is not None
+    assert skatteetaten.created["instanceOwner"] == {"personNumber": OWNER_PID}
+    assert skatteetaten.uploads[0][2] == sent_envelope
+    assert overview(client, company["id"])["filings"][0]["status"] == "mottatt"
+
+
+def test_enk_komplett_missing_pid_and_validation_guards(
+    client: TestClient, database_url: str, skatteetaten: Skatteetaten
+) -> None:
+    enk = books(client, database_url, form="ENK")
+
+    bad_type = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{enk['id']}/skattemelding/kontroll",
+        json={"aar": LAST_YEAR, "naeringstype": "finnesIkke"},
+    )
+    assert bad_type.status_code == 422
+    assert bad_type.json()["code"] == "skattemelding_answer_required"
+
+    skatteetaten.pid = None
+    no_pid = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{enk['id']}/skattemelding/kontroll",
+        json={"aar": LAST_YEAR, "naeringstype": "annenNaering"},
+    )
+    assert no_pid.status_code == 409
+    assert skatteetaten.fetched == []
+
+    skatteetaten.pid = OWNER_PID
+    komplett = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{enk['id']}/skattemelding/kontroll",
+        json={"aar": LAST_YEAR, "naeringstype": "annenNaering", "innsendingstype": "komplett"},
+    )
+    assert komplett.status_code == 200, komplett.text
+    assert komplett.json()["innsendingstype"] == "komplett"
+    assert b"<innsendingstype>komplett</innsendingstype>" in skatteetaten.validated[0]
+
+    # AS still requires ytelser_til_aksjonaerer and rejects ikkeKomplett.
+    as_company = _company(client, enk["organization_id"], orgnr="910000012", name="AS Test")
+    _post_opening(
+        client,
+        as_company["id"],
+        [_line("1920", debit="30000.00"), _line("2000", credit="30000.00")],
+    )
+    closed = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{as_company['id']}/arsavslutning",
+        json={"aar": LAST_YEAR, "bekreftet": True},
+    )
+    assert closed.status_code == 201, closed.text
+    _register_snapshot(database_url, as_company["id"], auditor=None, orgnr="910000012")
+
+    missing_ytelser = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{as_company['id']}/skattemelding/kontroll",
+        json={"aar": LAST_YEAR},
+    )
+    assert missing_ytelser.status_code == 422
+    assert missing_ytelser.json()["code"] == "skattemelding_answer_required"
+
+    bad_as_mode = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{as_company['id']}/skattemelding/kontroll",
+        json={
+            "aar": LAST_YEAR,
+            "ytelser_til_aksjonaerer": False,
+            "innsendingstype": "ikkeKomplett",
+        },
+    )
+    assert bad_as_mode.status_code == 422
+    assert bad_as_mode.json()["code"] == "skattemelding_answer_required"
+
+
+def test_enk_agent_key_approval_flow_and_sibling_isolation(
+    client: TestClient,
+    database_url: str,
+    skatteetaten: Skatteetaten,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    enk = books(client, database_url, form="ENK")
+    base = f"/api/v1/companies/{enk['id']}"
+    header = agent_header(client, enk["id"], scopes=("read", "write", "post"))
+
+    held = client.post(
+        f"{base}/skattemelding/kontroll",
+        json={"aar": LAST_YEAR, "naeringstype": "annenNaering", "innsendingstype": "ikkeKomplett"},
+        headers=header,
+    )
+    assert held.status_code == 202, held.text
+    assert skatteetaten.validated == []
+
+    async def has_login(db: Any, user: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(approvals_api, "has_usable_login", has_login)
+    checked = write(
+        client,
+        "POST",
+        f"{base}/godkjenninger/{held.json()['approval_id']}/godkjenn",
+        json={"files": []},
+    )
+    assert checked.status_code == 200, checked.text
+    filing = checked.json()["result"]
+    assert filing["status"] == "validert"
+    assert filing["innsendingstype"] == "ikkeKomplett"
+
+    sibling = _company(
+        client, enk["organization_id"], orgnr="910000012", name="Søster ENK", form="ENK"
+    )
+    isolated = client.get(
+        f"/api/v1/companies/{sibling['id']}/skattemelding/innsendinger/{filing['id']}"
+    )
+    assert isolated.status_code == 404
+    assert isolated.json()["code"] == "skattemelding_filing_not_found"
 
 
 def test_a_year_without_schemas_is_refused(client: TestClient, database_url: str) -> None:

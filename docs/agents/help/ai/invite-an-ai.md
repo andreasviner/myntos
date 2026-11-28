@@ -54,6 +54,8 @@ they want you to work in their books: then this article is how they make one.
      time and goes with your own ID-porten login; no key can move money,
      change a bank account number or decide who has access.
 
+   Under the list, «Les mer om KI i Myntos» leads to the KI page, about
+   Myntos's own KI, which is a different thing from the key.
    Tick «Jeg har lest dette og vil slå på nøkler for …» and press «Slå på
    nøkler». The window goes straight on to the form.
 5. Under «Navn på nøkkelen», give it a name they will recognise, such as

@@ -1,0 +1,986 @@
+---
+import KiLevelPicker from '../../components/KiLevelPicker.astro';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { CHAT_SUGGESTIONS } from '../../lib/kichat';
+
+/**
+ * KI-chat rett mot selskapets regnskap.
+ *
+ * Innlogget flate (ikke indeksert): sender uinnloggede til /logg-inn/.
+ * Hver samtale lagres per selskap og slettes sammen med selskapet. Hvert
+ * spørsmål får et oppdatert sammendrag av resultat, balanse, fakturaer,
+ * frister og automatisk oppslag av relevante bilag, strømmet direkte fra
+ * Løynd på valgt KI-nivå.
+ */
+---
+
+<BaseLayout
+  title="KI-chat"
+  description="Spør Myntos KI om hva som helst i regnskapet ditt."
+  width="wide"
+>
+  <p class="status" id="chat-page-status" role="status" hidden></p>
+
+  <div class="chat-shell" id="chat-shell" hidden>
+    <aside class="chat-sidebar" id="chat-sidebar" aria-label="Tidligere samtaler">
+      <div class="sidebar-top">
+        <button type="button" class="btn btn-primary btn-block" id="new-chat-btn">
+          + Ny samtale
+        </button>
+      </div>
+      <div class="thread-list" id="thread-list" role="list">
+        <p class="thread-empty" id="thread-empty">Ingen lagrede samtaler ennå.</p>
+      </div>
+      <div class="sidebar-foot">
+        <a href="/ki/about/">Om KI og KI-planer</a>
+        <a href="/organisasjon/#ki" id="sidebar-settings-link" hidden>KI-innstillinger</a>
+      </div>
+    </aside>
+
+    <section class="chat-main" aria-label="Samtale med regnskapet">
+      <header class="chat-topbar">
+        <button
+          type="button"
+          class="btn btn-ghost btn-small sidebar-toggle"
+          id="sidebar-toggle"
+          aria-expanded="false"
+          aria-controls="chat-sidebar"
+        >
+          Samtaler
+        </button>
+        <span class="chat-company-label" id="chat-company-label"></span>
+        <a class="chat-about-link" href="/ki/about/#planer">KI-nivå og planer</a>
+      </header>
+
+      <div class="chat-off-banner card" id="chat-off-banner" hidden>
+        <h2>KI er slått av for dette selskapet</h2>
+        <p id="chat-off-text">
+          Når KI er slått av, sendes ingen regnskapstall eller spørsmål til Løynd.
+        </p>
+        <p class="chat-off-actions">
+          <a class="btn btn-primary btn-small" href="/organisasjon/#ki" id="chat-turn-on" hidden>
+            Slå på KI i innstillinger
+          </a>
+          <a class="btn btn-ghost btn-small" href="/ki/about/">Les om KI i Myntos</a>
+        </p>
+      </div>
+
+      <div class="chat-messages" id="chat-messages" aria-live="polite">
+        <div class="chat-welcome" id="chat-welcome">
+          <p class="pill">Myntos KI</p>
+          <h1 class="chat-title" id="chat-heading">
+            Jeg har lest hele regnskapet ditt. Spør meg om hva som helst.
+          </h1>
+          <p class="chat-subtitle" id="chat-subtitle">
+            Svarene bygger direkte på resultatregnskapet, balansen, fakturaene, fristene og
+            bilagene i selskapet ditt.
+          </p>
+          <div class="chat-suggestions" id="chat-suggestions">
+            {
+              CHAT_SUGGESTIONS.map((suggestion) => (
+                <button type="button" class="suggestion-chip" data-suggestion={suggestion}>
+                  {suggestion}
+                </button>
+              ))
+            }
+          </div>
+        </div>
+
+        <div class="message-list" id="message-list" hidden></div>
+      </div>
+
+      <form class="chat-composer" id="chat-form" novalidate>
+        <p class="status chat-error" id="chat-error" role="status" hidden></p>
+        <div class="composer-box">
+          <label class="visually-hidden" for="chat-input">Still et spørsmål om regnskapet</label>
+          <textarea
+            id="chat-input"
+            rows="2"
+            maxlength="4000"
+            placeholder="Spør om kostnader, fakturaer, bilag, mva eller frister …"
+          ></textarea>
+          <div class="composer-bar">
+            <div class="composer-level">
+              <KiLevelPicker id="ki-chat" />
+            </div>
+            <button type="submit" class="btn btn-primary" id="chat-send">Send</button>
+          </div>
+        </div>
+      </form>
+    </section>
+  </div>
+</BaseLayout>
+
+<style>
+  .chat-shell {
+    display: grid;
+    grid-template-columns: 16.5rem minmax(0, 1fr);
+    gap: 1.25rem;
+    align-items: stretch;
+    min-height: calc(100dvh - 12rem);
+  }
+
+  .chat-sidebar {
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.85rem;
+    gap: 0.75rem;
+    max-height: calc(100dvh - 12rem);
+    position: sticky;
+    top: 4.5rem;
+  }
+
+  .sidebar-top {
+    flex-shrink: 0;
+  }
+
+  .thread-list {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-height: 4rem;
+  }
+
+  .thread-empty {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin: 0.5rem 0.25rem;
+  }
+
+  .thread-list :global(.thread-row) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.25rem;
+    border-radius: var(--radius-small);
+    border: 1px solid transparent;
+    transition: background-color 120ms ease, border-color 120ms ease;
+  }
+
+  .thread-list :global(.thread-row:hover) {
+    background: var(--surface-2);
+  }
+
+  .thread-list :global(.thread-row[data-active='true']) {
+    background: var(--surface-2);
+    border-color: var(--border-strong);
+  }
+
+  .thread-list :global(.thread-open) {
+    background: none;
+    border: 0;
+    text-align: left;
+    padding: 0.5rem 0.55rem;
+    cursor: pointer;
+    color: var(--fg);
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    font: inherit;
+  }
+
+  .thread-list :global(.thread-title) {
+    font-size: 0.88rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .thread-list :global(.thread-meta) {
+    font-size: 0.76rem;
+    color: var(--muted);
+  }
+
+  .thread-list :global(.thread-del) {
+    background: none;
+    border: 0;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 0.35rem 0.5rem;
+    border-radius: var(--radius-small);
+    font-size: 1rem;
+    line-height: 1;
+  }
+
+  .thread-list :global(.thread-del:hover) {
+    color: var(--fg-strong);
+    background: var(--border);
+  }
+
+  .sidebar-foot {
+    border-top: 1px solid var(--border);
+    padding-top: 0.65rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    font-size: 0.84rem;
+  }
+
+  .sidebar-foot a {
+    color: var(--muted);
+    text-decoration: none;
+  }
+
+  .sidebar-foot a:hover {
+    color: var(--fg-strong);
+    text-decoration: underline;
+  }
+
+  .chat-main {
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    min-height: calc(100dvh - 12rem);
+    overflow: hidden;
+  }
+
+  .chat-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.7rem 1.15rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .sidebar-toggle {
+    display: none;
+  }
+
+  .chat-company-label {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--fg-strong);
+  }
+
+  .chat-about-link {
+    font-size: 0.84rem;
+    color: var(--muted);
+    text-decoration: none;
+  }
+
+  .chat-about-link:hover {
+    color: var(--fg-strong);
+    text-decoration: underline;
+  }
+
+  .chat-off-banner {
+    margin: 1.25rem;
+    border: 1px solid var(--border-strong);
+    background: var(--surface-2);
+  }
+
+  .chat-off-banner h2 {
+    margin-top: 0;
+    font-size: 1.1rem;
+  }
+
+  .chat-off-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin-bottom: 0;
+  }
+
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.4rem 1.35rem 1rem;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .chat-welcome {
+    margin: auto;
+    max-width: 42rem;
+    text-align: center;
+    padding: 1.5rem 0.5rem;
+  }
+
+  .chat-welcome[data-compact='true'] {
+    margin: 0 0 1rem;
+    padding: 0 0 0.85rem;
+    max-width: none;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .chat-welcome[data-compact='true'] .pill,
+  .chat-welcome[data-compact='true'] .chat-subtitle,
+  .chat-welcome[data-compact='true'] .chat-suggestions {
+    display: none;
+  }
+
+  .chat-title {
+    margin: 0.5rem 0 0.6rem;
+    font-size: clamp(1.45rem, 2.5vw, 2rem);
+    line-height: 1.22;
+    letter-spacing: -0.02em;
+  }
+
+  .chat-welcome[data-compact='true'] .chat-title {
+    font-size: 1.05rem;
+    margin: 0;
+    color: var(--muted);
+    font-weight: 600;
+  }
+
+  .chat-subtitle {
+    margin: 0 auto 1.4rem;
+    max-width: 48ch;
+    color: var(--muted);
+    font-size: 0.96rem;
+  }
+
+  .chat-suggestions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: 0.65rem;
+    text-align: left;
+  }
+
+  .suggestion-chip {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-small);
+    padding: 0.7rem 0.9rem;
+    color: var(--fg);
+    font: inherit;
+    font-size: 0.88rem;
+    line-height: 1.35;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 120ms ease, background-color 120ms ease;
+  }
+
+  .suggestion-chip:hover:not(:disabled) {
+    border-color: var(--accent);
+    background: var(--surface);
+  }
+
+  .suggestion-chip:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .message-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1.15rem;
+    max-width: 48rem;
+    width: 100%;
+    margin: 0 auto;
+  }
+
+  .message-list :global(.chat-msg) {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .message-list :global(.chat-msg--user) {
+    align-items: flex-end;
+  }
+
+  .message-list :global(.chat-msg--assistant) {
+    align-items: flex-start;
+  }
+
+  .message-list :global(.chat-bubble) {
+    max-width: 100%;
+    line-height: 1.55;
+    font-size: 0.95rem;
+  }
+
+  .message-list :global(.chat-msg--user .chat-bubble) {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    padding: 0.7rem 1rem;
+    max-width: min(36rem, 90%);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .message-list :global(.chat-msg--assistant .chat-bubble) {
+    padding: 0.25rem 0;
+    width: 100%;
+  }
+
+  .message-list :global(.chat-bubble > :first-child) {
+    margin-top: 0;
+  }
+
+  .message-list :global(.chat-bubble > :last-child) {
+    margin-bottom: 0;
+  }
+
+  .message-list :global(.chat-bubble h3),
+  .message-list :global(.chat-bubble h4),
+  .message-list :global(.chat-bubble h5) {
+    margin: 0.9rem 0 0.35rem;
+    font-size: 1rem;
+  }
+
+  .message-list :global(.chat-bubble ul),
+  .message-list :global(.chat-bubble ol) {
+    margin: 0.45rem 0 0.65rem;
+    padding-left: 1.35rem;
+  }
+
+  .message-list :global(.chat-bubble li + li) {
+    margin-top: 0.2rem;
+  }
+
+  .message-list :global(.chat-bubble code) {
+    font-size: 0.88em;
+    background: var(--surface-2);
+    padding: 0.08rem 0.32rem;
+    border-radius: 4px;
+  }
+
+  .message-list :global(.chat-table-wrap) {
+    overflow-x: auto;
+    margin: 0.65rem 0;
+  }
+
+  .message-list :global(.chat-bubble table) {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.88rem;
+  }
+
+  .message-list :global(.chat-bubble th),
+  .message-list :global(.chat-bubble td) {
+    border-bottom: 1px solid var(--border);
+    padding: 0.4rem 0.6rem;
+    text-align: left;
+  }
+
+  .message-list :global(.chat-bubble th) {
+    color: var(--muted);
+    font-weight: 600;
+  }
+
+  .message-list :global(.chat-streaming-cursor::after) {
+    content: '▍';
+    margin-left: 0.12rem;
+    color: var(--accent);
+    animation: chat-blink 1s steps(2, start) infinite;
+  }
+
+  @keyframes chat-blink {
+    to {
+      visibility: hidden;
+    }
+  }
+
+  .message-list :global(.chat-msg-meta) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+
+  .message-list :global(.chat-level-pill) {
+    padding: 0.08rem 0.45rem;
+    border-radius: var(--radius-pill);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    font-weight: 600;
+  }
+
+  .message-list :global(.chat-notices) {
+    margin: 0.25rem 0 0;
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--radius-small);
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    font-size: 0.84rem;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .chat-composer {
+    border-top: 1px solid var(--border);
+    padding: 0.85rem 1.15rem 1rem;
+    background: var(--surface);
+  }
+
+  .chat-error {
+    margin: 0 0 0.55rem;
+  }
+
+  .composer-box {
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--surface-2);
+    padding: 0.65rem 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    max-width: 48rem;
+    margin: 0 auto;
+  }
+
+  .composer-box:focus-within {
+    border-color: var(--accent);
+  }
+
+  .composer-box textarea {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: var(--fg);
+    font: inherit;
+    font-size: 0.95rem;
+    resize: none;
+    outline: none;
+    max-height: 12rem;
+    min-height: 2.8rem;
+    padding: 0;
+  }
+
+  .composer-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .composer-level {
+    flex: 1;
+    min-width: 12rem;
+  }
+
+  .composer-level :global(.ki-picker > .ki-level) {
+    margin-top: 0;
+  }
+
+  @media (max-width: 54rem) {
+    .chat-shell {
+      grid-template-columns: 1fr;
+    }
+
+    .sidebar-toggle {
+      display: inline-flex;
+    }
+
+    .chat-sidebar {
+      position: static;
+      max-height: 20rem;
+      display: none;
+    }
+
+    .chat-sidebar[data-open='true'] {
+      display: flex;
+    }
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    createKiChatThread,
+    deleteKiChatThread,
+    getKiChatThread,
+    listKiChatThreads,
+    streamKiChatMessage,
+    type Company,
+    type KiChatMessage,
+    type KiChatThreadSummary,
+  } from '../../lib/api';
+  import { currentCompany, loadCompanies } from '../../lib/company';
+  import { clearStatus, el, setStatus, show } from '../../lib/dom';
+  import { formatThreadTime, renderMarkdown } from '../../lib/kichat';
+  import { KI_LEVEL_NAMES, mountKiInputs, type KiInputs } from '../../lib/kiinput';
+  import { canInCompany, loadSession, redirectToLogin } from '../../lib/session';
+
+  const pageStatus = el<HTMLParagraphElement>('#chat-page-status');
+  const shell = el('#chat-shell');
+  const sidebar = el('#chat-sidebar');
+  const sidebarToggle = el<HTMLButtonElement>('#sidebar-toggle');
+  const threadList = el('#thread-list');
+  const threadEmpty = el('#thread-empty');
+  const newChatBtn = el<HTMLButtonElement>('#new-chat-btn');
+  const welcome = el('#chat-welcome');
+  const messageList = el('#message-list');
+  const messagesScroller = el('#chat-messages');
+  const chatForm = el<HTMLFormElement>('#chat-form');
+  const chatInput = el<HTMLTextAreaElement>('#chat-input');
+  const chatSend = el<HTMLButtonElement>('#chat-send');
+  const chatError = el<HTMLParagraphElement>('#chat-error');
+  const suggestionButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-suggestion]')];
+
+  let company: Company | undefined;
+  let kiInputs: KiInputs | null = null;
+  let threads: KiChatThreadSummary[] = [];
+  let activeThreadId: number | null = null;
+  let sending = false;
+
+  function scrollToBottom(): void {
+    messagesScroller.scrollTop = messagesScroller.scrollHeight;
+  }
+
+  function setBusy(busy: boolean): void {
+    sending = busy;
+    const kiOn = company?.ki_enabled !== false;
+    const canWrite = company !== undefined && canInCompany(company, 'ledger:write');
+    const disabled = busy || !kiOn || !canWrite;
+    chatInput.disabled = disabled;
+    chatSend.disabled = disabled;
+    chatSend.textContent = busy ? 'Svarer …' : 'Send';
+    for (const btn of suggestionButtons) btn.disabled = disabled;
+  }
+
+  function renderThreads(): void {
+    for (const row of [...threadList.querySelectorAll('.thread-row')]) row.remove();
+    show(threadEmpty, threads.length === 0);
+    const canDelete = company !== undefined && canInCompany(company, 'ledger:write');
+
+    for (const thread of threads) {
+      const row = document.createElement('div');
+      row.className = 'thread-row';
+      row.setAttribute('role', 'listitem');
+      row.dataset.active = thread.id === activeThreadId ? 'true' : 'false';
+
+      const openBtn = document.createElement('button');
+      openBtn.type = 'button';
+      openBtn.className = 'thread-open';
+      const titleSpan = document.createElement('span');
+      titleSpan.className = 'thread-title';
+      titleSpan.textContent = thread.title;
+      const metaSpan = document.createElement('span');
+      metaSpan.className = 'thread-meta';
+      metaSpan.textContent = formatThreadTime(thread.updated_at);
+      openBtn.append(titleSpan, metaSpan);
+      openBtn.addEventListener('click', () => {
+        if (sending) return;
+        sidebar.dataset.open = 'false';
+        sidebarToggle.setAttribute('aria-expanded', 'false');
+        void openThread(thread.id);
+      });
+      row.append(openBtn);
+
+      if (canDelete) {
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'thread-del';
+        delBtn.title = 'Slett samtale';
+        delBtn.setAttribute('aria-label', `Slett samtalen ${thread.title}`);
+        delBtn.textContent = '×';
+        delBtn.addEventListener('click', (event) => {
+          event.stopPropagation();
+          if (sending) return;
+          if (!window.confirm(`Slette samtalen «${thread.title}»?`)) return;
+          void removeThread(thread.id);
+        });
+        row.append(delBtn);
+      }
+
+      threadList.append(row);
+    }
+  }
+
+  function createMessageElement(msg: KiChatMessage): HTMLElement {
+    const wrap = document.createElement('article');
+    wrap.className = `chat-msg chat-msg--${msg.role === 'user' ? 'user' : 'assistant'}`;
+
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble';
+    if (msg.role === 'user') {
+      bubble.textContent = msg.content;
+    } else {
+      bubble.append(renderMarkdown(msg.content));
+    }
+    wrap.append(bubble);
+
+    if (msg.role !== 'user') {
+      if (msg.notices.length > 0) {
+        const noticeBox = document.createElement('div');
+        noticeBox.className = 'chat-notices';
+        for (const notice of msg.notices) {
+          const p = document.createElement('span');
+          const link = document.createElement('a');
+          link.href = '/ki/about/#planer';
+          link.textContent = 'Se KI-planene';
+          p.append(notice, ' ', link);
+          noticeBox.append(p);
+        }
+        wrap.append(noticeBox);
+      }
+      if (msg.level !== null) {
+        const meta = document.createElement('div');
+        meta.className = 'chat-msg-meta';
+        const pill = document.createElement('span');
+        pill.className = 'chat-level-pill';
+        pill.textContent = KI_LEVEL_NAMES[msg.level] ?? msg.level;
+        meta.append(pill);
+        wrap.append(meta);
+      }
+    }
+
+    return wrap;
+  }
+
+  function showMessages(messages: KiChatMessage[]): void {
+    messageList.replaceChildren();
+    const hasMessages = messages.length > 0;
+    welcome.dataset.compact = hasMessages ? 'true' : 'false';
+    show(messageList, hasMessages);
+    for (const msg of messages) {
+      messageList.append(createMessageElement(msg));
+    }
+    if (hasMessages) scrollToBottom();
+  }
+
+  function startFreshView(): void {
+    activeThreadId = null;
+    clearStatus(chatError);
+    showMessages([]);
+    renderThreads();
+    chatInput.focus();
+  }
+
+  async function openThread(threadId: number): Promise<void> {
+    if (company === undefined) return;
+    clearStatus(chatError);
+    try {
+      const detail = await getKiChatThread(company.id, threadId);
+      activeThreadId = detail.id;
+      showMessages(detail.messages);
+      renderThreads();
+    } catch (error) {
+      setStatus(
+        chatError,
+        error instanceof ApiError ? error.message : 'Fikk ikke åpnet samtalen.',
+      );
+    }
+  }
+
+  async function removeThread(threadId: number): Promise<void> {
+    if (company === undefined) return;
+    clearStatus(chatError);
+    try {
+      await deleteKiChatThread(company.id, threadId);
+      threads = threads.filter((t) => t.id !== threadId);
+      if (activeThreadId === threadId) {
+        startFreshView();
+      } else {
+        renderThreads();
+      }
+    } catch (error) {
+      setStatus(
+        chatError,
+        error instanceof ApiError ? error.message : 'Fikk ikke slettet samtalen.',
+      );
+    }
+  }
+
+  function upsertThreadSummary(summary: KiChatThreadSummary): void {
+    threads = [summary, ...threads.filter((item) => item.id !== summary.id)];
+    renderThreads();
+  }
+
+  async function sendQuestion(rawText: string): Promise<void> {
+    if (company === undefined || sending) return;
+    const text = rawText.trim();
+    if (text === '') return;
+
+    clearStatus(chatError);
+    setBusy(true);
+
+    // Ensure a thread exists before streaming the first question.
+    let targetThreadId = activeThreadId;
+    try {
+      if (targetThreadId === null) {
+        const created = await createKiChatThread(company.id);
+        targetThreadId = created.id;
+        activeThreadId = created.id;
+        upsertThreadSummary({
+          id: created.id,
+          title: created.title,
+          message_count: 0,
+          preview: null,
+          created_at: created.created_at,
+          updated_at: created.updated_at,
+        });
+      }
+    } catch (error) {
+      setBusy(false);
+      setStatus(
+        chatError,
+        error instanceof ApiError ? error.message : 'Fikk ikke startet ny samtale.',
+      );
+      return;
+    }
+
+    chatInput.value = '';
+    chatInput.style.height = '';
+    welcome.dataset.compact = 'true';
+    show(messageList, true);
+
+    // Optimistically show the user's message and a live assistant placeholder.
+    const userEl = createMessageElement({
+      id: 0,
+      role: 'user',
+      content: text,
+      level: null,
+      requested_level: null,
+      notices: [],
+      created_at: new Date().toISOString(),
+    });
+    const assistantWrap = document.createElement('article');
+    assistantWrap.className = 'chat-msg chat-msg--assistant';
+    const liveBubble = document.createElement('div');
+    liveBubble.className = 'chat-bubble chat-streaming-cursor';
+    liveBubble.textContent = 'Leser regnskapet …';
+    assistantWrap.append(liveBubble);
+    messageList.append(userEl, assistantWrap);
+    scrollToBottom();
+
+    let streamedText = '';
+    const level = kiInputs?.level('ki-chat') ?? 'free';
+
+    try {
+      const turn = await streamKiChatMessage(company.id, targetThreadId, text, level, {
+        onStart: (info) => {
+          upsertThreadSummary({
+            id: info.thread_id,
+            title: info.thread_title,
+            message_count: 1,
+            preview: text.slice(0, 120),
+            created_at: info.user_message.created_at,
+            updated_at: info.user_message.created_at,
+          });
+        },
+        onDelta: (piece) => {
+          streamedText += piece;
+          liveBubble.replaceChildren(renderMarkdown(streamedText));
+          scrollToBottom();
+        },
+      });
+      assistantWrap.replaceWith(createMessageElement(turn.assistant_message));
+      upsertThreadSummary(turn.thread);
+      scrollToBottom();
+      // Refresh weekly quota percentage and available levels right after a turn.
+      void kiInputs?.refresh();
+    } catch (error) {
+      liveBubble.classList.remove('chat-streaming-cursor');
+      if (streamedText === '') {
+        assistantWrap.remove();
+      }
+      setStatus(
+        chatError,
+        error instanceof ApiError ? error.message : 'KI svarte ikke akkurat nå. Prøv igjen.',
+      );
+    } finally {
+      setBusy(false);
+      chatInput.focus();
+    }
+  }
+
+  chatForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void sendQuestion(chatInput.value);
+  });
+
+  chatInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      void sendQuestion(chatInput.value);
+    }
+  });
+
+  chatInput.addEventListener('input', () => {
+    chatInput.style.height = 'auto';
+    chatInput.style.height = `${Math.min(chatInput.scrollHeight, 192)}px`;
+  });
+
+  newChatBtn.addEventListener('click', () => {
+    if (sending) return;
+    sidebar.dataset.open = 'false';
+    sidebarToggle.setAttribute('aria-expanded', 'false');
+    startFreshView();
+  });
+
+  sidebarToggle.addEventListener('click', () => {
+    const next = sidebar.dataset.open !== 'true';
+    sidebar.dataset.open = next ? 'true' : 'false';
+    sidebarToggle.setAttribute('aria-expanded', next ? 'true' : 'false');
+  });
+
+  for (const btn of suggestionButtons) {
+    btn.addEventListener('click', () => {
+      const prompt = btn.dataset.suggestion ?? '';
+      if (prompt !== '') void sendQuestion(prompt);
+    });
+  }
+
+  async function mount(): Promise<void> {
+    const session = await loadSession();
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+
+    let companies: Company[];
+    try {
+      companies = await loadCompanies();
+    } catch {
+      setStatus(pageStatus, 'Fikk ikke hentet selskapene. Last siden på nytt.');
+      return;
+    }
+
+    company = currentCompany(companies);
+    if (company === undefined) {
+      setStatus(pageStatus, 'Opprett eller velg et selskap før du bruker KI-chat.');
+      return;
+    }
+
+    el('#chat-company-label').textContent = company.name;
+    el('#chat-subtitle').textContent =
+      `Svarene bygger direkte på resultatregnskapet, balansen, fakturaene, fristene og bilagene til ${company.name}.`;
+    const isAdmin = canInCompany(company, 'organization:manage');
+    show(el('#sidebar-settings-link'), isAdmin);
+
+    const kiOn = company.ki_enabled !== false;
+    show(el('#chat-off-banner'), !kiOn);
+    show(el('#chat-turn-on'), !kiOn && isAdmin);
+    if (!kiOn) {
+      el('#chat-off-text').textContent =
+        `KI er slått av for ${company.name}. Ingen regnskapstall eller spørsmål sendes til Løynd mens bryteren er av.`;
+    }
+
+    show(shell, true);
+    setBusy(false);
+
+    try {
+      threads = await listKiChatThreads(company.id);
+      renderThreads();
+    } catch {
+      // Leave sidebar empty rather than blocking chat.
+    }
+
+    const companyId = company.id;
+    kiInputs = mountKiInputs(() => companyId);
+    void kiInputs.refresh();
+  }
+
+  void mount();
+</script>

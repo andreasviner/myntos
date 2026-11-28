@@ -63,11 +63,15 @@ search this folder for the old label.
 | `myntos-connect` | The key exchange, refreshing, stopping, every token refusal. Read first |
 | `myntos-godkjenning` | Requests that wait for the person's approval, and asking the person to file |
 | `myntos-selskap` | Which company, its register data, its financial years, Enhetsregisteret lookups |
+| `myntos-ki` | Myntos's own KI: the levels a proposal is asked at, the company's KI plan and weekly quota remaining (%), reading a picture into text |
 | `myntos-frister` | The company's deadlines with Skatteetaten and Brønnøysund for the coming year, and which Myntos knows are met |
 | `myntos-kontantstrom` | Payments in and out, proposals read off a bilag, the bilag archive, corrections |
 | `myntos-bilag` | Every posted voucher, from every journal; one account's movements with its balance |
 | `myntos-regnskap` | The accounts for every year: resultatregnskap and balanse, side by side |
+| `myntos-analyse` | Income, costs and result before tax for any period, against a year earlier, as figures, sentences and charts |
 | `myntos-faktura` | Sales invoices and credit notes, and sending them as EHF over Peppol |
+| `myntos-integrasjon` | A server's integration key (rule 15): customers, invoices issued and sent as EHF with no approval, the PDF, the payment state |
+| `myntos-innkommende-efaktura` | Incoming supplier e-invoices (EHF) received over Peppol, and booking them |
 | `myntos-parter` | Customers and suppliers |
 | `myntos-bank` | Bank statements, matching lines, a voucher for a bank line |
 | `myntos-mva` | The VAT period, its review, the settings |
@@ -77,7 +81,9 @@ search this folder for the old label.
 | `myntos-manuelt-bilag` | Manual vouchers: year-end adjustments and corrections typed as debit and credit |
 | `myntos-anlegg` | The fixed asset register, the saldo per group and the year's depreciation |
 | `myntos-arsavslutning` | Closing and reopening a financial year |
-| `myntos-skattemelding` | An aksjeselskap's tax return and næringsspesifikasjon from a closed year; asking the person to file it |
+| `myntos-skattemelding` | An aksjeselskap's (AS) or enkeltpersonforetak's (ENK) tax return and næringsspesifikasjon from a closed year; asking the person to file it |
+| `myntos-aksjonaer` | An aksjeselskap's shareholder register (aksjeeierbok), Altinn 3 systembruker status, Skatteetaten prefill, and Aksjonærregisteroppgaven (RF-1086) |
+| `myntos-aarsregnskap` | An aksjeselskap's annual accounts (årsregnskap, RR-0002), small-company notes, minutes PDFs, and Altinn 3 filing to Regnskapsregisteret |
 | `myntos-kontoplan` | The chart of accounts |
 | `myntos-avdelinger` | Dimensions (avdelinger, prosjekter, driftsgrener) and the result per value |
 | `myntos-landbruk` | The farming add-on: switching it, settlements, subsidies, farm VAT |
@@ -215,18 +221,21 @@ features in the order a person does.
 | `payments` | `/kontantstrom/` | `myntos-kontantstrom` |
 | `vouchers` | `/bilag/` | `myntos-bilag` |
 | `reports` | `/regnskap/` | `myntos-regnskap` |
-| `invoices` | `/faktura/` | `myntos-faktura` |
+| `analysis` | `/analyse/` | `myntos-analyse` |
+| `invoices` | `/faktura/`, `/innkommende/` | `myntos-faktura`, `myntos-innkommende-efaktura` |
 | `customers-and-suppliers` | `/parter/` | `myntos-parter` |
 | `bank` | `/bank/` | `myntos-bank` |
 | `vat` | `/mva/`, `/mva-justeringer/` | `myntos-mva`, `myntos-mva-justering` |
 | `opening-balance-and-year-end` | `/inngaende-balanse/`, `/tidligere-program/`, `/manuelt-bilag/`, `/anlegg/`, `/arsavslutning/` | `myntos-inngaende-balanse`, `myntos-tidligere-program`, `myntos-manuelt-bilag`, `myntos-anlegg`, `myntos-arsavslutning` |
 | `tax-return` | `/skattemelding/` | `myntos-skattemelding` |
+| `shareholders` | `/aksjonaer/`, and the «Altinn-tilkobling (systembruker)» card on `/organisasjon/` | `myntos-aksjonaer` |
+| `annual-accounts` | `/aarsregnskap/` | `myntos-aarsregnskap` |
 | `chart-of-accounts` | `/kontoplan/` | `myntos-kontoplan` |
 | `departments` | `/avdelinger/` | `myntos-avdelinger` |
 | `farming` | The «Landbruk» card on `/kontoplan/`, the farm types on `/kontantstrom/`, NIBIO's driftsgrener on `/avdelinger/`, the year-end count on `/buskap/` and `/private-uttak/` | `myntos-landbruk`, `myntos-avdelinger`, `myntos-landbruk-arsoppgjor` |
 | `saf-t` | `/saft/` | `myntos-saft` |
 | `company-and-access` | `/organisasjon/`, `/slett-selskap/`, `/datadeling/` | `myntos-selskap` |
-| `ai` | `/ki/`, `/godkjenning/`, the KI part of `/organisasjon/` | `myntos-godkjenning`, `myntos-connect` |
+| `ai` | `/ki/`, `/godkjenning/`, the KI part of `/organisasjon/` and «Integrasjoner» there, the «KI-nivå» under every KI box | `myntos-ki`, `myntos-godkjenning`, `myntos-connect`, `myntos-integrasjon` |
 | `your-account` | `/konto/`, `/bytt-til-epost/` | – |
 | `feedback` | `/tilbakemelding/`, and the «Si fra» link on `/funksjoner/` | `myntos-tilbakemelding` |
 

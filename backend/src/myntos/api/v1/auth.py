@@ -955,7 +955,7 @@ async def provider_callback(
             code=code, code_verifier=attempt.code_verifier, nonce=attempt.nonce
         )
     except OidcError:
-        logger.warning("a %s sign-in failed at the token exchange", identity_provider.value)
+        logger.exception("a %s sign-in failed at the token exchange", identity_provider.value)
         return _failed("innlogging_feilet", page)
 
     try:

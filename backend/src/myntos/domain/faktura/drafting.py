@@ -507,7 +507,7 @@ def parse_lines(reply: str, menu: tuple[TaxChoice, ...]) -> InvoiceProposal:
         proposal.warnings.append("Vi fant ikke prisen på alle linjene. Fyll inn de som står tomme.")
     if guessed_tax:
         proposal.warnings.append(
-            f"Mva-satsen på minst én linje er satt til «{menu[0].label}» fordi forslaget "
+            f"Mva-satsen på minst en linje er satt til «{menu[0].label}» fordi forslaget "
             "ikke var tydelig. Kontroller satsen på hver linje."
         )
     return proposal

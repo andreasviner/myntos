@@ -123,10 +123,9 @@ class CompanyResponse(BaseModel):
     # bookkeeping is not gated on it, ownership is.
     verified: bool
     verified_at: datetime | None
-    # What these books cost. On the company and not on the account, because a
-    # set of books is the thing that has a size: see Company.plan. Read-only
-    # here — there is nothing to sell yet, and when there is, the payment flow
-    # will move it rather than a client PATCH.
+    # Always "free": the books cost nothing (see Company.plan). Kept in the
+    # response so a client that reads it does not break. A company's KI plan is
+    # a month at a time, so it is read from GET …/ki, not from here.
     plan: str
     # The last day of the books when the company has been dissolved (oppløst),
     # and null while it is in business. Set by POST

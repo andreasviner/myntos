@@ -30,7 +30,7 @@ from myntos.auth.digdir_check import sample_grunnlag
 from myntos.domain.anlegg.rules import Saldogruppe
 from myntos.domain.anlegg.saldo import GainLossYear, SaldoSpecification, SaldoYear
 from myntos.domain.arsoppgjor.findings import Severity
-from myntos.skattemelding import codes, envelope, schema, upersonlig, xmlwriter
+from myntos.skattemelding import codes, envelope, personlig, schema, upersonlig, xmlwriter
 from myntos.skattemelding.naeringsspesifikasjon import (
     FORDELT_ID,
     GENERAL_RULES,
@@ -38,6 +38,8 @@ from myntos.skattemelding.naeringsspesifikasjon import (
     AccountFigures,
     Grunnlag,
     Naeringsspesifikasjon,
+    Regnskapsplikt,
+    Virksomhetstype,
     build,
     document,
 )
@@ -360,13 +362,11 @@ def test_an_open_year_is_refused() -> None:
     assert "aret_er_apent" in _codes(nsp, Severity.FEIL)
 
 
-@pytest.mark.parametrize(
-    ("form", "code"), [("ENK", "enk_ikke_ferdig"), ("ANS", "organisasjonsform_ikke_stottet")]
-)
-def test_only_an_as_is_built_so_far(form: str, code: str) -> None:
+@pytest.mark.parametrize("form", ["ANS", "DA"])
+def test_only_as_and_enk_are_built_so_far(form: str) -> None:
     nsp = build(replace(sample_grunnlag(2025), organisation_form=form))
     assert nsp.blocked
-    assert code in _codes(nsp, Severity.FEIL)
+    assert "organisasjonsform_ikke_stottet" in _codes(nsp, Severity.FEIL)
 
 
 def test_an_account_without_a_post_is_refused_by_name() -> None:
@@ -809,3 +809,495 @@ def test_the_whole_envelope_is_what_tt02_validated() -> None:
     assert_valid(schema.REQUEST, request)
     assert_valid(schema.NAERINGSSPESIFIKASJON[2025], nsp_xml)
     assert_valid(schema.SKATTEMELDING_UPERSONLIG[2025], completed)
+
+
+# --- Enkeltpersonforetak (ENK) and personal skattemelding ----------------------------------
+
+
+def _enk_grunnlag(
+    year: int = 2025,
+    *,
+    accounts: tuple[AccountFigures, ...] | None = None,
+    saldo: SaldoSpecification | None = None,
+    farm_count_totals: tuple[tuple[str, Decimal], ...] = (),
+    private_withdrawals: Decimal = Decimal("0.00"),
+    private_injections: Decimal = Decimal("0.00"),
+) -> Grunnlag:
+    default_accounts = (
+        AccountFigures(
+            "3000", "Salgsinntekt", "salgsinntekt", "3000", Decimal("0"), Decimal("-1200000")
+        ),
+        AccountFigures(
+            "4300", "Varekostnad", "varekostnad", "4005", Decimal("0"), Decimal("400000")
+        ),
+        AccountFigures(
+            "6300", "Leie lokale", "annenDriftskostnad", "6300", Decimal("0"), Decimal("180000")
+        ),
+        AccountFigures(
+            "6010", "Avskrivning", "annenDriftskostnad", "6000", Decimal("0"), Decimal("20000")
+        ),
+        AccountFigures(
+            "8150", "Rentekostnad", "finanskostnad", "8150", Decimal("0"), Decimal("2000")
+        ),
+        AccountFigures(
+            "1205",
+            "Maskiner",
+            "balanseverdiForAnleggsmiddel",
+            "1205",
+            Decimal("100000"),
+            Decimal("80000"),
+        ),
+        AccountFigures(
+            "1400",
+            "Varelager",
+            "balanseverdiForOmloepsmiddel",
+            "1400",
+            Decimal("20000"),
+            Decimal("30000"),
+        ),
+        AccountFigures(
+            "1500",
+            "Kundefordringer",
+            "balanseverdiForOmloepsmiddel",
+            "1500",
+            Decimal("40000"),
+            Decimal("50000"),
+        ),
+        AccountFigures(
+            "1920",
+            "Bankinnskudd",
+            "balanseverdiForOmloepsmiddel",
+            "1920",
+            Decimal("100000"),
+            Decimal("658000"),
+        ),
+        AccountFigures(
+            "2220",
+            "Gjeld til kredittinstitusjoner",
+            "langsiktigGjeld",
+            "2220",
+            Decimal("-40000"),
+            Decimal("-40000"),
+        ),
+        AccountFigures(
+            "2400",
+            "Leverandørgjeld",
+            "kortsiktigGjeld",
+            "2400",
+            Decimal("-20000"),
+            Decimal("-20000"),
+        ),
+        # Opening equity: 100k + 20k + 40k + 100k - 40k - 20k = 200k.
+        # Result: 1 200k - 400k - 180k - 20k - 2k = 598k.
+        # Closing equity with 50k withdrawals and 10k injections: 200k + 598k - 50k + 10k = 758k.
+        # Assets closing: 80k + 30k + 50k + 658k = 818k; Debt + equity = 40k + 20k + 758k = 818k.
+        AccountFigures(
+            "2050",
+            "Annen egenkapital",
+            "egenkapital",
+            "2050",
+            Decimal("-200000"),
+            Decimal("-758000"),
+        ),
+    )
+    return Grunnlag(
+        year=year,
+        start=date(year, 1, 1),
+        end=date(year, 12, 31),
+        organisation_form="ENK",
+        year_closed=True,
+        has_auditor=False,
+        accounts=accounts if accounts is not None else default_accounts,
+        saldo=saldo if saldo is not None else _spec(_saldo(Decimal("20000"), Decimal("100000"))),
+        farm_count_totals=farm_count_totals,
+        private_withdrawals=private_withdrawals,
+        private_injections=private_injections,
+    )
+
+
+def _personal_melding(year: int, *, fastsatt: bool = False) -> envelope.FetchedMelding:
+    ns = schema.skattemelding_personlig(year).namespace
+    naering = (
+        "<naering>"
+        "<naeringsinntektMv><id>n-derived</id><naeringstype>annenNaering</naeringstype>"
+        "<naeringsinntekt>500000</naeringsinntekt></naeringsinntektMv>"
+        "<naeringsinntektMv><id>n-override</id><naeringstype>annenNaering</naeringstype>"
+        "<underskuddTilordnetInnehaver><fradragsberettigetBeloep>"
+        "<beloep><beloepSomHeltall>5000</beloepSomHeltall></beloep>"
+        "<erOverstyrt><boolsk>true</boolsk></erOverstyrt>"
+        "</fradragsberettigetBeloep></underskuddTilordnetInnehaver>"
+        "</naeringsinntektMv>"
+        "<oppgavegiver><id>oppg-1</id>"
+        "<oppgavegiversNavn><organisasjonsnavn>Tine SA</organisasjonsnavn></oppgavegiversNavn>"
+        "</oppgavegiver>"
+        "<samletGjeldOgFormuesobjekterINaering><id>fg-1</id>"
+        "<samletGjeldINaering>10000</samletGjeldINaering>"
+        "</samletGjeldOgFormuesobjekterINaering>"
+        "</naering>"
+        if fastsatt
+        else ""
+    )
+    content = (
+        f'<?xml version="1.0" encoding="UTF-8"?><skattemelding xmlns="{ns}">'
+        f"<partsreferanse>{PARTSNUMMER}</partsreferanse><inntektsaar>{year}</inntektsaar>"
+        "<bankLaanOgForsikring><konto><id>konto-1</id>"
+        "<bankensNavn><tekst>SpareBank 1</tekst></bankensNavn>"
+        "<kontonummer><tekst>12345678901</tekst></kontonummer>"
+        "<andelAvInnskudd><beloep><beloepSomHeltall>250000</beloepSomHeltall></beloep>"
+        "</andelAvInnskudd></konto></bankLaanOgForsikring>"
+        f"{naering}</skattemelding>"
+    ).encode()
+    doc_type = "skattemeldingPersonligFastsatt" if fastsatt else "skattemeldingPersonligUtkast"
+    return envelope.FetchedMelding("SKI:755:P1", doc_type, content)
+
+
+@pytest.mark.parametrize("year", sorted(schema.SKATTEMELDING_PERSONLIG))
+def test_enk_code_lists_and_skjermingsrente_load_for_each_year(year: int) -> None:
+    assert "annenNaering" in codes.by_code(year, codes.NAERINGSTYPE)
+    assert "jordbrukGartneriPelsdyrnaeringMv" in codes.by_code(year, codes.NAERINGSTYPE)
+    assert "saldogruppeD" in codes.by_code(year, codes.SKJERMINGSGRUNNLAG)
+    assert codes.skjermingsrente(year) == Decimal("4.6")
+    posts = codes.posts(year)
+    assert posts[("balanseverdiForAnleggsmiddel", "1205")].transfers_to_sme
+    assert not posts[("balanseverdiForOmloepsmiddel", "1920")].transfers_to_sme
+    assert not posts[("balanseverdiForOmloepsmiddel", "1401")].transfers_to_sme
+    assert posts[("kortsiktigGjeld", "2400")].transfers_to_sme
+    assert not posts[("langsiktigGjeld", "2220")].transfers_to_sme
+
+
+@pytest.mark.parametrize("year", sorted(schema.SKATTEMELDING_PERSONLIG))
+def test_enk_builds_ingen_regnskapsplikt_and_validates_for_each_year(year: int) -> None:
+    grunnlag = _enk_grunnlag(
+        year,
+        private_withdrawals=Decimal("50000.00"),
+        private_injections=Decimal("10000.00"),
+    )
+    nsp = build(grunnlag)
+    assert not nsp.blocked, nsp.findings
+    assert nsp.is_enk
+    assert nsp.business_type is Virksomhetstype.ENKELTPERSONFORETAK
+    assert nsp.regnskapsplikt is Regnskapsplikt.INGEN
+    assert nsp.rules is None
+    assert nsp.permanent == ()
+    assert nsp.result == nsp.taxable_result == Decimal("598000.00")
+    assert [(c.type, c.amount) for c in nsp.equity_changes] == [
+        ("aaretsOverskudd", Decimal("598000.00")),
+        ("kontantinnskudd", Decimal("10000.00")),
+        ("privatkonto", Decimal("50000.00")),
+    ]
+
+    # Formue excludes bank 1920 and bank loan 2220 (overfoeresTilSME=false).
+    formue_values, formue_findings = personlig.formue(nsp)
+    assert formue_values == upersonlig.Formue(
+        with_discount=80000, without_discount=80000, debt=20000
+    )
+    assert "formue_enk_overfores" in {f.code for f in formue_findings}
+
+    # Beregnet personinntekt:
+    # Assets avg: saldogruppeD 90k + varelager 25k + kundefordring 45k = 160k
+    # Less leverandoergjeld avg 20k => sum_foer_gjeld = 140k
+    # Less foretaksgjeld avg 40k => sum_etter_gjeld = 100k
+    # Skjermingsfradrag: 100k * 4.6% = 4 600
+    # Finance: kapitalkostnad=+2000, rentekostnad_foretaksgjeld=-2000 (net 0)
+    # Beregnet personinntekt: 598 000 - 4 600 = 593 400
+    answers = personlig.EnkAnswers(
+        naeringstype="annenNaering",
+        kommunenummer="0301",
+        naeringsbeskrivelse="Konsulenttjenester",
+    )
+    pi, pi_findings = personlig.compute_personinntekt(
+        nsp, accounts=grunnlag.accounts, answers=answers
+    )
+    assert pi_findings == []
+    assert pi.sum_foer_gjeld == Decimal("140000.00")
+    assert pi.sum_etter_gjeld == Decimal("100000.00")
+    assert pi.skjermingsrente == Decimal("4.6")
+    assert pi.skjermingsfradrag == Decimal("4600.00")
+    assert pi.kapitalkostnad == Decimal("2000.00")
+    assert pi.rentekostnad_foretaksgjeld == Decimal("2000.00")
+    assert pi.beregnet_personinntekt == Decimal("593400.00")
+    assert pi.tilordnet_innehaver == Decimal("593400.00")
+
+    details = personlig.document_details(
+        nsp, answers=answers, personinntekt=pi, formue_values=formue_values
+    )
+    nsp_xml = xmlwriter.write(
+        schema.naeringsspesifikasjon(year),
+        document(nsp, partsreferanse=PARTSNUMMER, enk_details=details),
+    )
+    assert_valid(schema.NAERINGSSPESIFIKASJON[year], nsp_xml)
+
+    root = _root(nsp_xml)
+    ns = {"n": schema.naeringsspesifikasjon(year).namespace}
+    assert root.findtext("n:virksomhet/n:virksomhetstype/n:virksomhetstype", namespaces=ns) == (
+        "enkeltpersonforetak"
+    )
+    assert root.findtext(
+        "n:virksomhet/n:regnskapspliktstype/n:regnskapspliktstype", namespaces=ns
+    ) == ("ingenRegnskapsplikt")
+    assert root.find("n:virksomhet/n:regeltypeForAarsregnskap", ns) is None
+    # Auto-created posts (6000, 1205, 1500, 1400) are omitted from resultat/balanse XML
+    # because the specifications carry them, avoiding double-counting.
+    cost_ids = {
+        e.findtext("n:id", namespaces=ns)
+        for e in root.findall(
+            "n:resultatregnskap/n:driftskostnad/n:annenDriftskostnad/n:kostnad", ns
+        )
+    }
+    assert "6300" in cost_ids and "6000" not in cost_ids
+    balance_ids = {
+        e.findtext("n:id", namespaces=ns)
+        for e in root.findall("n:balanseregnskap//n:balanseverdi", ns)
+    }
+    assert "1920" in balance_ids
+    assert not ({"1205", "1400", "1500"} & balance_ids)
+    assert root.find("n:spesifikasjonAvAnleggsmiddel/n:saldoavskrevetAnleggsmiddel", ns) is not None
+    assert (
+        root.find(
+            "n:spesifikasjonAvOmloepsmiddel/n:spesifikasjonAvSkattemessigVerdiPaaFordring", ns
+        )
+        is not None
+    )
+    assert (
+        root.find("n:spesifikasjonAvOmloepsmiddel/n:spesifikasjonAvSkattemessigVarelager", ns)
+        is not None
+    )
+    assert (
+        root.find(
+            "n:beregnetNaeringsinntekt/n:fordeltBeregnetNaeringsinntektForPersonligSkattepliktigEllerSdf",
+            ns,
+        )
+        is not None
+    )
+    assert root.find("n:beregnetPersoninntekt/n:fordeltBeregnetPersoninntekt", ns) is not None
+    # Full 100% ingenRegnskapsplikt lets Skatteetaten compute municipality formue automatically.
+    assert root.find("n:samletGjeldOgFormuesobjekter", ns) is None
+
+
+@pytest.mark.parametrize("year", sorted(schema.SKATTEMELDING_PERSONLIG))
+def test_enk_farm_buskap_and_feed_validate_in_varelager_spec(year: int) -> None:
+    accounts = (
+        AccountFigures(
+            "3000", "Melkesalg", "salgsinntekt", "3000", Decimal("0"), Decimal("-500000")
+        ),
+        AccountFigures("4300", "Kraftfôr", "varekostnad", "4005", Decimal("0"), Decimal("200000")),
+        AccountFigures(
+            "1450",
+            "Buskap",
+            "balanseverdiForOmloepsmiddel",
+            "1400",
+            Decimal("150000"),
+            Decimal("180000"),
+        ),
+        AccountFigures(
+            "1460",
+            "Egenprodusert grovfôr",
+            "balanseverdiForOmloepsmiddel",
+            "1401",
+            Decimal("40000"),
+            Decimal("50000"),
+        ),
+        AccountFigures(
+            "1920",
+            "Bank",
+            "balanseverdiForOmloepsmiddel",
+            "1920",
+            Decimal("100000"),
+            Decimal("360000"),
+        ),
+        AccountFigures(
+            "2050", "Egenkapital", "egenkapital", "2050", Decimal("-290000"), Decimal("-590000")
+        ),
+    )
+    grunnlag = _enk_grunnlag(
+        year,
+        accounts=accounts,
+        saldo=_spec(),
+        farm_count_totals=(
+            ("buskap", Decimal("160000")),
+            ("raavareOgInnkjoeptHalvfabrikata", Decimal("20000")),
+        ),
+    )
+    nsp = build(grunnlag)
+    assert not nsp.blocked, nsp.findings
+    formue_values, _ = personlig.formue(nsp)
+    # 1400 transfers to SME, 1401 (self-produced farm feed) and 1920 (bank) do not.
+    assert formue_values == upersonlig.Formue(with_discount=0, without_discount=180000, debt=0)
+    answers = personlig.EnkAnswers(
+        naeringstype="jordbrukGartneriPelsdyrnaeringMv",
+        kommunenummer="1121",
+        naeringsbeskrivelse="Melkeproduksjon",
+    )
+    pi, _ = personlig.compute_personinntekt(nsp, accounts=accounts, answers=answers)
+    details = personlig.document_details(
+        nsp, answers=answers, personinntekt=pi, formue_values=formue_values
+    )
+    nsp_xml = xmlwriter.write(
+        schema.naeringsspesifikasjon(year),
+        document(nsp, partsreferanse=PARTSNUMMER, enk_details=details),
+    )
+    assert_valid(schema.NAERINGSSPESIFIKASJON[year], nsp_xml)
+    ns = {"n": schema.naeringsspesifikasjon(year).namespace}
+    varelager = _root(nsp_xml).find(
+        "n:spesifikasjonAvOmloepsmiddel/n:spesifikasjonAvSkattemessigVarelager", ns
+    )
+    assert varelager is not None
+    assert varelager.findtext("n:buskap/n:beloep/n:beloep", namespaces=ns) == "160000.00"
+    assert varelager.findtext(
+        "n:raavareOgInnkjoeptHalvfabrikata/n:beloep/n:beloep", namespaces=ns
+    ) == ("20000.00")
+    assert (
+        varelager.findtext(
+            "n:selvprodusertVareBenyttetIEgenProduksjon/n:beloep/n:beloep", namespaces=ns
+        )
+        == "50000.00"
+    )
+
+
+def test_enk_above_20m_assets_uses_full_regnskapsplikt_and_emits_municipality_formue() -> None:
+    big = Decimal("25000000")
+    accounts = (
+        AccountFigures("3000", "Salg", "salgsinntekt", "3000", Decimal("0"), Decimal("-1000000")),
+        AccountFigures(
+            "1500",
+            "Kundefordringer",
+            "balanseverdiForOmloepsmiddel",
+            "1500",
+            big,
+            big + Decimal("1000000"),
+        ),
+        AccountFigures(
+            "2050", "Egenkapital", "egenkapital", "2050", -big, -(big + Decimal("1000000"))
+        ),
+    )
+    grunnlag = _enk_grunnlag(2025, accounts=accounts, saldo=_spec())
+    nsp = build(grunnlag)
+    assert not nsp.blocked, nsp.findings
+    assert nsp.regnskapsplikt is Regnskapsplikt.FULL
+    assert nsp.rules == SMALL_COMPANY_RULES
+    assert "enk_full_regnskapsplikt" in _codes(nsp, Severity.MERKNAD)
+
+    answers = personlig.EnkAnswers(naeringstype="annenNaering", kommunenummer="0301")
+    formue_values, _ = personlig.formue(nsp)
+    pi, _ = personlig.compute_personinntekt(nsp, accounts=accounts, answers=answers)
+    details = personlig.document_details(
+        nsp, answers=answers, personinntekt=pi, formue_values=formue_values
+    )
+    nsp_xml = xmlwriter.write(
+        schema.naeringsspesifikasjon(2025),
+        document(nsp, partsreferanse=PARTSNUMMER, enk_details=details),
+    )
+    assert_valid(schema.NAERINGSSPESIFIKASJON[2025], nsp_xml)
+    ns = {"n": schema.naeringsspesifikasjon(2025).namespace}
+    assert _root(nsp_xml).find("n:samletGjeldOgFormuesobjekter", ns) is not None
+
+
+def test_enk_personinntekt_spouse_split_months_and_interest_without_business_debt() -> None:
+    accounts = (
+        AccountFigures("3000", "Salg", "salgsinntekt", "3000", Decimal("0"), Decimal("-500000")),
+        AccountFigures("8150", "Renter", "finanskostnad", "8150", Decimal("0"), Decimal("5000")),
+        AccountFigures(
+            "1500",
+            "Fordringer",
+            "balanseverdiForOmloepsmiddel",
+            "1500",
+            Decimal("100000"),
+            Decimal("100000"),
+        ),
+        AccountFigures(
+            "1920", "Bank", "balanseverdiForOmloepsmiddel", "1920", Decimal("0"), Decimal("495000")
+        ),
+        AccountFigures(
+            "2050", "Egenkapital", "egenkapital", "2050", Decimal("-100000"), Decimal("-595000")
+        ),
+    )
+    grunnlag = _enk_grunnlag(2025, accounts=accounts, saldo=_spec())
+    nsp = build(grunnlag)
+    answers = personlig.EnkAnswers(
+        naeringstype="annenNaering",
+        kommunenummer="0301",
+        antall_maaneder=6,
+        andel_innehaver=Decimal("60"),
+    )
+    pi, pi_findings = personlig.compute_personinntekt(nsp, accounts=accounts, answers=answers)
+    assert "rentekostnad_uten_foretaksgjeld" in {f.code for f in pi_findings}
+    # Without foretaksgjeld, 8150 is added back via kapitalkostnad and NOT deducted as rentekostnad.
+    assert pi.rentekostnad_foretaksgjeld == Decimal("0.00")
+    assert pi.kapitalkostnad == Decimal("5000.00")
+    # Skjermingsfradrag for 6 months: 100 000 * (6/12) * 4.6% = 2 300.
+    assert pi.skjermingsfradrag == Decimal("2300.00")
+    # Beregnet: 495 000 + 5 000 - 2 300 = 497 700; 60% = 298 620.
+    assert pi.beregnet_personinntekt == Decimal("497700.00")
+    assert pi.tilordnet_innehaver == Decimal("298620.00")
+
+    formue_values, _ = personlig.formue(nsp)
+    details = personlig.document_details(
+        nsp, answers=answers, personinntekt=pi, formue_values=formue_values
+    )
+    nsp_xml = xmlwriter.write(
+        schema.naeringsspesifikasjon(2025),
+        document(nsp, partsreferanse=PARTSNUMMER, enk_details=details),
+    )
+    assert_valid(schema.NAERINGSSPESIFIKASJON[2025], nsp_xml)
+    ns = {"n": schema.naeringsspesifikasjon(2025).namespace}
+    # Spouse split (< 100%) emits explicit owner municipality formue.
+    assert _root(nsp_xml).find("n:samletGjeldOgFormuesobjekter", ns) is not None
+
+
+def test_enk_avskrivning_avviker_fra_saldo_emits_merknad() -> None:
+    grunnlag = _enk_grunnlag(2025, saldo=_spec(_saldo(Decimal("15000"), Decimal("100000"))))
+    nsp = build(grunnlag)
+    assert "avskrivning_avviker_fra_saldo" in _codes(nsp, Severity.MERKNAD)
+
+
+@pytest.mark.parametrize("year", sorted(schema.SKATTEMELDING_PERSONLIG))
+def test_personal_skattemelding_preserves_personal_posts_and_strips_derived_naering(
+    year: int,
+) -> None:
+    melding = _personal_melding(year, fastsatt=True)
+    nsp = build(_enk_grunnlag(year))
+    completed, findings = personlig.complete(melding, nsp)
+    assert findings == []
+    assert_valid(schema.SKATTEMELDING_PERSONLIG[year], completed)
+    # Personal bank account and oppgavegiver stay untouched.
+    assert b"<tekst>SpareBank 1</tekst>" in completed
+    assert b"<tekst>12345678901</tekst>" in completed
+    assert b"<organisasjonsnavn>Tine SA</organisasjonsnavn>" in completed
+    # Derived leaf on bank account and non-overridden derived naering items are stripped.
+    assert b"andelAvInnskudd" not in completed
+    assert b"n-derived" not in completed
+    assert b"samletGjeldOgFormuesobjekterINaering" not in completed
+    # User-overridden naering item (erOverstyrt=true) stays.
+    assert b"n-override" in completed
+
+
+def test_enk_request_envelope_omits_tin_and_validates() -> None:
+    melding = _personal_melding(2025, fastsatt=False)
+    grunnlag = _enk_grunnlag(2025)
+    nsp = build(grunnlag)
+    answers = personlig.EnkAnswers(
+        naeringstype="annenNaering",
+        kommunenummer="0301",
+        innsendingstype=envelope.Innsendingstype.IKKE_KOMPLETT,
+    )
+    pi, _ = personlig.compute_personinntekt(nsp, accounts=grunnlag.accounts, answers=answers)
+    formue_values, _ = personlig.formue(nsp)
+    details = personlig.document_details(
+        nsp, answers=answers, personinntekt=pi, formue_values=formue_values
+    )
+    nsp_xml = xmlwriter.write(
+        schema.naeringsspesifikasjon(2025),
+        document(nsp, partsreferanse=PARTSNUMMER, enk_details=details),
+    )
+    completed, _ = personlig.complete(melding, nsp)
+    request = envelope.request_xml(
+        year=2025,
+        melding=replace(melding, content=completed),
+        naeringsspesifikasjon=nsp_xml,
+        innsendingstype=envelope.Innsendingstype.IKKE_KOMPLETT,
+        tin=None,
+    )
+    assert_valid(schema.REQUEST, request)
+    assert b"<tin>" not in request
+    assert b"<innsendingstype>ikkeKomplett</innsendingstype>" in request
+    assert b"<type>skattemeldingPersonlig</type>" in request

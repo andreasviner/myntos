@@ -110,6 +110,7 @@ async def request_system_user(
     customer_orgnr: str,
     external_ref: str,
     resources: tuple[str, ...],
+    access_packages: tuple[str, ...] = (),
     settings: Settings | None = None,
 ) -> SystemUserRequest:
     """Ask a customer to approve a system user for this system.
@@ -121,7 +122,11 @@ async def request_system_user(
     system is the intended use.
 
     ``resources`` must be a subset of what the system declared in the register;
-    Altinn refuses anything beyond it, which is the register doing its job.
+    Altinn refuses anything beyond it, which is the register doing its job. The
+    same holds for ``access_packages``, full URNs, which is how a customer is
+    asked for MVA: production does not let the MVA app be delegated as a
+    resource (systemregister's docstring). Sent only when there are any, so a
+    request that needs none looks exactly as it did before packages existed.
     """
     settings = settings or get_settings()
     base = settings.altinn_platform_base_url.rstrip("/")
@@ -137,6 +142,8 @@ async def request_system_user(
         "rights": _rights(resources),
         "redirectUrl": settings.altinn_system_redirect_url,
     }
+    if access_packages:
+        body["accessPackages"] = [{"urn": package} for package in access_packages]
     async with _client() as http:
         try:
             response = await http.post(

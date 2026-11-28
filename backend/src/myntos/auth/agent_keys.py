@@ -17,7 +17,9 @@ The person does not have to understand any of it; ``llms.txt`` teaches the
 agent to do it.
 
 Every credential carries a prefix (``myntos_ck_``, ``myntos_rt_``,
-``myntos_at_``) so an agent can tell what it was handed, a request with the
+``myntos_at_``, and ``myntos_ik_`` for a server's integration key, which
+:mod:`myntos.auth.integration_keys` resolves) so an agent can tell what it was
+handed, a request with the
 wrong one can be answered with the fix rather than "unknown", and a secret
 scanner can recognise a leaked one. Each is 256 random bits stored as a
 SHA-256 digest, like a session (:mod:`myntos.auth.tokens` says why that is
@@ -57,6 +59,7 @@ from myntos.domain.identity.errors import (
 )
 from myntos.domain.identity.models import (
     AgentKey,
+    AgentKeyKind,
     AgentKeyScope,
     AgentKeyStop,
     AgentToken,
@@ -72,6 +75,9 @@ CONNECTION_KEY_PREFIX = "myntos_ck_"
 REFRESH_TOKEN_PREFIX = "myntos_rt_"  # noqa: S105 - a prefix, not a secret
 ACCESS_TOKEN_PREFIX = "myntos_at_"  # noqa: S105 - a prefix, not a secret
 AGENT_CREDENTIAL_PREFIXES = (CONNECTION_KEY_PREFIX, REFRESH_TOKEN_PREFIX, ACCESS_TOKEN_PREFIX)
+# A server's static secret (rule 15). Named here with the others so that every
+# refusal below can tell a credential handed to the wrong door what it is.
+INTEGRATION_KEY_PREFIX = "myntos_ik_"
 
 # What each scope asks of the person issuing it. A key narrows its person and
 # never widens them, so a viewer can make a key that reads and nothing else.
@@ -101,6 +107,26 @@ def is_agent_credential(token: str) -> bool:
 
 def _mint(prefix: str) -> str:
     return prefix + generate_token()
+
+
+def year_end(key: AgentKey) -> datetime:
+    """When an agent key stops on its own, a year after it was made.
+
+    Only an agent key has one. An integration key has no yearly expiry
+    (rule 15), and none of the code that asks can be handed one: it is never
+    exchanged or refreshed and has no access tokens. Should one arrive anyway,
+    it is refused rather than read as a key that never ends.
+    """
+    if key.expires_at is None:
+        raise AgentKeyStoppedError("dette er en integrasjonsnøkkel, ikke en nøkkel for en agent")
+    return as_utc(key.expires_at)
+
+
+def connection_deadline(key: AgentKey) -> datetime:
+    """When an agent key's connection key stops working unexchanged. As :func:`year_end`."""
+    if key.connection_key_expires_at is None:
+        raise AgentKeyStoppedError("dette er en integrasjonsnøkkel, ikke en nøkkel for en agent")
+    return as_utc(key.connection_key_expires_at)
 
 
 def _scopes_text(scopes: Iterable[AgentKeyScope]) -> str:
@@ -258,7 +284,7 @@ def _require_usable(key: AgentKey, company: Company, now: datetime) -> None:
             "nøkkelen er stoppet. Be personen lage en ny nøkkel i Myntos under Selskapet → "
             "Tilgang, og lim den inn på nytt."
         )
-    if as_utc(key.expires_at) <= now:
+    if year_end(key) <= now:
         raise AgentKeyStoppedError(
             "nøkkelen er over et år gammel og har sluttet å virke. Be personen lage en ny i "
             "Myntos under Innstillinger for selskapet → Tilgang."
@@ -298,7 +324,7 @@ async def _require_person(db: AsyncSession, key: AgentKey) -> None:
         )
 
 
-def _note_use(key: AgentKey, client: str | None, now: datetime) -> None:
+def note_use(key: AgentKey, client: str | None, now: datetime) -> None:
     """Slide ``last_used_at``, at most once a minute, as a session does."""
     if key.last_used_at is None or now - as_utc(key.last_used_at) > timedelta(minutes=1):
         key.last_used_at = now
@@ -310,7 +336,7 @@ async def _issue_pair(
     db: AsyncSession, key: AgentKey, company: Company, person: User, now: datetime
 ) -> TokenPair:
     settings = get_settings()
-    key_expires = as_utc(key.expires_at)
+    key_expires = year_end(key)
     access_expires = min(
         now + timedelta(minutes=settings.agent_access_token_lifetime_minutes), key_expires
     )
@@ -364,6 +390,12 @@ def _wrong_kind(token: str, wanted: str) -> InvalidGrantError | None:
             f"dette er en tilgangsnøkkel (myntos_at_), ikke {wanted}. Den brukes i "
             "Authorization-headeren, ikke her."
         )
+    if token.startswith(INTEGRATION_KEY_PREFIX):
+        return InvalidGrantError(
+            f"dette er en integrasjonsnøkkel (myntos_ik_), ikke {wanted}. Den byttes ikke mot "
+            "noe: serveren sender den som den er i Authorization-headeren, fra en av adressene "
+            "den er laget for."
+        )
     return None
 
 
@@ -404,7 +436,7 @@ async def exchange_connection_key(
             "i Myntos under Innstillinger for selskapet → Tilgang."
         )
     _require_usable(key, company, now)
-    if as_utc(key.connection_key_expires_at) <= now:
+    if connection_deadline(key) <= now:
         raise ConnectionKeyExpiredError(
             "tilkoblingsnøkkelen ble ikke brukt innen et døgn og har gått ut. Be personen lage "
             "en ny i Myntos under Innstillinger for selskapet → Tilgang."
@@ -421,7 +453,7 @@ async def exchange_connection_key(
             "tilkoblingsnøkkelen ble brukt i samme øyeblikk et annet sted."
         )
     key.exchanged_at = now
-    _note_use(key, client, now)
+    note_use(key, client, now)
     return await _issue_pair(db, key, company, person, now)
 
 
@@ -486,7 +518,7 @@ async def refresh(
     await _require_person(db, key)
     if token.used_at is None:
         token.used_at = now
-    _note_use(key, client, now)
+    note_use(key, client, now)
     return await _issue_pair(db, key, company, person, now)
 
 
@@ -572,14 +604,14 @@ async def resolve_access_token(db: AsyncSession, token: str) -> KeyAccess:
     now = utc_now()
     if as_utc(access_token.expires_at) <= now or key.revoked_at is not None:
         raise expired
-    if as_utc(key.expires_at) <= now or role is None or not user.is_active:
+    if year_end(key) <= now or role is None or not user.is_active:
         raise expired
     if not enabled:
         raise AgentAccessDisabledError(
             "selskapet har slått av nøkler for KI-agenter og API. Bare en eier eller "
             "administrator kan slå dem på igjen."
         )
-    _note_use(key, None, now)
+    note_use(key, None, now)
     return KeyAccess(key=key, user=user, role=role, company_name=company_name)
 
 
@@ -612,8 +644,12 @@ async def resolve_key_for_replay(db: AsyncSession, key_id: int) -> KeyAccess:
     if row is None:
         raise AgentKeyStoppedError("nøkkelen finnes ikke lenger")
     key, user, enabled, company_name, role = row
+    # An integration key never asks (rule 15), so nothing it made can be
+    # waiting; refused here so a forged or stale row cannot make it one.
+    if key.kind is not AgentKeyKind.AGENT:
+        raise AgentKeyStoppedError("en integrasjonsnøkkel venter aldri på godkjenning")
     now = utc_now()
-    if key.revoked_at is not None or as_utc(key.expires_at) <= now:
+    if key.revoked_at is not None or year_end(key) <= now:
         raise AgentKeyStoppedError("nøkkelen er stoppet, så det den ba om kan ikke kjøres")
     if role is None or not user.is_active:
         raise AgentKeyStoppedError("personen bak nøkkelen har ikke lenger tilgang til regnskapet")
@@ -638,8 +674,16 @@ async def stop_keys(
     reason: AgentKeyStop,
     user_id: int | None = None,
     company_id: int | None = None,
-) -> None:
-    """Stop every live key of a person, of a company, or of a person in a company."""
+    kind: AgentKeyKind | None = None,
+) -> list[AgentKey]:
+    """Stop every live key of a person, of a company, or of a person in a company.
+
+    Integration keys included unless ``kind`` narrows it: the events that stop
+    a person's agent keys (a password reset, a deleted account, a closed
+    company) stop their integration keys too, and the one that does not, the
+    Tilgang switch, says so with ``kind``. Returns the keys it stopped, so a
+    caller can tell the owner which integrations went with them.
+    """
     if user_id is None and company_id is None:
         raise ValueError("refusing to stop every key there is")
     statement = (
@@ -652,7 +696,9 @@ async def stop_keys(
         statement = statement.where(AgentKey.user_id == user_id)
     if company_id is not None:
         statement = statement.where(AgentKey.company_id == company_id)
-    await db.execute(statement)
+    if kind is not None:
+        statement = statement.where(AgentKey.kind == kind)
+    return list(await db.scalars(statement.returning(AgentKey)))
 
 
 async def stop_by_token(db: AsyncSession, token: str) -> None:
@@ -666,6 +712,10 @@ async def stop_by_token(db: AsyncSession, token: str) -> None:
     key: AgentKey | None
     if token.startswith(CONNECTION_KEY_PREFIX):
         key = await db.scalar(select(AgentKey).where(AgentKey.connection_key_hash == digest))
+    elif token.startswith(INTEGRATION_KEY_PREFIX):
+        # A server that finds its secret leaked can end it itself, without
+        # waiting for the owner to open the page.
+        key = await db.scalar(select(AgentKey).where(AgentKey.secret_hash == digest))
     else:
         key = await db.scalar(
             select(AgentKey)
@@ -687,10 +737,14 @@ async def list_keys(
     ``user_id`` narrows it to one person's own, which is what a member without
     ``member:manage`` sees: their keys are theirs to know about, everybody
     else's are access management.
+
+    Agent keys only. Integration keys have their own list, which only an owner
+    sees (:mod:`myntos.auth.integration_keys`), so an administrator cannot stop
+    one from here either.
     """
     query = (
         select(AgentKey)
-        .where(AgentKey.company_id == company_id)
+        .where(AgentKey.company_id == company_id, AgentKey.kind == AgentKeyKind.AGENT)
         .options(selectinload(AgentKey.user))
         .order_by(AgentKey.created_at.desc(), AgentKey.id.desc())
     )
@@ -700,9 +754,13 @@ async def list_keys(
 
 
 async def get_key(db: AsyncSession, *, company_id: int, key_id: int) -> AgentKey:
-    """One key, looked up with its company like every other sub-resource."""
+    """One agent key, looked up with its company like every other sub-resource."""
     key = await db.scalar(
-        select(AgentKey).where(AgentKey.id == key_id, AgentKey.company_id == company_id)
+        select(AgentKey).where(
+            AgentKey.id == key_id,
+            AgentKey.company_id == company_id,
+            AgentKey.kind == AgentKeyKind.AGENT,
+        )
     )
     if key is None:
         raise AgentKeyNotFoundError("fant ingen slik nøkkel")
@@ -722,10 +780,13 @@ def key_state(key: AgentKey, *, now: datetime) -> KeyState:
     """
     if key.revoked_at is not None:
         return "stopped"
-    if as_utc(key.expires_at) <= now:
+    if key.is_integration:
+        # No year, no exchange and no idle deadline (rule 15): live until stopped.
+        return "active"
+    if year_end(key) <= now:
         return "expired"
     if key.exchanged_at is None:
-        return "expired" if as_utc(key.connection_key_expires_at) <= now else "waiting"
+        return "expired" if connection_deadline(key) <= now else "waiting"
     idle = timedelta(days=get_settings().agent_refresh_idle_days)
     last = key.last_used_at or key.exchanged_at
     if as_utc(last) + idle <= now:

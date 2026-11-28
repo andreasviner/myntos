@@ -375,7 +375,9 @@ def test_a_bank_line_with_the_invoices_kid_pays_it(client: TestClient) -> None:
     company = _bank_company(client)
     # Ten hours at 1 000 kr and 25 % VAT: the 12 500 kr the statement brings in.
     invoice = _bank_invoice(client, company["id"], "1000.00")
-    assert invoice["payment_reference"] == kid.for_document_number("1")
+    assert invoice["payment_reference"] == kid.for_document_number(
+        "1", issue_date=date.fromisoformat(invoice["issue_date"])
+    )
     _import_paying(client, company["id"], invoice["payment_reference"])
 
     line = _bank_line(client, company["id"], "12500.00")

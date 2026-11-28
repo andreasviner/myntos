@@ -30,7 +30,7 @@ export const PUBLIC_PAGES: readonly string[] = [
   '/funksjoner/',
   '/priser/',
   '/bankpriser/',
-  '/ki/',
+  '/ki/about/',
   '/datadeling/',
   '/kom-i-gang/',
   '/sammenlign/',

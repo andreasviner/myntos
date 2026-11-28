@@ -293,16 +293,41 @@ class AppInstanceClient:
             )
         return uploaded
 
-    async def process_next(self, ref: InstanceRef, *, token: str) -> Instance:
+    async def process_next(
+        self, ref: InstanceRef, *, token: str, action: str | None = None
+    ) -> Instance:
         """Advance the instance one process step.
 
-        Called twice to submit: once to complete filling, once to submit. The
-        second call is the one that files anything with the state, which is why
-        :meth:`complete_and_submit` exists rather than leaving the count to
-        whoever is writing the flow that day.
+        Called twice to submit Skatteetaten apps (with no body): once to
+        complete filling, once to submit. Apps with ``processActions`` enabled
+        (such as Brønnøysundregistrene's RR-0002) require an explicit
+        ``{"action": "confirm" | "sign" | "reject"}`` body.
         """
-        payload = await self._request("PUT", f"/instances/{ref.path}/process/next", token=token)
+        body = {"action": action} if action is not None else None
+        payload = await self._request(
+            "PUT", f"/instances/{ref.path}/process/next", token=token, json=body
+        )
         return _instance_from(payload, fallback=ref)
+
+    async def validate_instance(self, ref: InstanceRef, *, token: str) -> list[dict[str, Any]]:
+        """Run server-side validation on an instance before locking or signing."""
+        response = await self._send("GET", f"/instances/{ref.path}/validate", token=token)
+        if response.status_code != httpx.codes.OK:
+            raise AltinnInstanceError(
+                f"GET /instances/{ref.path}/validate failed ({response.status_code}): "
+                f"{response.text[:400]}"
+            )
+        try:
+            payload = response.json()
+        except ValueError as error:
+            raise AltinnInstanceError(
+                f"GET /instances/{ref.path}/validate did not answer with JSON"
+            ) from error
+        if not isinstance(payload, list):
+            raise AltinnInstanceError(
+                f"GET /instances/{ref.path}/validate answered with unexpected JSON"
+            )
+        return [item for item in payload if isinstance(item, dict)]
 
     async def complete_and_submit(self, ref: InstanceRef, *, token: str) -> Instance:
         """Complete the filling step and submit — the two ``process/next`` calls.

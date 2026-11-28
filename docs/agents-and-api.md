@@ -28,7 +28,12 @@ end.
 **A key is a key**, whether an AI assistant holds it or a program somebody
 wrote: the same rights, the same approval page, the same limits. The words on
 the page say «KI-agent eller program» where it matters, and nothing in the
-backend can tell the two apart.
+backend can tell the two apart. **One exception, the owner's decision of
+2026-11-26** ([rule 15](#15-a-servers-integration-key-sends-invoices-without-asking)):
+a server's *integration key*, made by an owner, bound to IP addresses and
+limited to invoicing, is a different kind of key, made in its own section
+(«Integrasjoner»), and the one thing in Myntos that sends without a person's
+yes.
 
 ## The rules
 
@@ -180,6 +185,15 @@ on `/godkjenning/` (rule 13), even from a key that may post on its own. «Selv»
 covers what stays inside the books; it never covers what leaves them, because
 what has been sent cannot be called back.
 
+**The one exception, the owner's decision of 2026-11-26: an AI agent's send
+always waits for its person; a server integration key, made by an owner,
+bound to IP addresses and limited to invoicing, may send invoices on its own;
+nothing else may.** Why a server and not an agent, and what holds it, is
+[rule 15](#15-a-servers-integration-key-sends-invoices-without-asking).
+Everything below about «a key» means an agent key unless it says otherwise;
+an integration key cannot do any of the list either, because it reaches only
+the invoicing routes.
+
 A send to the state goes **with the person's own ID-porten login**
 (`key_send(…, id_porten=True)`), which is Skatteetaten's condition for an
 end-user system (ARCHITECTURE.md § The two auth planes): the approve route
@@ -236,7 +250,9 @@ decision about whether its bilag reach a model), `PUT
 to the bilag as they are: [data-sharing.md](data-sharing.md)), and the
 register's board list with who has access (`GET /companies/{id}/register`). A send is published as
 `x-myntos-key-send`, and one with the person's login as
-`x-myntos-key-id-porten`.
+`x-myntos-key-id-porten`. An integration key passes the gate on a second,
+narrower declaration, `x-myntos-integration` (rule 15), and every other route
+answers it 403 `not_for_integration_keys`.
 
 ### 6. Irreversible writes take two steps, for agents too
 
@@ -463,6 +479,10 @@ The rules that hold it:
   `FilingType`); that request links to the MVA or the Skattemelding page,
   where the person files it themselves, and it turns `done` when that termin
   or year is filed.
+- **An integration key is never held** (rule 15, the owner's decision of
+  2026-11-26). It is not an agent key: it has no scopes to ask with, nobody
+  to ask, and reaches only the invoicing routes, where it runs at once, the
+  EHF send included. Nothing it does appears on `/godkjenning/`.
 
 *Why:* the owner wants people to be able to let an agent do everything, to
 decide for themselves how much of it they check first, and to say yes to
@@ -499,6 +519,76 @@ confidence and the person goes looking for a button that is not there.
 They want to know where to click. Answering that from guesswork is how a
 general-purpose model invents menus.
 
+### 15. A server's integration key sends invoices without asking
+
+The owner's decision of 2026-11-26: **an AI agent's send always waits for its
+person; a server integration key, made by an owner, bound to IP addresses and
+limited to invoicing, may send invoices on its own; nothing else may.**
+
+*Why a server and not an agent.* Rule 4 assumes a key a person sees ends up in
+a chat, and rule 7 that an agent may be following somebody else's words. A
+server is neither: an owner chose the program, decided what it does, and put
+the secret in its settings. And a business that invoices from its own system
+(a shop, a subscription service) cannot have somebody press «Godkjenn» for
+every invoice: a held invoice is an invoice that does not go out. So the
+exception is as narrow as that need, and every part of it is something a
+stolen secret would otherwise have.
+
+What one is (`myntos.auth.integration_keys`; a row in `agent_key` with `kind`
+`integration`, migration `f5c2a8d19e74`, so the voucher stamp, the refusal
+counter, the request limit and the stops follow it unchanged):
+
+- **Made by an owner, from a session**, on `/organisasjon/#integrasjoner`
+  («Integrasjoner», `integration:manage`). The routes
+  (`GET`/`POST /companies/{id}/integrasjonsnokler`,
+  `DELETE …/integrasjonsnokler/{key_id}`) are closed to every key
+  (`_NOT_FOR_AGENTS`): a key that made keys would be access management.
+- **A static secret**, `myntos_ik_…`, sent as `Authorization: Bearer`, shown
+  once and stored as a digest. Never exchanged, no refresh chain and no yearly
+  expiry: a server cannot paste a fresh key in, and invoicing that stops one
+  morning with nobody told is worse than a key the owner sees, with its last
+  use, on the page. Nobody should ever paste it into an AI assistant, and the
+  page says so under the secret.
+- **Bound to 1 to 10 IPv4 or IPv6 addresses or CIDR ranges**, none wider than
+  /16 or /48, so the secret copied anywhere else opens nothing.
+- **One purpose, `faktura`.** It reaches only the routes that declare
+  `x-myntos-integration: faktura` (`| FAKTURA_INTEGRATION` on `openapi_extra`,
+  `myntos.api.deps`): the customer list and adding a customer, the invoice
+  catalogue, the invoice list, making, reading and deleting a draft, issuing,
+  the PDF and the EHF, the recipient lookup, sending and the sending status.
+  Thirteen routes, held by `test_integration_keys.py`. Never a credit note
+  (the send route refuses one to an integration key), a payment, a filing, a
+  kontonummer or access. **A route that goes with the person's ID-porten login
+  can never carry the declaration** (`test_no_id_porten_route_is_open_to_integrations`).
+- **It works as the owner who made it**, with their role as it stands on each
+  request, and every voucher it posts carries its stamp (rule 6).
+- **The Tilgang switch does not govern it.** The switch is about AI agents and
+  the programs a member connects; switching it off stops no integration, and
+  making one needs no switch on.
+
+The gate (`get_caller`), in this order: the address (403
+`integration_key_wrong_address`), then the route's declaration (403
+`not_for_integration_keys`), both counted towards the refusal stop (rule 10);
+then the request limit; then the company wall (404, rule 9); then the route
+runs, with no approval.
+
+It stops when an owner presses «Stopp», when the person who made it is no
+longer an owner or no longer a member, when their account is deleted or their
+password reset, when the company is closed, after too many refusals, and when
+the server calls `POST /agent/revoke` with it. The owner is mailed when one is
+made, and when one stops by «Stopp», refusals, a role or a membership; never
+the secret.
+
+**Which address it sees.** `request.client.host`: uvicorn trusts
+`X-Forwarded-For` from 127.0.0.1 only, and Caddy in front of `api.myntos.no`
+replaces that header with the real peer, so a call through Caddy shows the
+caller's own address, and a server on the same machine calling
+`127.0.0.1:8001` directly shows 127.0.0.1. The cost of that: any process on
+the machine can call 127.0.0.1 with an `X-Forwarded-For` of its choosing and
+be seen as that address. An address list protects against the secret copied
+to somewhere else on the internet; it does not protect against a process on
+the same machine, and a key bound to 127.0.0.1 is as safe as the machine.
+
 ## Where things live
 
 | What | Where |
@@ -520,6 +610,7 @@ general-purpose model invents menus.
 | The mails | `backend/src/myntos/domain/identity/agent_key_mail.py` |
 | Issuing and stopping keys | `/organisasjon/#tilgang`: «Inviter en KI» beside «Inviter en kollega» opens a window (the consent the first time, then the form), and the card «KI-agenter og API-nøkler» under the members lists the keys once keys are on. A key is access to one company's books, like a membership. `/ki/` links to it. Labels in `frontend/src/lib/agentkeys.ts` |
 | Deciding what keys asked | `/godkjenning/`, in the top menu while the company has keys on, with a count of what waits. Labels in `frontend/src/lib/approvals.ts` |
+| Integration keys (rule 15) | `backend/src/myntos/auth/integration_keys.py`, the routes in `backend/src/myntos/api/v1/integration_keys.py`, the gate's branch in `deps.py` (`_admit_integration_key`); tests in `backend/tests/test_integration_keys.py`; the page `/organisasjon/#integrasjoner`, labels in `frontend/src/lib/integrationkeys.ts`; the skill `myntos-integrasjon` |
 
 ## Build plan
 
@@ -571,6 +662,13 @@ exist catch up.
   invitation is mail sent out. Two stay closed whatever is decided: approving
   (it is the gate), and making keys (a key that makes keys hands a new secret
   into a chat, against rule 4). Waiting for the owner's word.
+- **Some integration-key stops are not mailed** (rule 15). A stop by
+  «Stopp», refusals, a role or a membership mails the owner; one made in bulk
+  by a password reset, a BankID link, a reclaimed address, a deleted account
+  or a closed company does not, and the server only starts getting 401
+  `integration_key_stopped`.
+- **An integration key records no client** in `last_used_client`, only when it
+  was last used.
 - **A send approved at the wrong moment can still fail.** The ID-porten login
   is checked before the request is claimed, but it can expire in the seconds
   the replay takes; the request is then `failed` with the route's 409 and has

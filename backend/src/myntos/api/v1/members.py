@@ -25,10 +25,11 @@ companies these are, and who may add another one.
 
 from datetime import datetime
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, BackgroundTasks, status
 from pydantic import BaseModel, EmailStr, Field
 
 from myntos.api.deps import CurrentCompany, CurrentUser, DbSession, OutgoingMail
+from myntos.api.v1.integration_keys import tell_owner_stopped
 from myntos.auth import agent_keys
 from myntos.core.clock import as_utc
 from myntos.core.config import get_settings
@@ -37,6 +38,7 @@ from myntos.domain.identity import service
 from myntos.domain.identity.access import Permission, require_permission
 from myntos.domain.identity.invitation_mail import invitation_mail
 from myntos.domain.identity.models import (
+    AgentKeyKind,
     AgentKeyStop,
     CompanyMembership,
     OrganizationInvitation,
@@ -353,7 +355,12 @@ async def revoke_invitation(invitation_id: int, context: CurrentCompany, db: DbS
 
 @router.patch("/companies/{company_id}/members/{user_id}")
 async def change_member_role(
-    user_id: int, payload: ChangeRoleRequest, context: CurrentCompany, db: DbSession
+    user_id: int,
+    payload: ChangeRoleRequest,
+    context: CurrentCompany,
+    db: DbSession,
+    post: OutgoingMail,
+    background: BackgroundTasks,
 ) -> MemberResponse:
     """Change what somebody may do in these books: the role in the member list.
 
@@ -362,8 +369,11 @@ async def change_member_role(
     (``GET /api/v1/companies/{company_id}/members``) says what each may do.
     It holds from the person's next request, and for their keys with it:
     a key never does more than its person's role allows on that request, so
-    a role taken away needs no key stopped. Answers with the person's row as
-    it now is.
+    a role taken away needs no agent key stopped. An integration key does
+    stop, because only an owner may hold one (docs/agents-and-api.md rule
+    15): an owner made anything else stops every integration key they made
+    for these books, and they are mailed. Answers with the person's row as it
+    now is.
 
     Owners and administrators only (``member:manage``), with two limits that
     keep the owner role worth having: only an owner may make somebody an
@@ -381,11 +391,33 @@ async def change_member_role(
     await service.change_member_role(db, actor=context.membership, target=target, role=payload.role)
     await db.refresh(target, attribute_names=["user"])
     await db.refresh(target.user, attribute_names=["government_identity"])
+    if payload.role is not OrganizationRole.OWNER:
+        stopped = await agent_keys.stop_keys(
+            db,
+            reason=AgentKeyStop.NOT_OWNER,
+            user_id=target.user_id,
+            company_id=context.company.id,
+            kind=AgentKeyKind.INTEGRATION,
+        )
+        tell_owner_stopped(
+            background,
+            post,
+            stopped,
+            person=target.user,
+            company_name=context.company.name,
+            reason=AgentKeyStop.NOT_OWNER,
+        )
     return _member_response(target, is_self=target.user_id == context.membership.user_id)
 
 
 @router.delete("/companies/{company_id}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def remove_member(user_id: int, context: CurrentCompany, db: DbSession) -> None:
+async def remove_member(
+    user_id: int,
+    context: CurrentCompany,
+    db: DbSession,
+    post: OutgoingMail,
+    background: BackgroundTasks,
+) -> None:
     """Take away someone's access to these books, or give up your own.
 
     Passing your own user id is how a person walks away from a client's books,
@@ -396,14 +428,27 @@ async def remove_member(user_id: int, context: CurrentCompany, db: DbSession) ->
     (docs/agents-and-api.md rule 3). A key would stop working anyway, since it
     acts with a membership that is gone, but stopped rather than idle means
     that inviting the person back later does not wake their old keys with them.
+    Integration keys stop the same way, and their owner is mailed for each,
+    because the server that held one only starts failing.
     """
     target = await service.get_company_membership(
         db, company_id=context.company.id, user_id=user_id
     )
+    # Loaded before the row goes, for the mail about their integration keys.
+    await db.refresh(target, attribute_names=["user"])
+    person = target.user
     await service.remove_member(db, actor=context.membership, target=target)
-    await agent_keys.stop_keys(
+    stopped = await agent_keys.stop_keys(
         db,
         reason=AgentKeyStop.MEMBER_REMOVED,
         user_id=target.user_id,
         company_id=context.company.id,
+    )
+    tell_owner_stopped(
+        background,
+        post,
+        stopped,
+        person=person,
+        company_name=context.company.name,
+        reason=AgentKeyStop.MEMBER_REMOVED,
     )

@@ -141,10 +141,14 @@ class Settings(BaseSettings):
     operator_key_sha256: str | None = None
     # How long a kind of failure is kept after it last happened.
     server_error_retention_days: int = 90
-    # Who is mailed when a kind of failure is new or open again; unset, nobody
-    # is, and the page has to be opened to be read. The mail carries the code
-    # that failed and never its values (domain/server_errors/mail.py).
+    # Who is mailed when a kind of failure is new or open again; unset, falls
+    # back to ``DEVELOPER_MAIL`` below, and if both are unset nobody is mailed
+    # and the page has to be opened to be read. The mail carries the code that
+    # failed and never its values (domain/server_errors/mail.py).
     server_error_notify_to: str | None = None
+    # Developer address for server error notices when ``SERVER_ERROR_NOTIFY_TO``
+    # is unset. Same code-only privacy guarantee (docs/operator.md).
+    developer_mail: str | None = None
 
     # --- Outgoing email (optional; nothing below is required to run) ---
     #
@@ -190,6 +194,34 @@ class Settings(BaseSettings):
     # the other. The token wants the "Send email" permission and nothing else.
     cloudflare_account_id: str | None = None
     cloudflare_email_token: SecretStr | None = None
+
+    # --- Inbound email invoice intake (Mottatt) ---
+    # Each company receives a dedicated ``<slug>@<inbound_email_domain>`` address
+    # (e.g. ``test@myntos.no``). A Cloudflare Email Worker forwards incoming
+    # messages to ``POST /api/v1/webhooks/inbound-email`` signed with HMAC-SHA256
+    # using ``inbound_email_webhook_secret``. Left unset, the webhook refuses
+    # requests (503) so nothing can be injected into a deployment that has not
+    # enabled inbound email routing.
+    inbound_email_domain: str = "myntos.no"
+    inbound_email_webhook_secret: SecretStr | None = None
+    inbound_email_max_per_hour: int = 60
+
+    @property
+    def inbound_email_configured(self) -> bool:
+        """Whether the inbound email webhook secret and domain are configured."""
+        return bool(
+            self.inbound_email_domain.strip()
+            and self.inbound_email_webhook_secret is not None
+            and self.inbound_email_webhook_secret.get_secret_value().strip()
+        )
+
+    @property
+    def ademico_webhook_configured(self) -> bool:
+        """Whether a secret is set for Ademico's pushes to authenticate with."""
+        return bool(
+            self.ademico_webhook_secret is not None
+            and self.ademico_webhook_secret.get_secret_value().strip()
+        )
 
     @property
     def smtp_configured(self) -> bool:
@@ -350,6 +382,10 @@ class Settings(BaseSettings):
     # Test: https://skd.apps.tt02.altinn.no/skd/mva-melding-innsending-v1
     # Prod: https://skd.apps.altinn.no/skd/mva-melding-innsending-v1
     altinn_mva_app_url: str | None = None
+    # Brønnøysundregistrene årsregnskap (RR-0002):
+    # Test: https://brg.apps.tt02.altinn.no/brg/aarsregnskap-vanlig-202406
+    # Prod: https://brg.apps.altinn.no/brg/aarsregnskap-vanlig-202406
+    altinn_aarsregnskap_app_url: str | None = None
 
     # --- Altinn systembruker (system vendor registration) ---
     # Our own organisasjonsnummer, as the *vendor* of this system. Not the same
@@ -364,8 +400,11 @@ class Settings(BaseSettings):
     altinn_system_name: str = "myntos"
     # Where a customer's browser may return after approving a system user.
     # Altinn requires https, so a loopback development URL is not valid here
-    # even in test.
-    altinn_system_redirect_url: str = "https://myntos.no/skatt/systembruker/godkjent"
+    # even in test. The company page, because the approval is the company's and
+    # a page that exists beats the purpose-built one this used to name: that
+    # was /skatt/systembruker/godkjent, which never existed, and it would have
+    # been the production registration's only allowed URL (2026-11-25).
+    altinn_system_redirect_url: str = "https://myntos.no/organisasjon/"
 
     # --- Skatteetaten ---
     # Three separate hosts, because Skatteetaten splits them by auth plane and
@@ -386,24 +425,101 @@ class Settings(BaseSettings):
     # --- Løynd (the model that reads an uploaded bilag) ---
     # Optional in the same sense as the sign-in providers: without a key the
     # model is simply not asked, and the register falls back to its own reading
-    # of the document. Norwegian-hosted inference is the reason this particular
-    # service is the one allowed to see a user's bilag — see
+    # of the document. Inference in the EEA that keeps nothing is the reason this
+    # particular service is the one allowed to see a user's bilag: see
     # myntos.integrations.loynd.
     loynd_key: SecretStr | None = None
     loynd_base_url: str = "https://api.loynd.no"
+    # The free level: Løynd's own model on its own machines in Norway.
     loynd_model: str = "loynd-lite"
+    # The paid levels a KI plan buys (myntos.domain.ki). Løynd's live tier names
+    # by default, which follow the best model in their class, so a better model
+    # there is a better «Medium» here without a release. Løynd runs both on its
+    # own machines in Norway when they are free, and otherwise on extra
+    # inference capacity in the EU, so the key must not be one Løynd keeps in
+    # Norway (it answers 403 for these models then). Both need Myntos's own Løynd
+    # key to have prepaid credit: without it Løynd answers 402 and the request
+    # falls back to the free level.
+    loynd_model_medium: str = "medium"
+    loynd_model_thinking: str = "high"
 
-    # --- Recommand (the Peppol access point that carries an EHF out) ---
-    # Optional like Løynd: without both halves of the key nothing is sent and
-    # the invoice page offers the XML to download, as it did before. One key
-    # for the whole deployment; each company is a company under it, created
-    # when an admin registers it (myntos.api.v1.peppol). Recommand is
-    # BRBX BV in Belgium and hosts in the EU, but its mail goes through
-    # Postmark in the USA, so Myntos never asks it to e-mail anything:
-    # docs/integrations/peppol.md.
-    recommand_api_key: SecretStr | None = None
-    recommand_api_secret: SecretStr | None = None
-    recommand_api_base_url: str = "https://app.recommand.eu"
+    # --- KI reading the books (myntos.domain.analyse.jobs) ---
+    # How many runs ask Løynd at once, across every company. Two cards serve
+    # everyone, and a company whose page is open waits behind another
+    # company's whole year otherwise; two at a time is what the cards measured
+    # well at (CLAUDE.local.md, «Two cards»). The rest wait their turn.
+    ki_analysis_concurrency: int = 2
+    # The most vouchers in one question. The batch is usually smaller: it is
+    # packed to fit the answer budget below.
+    ki_analysis_batch_size: int = 20
+    # The longest answer Løynd writes to a keyed request: it clamps
+    # max_tokens to its own max_completion_tokens, 1024 for loynd-lite, and a
+    # batch whose answer would not fit is cut off at its end (docs/analyse.md,
+    # the probe). Raise it only with Løynd's setting.
+    ki_analysis_answer_tokens: int = 1024
+    # How long one batch's answer may take. Measured 17 to 26 s for a full
+    # batch at the free level, against the 20 s a bilag's few fields are
+    # allowed (myntos.integrations.loynd).
+    ki_analysis_read_timeout: float = 120.0
+
+    # --- Mollie (payment for the KI plans) ---
+    # The same provider and the same pattern as Løynd's own checkout: a one-off
+    # payment per month bought, nothing stored about the card here, and the
+    # status always re-fetched from Mollie with the server's key (a webhook is
+    # only ever a hint). Mollie B.V. is in the Netherlands. Both keys may sit in
+    # .env; mollie_mode picks one, so a deployment with only a test key can never
+    # charge anybody, and "off" (or no key for the mode) hides the purchase
+    # buttons while the free level keeps working.
+    mollie_test_key: SecretStr | None = None
+    mollie_live_key: SecretStr | None = None
+    mollie_mode: Literal["test", "live", "off"] = "test"
+    # Where Mollie POSTs "this payment changed". Only sent when it is public
+    # HTTPS: Mollie refuses a payment whose webhook it cannot reach, and a
+    # localhost URL would make every local test checkout fail. Without it the
+    # payment is settled only when the browser comes back from Mollie.
+    mollie_webhook_url: str | None = "https://api.myntos.no/api/v1/webhooks/mollie"
+    mollie_timeout_seconds: float = 15.0
+
+    # --- Monthly invoicing for KI subscriptions (myntos.domain.ki.invoicing) ---
+    # The Company.id in Myntos that issues monthly section 5-1 invoices for KI
+    # subscriptions (e.g. Lindeman Technologies AS). Left unset, monthly
+    # invoiced subscriptions cannot be started (Mollie one-off checkout, if
+    # configured, still works independently).
+    ki_billing_company_id: int | None = None
+    # How often the background job checks for subscriptions whose billing month
+    # has rolled over and issues the next monthly invoice. 0 disables the loop.
+    ki_billing_interval_seconds: int = 3600
+
+    # --- Ademico (the Peppol access point for sending and receiving EHF) ---
+    # Optional like Løynd: without user, password and access token nothing is
+    # sent or received, and the invoice page offers the XML to download as
+    # before. One account for the whole deployment; each Myntos company is a
+    # legal entity under it, created when an admin registers it
+    # (myntos.api.v1.peppol). Ademico Software is in Belgium and hosts in the
+    # EEA: docs/integrations/peppol.md.
+    ademico_user: str | None = None
+    ademico_password: SecretStr | None = None
+    ademico_token: SecretStr | None = None
+    ademico_api_base_url: str = "https://peppol-api1.ademico-software.com/domibus"
+    # OpenPeppol's production BDXL SML DNS zone, queried directly (public DNS
+    # NAPTR + SMP HTTP metadata) to check whether a Norwegian buyer can receive
+    # EHF before issuing an invoice. Test environments use
+    # ``participant.sml.test.tech.peppol.org``.
+    peppol_sml_zone: str = "participant.sml.prod.tech.peppol.org"
+    # Ademico pushes every event (a delivery, a buyer's answer, a received EHF)
+    # to ademico_webhook_url with Basic Auth: user "ademico", password this
+    # secret. Ademico cannot sign a body, so this is all that tells its push
+    # from anyone else's, and a push is read back from Ademico before it is
+    # believed anyway (myntos.integrations.peppol_sync). Unset, the webhook
+    # answers 503 and the sweep below carries everything, fifteen minutes late.
+    ademico_webhook_secret: SecretStr | None = None
+    # What `python -m myntos.integrations.peppol_sync on` tells Ademico to call.
+    ademico_webhook_url: str = "https://api.myntos.no/api/v1/webhooks/ademico"
+    # The sweep behind the webhook: how often Myntos drains Ademico's pull
+    # queue and checks its document list for anything no push brought (a push
+    # during a restart, a push Ademico gave up on). Not the way events arrive,
+    # only the way none is lost; 0 turns it off.
+    peppol_sweep_interval_seconds: int = 900
 
     # --- Enhetsregisteret (Brønnøysundregistrene) ---
     # Open data, no credentials. Configurable only so tests can point it at a
@@ -474,6 +590,28 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return value.strip().lower() or None
         return value
+
+    @field_validator("server_error_notify_to", "developer_mail", mode="before")
+    @classmethod
+    def _blank_address_is_unset(cls, value: object) -> object:
+        """Read ``DEVELOPER_MAIL=`` or ``SERVER_ERROR_NOTIFY_TO=`` as unset."""
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
+
+    @field_validator("ki_billing_company_id", mode="before")
+    @classmethod
+    def _blank_billing_company_is_unset(cls, value: object) -> object:
+        """Read ``KI_BILLING_COMPANY_ID=`` as unset."""
+        if isinstance(value, str):
+            stripped = value.strip()
+            return int(stripped) if stripped else None
+        return value
+
+    @property
+    def error_notify_to(self) -> str | None:
+        """Server error notice recipient: ``SERVER_ERROR_NOTIFY_TO``, else ``DEVELOPER_MAIL``."""
+        return self.server_error_notify_to or self.developer_mail
 
     @property
     def operator_key_digest(self) -> str | None:

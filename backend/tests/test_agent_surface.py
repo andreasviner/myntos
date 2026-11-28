@@ -36,6 +36,7 @@ from typing import Any
 from fastapi.routing import APIRoute, iter_route_contexts
 
 from myntos.api.deps import (
+    INTEGRATION_EXTENSION,
     KEY_APPROVAL_LABEL_EXTENSION,
     KEY_ID_PORTEN_EXTENSION,
     KEY_PREVIEW_EXTENSION,
@@ -112,10 +113,32 @@ _DATA_SHARING = (
     "may make (docs/data-sharing.md)."
 )
 _PEPPOL_REGISTRATION = (
-    "Registering the company with the Peppol access point decides which business invoices go "
-    "out in the name of, and hands out the link where the person who signs for the company "
-    "proves who they are. That proof is the person's own act, like the ID-porten login, and "
-    "the decision is the company's, not one its tools may make (rule 5)."
+    "Registering the company with the Peppol access point and enabling or disabling receiving in "
+    "ELMA decides which business invoices go out and arrive in the name of. Moving a company's "
+    "Peppol inbox is the company's own act, never one its tools may make (rule 5)."
+)
+_EMAIL_INBOX_SECURITY = (
+    "Enabling or disabling the company's @myntos.no invoice inbox, changing its sender policy, or "
+    "approving external senders controls who may feed invoices into the books — an admin security "
+    "decision, never one an agent key may make (rule 5)."
+)
+_INBOUND_EMAIL_WEBHOOK = (
+    "Internal server-to-server webhook called exclusively by the Cloudflare Email Worker with an "
+    "HMAC-SHA256 deployment secret; never callable by user sessions or agent keys."
+)
+_ADEMICO_WEBHOOK = (
+    "Ademico's server-to-server notice that a Peppol document was delivered or received, for "
+    "any company under the deployment. Basic Auth with a deployment secret, and every document "
+    "it names is read back from Ademico; never callable by sessions or agent keys."
+)
+_KI_PURCHASE = (
+    "Activating, switching, canceling or paying for a KI plan: monthly subscription billing "
+    "and Mollie checkout. A key never commits the company to spend money (rule 5); reading the "
+    "plans, weekly quota, and KI invoices is KEY_READ."
+)
+_MOLLIE_WEBHOOK = (
+    "Mollie's server-to-server notice that a payment changed. Carries only a payment id, which "
+    "Myntos looks up at Mollie with its own key; never callable by sessions or agent keys."
 )
 _OPERATOR = (
     "The operator's page: every stranger's feedback in their own words and the server's "
@@ -169,6 +192,9 @@ _NOT_FOR_AGENTS: dict[str, str] = {
     "POST /api/v1/companies/{company_id}/agent-keys": _ACCESS,
     "DELETE /api/v1/companies/{company_id}/agent-keys/{key_id}": _ACCESS,
     "PUT /api/v1/companies/{company_id}/agent-access": _ACCESS,
+    "GET /api/v1/companies/{company_id}/integrasjonsnokler": _ACCESS,
+    "POST /api/v1/companies/{company_id}/integrasjonsnokler": _ACCESS,
+    "DELETE /api/v1/companies/{company_id}/integrasjonsnokler/{key_id}": _ACCESS,
     "GET /api/v1/companies/{company_id}/members": _ACCESS,
     "PATCH /api/v1/companies/{company_id}/members/{user_id}": _ACCESS,
     "DELETE /api/v1/companies/{company_id}/members/{user_id}": _ACCESS,
@@ -183,7 +209,18 @@ _NOT_FOR_AGENTS: dict[str, str] = {
     "PATCH /api/v1/companies/{company_id}/bankkontoer/{bank_account_id}": _MONEY,
     "DELETE /api/v1/companies/{company_id}/bankkontoer/{bank_account_id}": _MONEY,
     "POST /api/v1/companies/{company_id}/bekreft": _GOVERNMENT,
+    "POST /api/v1/companies/{company_id}/altinn/systembruker": _GOVERNMENT,
+    "POST /api/v1/companies/{company_id}/altinn/systembruker/oppdater": _GOVERNMENT,
     "POST /api/v1/companies/{company_id}/peppol": _PEPPOL_REGISTRATION,
+    "PUT /api/v1/companies/{company_id}/peppol/mottak": _PEPPOL_REGISTRATION,
+    "PUT /api/v1/companies/{company_id}/mottak/epost-innstillinger": _EMAIL_INBOX_SECURITY,
+    "POST /api/v1/webhooks/inbound-email": _INBOUND_EMAIL_WEBHOOK,
+    "POST /api/v1/webhooks/mollie": _MOLLIE_WEBHOOK,
+    "POST /api/v1/webhooks/ademico": _ADEMICO_WEBHOOK,
+    "PUT /api/v1/companies/{company_id}/ki/abonnement": _KI_PURCHASE,
+    "DELETE /api/v1/companies/{company_id}/ki/abonnement": _KI_PURCHASE,
+    "POST /api/v1/companies/{company_id}/ki/betaling": _KI_PURCHASE,
+    "GET /api/v1/companies/{company_id}/ki/betaling/{reference}": _KI_PURCHASE,
     "GET /api/v1/skatt/altinn/authorized-parties": _GOVERNMENT,
     "GET /api/v1/skatt/idporten/callback": _GOVERNMENT,
     "GET /api/v1/skatt/idporten/start": _GOVERNMENT,
@@ -451,6 +488,37 @@ def test_what_goes_as_the_person_waits_for_the_person() -> None:
         "These routes send with the person's ID-porten login but a key could call them "
         f"without the person's approval. Declare them key_send('…', id_porten=True): {loose}"
     )
+
+
+def test_no_id_porten_route_is_open_to_integrations() -> None:
+    """A server's integration key never acts with somebody's ID-porten login (rule 15).
+
+    It sends without asking, which the owner allowed for invoices on Peppol
+    and for nothing that goes to the state as a person. The gate refuses such
+    a route even if it declared the purpose; this keeps the declaration from
+    being made at all. Both ways of seeing it: the extension, and a call that
+    opens the login.
+    """
+    routes = [
+        (context.path, context.original_route)
+        for context in iter_route_contexts(create_app().routes)
+        if isinstance(context.original_route, APIRoute)
+    ]
+    assert len(routes) > 100, "the walk no longer finds the routes; this test would pass on none"
+    open_to_integrations = [
+        (path, route)
+        for path, route in routes
+        if (route.openapi_extra or {}).get(INTEGRATION_EXTENSION)
+    ]
+    assert open_to_integrations, "no route declares a purpose; this test would pass on none"
+    wrong = sorted(
+        f"{method} {path}"
+        for path, route in open_to_integrations
+        if (route.openapi_extra or {}).get(KEY_ID_PORTEN_EXTENSION)
+        or "government_login_for(" in inspect.getsource(route.endpoint)
+        for method in sorted(route.methods or ())
+    )
+    assert not wrong, f"These go with a person's ID-porten login and must not be: {wrong}"
 
 
 def test_a_skill_teaches_only_what_a_key_can_call() -> None:

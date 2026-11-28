@@ -1,6 +1,6 @@
 ---
 title: Let KI fill in the invoice from the customer's e-mail
-description: How a person pastes the customer's e-mail with invoice details, or a sentence about the sale, into the box at the top of the Faktura page in Myntos and gets the buyer, the dates, the reference and the lines filled in by KI. Use when someone asks whether Myntos can fill in an invoice from an e-mail, read the customer's invoice address for them, find the customer's organisation number and address from the company name, or where the KI box on the invoice is.
+description: How a person pastes the customer's e-mail with invoice details, or a sentence about the sale, into the box at the top of the Faktura page in Myntos and gets the buyer, the dates, the reference and the lines filled in by KI. Use when someone asks whether Myntos can fill in an invoice from an e-mail or a screenshot of one, read the customer's invoice address for them, find the customer's organisation number and address from the company name, or where the KI box on the invoice is.
 pages: /faktura/
 skill: myntos-faktura
 ---
@@ -42,7 +42,7 @@ may be a private person.
 
 - The role «Medlem», «Administrator» or «Eier».
 - KI switched on for the company. It is on unless someone ticked «Slå av KI
-  for …» on the «KI» page (`https://myntos.no/ki/`).
+  for …» under «Innstillinger» → «KI i Myntos» (`https://myntos.no/organisasjon/#ki`).
 
 ## Steps
 
@@ -52,26 +52,33 @@ may be a private person.
 2. Paste the customer's e-mail, greeting and signature included, or write
    what was sold, for example «Faktura til Bygg AS for 10 timer rådgivning
    levert 14. oktober, 1 500 kroner timen. Deres ref: Ola Nordmann».
-3. Press «Fyll ut fakturaen». The page says «Fyller ut fakturaen …».
-4. Every field it filled in is tinted and marked «KI» after its label, and a
+   If they only have the e-mail as a screenshot or a photo, paste it straight
+   into the box (Ctrl+V / Cmd+V), or press «Legg ved bilde» under the box and
+   choose the picture: its text is added to the box, and the page says «Teksten
+   fra bildet er lagt inn. Se over den før du sender.». Check it before going on.
+3. Optional: at «KI-nivå» under the box, choose «Medium» or «Smart» if the
+   company has a KI plan and the e-mail is long or muddled. «Gratis» is chosen
+   otherwise ([Choose the KI level](https://myntos.no/llms/help/ai/choose-a-ki-level.md)).
+4. Press «Fyll ut fakturaen». The page says «Fyller ut fakturaen …».
+5. Every field it filled in is tinted and marked «KI» after its label, and a
    message under the box says what it filled in, such as «Fylte inn kjøperen
    og referansen.». The mark goes away from a field when they change it.
    Lines it added are marked «KI» the same way. When there is an
    organisation number, the line under «Organisasjonsnummer» shows the
    registered name and company form, and the address fields fill in from
    Enhetsregisteret a moment later. Check that it is the right company.
-5. If the text had no lines in it, as a customer's e-mail usually does,
+6. If the text had no lines in it, as a customer's e-mail usually does,
    describe the sale in the second box, under «Linjer»:
    [Let KI write the lines](https://myntos.no/llms/help/invoices/add-lines-with-ki.md).
    Or type the lines.
-6. Check everything marked «KI», then carry on:
+7. Check everything marked «KI», then carry on:
    [Issue an invoice](https://myntos.no/llms/help/invoices/issue-an-invoice.md).
 
 ## If something stops them
 
 | What they see | Why | What to do |
 | --- | --- | --- |
-| No box at the top | KI is switched off for the company, Myntos has no model available, or their role is «Leser» | Fill in the form by hand, or have KI switched on again on the «KI» page |
+| No box at the top | KI is switched off for the company, Myntos has no model available, or their role is «Leser» | Fill in the form by hand, or have KI switched on again under «Innstillinger» → «KI i Myntos» (`https://myntos.no/organisasjon/#ki`) |
 | «Kjøperen sto allerede i skjemaet, så den er ikke endret.» | A customer was chosen, or part of a buyer was typed, before they pressed the button. The KI never changes a buyer someone wrote | Set «Kunde» back to «Skriv inn kjøperen selv» and clear the buyer fields, then press «Fyll ut fakturaen» again |
 | «Kunden er satt til «…», fordi det er den eneste kunden som passer til «…». Kontroller at det er riktig kunde.» | The text named the customer by part of their name | Check «Kunde», and choose another if it is wrong |
 | «Flere kunder passer til «…»: …» | More than one registered customer fits the name | Choose the right one in «Kunde» |
@@ -85,12 +92,17 @@ may be a private person.
 | «Teksten sier ikke hva som er solgt, så fakturaen har ingen linjer ennå.» | Normal for a customer's e-mail | Describe the sale under «Linjer», or type the lines |
 | «Vi fant verken kjøper eller fakturalinjer i teksten. …» | Nothing in the text could be used | Paste the part with the invoice details, or fill in the form by hand |
 | «Vi fikk ikke svar fra Løynd nå. Fyll ut selv, eller prøv igjen.» | The model did not answer | Try again in a moment, or fill in the form |
+| «Vi fant ingen tekst i bildet. Skriv det inn selv.» | The picture added with «Legg ved bilde» had no text Myntos could read | Paste or type the details |
+| «… svaret kommer fra den gratis modellen. …» | «Medium» or «Smart» was chosen, but the company's plan has ended or its weekly quota is spent, or the larger model did not answer. «Gratis» filled in the form | Check the form as usual. See [Choose the KI level](https://myntos.no/llms/help/ai/choose-a-ki-level.md) |
 
 ## Good to know
 
-- The text goes to Løynd, the model Myntos uses, which runs in Norway. What
-  it sees is explained on the «KI» page (`https://myntos.no/ki/`). The
+- The text goes to Løynd, the KI service Myntos uses, inside the EEA. What
+  it sees is explained on the KI about page (`https://myntos.no/ki/about/`). The
   company's customer list is not sent to it.
+- A picture added with «Legg ved bilde» is read on Løynd's own machines in
+  Norway and is not kept. Only the text in the box is sent when they press
+  «Fyll ut fakturaen».
 - A date or a place the form filled in by itself (today, 14 days ahead, the
   company's town) is replaced if the text names another. Anything they typed
   is never replaced.

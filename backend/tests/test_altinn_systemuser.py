@@ -35,7 +35,7 @@ def _settings(**overrides: Any) -> Settings:
     values: dict[str, Any] = {
         "altinn_vendor_orgnr": "938193045",
         "altinn_system_name": "myntos",
-        "altinn_system_redirect_url": "https://myntos.no/skatt/systembruker/godkjent",
+        "altinn_system_redirect_url": "https://myntos.no/organisasjon/",
         "altinn_platform_base_url": "https://platform.tt02.altinn.no",
         "maskinporten_client_id": "f8293b48-86b5-466c-9823-526b1b619434",
     }
@@ -133,6 +133,30 @@ async def test_the_request_names_the_customer_the_system_and_the_rights(
     assert seen["body"]["rights"] == [
         {"resource": [{"id": "urn:altinn:resource", "value": RESOURCE}]}
     ]
+    # No packages asked for, so none sent: the request is the one TT02 accepted.
+    assert "accessPackages" not in seen["body"]
+
+
+async def test_mva_is_asked_for_as_its_access_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production does not let the MVA app be delegated as a resource."""
+    seen: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(201, json=_body())
+
+    monkeypatch.setattr(systemuser, "_client", _transport(handler))
+    await request_system_user(
+        "token",
+        customer_orgnr=CUSTOMER,
+        external_ref=REF,
+        resources=(RESOURCE,),
+        access_packages=("urn:altinn:accesspackage:merverdiavgift",),
+        settings=_settings(),
+    )
+    assert seen["body"]["accessPackages"] == [{"urn": "urn:altinn:accesspackage:merverdiavgift"}]
 
 
 async def test_a_new_request_carries_the_url_the_customer_must_open(

@@ -470,7 +470,11 @@ def test_a_camera_roll_title_is_not_a_counterparty() -> None:
     """
     assert interpretation._clean_title("IMG_9362.png") is None
     assert interpretation._clean_title("Screenshot 2026-09-05 at 16.04.png") is None
+    assert interpretation._clean_title("image.png") is None
+    assert interpretation._clean_title("skjermbilde-1.png") is None
     assert interpretation._clean_title("eBay") == "eBay"
+    assert interpretation._clean_title("Foto Knudsen") == "Foto Knudsen"
+    assert interpretation._clean_title("Image Solutions AS") == "Image Solutions AS"
 
 
 def test_a_clause_off_a_status_page_is_not_offered_as_a_motpart() -> None:
@@ -1444,6 +1448,11 @@ def test_an_ordinary_norwegian_invoice_is_not_read_as_voec() -> None:
 
 def test_a_camera_roll_name_says_nothing() -> None:
     assert interpretation.is_camera_roll("IMG 9461")
+    assert interpretation.is_camera_roll("image")
+    assert interpretation.is_camera_roll("skjermbilde")
+    assert interpretation.is_camera_roll("skjermbilde-1")
+    assert not interpretation.is_camera_roll("Foto Knudsen")
+    assert not interpretation.is_camera_roll("Image Solutions AS")
     assert not interpretation.is_camera_roll("Order details eBay")
 
 

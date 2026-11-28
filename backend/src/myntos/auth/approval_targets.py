@@ -26,11 +26,18 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from myntos.aarsregnskap import service as aarsregnskap_service
+from myntos.aksjonaer import service as aksjonaer_service
+from myntos.aksjonaer.errors import AksjonaerError
+from myntos.domain.analyse import jobs as analyse_jobs
+from myntos.domain.analyse.errors import AnalysisRunNotFoundError
 from myntos.domain.anlegg.register import get_asset
 from myntos.domain.bank.service import get_line
 from myntos.domain.faktura.errors import FakturaError
 from myntos.domain.faktura.models import DocumentType, InvoiceStatus
 from myntos.domain.faktura.service import get_document
+from myntos.domain.ki import chat as ki_chat
+from myntos.domain.ki.errors import KiError
 from myntos.domain.ledger.cashflow import CashFlowDirection
 from myntos.domain.ledger.dimensions import get_dimension, get_value
 from myntos.domain.ledger.errors import LedgerError
@@ -38,9 +45,14 @@ from myntos.domain.ledger.kontoplan import get_account
 from myntos.domain.ledger.models import Company, PartyType
 from myntos.domain.ledger.parties import get_party
 from myntos.domain.ledger.service import get_voucher
+from myntos.domain.mottak import service as mottak_service
+from myntos.domain.mottak.errors import MottakError
 from myntos.domain.mva import service as mva_service
 from myntos.domain.mva.codes import Meldingskategori
 from myntos.domain.mva.periods import PeriodType
+from myntos.domain.peppol import service as peppol_service
+from myntos.domain.peppol.errors import PeppolError
+from myntos.domain.peppol.models import IncomingDocumentType
 from myntos.saft.jobs import ImportNotFoundError
 from myntos.saft.models import ImportPurpose, SaftImport
 from myntos.skattemelding import service as skattemelding_service
@@ -147,6 +159,72 @@ async def _import(db: AsyncSession, company: Company, path: str, pk: int) -> str
     )
 
 
+async def _incoming_invoice(db: AsyncSession, company: Company, path: str, pk: int) -> str:
+    doc = await peppol_service.get_incoming(db, company=company, incoming_id=pk)
+    kind = (
+        "Innkommende kreditnota"
+        if doc.document_type is IncomingDocumentType.KREDITNOTA
+        else "Innkommende faktura"
+    )
+    dated = f", {_dato(doc.issue_date)}" if doc.issue_date else ""
+    return (
+        f"{kind} nr. {doc.invoice_number} fra {doc.seller_name}{dated}, "
+        f"{_kroner(doc.gross_amount)} {doc.currency}"
+    )
+
+
+async def _incoming_mail(db: AsyncSession, company: Company, path: str, pk: int) -> str:
+    doc = await mottak_service.get_mail_document(db, company=company, mail_id=pk)
+    subject = f" «{doc.subject}»" if doc.subject else ""
+    return f"E-postfaktura{subject} ({doc.filename}) fra {doc.sender_email}"
+
+
+async def _analysis_run(db: AsyncSession, company: Company, path: str, pk: int) -> str:
+    run = await analyse_jobs.get_run(db, company.id, pk)
+    if run is None:
+        raise AnalysisRunNotFoundError("finner ikke KI-kjøringen")
+    names = {
+        "merking": "Bilagslesing",
+        "dyp": "Dyp KI-analyse",
+        "revisor": "KI-revisor",
+        "rydding": "KI-rydding",
+    }
+    label = names.get(run.kind, "KI-analyse")
+    if run.period_from is not None and run.period_to is not None:
+        return f"{label} for {_dato(run.period_from)} til {_dato(run.period_to)}"
+    return f"{label} med nummer {pk}"
+
+
+async def _chat_thread(db: AsyncSession, company: Company, path: str, pk: int) -> str:
+    thread = await ki_chat.get_thread(db, company_id=company.id, thread_id=pk)
+    return f"KI-samtalen «{thread.title}»"
+
+
+async def _share_class(db: AsyncSession, company: Company, path: str, pk: int) -> str:
+    sc = await aksjonaer_service.get_share_class(db, company, pk)
+    return f"Aksjeklassen {sc.code} ({sc.name})"
+
+
+async def _shareholder(db: AsyncSession, company: Company, path: str, pk: int) -> str:
+    holder = await aksjonaer_service.get_shareholder(db, company, pk)
+    return f"Aksjonæren {holder.name}"
+
+
+async def _share_event(db: AsyncSession, company: Company, path: str, pk: int) -> str:
+    ev = await aksjonaer_service.get_event(db, company, pk)
+    return f"Aksjehendelsen ({ev.event_type}) {_dato(ev.event_date)}"
+
+
+async def _aksjonaer_filing(db: AsyncSession, company: Company, path: str, pk: int) -> str:
+    filing = await aksjonaer_service.get_filing(db, company, pk)
+    return f"Aksjonærregisteroppgaven for {filing.year} (aksjeklasse {filing.share_class_code})"
+
+
+async def _aarsregnskap_filing(db: AsyncSession, company: Company, path: str, pk: int) -> str:
+    filing = await aarsregnskap_service.get_filing(db, company, pk)
+    return f"Årsregnskapet for {filing.year}"
+
+
 _DESCRIBE: dict[str, Describe] = {
     "voucher_id": _voucher,
     "document_id": _document,
@@ -158,6 +236,15 @@ _DESCRIBE: dict[str, Describe] = {
     "dimension_id": _dimension,
     "dimension_value_id": _dimension_value,
     "import_id": _import,
+    "incoming_id": _incoming_invoice,
+    "mail_id": _incoming_mail,
+    "run_id": _analysis_run,
+    "thread_id": _chat_thread,
+    "share_class_id": _share_class,
+    "shareholder_id": _shareholder,
+    "event_id": _share_event,
+    "aksjonaer_filing_id": _aksjonaer_filing,
+    "aarsregnskap_filing_id": _aarsregnskap_filing,
 }
 
 # Records with no lookup of their own above, named so the person at least
@@ -179,6 +266,15 @@ _GONE: dict[str, str] = {
     "dimension_id": "Dimensjonen",
     "dimension_value_id": "Verdien",
     "import_id": "Opplastingen",
+    "incoming_id": "Den innkommende e-fakturaen",
+    "mail_id": "E-postfakturaen",
+    "run_id": "KI-analysen",
+    "thread_id": "KI-samtalen",
+    "share_class_id": "Aksjeklassen",
+    "shareholder_id": "Aksjonæren",
+    "event_id": "Aksjehendelsen",
+    "aksjonaer_filing_id": "Aksjonærregisteroppgaven",
+    "aarsregnskap_filing_id": "Årsregnskapet",
 }
 
 
@@ -219,6 +315,6 @@ async def describe(
             continue
         try:
             lines.append(await describe_one(db, company, path, pk))
-        except (LedgerError, FakturaError):
+        except (LedgerError, AksjonaerError, FakturaError, PeppolError, MottakError, KiError):
             lines.append(f"{_GONE[name]} finnes ikke i regnskapet")
     return lines

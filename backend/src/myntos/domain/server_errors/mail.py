@@ -1,6 +1,7 @@
 """The one mail the error log causes: a line to the operator that something broke.
 
-Plain text, to ``SERVER_ERROR_NOTIFY_TO`` and nobody else. It says what the
+Plain text, to ``SERVER_ERROR_NOTIFY_TO`` (or ``DEVELOPER_MAIL``) and nobody
+else. It says what the
 operator's page says about a kind of failure and nothing more: its number, the
 logger, the log line's template, the route's template and the exception's
 type. All of that is code, which is why the row may keep it (docs/operator.md);

@@ -17,6 +17,11 @@ dependencies = [
     "asyncpg>=0.29",
     "alembic>=1.13",
     "httpx>=0.27",
+    # Public Peppol BDXL SML lookup (DNS NAPTR) to check whether a buyer can
+    # receive EHF over Peppol before an invoice is issued. Also pulled in by
+    # email-validator; listed here directly because myntos.integrations.peppol_smp
+    # imports dns.asyncresolver itself.
+    "dnspython>=2.7",
     # RS256 signing of Maskinporten JWT grants; also verifies Google ID tokens.
     # The floors below are the releases that fixed advisories reachable here:
     # login tokens for pyjwt, an uploaded bilag for pypdf and Pillow.

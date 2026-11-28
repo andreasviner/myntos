@@ -22,12 +22,59 @@ import re
 from collections.abc import Awaitable, Callable
 
 from fastapi import Request, Response, status
+from fastapi.exception_handlers import (
+    http_exception_handler,
+    request_validation_exception_handler,
+)
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from myntos.aarsregnskap.errors import (
+    AarsregnskapChangedError,
+    AarsregnskapConfirmationRequiredError,
+    AarsregnskapDocumentNotFoundError,
+    AarsregnskapFilingNotFoundError,
+    AarsregnskapNotReadyError,
+    AarsregnskapNotSubmittableError,
+    AarsregnskapRemoteError,
+    AarsregnskapSubmissionNotAvailableError,
+    InvalidAarsregnskapDataError,
+)
+from myntos.aksjonaer.errors import (
+    AksjonaerConfirmationRequiredError,
+    AksjonaerDocumentNotFoundError,
+    AksjonaerFilingNotFoundError,
+    AksjonaerNotReadyError,
+    AksjonaerPrefillNotFoundError,
+    AksjonaerRemoteError,
+    AksjonaerSubmissionNotAvailableError,
+    DuplicateShareClassError,
+    InvalidAksjonaerDataError,
+    ShareClassInUseError,
+    ShareClassNotFoundError,
+    ShareEventNotFoundError,
+    ShareholderInUseError,
+    ShareholderNotFoundError,
+)
 from myntos.auth.approvals import ApprovalHeld
 from myntos.auth.operator import NotTheOperatorError, OperatorError, OperatorPageOffError
 from myntos.core.clock import as_utc
 from myntos.core.config import get_settings
+from myntos.domain.altinn.errors import (
+    InvalidSystemUserResourceError,
+    SystemUserNotApprovedError,
+    SystemUserNotAvailableError,
+    SystemUserRemoteError,
+    SystemUserRequestNotFoundError,
+)
+from myntos.domain.analyse.errors import (
+    AnalyseError,
+    AnalysisReportNotFoundError,
+    AnalysisRunNotFoundError,
+    InvalidAnalysisPeriodError,
+    UnknownDatasetError,
+)
 from myntos.domain.anlegg.errors import (
     DepreciationExistsError,
     DepreciationNotPostableError,
@@ -120,11 +167,14 @@ from myntos.domain.identity.errors import (
     IdentityError,
     IdentityNotFoundError,
     IdPortenLoginRequiredError,
+    IntegrationKeyWrongAddressError,
     InvalidAgentScopeError,
     InvalidAgentTokenError,
     InvalidCredentialsError,
     InvalidEmailTokenError,
     InvalidGrantError,
+    InvalidIntegrationAddressError,
+    InvalidIntegrationKeyError,
     InvalidInvitationError,
     InvalidProviderSignupError,
     InvitationEmailMismatchError,
@@ -137,6 +187,7 @@ from myntos.domain.identity.errors import (
     NotAMemberError,
     NotAnAccessTokenError,
     NotForAgentKeysError,
+    NotForIntegrationKeysError,
     NotYourAgentError,
     PermissionDeniedError,
     ReauthenticationFailedError,
@@ -145,6 +196,19 @@ from myntos.domain.identity.errors import (
     SessionNotFoundError,
     UnverifiedProviderEmailError,
     WeakPasswordError,
+)
+from myntos.domain.ki.errors import (
+    KiBillingNotConfiguredError,
+    KiChatThreadNotFoundError,
+    KiError,
+    KiInvoiceNotFoundError,
+    KiModelUnavailableError,
+    KiPaymentNotFoundError,
+    KiPaymentProviderError,
+    KiPlanNotFoundError,
+    KiPurchaseNotAvailableError,
+    KiSubscriptionNotFoundError,
+    KiTurnedOffError,
 )
 from myntos.domain.ledger.dimensions import (
     DimensionInUseError,
@@ -188,6 +252,18 @@ from myntos.domain.ledger.errors import (
 )
 from myntos.domain.ledger.posting import TaxRateNotFoundError
 from myntos.domain.manuelt_bilag.errors import InvalidManualVoucherError
+from myntos.domain.mottak.errors import (
+    InboundEmailRateLimitedError,
+    InboxNotAvailableError,
+    InvalidAllowedSenderError,
+    InvalidInboundEmailError,
+    InvalidWebhookSignatureError,
+    MailDocumentAlreadyBookedError,
+    MailDocumentDismissedError,
+    MailDocumentInvalidError,
+    MailDocumentNotFoundError,
+    MottakError,
+)
 from myntos.domain.mva.errors import (
     AdjustmentNotFoundError,
     ConfirmationRequiredError,
@@ -209,10 +285,16 @@ from myntos.domain.peppol.errors import (
     AlreadySentError,
     CompanyAddressMissingError,
     CompanyNotConfirmedError,
+    IncomingInvoiceAlreadyBookedError,
+    IncomingInvoiceDismissedError,
+    IncomingInvoiceInvalidError,
+    IncomingInvoiceNotFoundError,
     NotRegisteredError,
     NotSendableError,
     PeppolError,
     PeppolNotAvailableError,
+    ReceivingAlreadyClaimedError,
+    ReceivingConflictError,
     RecipientNotOnPeppolError,
     SendUncertainError,
     TransmissionNotFoundError,
@@ -255,10 +337,12 @@ HandledError = (
     | LedgerError
     | FakturaError
     | PeppolError
+    | MottakError
     | BrregError
     | FeedbackError
     | OperatorError
     | ServerErrorLogError
+    | KiError
 )
 
 _STATUS_BY_ERROR: dict[type[Exception], int] = {
@@ -333,6 +417,13 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     # 404 like every other record that is not yours to name.
     AgentKeyNotFoundError: status.HTTP_404_NOT_FOUND,
     AgentRateLimitedError: status.HTTP_429_TOO_MANY_REQUESTS,
+    # A server's integration key: 401 for a secret that opens nothing, as for
+    # any bearer token; 403 for a live key used from the wrong address or on a
+    # route outside its purpose; 422 for addresses that cannot be listed.
+    InvalidIntegrationKeyError: status.HTTP_401_UNAUTHORIZED,
+    IntegrationKeyWrongAddressError: status.HTTP_403_FORBIDDEN,
+    NotForIntegrationKeysError: status.HTTP_403_FORBIDDEN,
+    InvalidIntegrationAddressError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     # --- Feedback from anybody (docs/feedback.md) ---
     InvalidFeedbackError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     # 404 for a reference never given out, withdrawn, or past its time alike:
@@ -346,19 +437,28 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     # 503: the deployment has no access point, which no retry will change and
     # no person using Myntos can fix.
     PeppolNotAvailableError: status.HTTP_503_SERVICE_UNAVAILABLE,
-    # 404 like every sub-resource: the invoice exists, a send of it does not.
+    # 404 like every sub-resource: the invoice exists, a send of it does not,
+    # or the incoming EHF belongs to another company.
     TransmissionNotFoundError: status.HTTP_404_NOT_FOUND,
-    # 409 for every step still missing on the way to a send: the company not
-    # confirmed or registered, the document a draft or without a buyer orgnr,
-    # sent once already, a customer the network cannot reach. Each is the
-    # state of the books or of the customer, not a malformed request, and each
-    # message says what to do instead.
+    IncomingInvoiceNotFoundError: status.HTTP_404_NOT_FOUND,
+    # 409 for every step still missing on the way to a send or receive: the
+    # company not confirmed or registered, another set of books or access point
+    # holding receiving for this orgnr, the document a draft or without a buyer
+    # orgnr, sent or booked once already, dismissed, or a customer the network
+    # cannot reach.
     CompanyNotConfirmedError: status.HTTP_409_CONFLICT,
     CompanyAddressMissingError: status.HTTP_409_CONFLICT,
     NotRegisteredError: status.HTTP_409_CONFLICT,
+    ReceivingAlreadyClaimedError: status.HTTP_409_CONFLICT,
+    ReceivingConflictError: status.HTTP_409_CONFLICT,
     NotSendableError: status.HTTP_409_CONFLICT,
     AlreadySentError: status.HTTP_409_CONFLICT,
     RecipientNotOnPeppolError: status.HTTP_409_CONFLICT,
+    IncomingInvoiceAlreadyBookedError: status.HTTP_409_CONFLICT,
+    IncomingInvoiceDismissedError: status.HTTP_409_CONFLICT,
+    # 422: what the booking request sent (e.g. non-NOK currency without an
+    # explicit NOK amount) cannot be posted as given.
+    IncomingInvoiceInvalidError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     # 502: the access point refused what Myntos wrote, could not be reached,
     # or did not answer a send in time. The request was fine; what we asked on
     # its behalf was not, and the uncertain one is said apart because sending
@@ -472,6 +572,14 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     # 409: it exists and is switched off; switching it on is the fix.
     InactiveDimensionError: status.HTTP_409_CONFLICT,
     InvalidDimensionError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    # --- Analyse (docs/analyse.md) ---
+    # A dataset is named in the path, so an unknown one is not there, like a record.
+    UnknownDatasetError: status.HTTP_404_NOT_FOUND,
+    # Another company's run or report is the same 404 as one that does not exist.
+    AnalysisRunNotFoundError: status.HTTP_404_NOT_FOUND,
+    AnalysisReportNotFoundError: status.HTTP_404_NOT_FOUND,
+    InvalidAnalysisPeriodError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    AnalyseError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     # --- Fakturering ---
     InvoiceNotFoundError: status.HTTP_404_NOT_FOUND,
     # 404 on the XML resource, not on the invoice: the document exists, the
@@ -591,6 +699,58 @@ _STATUS_BY_ERROR: dict[type[Exception], int] = {
     # on the caller's behalf is not. The distinction decides whether an alert
     # about this is ours to act on.
     RegisterUnavailableError: status.HTTP_502_BAD_GATEWAY,
+    # --- Mottatt (e-postmottak) ---
+    InboxNotAvailableError: status.HTTP_503_SERVICE_UNAVAILABLE,
+    InvalidWebhookSignatureError: status.HTTP_401_UNAUTHORIZED,
+    InboundEmailRateLimitedError: status.HTTP_429_TOO_MANY_REQUESTS,
+    InvalidInboundEmailError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    InvalidAllowedSenderError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    MailDocumentNotFoundError: status.HTTP_404_NOT_FOUND,
+    MailDocumentAlreadyBookedError: status.HTTP_409_CONFLICT,
+    MailDocumentDismissedError: status.HTTP_409_CONFLICT,
+    MailDocumentInvalidError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    # --- KI-planer, abonnement og chat ---
+    KiPlanNotFoundError: status.HTTP_404_NOT_FOUND,
+    KiPaymentNotFoundError: status.HTTP_404_NOT_FOUND,
+    KiSubscriptionNotFoundError: status.HTTP_404_NOT_FOUND,
+    KiInvoiceNotFoundError: status.HTTP_404_NOT_FOUND,
+    KiChatThreadNotFoundError: status.HTTP_404_NOT_FOUND,
+    KiPurchaseNotAvailableError: status.HTTP_503_SERVICE_UNAVAILABLE,
+    KiBillingNotConfiguredError: status.HTTP_503_SERVICE_UNAVAILABLE,
+    KiTurnedOffError: status.HTTP_409_CONFLICT,
+    KiPaymentProviderError: status.HTTP_502_BAD_GATEWAY,
+    KiModelUnavailableError: status.HTTP_502_BAD_GATEWAY,
+    # --- Altinn 3 systembruker ---
+    SystemUserNotAvailableError: status.HTTP_503_SERVICE_UNAVAILABLE,
+    SystemUserRequestNotFoundError: status.HTTP_404_NOT_FOUND,
+    SystemUserNotApprovedError: status.HTTP_409_CONFLICT,
+    InvalidSystemUserResourceError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    SystemUserRemoteError: status.HTTP_502_BAD_GATEWAY,
+    # --- Aksjeeierbok og aksjonærregisteroppgaven (RF-1086) ---
+    ShareClassNotFoundError: status.HTTP_404_NOT_FOUND,
+    ShareholderNotFoundError: status.HTTP_404_NOT_FOUND,
+    ShareEventNotFoundError: status.HTTP_404_NOT_FOUND,
+    AksjonaerFilingNotFoundError: status.HTTP_404_NOT_FOUND,
+    AksjonaerDocumentNotFoundError: status.HTTP_404_NOT_FOUND,
+    DuplicateShareClassError: status.HTTP_409_CONFLICT,
+    ShareClassInUseError: status.HTTP_409_CONFLICT,
+    ShareholderInUseError: status.HTTP_409_CONFLICT,
+    AksjonaerNotReadyError: status.HTTP_409_CONFLICT,
+    AksjonaerPrefillNotFoundError: status.HTTP_409_CONFLICT,
+    InvalidAksjonaerDataError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    AksjonaerConfirmationRequiredError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    AksjonaerSubmissionNotAvailableError: status.HTTP_503_SERVICE_UNAVAILABLE,
+    AksjonaerRemoteError: status.HTTP_502_BAD_GATEWAY,
+    # --- Årsregnskap til Regnskapsregisteret (RR-0002) ---
+    AarsregnskapFilingNotFoundError: status.HTTP_404_NOT_FOUND,
+    AarsregnskapDocumentNotFoundError: status.HTTP_404_NOT_FOUND,
+    AarsregnskapNotReadyError: status.HTTP_409_CONFLICT,
+    AarsregnskapChangedError: status.HTTP_409_CONFLICT,
+    AarsregnskapNotSubmittableError: status.HTTP_409_CONFLICT,
+    InvalidAarsregnskapDataError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    AarsregnskapConfirmationRequiredError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    AarsregnskapSubmissionNotAvailableError: status.HTTP_503_SERVICE_UNAVAILABLE,
+    AarsregnskapRemoteError: status.HTTP_502_BAD_GATEWAY,
 }
 
 _CAMEL_BOUNDARY = re.compile(r"(?<!^)(?=[A-Z])")
@@ -618,14 +778,103 @@ def status_for(error: Exception) -> int:
     return status.HTTP_400_BAD_REQUEST
 
 
+def _route_template(request: Request) -> str | None:
+    """``"PUT /api/v1/companies/{company_id}/peppol/mottak"``, never carrying ids."""
+    route = getattr(request.scope.get("route"), "path", None)
+    return f"{request.method} {route}" if isinstance(route, str) and route else None
+
+
+def _validation_summary(exc: RequestValidationError) -> str:
+    """Location and Pydantic error type only — never the rejected input values."""
+    parts: list[str] = []
+    for item in exc.errors()[:5]:
+        loc = ".".join(str(segment) for segment in item.get("loc", ())) or "request"
+        kind = str(item.get("type") or "invalid")
+        parts.append(f"{loc}:{kind}")
+    return ", ".join(parts) or "invalid"
+
+
+async def http_error_handler(request: Request, exc: Exception) -> Response:
+    """Log every FastAPI/Starlette HTTPException so 5xx gateway errors never vanish.
+
+    Routes that raise ``HTTPException(502/503)`` directly (for instance Altinn,
+    Skatteetaten, or OIDC startup) bypass :func:`domain_error_handler`. Logging
+    5xx at ERROR with the route template ensures they reach both the journal
+    and ``/drift/`` without carrying user data or request IDs; 4xx refusals log
+    at WARNING in the journal only.
+    """
+    if not isinstance(exc, StarletteHTTPException):  # pragma: no cover - registered for this type
+        raise exc
+    route = _route_template(request)
+    if exc.status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR:
+        _logger.error(
+            "HTTP %d error on %s",
+            exc.status_code,
+            route or f"{request.method} <unmatched>",
+            exc_info=exc,
+            extra={ROUTE_ATTRIBUTE: route},
+        )
+    elif exc.status_code >= status.HTTP_400_BAD_REQUEST:
+        _logger.warning(
+            "HTTP %d refusal on %s",
+            exc.status_code,
+            route or f"{request.method} <unmatched>",
+        )
+    return await http_exception_handler(request, exc)
+
+
+async def validation_error_handler(request: Request, exc: Exception) -> Response:
+    """Log FastAPI 422 request validation errors before returning the standard 422 JSON.
+
+    A Pydantic/FastAPI 422 on our own API routes usually indicates a frontend-to-
+    backend contract mismatch (such as a missing Content-Type header or renamed
+    field). Logging at ERROR with the route template ensures it appears on
+    ``/drift/`` without ever keeping request input values.
+    """
+    if not isinstance(exc, RequestValidationError):  # pragma: no cover - registered for this type
+        raise exc
+    route = _route_template(request)
+    _logger.error(
+        "request validation failed on %s (%s)",
+        route or f"{request.method} <unmatched>",
+        _validation_summary(exc),
+        exc_info=exc,
+        extra={ROUTE_ATTRIBUTE: route},
+    )
+    return await request_validation_exception_handler(request, exc)
+
+
 async def domain_error_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Render a handled error as JSON."""
+    """Render a handled error as JSON and log it so no failure goes unseen."""
     if not isinstance(exc, HandledError):  # pragma: no cover - registered per type
         raise exc
     status_code = status_for(exc)
+    code = error_code(type(exc))
+    route = _route_template(request)
+    if status_code >= status.HTTP_500_INTERNAL_SERVER_ERROR:
+        # 502/503 integration and infrastructure failures (Ademico, Skatteetaten,
+        # Brreg, mail, unconfigured services) belong on /drift/ as well as in the
+        # journal. Template and route carry no user data.
+        _logger.error(
+            "handled %d error (%s) on %s",
+            status_code,
+            code,
+            route or f"{request.method} <unmatched>",
+            exc_info=exc,
+            extra={ROUTE_ATTRIBUTE: route},
+        )
+    else:
+        # 4xx refusals are logged to the journal by status, error code and route
+        # template only (never paths carrying ids or feedback references).
+        _logger.warning(
+            "handled %d refusal (%s) on %s",
+            status_code,
+            code,
+            route or f"{request.method} <unmatched>",
+        )
     response = JSONResponse(
         status_code=status_code,
-        content={"detail": str(exc), "code": error_code(type(exc))},
+        content={"detail": str(exc), "code": code},
     )
     if status_code == status.HTTP_401_UNAUTHORIZED:
         # RFC 9110: a 401 must say how to authenticate. "Bearer" is the machine
@@ -639,7 +888,7 @@ async def domain_error_handler(request: Request, exc: Exception) -> JSONResponse
     elif isinstance(exc, FeedbackInboxFullError):
         # Until the operator has read some, which is days rather than minutes.
         response.headers["Retry-After"] = str(24 * 60 * 60)
-    elif isinstance(exc, FeedbackBusyError):
+    elif isinstance(exc, (FeedbackBusyError, InboundEmailRateLimitedError)):
         # The cap counts a rolling hour.
         response.headers["Retry-After"] = str(60 * 60)
     return response

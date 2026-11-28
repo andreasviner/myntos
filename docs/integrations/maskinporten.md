@@ -288,8 +288,18 @@ does nothing for `f8293b48`, which is a test client. The table below is the
 | `altinn:authentication/systemuser.request.read` / `.write` | usable | not registered |
 | `altinn:correspondence.read` | granted, not on client | not registered |
 | `altinn:events.subscribe` | granted, not on client | not registered |
-| `digdir:dialogporten` | granted, not on client | not registered |
+| `digdir:dialogporten` | usable (issued 2026-11-25) | not registered |
 | `skatteetaten:mvameldinginnsending` | **retired** - see mva.md | **retired** |
+
+**2026-11-25, with a new key on `f8293b48`** (its first since the 2026-09-06
+rebuild): test Maskinporten issues tokens for all seven Skatteetaten and
+Digdir scopes from the second grant round, so they are both granted in test and
+ticked onto the client. The aksjonærregisteroppgave scope was missing from the
+portal's «Legg til nytt scope» picker that day because the client already had
+it. A missing scope in the picker is no evidence about the grant: ask for a
+token. The same day, the portal kept the `kid` given in the pasted JWK. The
+2026-10-09 ID-porten test key had come back with a UUID instead, so read the kid
+off the Nøkler tab every time.
 
 Granted for org `938193045` in **both test and production** (Altinn Servicedesk,
 2026-08-28): the twelve Altinn/Digdir scopes above other than
@@ -299,7 +309,13 @@ To re-check any of this rather than trusting the table, ask Maskinporten for a
 token with one scope and read the refusal: `invalid_scope ... invalid scopes for
 client` means not registered on that client. The same wording is used for a scope
 that does not exist, so it cannot tell you whether a name is real - only the
-portal's picker can.
+portal's picker can. A scope that *is* on the client but not granted to the
+organisation gets a different answer: `invalid_scope - Consumer has not been
+granted access to the scope …` (production client, 2026-11-21). So Maskinporten
+does tell step 1 from step 2. ID-porten's authorization endpoint answers an
+unregistered scope with `Scope … not registered on client`. Whether it checks
+the grant before the login has not been seen, because every scope on the
+ID-porten clients was granted when they were probed.
 
 ## Applying for a scope Skatteetaten has not granted
 
@@ -348,7 +364,7 @@ stop counting in access checks on **2026-12-01**.
 | --- | --- |
 | System id | `938193045_myntos` |
 | Altinn's own handle | `426f7e05-23e1-4fd3-b256-e929063b0a30` |
-| Declared rights | `app_skd_formueinntekt-skattemelding-v2`, `app_skd_mva-melding-innsending-v1` |
+| Declared rights | `app_skd_formueinntekt-skattemelding-v2`, `app_skd_mva-melding-innsending-v1` in August. Since 2026-11-25, production's list, below: TT02 had made the MVA app non-delegable too, and offers the same `merverdiavgift` package |
 | Maskinporten client | `f8293b48-…` (test) |
 | `isVisible` | **true** (findable in Altinn's catalogue) |
 
@@ -358,8 +374,9 @@ Four things learned doing it:
   customer has approved a system user against it, changing it means every
   customer approving again.
 - **`rights` is a ceiling, not a grant.** It bounds what the system may ever
-  request; the customer's approval is what grants it, per customer. So the list
-  is the two apps we actually submit to and nothing more.
+  request; the customer's approval is what grants it, per customer. In August
+  the list was the two apps submitted to then. Production's list is longer
+  (below).
 - **`allowedredirecturls` must be https.** The loopback URL ID-porten requires
   is rejected here, so the deployed frontend is the only valid answer even in
   test.
@@ -372,6 +389,43 @@ still have system users, because the vendor generates the confirmation URL
 itself. Updating the registration is `PUT {vendor}/{system id}` with the **whole
 document** - a partial body missing `clientId` would unhook the system from its
 Maskinporten client, and nothing would say so until the next token request.
+
+**Registered in production on 2026-11-25**, with the owner's go-ahead:
+
+| | |
+| --- | --- |
+| System id | `938193045_myntos` (the same id as TT02; the environments do not share a register) |
+| Altinn's own handle | `f0145a50-510a-427f-b4e1-35fc6eb3fe79` |
+| Declared rights | `app_skd_formueinntekt-skattemelding-v2` and one Skatteetaten resource per scope granted by then (`systemregister.SYSTEM_RESOURCES`; skatteetaten.md, «The second application») |
+| Access packages | `urn:altinn:accesspackage:merverdiavgift`, for MVA only |
+| Maskinporten client | `a7693ab9-…` (production) |
+| Allowed redirect | `https://myntos.no/organisasjon/` |
+| `isVisible` | **true** |
+
+What production taught that TT02 had not:
+
+- **The MVA app is not delegable in production.** Its resource registry entry
+  says `delegable: false`. The first attempt named it in `rights`, as TT02 had
+  accepted, and got 400 `AUTH.VLD-00021` «One or more resources specified in
+  rights is marked as not delegable». MVA went over to access packages on
+  2026-04-15, so a system user reaches it only through a package. Of the
+  packages its policy accepts, `merverdiavgift` is the only one that is about
+  MVA. The rest are the regnskapsfører and revisor packages. So a customer who
+  wants MVA through a system user is asked for `merverdiavgift`
+  (`request_system_user(access_packages=…)`).
+- **Before declaring anything, ask the resource registry.** It is public and
+  takes no token:
+  - `GET https://platform.altinn.no/resourceregistry/api/v1/resource/{id}`
+    answers `delegable`.
+  - `…/{id}/policy/subjects` lists every access package and role that reaches
+    the resource.
+
+  That is how Frister and Krav og betalinger were found to be plain delegable
+  resources (`ske-frister`, `ske-krav-og-betalinger`). The `krav-og-utlegg`
+  package also reaches them, but it is a bundle, so the resources went in
+  instead.
+- **The register takes a plain Maskinporten token** with
+  `altinn:authentication/systemregister.write`. There is no exchange step.
 
 ### The approval is the customer's, in Altinn, and cannot be ours
 
@@ -476,9 +530,10 @@ No maintained Python library exists, so this is a thin module over `PyJWT`
 | The companies a person may report for | `myntos.integrations.altinn.authorized_parties` |
 | Skattemelding fetch/validate/submit | `myntos.integrations.skatteetaten.client` |
 | MVA validation and submission | `myntos.integrations.skatteetaten.mva` |
+| Aksjonærregisteroppgaven (RF-1086) prefill & submission | `myntos.integrations.skatteetaten.aksjonaer` |
 | Registering the system in Altinn's systemregister | `myntos.integrations.altinn.systemregister` |
-| System-user requests and approval polling | `myntos.integrations.altinn.systemuser` |
-| Tests (Digdir and Altinn stubbed) | `tests/test_digdir_auth.py`, `tests/test_altinn_submission.py`, `tests/test_altinn_authorized_parties.py`, `tests/test_altinn_systemregister.py`, `tests/test_altinn_systemuser.py` |
+| System-user requests and approval polling | `myntos.integrations.altinn.systemuser`, `myntos.domain.altinn`, `myntos.api.v1.systembruker` |
+| Tests (Digdir and Altinn stubbed) | `tests/test_digdir_auth.py`, `tests/test_altinn_submission.py`, `tests/test_altinn_authorized_parties.py`, `tests/test_altinn_systemregister.py`, `tests/test_altinn_systemuser.py`, `tests/test_aksjonaer_xml.py`, `tests/test_aksjonaer_api.py` |
 
 Key handling: the private key is read from `MASKINPORTEN_JWK_PATH` (or an
 injected secret env var); never from the repo; never logged, and neither are

@@ -117,6 +117,8 @@ export function needsLogin(
 const PAGES: [string, string, string][] = [
   ['/mva/spesifikasjoner', '/mva-justeringer/', 'Mva-justeringer'],
   ['/skattemelding', '/skattemelding/', 'Skattemelding'],
+  ['/aksjonaer', '/aksjonaer/', 'Aksjonærregisteroppgave'],
+  ['/aarsregnskap', '/aarsregnskap/', 'Årsregnskap'],
   ['/inngaende-balanse', '/inngaende-balanse/', 'Inngående balanse'],
   ['/manuelt-bilag', '/manuelt-bilag/', 'Manuelt bilag'],
   ['/anlegg', '/anlegg/', 'Anlegg og avskrivning'],

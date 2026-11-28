@@ -1,23 +1,18 @@
 /**
- * What the pages say about sending an invoice as EHF over Peppol.
+ * What the pages say about sending and receiving EHF over Peppol.
  *
- * Read by /faktura/, which sends and shows how a send stands, and by
- * /organisasjon/, which registers the company. Kept in one place so the two
- * pages, and the help articles that quote them, name each step the same way.
+ * Read by /faktura/, which sends and shows how a send stands, by
+ * /organisasjon/, which registers the company and toggles receiving, and by
+ * /innkommende/, which lists and books received supplier EHF invoices.
+ * Kept in one place so every page and help article names each step the same way.
  *
  * Sending is the default, not a second step: from 1 January 2027 an invoice to
  * another bokføringspliktig is only delivered when it travels as EHF, so the
  * review's main button issues and sends in one press whenever the customer can
- * receive (`delivery`). A separate «Send som EHF» after issuing was an invoice
- * issued, booked and then forgotten in the outbox, which is the one way of
- * getting the law wrong that this page could cause by itself.
- *
- * The backend decides every step (`GET …/peppol`); this only turns its answer
- * into the sentence for the first step still missing, because a person told
- * everything that is not done yet is a person who does none of it.
+ * receive (`delivery`).
  */
 
-import type { EhfSending, PeppolStanding } from './api';
+import type { EhfSending, IncomingEhfStatus, PeppolStanding } from './api';
 import { isoDate } from './format';
 
 /** The button on an issued invoice. */
@@ -28,10 +23,13 @@ export const SEND_AGAIN_LABEL = 'Send EHF på nytt';
 export const ISSUE_AND_SEND_LABEL = 'Utsted og send som EHF';
 /** Beside it, for an invoice the person wants issued but not sent yet. */
 export const ISSUE_ONLY_LABEL = 'Utsted uten å sende';
-/** The company page's button. */
+/** The company page's button to register for sending EHF. */
 export const REGISTER_LABEL = 'Registrer for e-faktura';
-/** The link to the access point's identity check. */
-export const VERIFY_LABEL = 'Fullfør identitetskontrollen';
+/** The invoice page's one-click button to activate EHF sending before the first invoice. */
+export const ACTIVATE_LABEL = 'Aktiver e-faktura (EHF)';
+/** The company page's buttons to turn Peppol receiving (ELMA/SMP) on or off. */
+export const ENABLE_RECEIVING_LABEL = 'Slå på mottak av e-faktura';
+export const DISABLE_RECEIVING_LABEL = 'Slå av mottak av e-faktura';
 
 /** The status column's word for a sent invoice. */
 export function sendingLabel(sending: EhfSending | null): string | null {
@@ -53,12 +51,18 @@ export function sendingSentence(sending: EhfSending): string {
   return 'EHF-en er sendt over Peppol. Vi venter på kvittering fra kundens system.';
 }
 
+/** Status label for an incoming EHF document in the inbox. */
+export function incomingStatusLabel(status: IncomingEhfStatus): string {
+  if (status === 'bokfort') return 'Bokført';
+  if (status === 'avvist') return 'Avvist';
+  return 'Ny';
+}
+
 /**
  * Whether to offer the send button on a document.
  *
  * A failed send is offered again; a pending or delivered one never is, because
- * an invoice that arrives twice can be paid twice. The backend refuses either
- * way (`already_sent`); this only keeps the button from being a trap.
+ * an invoice that arrives twice can be paid twice.
  */
 export function sendable(
   item: { status: string; has_ehf: boolean; buyer_orgnr: string | null; ehf_sending: EhfSending | null },
@@ -70,21 +74,17 @@ export function sendable(
 }
 
 /**
- * How an invoice about to be issued reaches the customer.
+ * Whether the invoice page should prompt the user to set up EHF before
+ * creating and sending their first business invoice.
  *
- * - `ehf`: over Peppol, sent by the same press that issues it.
- * - `not-on-peppol`: the access point found no Peppol address for this customer
- *   and document, so the person sends the PDF. A send would only be refused
- *   (`recipient_not_on_peppol`) after the invoice was issued and booked.
- * - `not-registered`: a business customer, and this company cannot send yet.
- * - `pdf`: nothing to say: a consumer or a buyer with no orgnr, or no access
- *   point in this installation.
- *
- * `receives` is the access point's answer about the customer, `null` when it
- * could not be asked. Not asked is not a no: the send then goes, and says
- * itself if the customer cannot take it, because holding back every invoice
- * while the lookup is down would make the PDF the default again.
+ * True whenever the deployment has a Peppol access point configured and this
+ * company cannot send yet. Private-consumer (B2C) invoices remain available
+ * via an explicit opt-out link on the setup card.
  */
+export function needsSetupGate(standing: PeppolStanding | null): boolean {
+  return standing !== null && standing.available && !standing.can_send;
+}
+
 export type Delivery = 'ehf' | 'not-on-peppol' | 'not-registered' | 'pdf';
 
 export function delivery(
@@ -98,13 +98,6 @@ export function delivery(
   return receives === false ? 'not-on-peppol' : 'ehf';
 }
 
-/**
- * The review's sentence about where the invoice goes, or `null` for nothing.
- *
- * For `ehf` it names the customer and the orgnr it is addressed to, because the
- * review is the only confirmation there is: the press that issues it sends it,
- * and a sent invoice cannot be called back.
- */
 export function deliverySentence(
   how: Delivery,
   draft: { buyer_name: string; buyer_orgnr: string | null },
@@ -126,44 +119,52 @@ export function deliverySentence(
   if (how === 'not-registered') {
     return (
       `Fra ${isoDate(mandatoryFrom)} skal fakturaer til andre bokføringspliktige sendes som ` +
-      'EHF over Peppol. Selskapet er ikke registrert for e-faktura ennå, så denne må du ' +
-      'sende selv.'
+      'EHF over Peppol, og e-faktura er standard i Myntos. Sett opp e-faktura før du kan ' +
+      'utstede faktura til en bedrift.'
     );
   }
   return null;
 }
 
 /**
- * The company page's sentence for where the company stands.
+ * The company page's sentence for where the company stands on sending EHF.
  *
- * Only the first missing step, each with what the person does about it.
  * `null` when the deployment has no access point: there is then no step a
  * person can take, and the card is not shown.
  */
 export function standingSentence(standing: PeppolStanding): string | null {
   if (!standing.available) return null;
-  if (standing.verified) {
+  if (standing.can_send) {
     return (
-      'Selskapet er registrert. Fakturaer til kunder på Peppol sendes som EHF når de ' +
-      'utstedes på Faktura-siden.'
-    );
-  }
-  if (standing.registered) {
-    return (
-      'Selskapet er registrert. Før det kan sende, må noen som signerer for selskapet ' +
-      '(daglig leder, et styremedlem med signaturrett eller prokura) fullføre ' +
-      'identitetskontrollen hos tilgangspunktet.'
+      'Selskapet er registrert for sending. Fakturaer til kunder på Peppol sendes som EHF når ' +
+      'de utstedes på Faktura-siden.'
     );
   }
   if (!standing.company_confirmed) {
     return (
-      'For å sende EHF må selskapet først bekreftes med ID-porten, så bare de som kan ' +
-      'handle for selskapet kan sende fakturaer i dets navn.'
+      'For å sende eller motta EHF må selskapet først bekreftes med ID-porten, så bare de som ' +
+      'kan handle for selskapet kan sende og motta fakturaer i dets navn.'
     );
   }
   return (
-    'Selskapet er ikke registrert for e-faktura. Registrer det for å sende fakturaer som ' +
-    'EHF over Peppol. Det registreres bare for å sende, så e-fakturaer du mottar i dag, ' +
+    'Selskapet er ikke registrert for e-faktura ennå. Registrer det for å sende fakturaer som ' +
+    'EHF over Peppol. Selve registreringen er bare for å sende, så e-fakturaer du mottar i dag, ' +
     'kommer fram som før.'
+  );
+}
+
+/** The company page's sentence for receiving supplier EHFs over Peppol (ELMA). */
+export function receivingSentence(standing: PeppolStanding): string | null {
+  if (!standing.available || !standing.company_confirmed) return null;
+  if (standing.can_receive) {
+    return (
+      'Mottak av e-faktura er slått på. Leverandørfakturaer sendt til selskapets ' +
+      'organisasjonsnummer over Peppol kommer inn under Innkommende e-faktura.'
+    );
+  }
+  return (
+    'Mottak av e-faktura er slått av. Å slå det på registrerer organisasjonsnummeret i ' +
+    'Peppol-nettverket (ELMA) gjennom Myntos. Hvis selskapet allerede mottar e-faktura i et ' +
+    'annet regnskapsprogram, må mottak slås av der først.'
   );
 }

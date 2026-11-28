@@ -91,7 +91,7 @@ Questions only appear when something is unclear; most bilag get none.
   wrote themselves is kept as written.
 - A field they choose by hand, or with an answer button, is not changed by
   later answers.
-- Answers go only to Myntos's own AI (Løynd, on servers in Norway), never to
+- Answers go only to Myntos's own AI (Løynd, inside the EEA), never to
   an outside AI provider and never into a web search.
 - Turning «Penger inn» / «Penger ut» around reads the bilag again; answers
   about the category are dropped, because they were about the other side.

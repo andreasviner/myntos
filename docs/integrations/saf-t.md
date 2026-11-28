@@ -36,6 +36,12 @@ There is **no periodic SAF-T filing**: the file is produced **on demand at an
 audit**, uploaded via Altinn form **RF-1363**. Limits: 200 MB/attachment,
 2 GB per XML file, max 10 attachments, one financial year per file, naming
 `SAF-T Financial_<orgnr>_<yyyymmddhhmiss>_<n>_<total>.xml`, ZIP recommended.
+Skatteetaten's api-dokumentasjon (read 2026-11-21) now lists **«Innsending av
+kontrollopplysninger (SAFT-regnskap, SAFT-kassasystem og andre
+kontrollopplysninger)»** as a reporting API, under the access form's area
+«Kontrollopplysninger». So the upload could go from Myntos with a systembruker
+instead of the person downloading the file and uploading it themselves. Nothing
+is built. If it is, it is a `key_send`, like every filing.
 
 ## Account mapping — the old standard kontoplan is DEAD
 

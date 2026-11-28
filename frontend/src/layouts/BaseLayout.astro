@@ -1,6 +1,7 @@
 ---
 import Logo from '../components/Logo.astro';
 import { guider } from '../data/flytting';
+import { KI_PLANS } from '../data/kiplaner';
 import { isIndexable } from '../lib/indexing';
 
 interface Props {
@@ -111,12 +112,14 @@ const structuredData = {
       // an assistant that tells somebody Myntos runs their payroll is repeating
       // our words, and they would be wrong. The same list closes /funksjoner/.
       description:
-        'Myntos is free bookkeeping software for Norwegian companies, and will stay free, with public source code. It records payments with their receipts, issues invoices and sends them as EHF e-invoices over Peppol, calculates value-added tax and makes the VAT return for each period, files an aksjeselskap’s tax return (skattemelding with næringsspesifikasjon) through Altinn, reconciles bank statements and exports SAF-T Financial. Not built yet: payroll and the a-melding, the annual accounts to the Register of Company Accounts, the shareholder register return, the næringsspesifikasjon of a sole proprietorship, recording a customer’s payment against an invoice, and receiving e-invoices over Peppol.',
+        `Myntos is free bookkeeping software for Norwegian companies, and will stay free, with public source code. Its AI, run by Løynd inside the EEA, reads receipts and drafts invoices for every company at no cost; optional monthly AI plans from ${(KI_PLANS[0]?.priceExclVat ?? '0').replace(/\.00$/, '')} NOK excluding VAT add larger models. It records payments with their receipts, issues invoices and sends and receives EHF e-invoices over Peppol, calculates value-added tax and makes the VAT return for each period, files tax returns (skattemelding with næringsspesifikasjon) for both aksjeselskap (AS) and enkeltpersonforetak (ENK), shareholder register returns (RF-1086), and annual accounts (årsregnskap, RR-0002) through Altinn, reconciles bank statements and exports SAF-T Financial. Not built yet: payroll and the a-melding, and a direct bank connection.`,
       featureList: [
         'Double-entry bookkeeping with a receipt archive',
         'Sales invoices checked against bokføringsforskriften § 5-1, with the EHF file made at issue',
         'VAT codes with date-dependent rates and the MVA-melding per period',
-        'Tax return (skattemelding with næringsspesifikasjon) for an aksjeselskap, checked by Skatteetaten and filed through Altinn',
+        'Tax return (skattemelding with næringsspesifikasjon) for aksjeselskap (AS) and enkeltpersonforetak (ENK), checked by Skatteetaten and filed through Altinn',
+        'Shareholder register (aksjeeierbok) and RF-1086 return filed via Altinn 3 systembruker',
+        'Annual accounts (årsregnskap, RR-0002) with mandatory small-company notes and Altinn 3 filing to Regnskapsregisteret',
         'SAF-T Financial export (v1.30 and v1.40)',
         'Bank statement import (camt.053) and reconciliation',
         'Opening balance, year-end closing and fixed-asset register',
@@ -126,7 +129,9 @@ const structuredData = {
       ],
       // The terms the code is published under, as /funksjoner/ and /vilkar/ state them.
       license: 'https://www.elastic.co/licensing/elastic-license',
-      // /priser/ in one line: there is no price list and no paid tier.
+      // /priser/ in one line: the bookkeeping is free and always will be. The
+      // optional KI plans are named in the description above rather than as a
+      // second offer, because an offer here reads as the price of Myntos.
       isAccessibleForFree: true,
       offers: {
         '@type': 'Offer',
@@ -178,10 +183,30 @@ const features = [
     title: 'Skattemelding',
     blurb: 'Næringsspesifikasjon og innlevering via Altinn.',
   },
+  // Heter «Analyse og KI-revisor» når KI-revisoren er bygget
+  // (docs/analyse.md, WP7). Til da sier den bare det som finnes.
+  {
+    href: '/funksjoner/#analyse',
+    title: 'Analyse',
+    blurb: 'Inntekter og kostnader over tid, rett fra regnskapet.',
+  },
   {
     href: '/funksjoner/#samarbeid',
     title: 'Flere brukere',
     blurb: 'Tilgang per selskap, med roller og invitasjoner.',
+  },
+  // Den eneste oppføringen som ikke er et anker på /funksjoner/: et
+  // regnskapsprogram som sender bilag til en modell, bør si hvor, hvordan og
+  // hva det koster der folk ser etter hva programmet gjør. Det var også
+  // grunnen til at KI var en egen fane i toppen for den som ikke er logget
+  // inn. Fanen gikk da Analyse tok KI sin plass blant de innloggede fanene,
+  // og grunnen bæres nå av denne oppføringen og lenkene i bunnteksten og på
+  // forsiden. Rett før KI-assistenten, så Myntos sin egen KI og den du tar
+  // med selv står sammen.
+  {
+    href: '/ki/about/',
+    title: 'KI i Myntos',
+    blurb: 'Løynd, nivåene og KI-planene.',
   },
   {
     href: '/funksjoner/#ki-agenter',
@@ -409,33 +434,33 @@ const gettingStarted = [
                 noe ved Myntos, og en fane i toppen sier at den er like viktig
                 som Priser. Den nås fra /priser/ og fra bunnteksten. */}
             <a class="nav-link" href="/priser/">Priser</a>
-            {/* Egen fane, ikke et avsnitt i personvernerklæringen: et
-                regnskapsprogram som sender bilag til en modell bør si det der
-                folk ser etter det, ikke der de leter. */}
-            <a class="nav-link" href="/ki/">KI</a>
+            {/* Ingen KI-fane: hvor KI-en kjører og hva den koster står under
+                «KI i Myntos» i Funksjoner-menyen, der folk ser etter hva
+                programmet gjør (se `features`). Og ingen Analyse-fane: uten
+                innlogging er det ikke noe regnskap å analysere, så analysen er
+                et avsnitt på /funksjoner/ og en oppføring i den samme menyen. */}
           </div>
 
           {/* Signed in: the application.
 
-              Kort med vilje. Toppen er ikke et innholdsfortegnelse over alle
-              sidene, den er de få stedene man går rett til flere ganger om
-              dagen: oversikten, Betaling (kontantstrømmen), Faktura og KI.
-              Kunder og leverandører nås fra fakturaen og fra kontantstrømmen,
-              der man faktisk trenger dem; mva-meldingen fra mva-tallet på
-              oversikten; bank, SAF-T og årets åpning og avslutning fra notatet
-              under oversiktens tall. En lenke som står overalt er ikke lettere
-              å finne enn én som står der man er. */}
+              Kort med vilje. Toppen er ikke en innholdsfortegnelse over alle
+              sidene, den er de få stedene man går rett til, igjen og igjen:
+              oversikten, Betaling (kontantstrømmen), Faktura, Mottatt, Analyse
+              og KI (samtale med regnskapet). Om KI og KI-planene ligger på
+              /ki/about/ og nås der KI brukes og fra firmamenyen («Om KI og
+              KI-plan»), mens av/på-bryteren for KI står i selskapsinnstillingene
+              (/organisasjon/#ki). */}
           {/* Rekkefølgen er arbeidsdagen: oversikten først, så det man gjør
               oftest. En betaling føres når den skjer, en faktura skrives når
-              det passer, og KI er hjelpen man ber om underveis.
-
-              «Betaling» og ikke «Kontantstrøm»: det er ordet på knappen folk
-              allerede trykker på fra forsiden, og det navner det man skal
-              gjøre framfor rapporten det ender i. */}
+              det passer, og det som er mottatt ses gjennom når det kommer.
+              Analyse og KI står etter hverdagsføringen: dit går man for å se
+              hvordan det går og spørre regnskapet om hva som helst. */}
           <div class="nav-group nav-primary" data-auth-only="inn">
             <a class="nav-link" href="/">Oversikt</a>
             <a class="nav-link" href="/kontantstrom/">Betaling</a>
             <a class="nav-link" href="/faktura/">Faktura</a>
+            <a class="nav-link" href="/innkommende/">Mottatt</a>
+            <a class="nav-link" href="/analyse/">Analyse</a>
             <a class="nav-link" href="/ki/">KI</a>
             {/* Bare for et selskap som har slått på nøkler: uten dem finnes det
                 ingenting å godkjenne, og en lenke til en tom side er støy i
@@ -572,6 +597,10 @@ const gettingStarted = [
                     <a class="nav-menu-handling" href="/organisasjon/#selskap">
                       Innstillinger for selskapet
                     </a>
+                    {/* Om KI-siden handler om selskapet: nivåene, ukekvoten og
+                        KI-planene. Ingen rolle skjuler den: siden er offentlig,
+                        og den spør selv hvem som kan administrere abonnement. */}
+                    <a class="nav-menu-handling" href="/ki/about/">Om KI og KI-plan</a>
                     {/* Kontoen er personen, ikke selskapet: innloggingene og
                         slettingen gjelder alle regnskapene på én gang, og hører
                         derfor ikke hjemme på selskapets side. */}
@@ -668,6 +697,9 @@ const gettingStarted = [
             <h2>Produkt</h2>
             <a href="/funksjoner/">Funksjoner</a>
             <a href="/priser/">Priser</a>
+            {/* To spørsmål, en side: her hva KI-en gjør og hva planene
+                koster, under Juridisk («Bruk av KI») hva som sendes. */}
+            <a href="/ki/about/">KI og KI-planer</a>
             <a href="/registrer/">Opprett konto</a>
           </nav>
           <nav class="footer-col" aria-label="Ressurser">
@@ -684,7 +716,7 @@ const gettingStarted = [
             <h2>Juridisk</h2>
             <a href="/vilkar/">Bruksvilkår</a>
             <a href="/personvern/">Personvern</a>
-            <a href="/ki/">Bruk av KI</a>
+            <a href="/ki/about/">Bruk av KI</a>
             <a href="/ansvar/">Ansvarsfraskrivelse</a>
           </nav>
         </div>
@@ -785,6 +817,24 @@ const gettingStarted = [
     --positive: #0b7a61;
     --negative: #a4201f;
 
+    /* Diagrammene (lib/charts.ts), i denne rekkefølgen: grønn, blå, oransje,
+       magenta, oker, fiolett. Rekkefølgen er valgt slik at to farger som står
+       ved siden av hverandre, også i ringen der den sjette møter den første,
+       kan skilles med alle de vanlige typene fargeblindhet; dataviz-skillets
+       validator har sjekket dem mot --surface i begge temaer (docs/analyse.md).
+       --chart-1 er aksentgrønnen et hakk mettere, fordi #0b7a61 er for grå til
+       å bære en flate. Ingen er rød: en kostnad er ikke en feil, og --negative
+       betyr noe annet på dette nettstedet. --chart-compare er fjoråret, en
+       stille grå som skal ligge bak; den er svakere enn 3:1 med vilje, og
+       tallene står i tabellen under. */
+    --chart-1: #007a5f;
+    --chart-2: #2a71d6;
+    --chart-3: #e97125;
+    --chart-4: #bc3e79;
+    --chart-5: #bc8800;
+    --chart-6: #7454d6;
+    --chart-compare: #9fafa9;
+
     --shadow: 0 1px 2px rgb(16 32 28 / 6%), 0 10px 28px -14px rgb(16 32 28 / 20%);
     --shadow-lifted: 0 2px 6px rgb(16 32 28 / 8%), 0 24px 48px -22px rgb(16 32 28 / 28%);
     --glow: radial-gradient(60rem 30rem at 50% -12rem, rgb(11 122 97 / 8%), transparent 70%);
@@ -830,6 +880,16 @@ const gettingStarted = [
     --danger-fg: #2a0807;
     --positive: #2ed3a5;
     --negative: #ff8f8a;
+
+    /* Samme seks i mørkt, lysere og like sterke mot hverandre. Aksenten
+       #2ed3a5 er for lys til å stå ved siden av de andre fem uten å rope. */
+    --chart-1: #08b28a;
+    --chart-2: #4e8ce6;
+    --chart-3: #e57431;
+    --chart-4: #c65085;
+    --chart-5: #c6952c;
+    --chart-6: #8c79e0;
+    --chart-compare: #586762;
 
     --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 12px 32px -16px rgb(0 0 0 / 70%);
     --shadow-lifted: 0 2px 4px rgb(0 0 0 / 40%), 0 24px 48px -20px rgb(0 0 0 / 80%);
@@ -1403,6 +1463,27 @@ const gettingStarted = [
     display: none;
   }
 
+  /* Med «Godkjenning» har toppen seks faner, og like over grensen der menyen
+     felles sammen (62rem) skjøv de «Logg ut» ut av skjermen: et langt
+     selskapsnavn og telleren ga opptil 100 px for mye. Bare da, og bare i det
+     smale beltet, står fanene tettere og navnet kortes inn tidligere. Navnet
+     står i sin helhet i firmamenyen. */
+  @media (62rem <= width < 72rem) {
+    .site-header-inner:has([data-approvals]:not([hidden])) .nav-primary {
+      margin-inline-start: 0.75rem;
+      gap: 0.35rem 0.8rem;
+    }
+
+    .site-header-inner:has([data-approvals]:not([hidden])) .site-nav {
+      gap: 0.35rem 1rem;
+    }
+
+    .site-header-inner:has([data-approvals]:not([hidden])) .nav-company-name,
+    .site-header-inner:has([data-approvals]:not([hidden])) .nav-user {
+      max-width: 7.5rem;
+    }
+  }
+
   /* --- Mobile menu ------------------------------------------------------------ */
 
   .nav-toggle {
@@ -1593,6 +1674,25 @@ const gettingStarted = [
     grid-template-columns: minmax(12rem, 1.5fr) repeat(auto-fit, minmax(8rem, 1fr));
   }
 
+  /* På en telefon er 12rem + 2rem + 8rem bredere enn de 328 px som er igjen
+     innenfor margene på en 360 px skjerm, så hele siden kunne skyves sidelengs
+     og «Ansvarsfraskrivelse» ble kuttet. To like kolonner og merket på en egen
+     rad får plass. */
+  @media (max-width: 30rem) {
+    .footer-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1.75rem 1rem;
+    }
+
+    .footer-brand {
+      grid-column: 1 / -1;
+    }
+
+    .footer-col a {
+      overflow-wrap: break-word;
+    }
+  }
+
   .footer-logo {
     height: 1.7rem;
     width: auto;
@@ -1766,6 +1866,37 @@ const gettingStarted = [
     display: grid;
     gap: 1rem;
     grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  }
+
+  /* Tallkortene: et lite navn, et stort tall og en linje under. Her og ikke i
+     index.astro, fordi oversikten og /analyse/ viser tallene sine på samme
+     måte, og to kopier av fem regler blir to måter etter første endring.
+     Etter .grid, så smalere kort vinner over rutenettets egne. */
+  .stats {
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  }
+
+  .stat-label {
+    margin: 0;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    font-weight: 700;
+  }
+
+  .stat-value {
+    margin: 0.35rem 0 0;
+    font-size: 1.5rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+
+  .stat-note {
+    margin: 0.2rem 0 0;
+    font-size: 0.85rem;
+    color: var(--muted);
   }
 
   .eyebrow {
@@ -2274,6 +2405,344 @@ const gettingStarted = [
       animation: none !important;
       background: var(--surface-3);
     }
+  }
+
+  /* --- Diagrammer ------------------------------------------------------------
+     lib/charts.ts bygger dem med skript, og en sides egen <style> når aldri
+     det et skript lager, så alt om dem står her. Fargen kommer gjennom --c,
+     som klassene chart-c1 til chart-c6 og chart-cc setter, fordi et
+     SVG-attributt ikke kan inneholde var(). SVG-en tegnes like bred som boksen
+     sin (skriptet måler den), så 12px tekst er 12px også på en telefon.
+  ------------------------------------------------------------------------- */
+
+  .chart {
+    /* Det kolonnene og sektorene skilles med. Et kort er --surface; en side
+       som legger et diagram på en annen flate, setter denne der. */
+    --chart-bg: var(--surface);
+    /* Forklaringen under ringen velger oppsett etter diagrammets egen bredde,
+       ikke skjermens. Prisen: diagrammet har ingen bredde av seg selv, så det
+       må stå i noe som gir det bredde (en blokk, et grid-spor). I en
+       flex-rad eller en boks med margin: auto og uten width krymper det til
+       ingenting. */
+    container-type: inline-size;
+    min-width: 0;
+    margin: 0;
+  }
+
+  .chart-title {
+    margin: 0 0 0.75rem;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--fg);
+  }
+
+  .chart-c1 {
+    --c: var(--chart-1);
+  }
+
+  .chart-c2 {
+    --c: var(--chart-2);
+  }
+
+  .chart-c3 {
+    --c: var(--chart-3);
+  }
+
+  .chart-c4 {
+    --c: var(--chart-4);
+  }
+
+  .chart-c5 {
+    --c: var(--chart-5);
+  }
+
+  .chart-c6 {
+    --c: var(--chart-6);
+  }
+
+  .chart-cc {
+    --c: var(--chart-compare);
+  }
+
+  .chart-svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+  }
+
+  /* Tekst i teksttokens, aldri i seriens farge: en oransje etikett på hvitt
+     er for svak til å leses, og fargen sier allerede hvilken serie det er. */
+  .chart-svg text {
+    font-family: var(--font);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    fill: var(--muted);
+  }
+
+  /* Navnene på stolpene er det som leses der, ikke akseverdier. */
+  .chart-svg .chart-label {
+    font-size: 13px;
+    fill: var(--fg);
+  }
+
+  .chart-grid line,
+  .chart-axis {
+    stroke-width: 1px;
+  }
+
+  .chart-grid line {
+    stroke: var(--border);
+  }
+
+  .chart-axis {
+    stroke: var(--border-strong);
+  }
+
+  .chart-mark {
+    fill: var(--c);
+  }
+
+  /* Året selv står foran fjoråret og overlapper det. Kanten i flatens farge
+     skiller dem; paint-order legger den under fyllet, så bare den ytre
+     halvdelen (2px) synes og kolonnen ikke blir smalere. */
+  .chart-front {
+    stroke: var(--chart-bg);
+    stroke-width: 4px;
+    paint-order: stroke;
+  }
+
+  /* Linjene og punktene slipper musen gjennom til måneden under, som har
+     tooltipen. */
+  .chart-line {
+    fill: none;
+    stroke: var(--c);
+    stroke-width: 2px;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    pointer-events: none;
+  }
+
+  .chart-dot {
+    fill: var(--c);
+    stroke: var(--chart-bg);
+    stroke-width: 2px;
+    pointer-events: none;
+  }
+
+  .chart-slice {
+    fill: var(--c);
+    stroke: var(--chart-bg);
+    stroke-width: 2px;
+    stroke-linejoin: round;
+  }
+
+  .chart-hit {
+    fill: transparent;
+  }
+
+  .chart-slot:hover .chart-hit {
+    fill: var(--fg);
+    fill-opacity: 0.05;
+  }
+
+  .chart-slice:hover {
+    fill-opacity: 0.8;
+  }
+
+  .chart-key {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+    margin: 0 0 0.6rem;
+    padding: 0;
+    list-style: none;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+
+  .chart-key li {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .chart-swatch {
+    flex: none;
+    width: 0.75rem;
+    height: 0.75rem;
+    border-radius: 3px;
+    background: var(--c);
+  }
+
+  .chart-donut {
+    display: grid;
+    gap: 1rem;
+    justify-items: center;
+  }
+
+  .chart-donut .chart-svg {
+    max-width: 11rem;
+  }
+
+  .chart-legend {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 0.9rem;
+  }
+
+  .chart-legend li {
+    display: grid;
+    grid-template-columns: 0.75rem minmax(0, 1fr) auto 3.4rem;
+    align-items: start;
+    gap: 0 0.6rem;
+    padding: 0.35rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .chart-legend .chart-swatch {
+    margin-top: 0.3rem;
+  }
+
+  .chart-legend-value,
+  .chart-legend-share {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .chart-legend-share {
+    color: var(--muted);
+  }
+
+  .chart-legend .chart-legend-sum {
+    border-bottom: none;
+    font-weight: 600;
+  }
+
+  .chart-legend-sum .chart-legend-label {
+    grid-column: 2;
+  }
+
+  /* Ringen ved siden av listen bare når det er god plass. I et halvt kort
+     (to diagrammer side om side) ble kontonavnene ellers brutt over to linjer
+     i en smal kolonne, så der står ringen over listen. */
+  @container (min-width: 36rem) {
+    .chart-donut {
+      grid-template-columns: 10rem minmax(0, 1fr);
+      align-items: center;
+      justify-items: stretch;
+    }
+  }
+
+  /* På en smal telefon får navnet hele linjen, og beløp og andel står under
+     det, i stedet for at et kontonavn brytes over fire linjer. */
+  @container (max-width: 20rem) {
+    .chart-legend li {
+      grid-template-columns: 0.75rem minmax(0, 1fr) auto;
+    }
+
+    .chart-legend-label {
+      grid-column: 2 / -1;
+    }
+
+    .chart-legend-value {
+      grid-column: 2;
+      text-align: left;
+    }
+  }
+
+  .chart-caption {
+    margin: 0.75rem 0 0;
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+
+  /* Et diagram uten tall: én setning i stedet for en tom ring eller tabell. */
+  .chart-nothing {
+    margin: 0;
+    color: var(--muted);
+  }
+
+  .chart-numbers {
+    margin-top: 0.6rem;
+    font-size: 0.9rem;
+  }
+
+  .chart-numbers > summary {
+    width: fit-content;
+    color: var(--accent);
+    cursor: pointer;
+  }
+
+  .chart-numbers .table-scroll {
+    margin-top: 0.4rem;
+  }
+
+  /* Tabellen flukter med diagrammet over den, og på en telefon er de to
+     ytterste polstringene det som ellers dytter «Andel» ut av kortet. */
+  .chart table.data {
+    font-size: 0.875rem;
+  }
+
+  .chart table.data th,
+  .chart table.data td {
+    padding: 0.45rem 0.6rem;
+  }
+
+  .chart table.data tr > :first-child {
+    padding-left: 0;
+  }
+
+  .chart table.data tr > :last-child {
+    padding-right: 0;
+  }
+
+  /* En lang serie («Resultat før skatt») i versaler på én linje tok bredden
+     fra månedene, som da ble brutt i to. */
+  .chart table.data thead th.num {
+    white-space: normal;
+  }
+
+  .chart table.data th.chart-month {
+    white-space: nowrap;
+  }
+
+  .chart table.data tbody tr:last-child th {
+    border-bottom: none;
+  }
+
+  /* Hver rad begynner med en th (måneden eller navnet), og th i table.data
+     er ellers en liten kolonneoverskrift i versaler. */
+  .chart table.data tbody th,
+  .chart table.data tfoot th {
+    font-size: inherit;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    color: var(--fg);
+  }
+
+  .chart table.data tfoot th,
+  .chart table.data tfoot td {
+    font-weight: 600;
+    border-bottom: none;
+    border-top: 1px solid var(--border-strong);
+  }
+
+  .chart table.data td.chart-none {
+    color: var(--faint);
+  }
+
+  .chart-figure {
+    margin: 0;
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+    color: var(--fg-strong);
   }
 
   .visually-hidden {

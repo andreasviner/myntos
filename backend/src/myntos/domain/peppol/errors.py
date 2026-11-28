@@ -1,28 +1,29 @@
-"""Refusals from sending over Peppol.
+"""Refusals from sending and receiving over Peppol.
 
 Meaning here, status codes in :mod:`myntos.api.errors`, Norwegian messages
-because the person who has to act on them is the one sending the invoice. Each
-message says what to do instead, because the usual answer to "this cannot go as
-an EHF" is the PDF, sent by the person themselves.
+because the person who has to act on them is the one sending or receiving the
+invoice. Each message says what to do instead, because the usual answer to
+"this cannot go as an EHF" is the PDF, sent by the person themselves.
 """
 
 from __future__ import annotations
 
 
 class PeppolError(Exception):
-    """Base class for every refusal from sending over Peppol."""
+    """Base class for every refusal from sending or receiving over Peppol."""
 
 
 class PeppolNotAvailableError(PeppolError):
-    """This deployment has no access point to send through."""
+    """This deployment has no access point to send or receive through."""
 
 
 class CompanyNotConfirmedError(PeppolError):
     """The company has not been confirmed through Altinn.
 
-    The access point takes whatever company the deployment's key names, so
-    without this anybody who typed an orgnr into a new account could send
-    invoices in that business's name. Confirming is what proves they may.
+    The access point takes whatever company the deployment's credentials name,
+    so without this anybody who typed an orgnr into a new account could send
+    or receive invoices in that business's name. Confirming is what proves they
+    may.
     """
 
 
@@ -31,7 +32,15 @@ class CompanyAddressMissingError(PeppolError):
 
 
 class NotRegisteredError(PeppolError):
-    """The company is not registered for e-invoicing, or has not finished the check."""
+    """The company is not registered for e-invoicing."""
+
+
+class ReceivingAlreadyClaimedError(PeppolError):
+    """Another active company in Myntos already receives EHF for this orgnr."""
+
+
+class ReceivingConflictError(PeppolError):
+    """This orgnr is already registered to receive EHF at another access point (ELMA)."""
 
 
 class NotSendableError(PeppolError):
@@ -69,3 +78,19 @@ class AccessPointUnavailableError(PeppolError):
 
 class TransmissionNotFoundError(PeppolError):
     """The document has never been sent over Peppol."""
+
+
+class IncomingInvoiceNotFoundError(PeppolError):
+    """No received EHF with that id belongs to this company."""
+
+
+class IncomingInvoiceAlreadyBookedError(PeppolError):
+    """The received EHF has already been booked as a voucher."""
+
+
+class IncomingInvoiceDismissedError(PeppolError):
+    """The received EHF is dismissed and must be reopened before booking."""
+
+
+class IncomingInvoiceInvalidError(PeppolError):
+    """The booking request for this received EHF cannot be posted as given."""

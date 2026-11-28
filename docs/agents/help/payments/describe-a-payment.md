@@ -54,8 +54,8 @@ They need the role «Medlem» or more, and the form open on
 - If the box is empty when they register, the payment is filed under the name
   of the type they chose, such as «Varekjøp».
 - At most 255 characters.
-- The sentence is shown only to Myntos's own AI (on Myntos's servers in
-  Norway) and stored as the payment's text. Write it as you would want an
+- The sentence is shown only to Myntos's own AI (Løynd, inside the EEA) and
+  stored as the payment's text. Write it as you would want an
   auditor to read it.
 - After the payment is registered, the description can only be changed with
   «Rediger», which keeps the original in the books:

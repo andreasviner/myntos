@@ -6,9 +6,13 @@ digit — both schemes, because which one a seller's bank agreed is not somethin
 this system is told.
 """
 
+from datetime import date
+
 import pytest
 
 from myntos.domain.faktura import kid
+
+ISSUE_DATE = date(2026, 11, 25)
 
 # --- Check digits -----------------------------------------------------------------
 
@@ -42,7 +46,7 @@ def _mod11_remainder(base: str) -> int:
 
 def test_every_generated_kid_validates() -> None:
     for number in [*range(1, 500), 9999, 100000, 999999, 1234567]:
-        generated = kid.preview_for_next(number)
+        generated = kid.preview_for_next(number, issue_date=ISSUE_DATE)
         assert kid.is_valid(generated), generated
 
 
@@ -70,51 +74,77 @@ def test_what_is_not_a_kid_at_all(bad: str) -> None:
 # --- Building -----------------------------------------------------------------------
 
 
-def test_the_kid_is_the_invoice_number_then_its_check_digit() -> None:
-    built = kid.for_document_number("137")
+def test_the_kid_is_the_issue_date_invoice_number_and_check_digit() -> None:
+    built = kid.for_document_number("137", issue_date=ISSUE_DATE)
 
-    assert built == "1370"
-    assert built[:-1] == "137"
-    assert built[-1] == kid.mod10_check_digit("137")
+    assert built == "202611251374"
+    assert built[: kid.DATE_LENGTH] == "20261125"
+    assert built[kid.DATE_LENGTH : -1] == "137"
+    assert built[-1] == kid.mod10_check_digit("20261125137")
 
 
 @pytest.mark.parametrize(
     ("number", "expected"),
-    [("1", "18"), ("18", "182"), ("1042", "10421"), ("100000", "1000009")],
+    [
+        ("1", "2026112512"),
+        ("18", "20261125189"),
+        ("42", "20261125429"),
+        ("1042", "2026112510428"),
+        ("100000", "202611251000006"),
+    ],
 )
-def test_the_kid_has_no_zeros_in_front(number: str, expected: str) -> None:
-    """Read off a paper invoice and typed into a bank: nine zeros were miscounted."""
-    built = kid.for_document_number(number)
+def test_the_kid_starts_with_the_issue_date_and_has_no_leading_zeros(
+    number: str, expected: str
+) -> None:
+    """At least ten digits, never starting with zeros that are hard to count and type."""
+    built = kid.for_document_number(number, issue_date=ISSUE_DATE)
 
     assert built == expected
+    assert len(built) >= kid.MIN_LENGTH
     assert not built.startswith("0")
+    assert kid.is_valid(built)
 
 
 def test_the_buyer_does_not_change_the_kid() -> None:
     """The invoice number already names the buyer, so the preview is the same for anyone."""
-    assert kid.preview_for_next(7) == kid.for_document_number("7")
+    assert kid.preview_for_next(7, issue_date=ISSUE_DATE) == kid.for_document_number(
+        "7", issue_date=ISSUE_DATE
+    )
 
 
 def test_a_number_from_another_system_keeps_its_digits() -> None:
     """A series brought over may read "F-01042"; the digits are still the invoice."""
-    built = kid.for_document_number("F-01042")
+    built = kid.for_document_number("F-01042", issue_date=ISSUE_DATE)
 
-    assert built == kid.for_document_number("1042")
+    assert built == kid.for_document_number("1042", issue_date=ISSUE_DATE)
     assert kid.is_valid(built)
 
 
-def test_the_shortest_kid_is_still_one_a_bank_takes() -> None:
-    """Two digits is the floor on the payer's side, and invoice 1 is exactly that."""
-    assert len(kid.for_document_number("1")) == 2
-    assert kid.is_valid(kid.for_document_number("1"))
+def test_the_shortest_generated_kid_is_ten_digits_and_banks_still_accept_shorter_ones() -> None:
+    """Generated KIDs start at ten digits; validation still accepts 2-25 digits for older KIDs."""
+    generated = kid.for_document_number("1", issue_date=ISSUE_DATE)
+    assert len(generated) == kid.MIN_LENGTH
+    assert kid.is_valid(generated)
+    assert kid.is_valid("18")
+    assert kid.is_valid("000000000018")
 
 
 def test_a_kid_never_outgrows_the_field() -> None:
-    built = kid.for_document_number("9" * 40)
-    assert len(built) <= kid.MAX_LENGTH
+    built = kid.for_document_number("9" * 40, issue_date=ISSUE_DATE)
+    assert len(built) == kid.MAX_LENGTH
+    assert built.startswith("20261125")
+    assert kid.is_valid(built)
 
 
-def test_consecutive_invoices_stay_distinct() -> None:
-    """The property that matters: no two invoices may share a KID."""
-    built = {kid.for_document_number(str(n)) for n in range(1, 20000)}
+def test_consecutive_invoices_on_the_same_day_stay_distinct() -> None:
+    """High-volume companies issuing many invoices in a single day never collide."""
+    built = {kid.for_document_number(str(n), issue_date=ISSUE_DATE) for n in range(1, 20000)}
     assert len(built) == 19999
+
+
+def test_different_issue_dates_change_the_prefix_without_colliding() -> None:
+    first = kid.for_document_number("12", issue_date=date(2026, 1, 2))
+    second = kid.for_document_number("2", issue_date=date(2026, 1, 21))
+    assert first != second
+    assert first.startswith("20260102")
+    assert second.startswith("20260121")

@@ -61,7 +61,7 @@ AKSJESELSKAP_FORMS = frozenset({"AS", "ASA"})
 #: The forms Myntos files the skattemelding for. An ASA reaches the same
 #: næringsspesifikasjon code path and is refused there
 #: (``organisasjonsform_ikke_stottet``), so it is not promised here either.
-FILES_SKATTEMELDING = frozenset({"AS"})
+FILES_SKATTEMELDING = frozenset({"AS", "ENK"})
 
 
 @dataclass(frozen=True)
@@ -117,8 +117,8 @@ def _aksjeselskap(form: str, year: int) -> list[YearlyDeadline]:
             deadline=date(after, 1, 31),
             label=f"Aksjonærregisteroppgaven for {year}",
             recipient=Recipient.SKATTEETATEN,
-            files_from_myntos=False,
-            note="Myntos kan ikke sende den ennå.",
+            files_from_myntos=True,
+            note=None,
         ),
         YearlyDeadline(
             kind=Kind.FORSKUDDSSKATT,
@@ -145,7 +145,7 @@ def _aksjeselskap(form: str, year: int) -> list[YearlyDeadline]:
             label=f"Skattemeldingen for {year}",
             recipient=Recipient.SKATTEETATEN,
             files_from_myntos=files,
-            note=None if files else "Myntos sender skattemeldingen bare for AS ennå.",
+            note=None if files else "Myntos sender skattemeldingen bare for AS og ENK ennå.",
         ),
         YearlyDeadline(
             kind=Kind.ARSREGNSKAP,
@@ -153,11 +153,8 @@ def _aksjeselskap(form: str, year: int) -> list[YearlyDeadline]:
             deadline=date(after, 7, 31),
             label=f"Årsregnskapet for {year}",
             recipient=Recipient.BRONNOYSUND,
-            files_from_myntos=False,
-            note=(
-                "Sendes til Regnskapsregisteret i Brønnøysund etter at generalforsamlingen "
-                "har godkjent det. Myntos kan ikke sende det ennå."
-            ),
+            files_from_myntos=True,
+            note=None,
         ),
     ]
 
@@ -183,10 +180,11 @@ def _enkeltpersonforetak(year: int) -> list[YearlyDeadline]:
             deadline=date(year + 1, 5, 31),
             label=f"Skattemeldingen for {year}",
             recipient=Recipient.SKATTEETATEN,
-            files_from_myntos=False,
+            files_from_myntos=True,
             note=(
                 "Det er innehaverens egen skattemelding, med næringsspesifikasjonen. Myntos "
-                "kan ikke sende den for et enkeltpersonforetak ennå."
+                "sender næringsdelen til din personlige skattemelding, så du kan fullføre "
+                "private poster på skatteetaten.no."
             ),
         ),
     ]

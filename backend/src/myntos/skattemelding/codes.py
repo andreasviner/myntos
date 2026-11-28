@@ -24,6 +24,7 @@ from __future__ import annotations
 import gzip
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from functools import cache
 from pathlib import Path
 
@@ -37,6 +38,9 @@ PERMANENT_DIFFERENCE = "permanentForskjellstype"
 EQUITY_CHANGE = "egenkapitalendringstype"
 TEMPORARY_DIFFERENCE = "midlertidigForskjellstype"
 ANNUAL_ACCOUNTS_RULES = "regeltypeForAarsregnskap"
+NAERINGSTYPE = "naeringstype"
+SKJERMINGSGRUNNLAG = "skjermingsgrunnlagstype"
+TAX_RATES = "satserIFormuesOgInntektsskatt"
 
 # SAF-T's disposition of the result (8800 Årsresultat and its kind). In the
 # grouping list an account may carry, and not a post of the næringsspesifikasjon:
@@ -65,6 +69,13 @@ class Code:
     #: A balance post whose value gets the verdsettingsrabatt in the formue
     #: (``BalansekontoGirVerdsettingsrabatt``): driftsmidler, shares.
     gives_discount: bool = False
+    #: A balance post Skatteetaten transfers automatically from an ENK's
+    #: næringsspesifikasjon to the owner's personal skattemelding
+    #: (``overfoeresTilSME``). Excludes bank accounts (1920), bank loans (2220),
+    #: real estate, and tax-exempt self-produced farm feed (1401).
+    transfers_to_sme: bool = False
+    #: Rate value from ``satserIFormuesOgInntektsskatt`` (``satsverdi``).
+    rate_value: str | None = None
 
     def allows(self, *, regnskapsplikt: str, business_type: str) -> bool:
         """Whether a business of this kind and regnskapsplikt may use the code."""
@@ -102,6 +113,8 @@ def _code(list_name: str, kode: ET.Element) -> Code:
         business_types=frozenset(values.get("virksomhetstype", ())),
         regnskapsplikt=frozenset(values.get("regnskapspliktstype", ())),
         gives_discount=values.get("BalansekontoGirVerdsettingsrabatt") == ["true"],
+        transfers_to_sme=values.get("overfoeresTilSME") == ["true"],
+        rate_value=next(iter(values.get("satsverdi", ())), None),
     )
 
 
@@ -115,14 +128,12 @@ def codes(year: int, list_name: str) -> tuple[Code, ...]:
         raise CodeListError(f"kodelisten {list_name} for {year} mangler")
     # The stdlib parser: a vendored file, as in myntos.skattemelding.schema.
     root = ET.fromstring(gzip.decompress(path.read_bytes()))  # noqa: S314
-    found: list[Code] = []
-    subs = root.findall(f"{_NS}underkodeliste")
-    if subs:
-        for sub in subs:
-            name = _text(sub, "tekniskNavn") or ""
-            found += [_code(name, kode) for kode in sub.findall(f"{_NS}kode")]
-    else:
-        found += [_code(list_name, kode) for kode in root.findall(f"{_NS}kode")]
+    # Some code lists (such as satserIFormuesOgInntektsskatt) carry both direct
+    # <kode> entries and <underkodeliste> groups under the same root.
+    found: list[Code] = [_code(list_name, kode) for kode in root.findall(f"{_NS}kode")]
+    for sub in root.findall(f"{_NS}underkodeliste"):
+        name = _text(sub, "tekniskNavn") or ""
+        found += [_code(name, kode) for kode in sub.findall(f"{_NS}kode")]
     return tuple(found)
 
 
@@ -136,3 +147,15 @@ def posts(year: int) -> dict[tuple[str, str], Code]:
 def by_code(year: int, list_name: str) -> dict[str, Code]:
     """A list without categories, by code."""
     return {code.code: code for code in codes(year, list_name)}
+
+
+@cache
+def skjermingsrente(year: int) -> Decimal:
+    """The shielding interest rate (skjermingsrente, percent) for ENK personinntekt."""
+    entry = by_code(year, TAX_RATES).get("personinntekt.skjermingsrente")
+    if entry is None or entry.rate_value is None:
+        raise CodeListError(f"skjermingsrente for personinntekt mangler for {year}")
+    try:
+        return Decimal(entry.rate_value)
+    except InvalidOperation as error:
+        raise CodeListError(f"ugyldig skjermingsrente {entry.rate_value!r} for {year}") from error

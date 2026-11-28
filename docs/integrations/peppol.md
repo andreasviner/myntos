@@ -1,272 +1,273 @@
-# Sending EHF over Peppol (Recommand)
+# Sending and receiving EHF over Peppol (Ademico)
 
 From 1 January 2027 a sale to another bokføringspliktig is documented by an
-e-invoice, and an e-invoice is only delivered when it travels over Peppol.
-Myntos writes the EHF and freezes it at issue ([efaktura.md](efaktura.md));
-this is how the frozen file reaches the customer. Peppol is not something a
-program joins on its own: every sender and every receiver goes through an
-access point certified by OpenPeppol. This deployment uses **Recommand** (BRBX
-BV, Peer, Belgium), through its REST API at `https://app.recommand.eu`, chosen
-on 2026-11-01 in place of invoice.be, the earlier plan.
+e-invoice, and an e-invoice is only delivered when it travels over Peppol
+(receiving becomes mandatory from 1 January 2030). Myntos writes outgoing EHF
+XML and freezes it at issue ([efaktura.md](efaktura.md)); this is how the
+frozen file reaches the customer and how supplier EHF invoices arrive in Myntos.
 
-Code: `backend/src/myntos/integrations/recommand.py` (the client, and the only
-file that knows Recommand's API), `domain/peppol/` (who may register and send,
-the two tables; it makes no request), `api/v1/peppol.py` (the five routes,
-which call the access point between the domain's checks and its storing, as
-ARCHITECTURE.md's dependency rule has it), migration `8d7b599c0754`.
-Frontend: «Utsted og send som EHF», «Send som EHF» and the delivery status on
-`/faktura/`, the «E-faktura» card on `/organisasjon/`, `src/lib/peppol.ts`.
-Tests: `backend/tests/test_peppol.py`, against a stand-in written from
-Recommand's published OpenAPI document. Built 2026-11-01; **nothing has been
-sent to a real access point yet** (see «Before the first customer»).
+Peppol is not something a program joins on its own: every sender and every
+receiver goes through an access point certified by OpenPeppol. This deployment
+uses **Ademico Software** (Belgium, EEA), through its Peppol REST API
+(`https://peppol-api1.ademico-software.com/domibus` for Basic Auth,
+`https://peppol-api.ademico-software.com` for OAuth2), chosen on 2026-11-25 in
+place of Recommand (which was built 2026-11-01 as send-only).
 
-## The four decisions
+Code:
+- `backend/src/myntos/integrations/ademico.py` (the Ademico REST client)
+- `backend/src/myntos/integrations/peppol_smp.py` (direct public OpenPeppol BDXL SML DNS NAPTR + SMP XML lookup for pre-send recipient checks)
+- `backend/src/myntos/integrations/peppol_sync.py` (Ademico's webhook and the sweep behind it, for all companies at once: every push read back from Ademico before it is believed; the pull queue drained and Ademico's own document list checked every 15 minutes; and the `show`/`on`/`off` command that tells Ademico where to push)
+- `backend/src/myntos/domain/peppol/` (`models.py`, `service.py`, `errors.py`, `ubl_reader.py`, `incoming_pdf.py`; makes no network calls)
+- `backend/src/myntos/api/v1/peppol.py` (registration, receiving opt-in/out, recipient lookup, sending, delivery status, Ademico's webhook, sync, and incoming inbox routes)
+- Migrations: `8d7b599c0754` (initial send tables) and `c7e3b91a4f20` (Ademico receiving fields + `peppol_incoming_document`)
+
+Frontend:
+- «Utsted og send som EHF», «Send som EHF» and delivery status on `/faktura/`
+- «E-faktura» card (sending registration + explicit «Mottak av e-faktura» opt-in/out) on `/organisasjon/`
+- «Innkommende e-faktura» inbox and booking page on `/innkommende/`
+- Shared labels and copy helpers in `frontend/src/lib/peppol.ts`
+
+Tests: `backend/tests/test_peppol.py`, against an Ademico stand-in modeled directly from live Ademico TEST recordings (2026-11-09 / 2026-11-25).
+
+## Core decisions
 
 ### Peppol only, never e-mail
 
-Recommand will e-mail a document instead of, or beside, a Peppol transmission,
-if the request carries an `email` field. Its mail goes through **Postmark, in
-the USA** (Recommand's own list of subprocessors, effective 2026-10-14). An
-invoice is accounting data, which never leaves the EEA (CLAUDE.md rule 5), so
-no request from Myntos carries `email`, and a company is registered with no
-contact details at all. A customer who cannot receive over Peppol is refused
-(422 from Recommand, `recipient_not_on_peppol` from Myntos) with a message
-telling the person to send the PDF themselves. A silent fallback to mail would
-have been the friendlier button and the breach of rule 5.
+Myntos never asks Ademico to send invoices by e-mail and sends no company
+e-mail address or phone number when registering a legal entity. A customer who
+cannot receive over Peppol is refused (`recipient_not_on_peppol`) with a
+message telling the user to send the PDF themselves.
 
-The test `test_the_frozen_xml_goes_as_it_is_and_never_by_email` holds this:
-no request body may contain the key.
+### The frozen XML, byte for byte
 
-### The frozen XML, as it is
+`POST /api/peppol/v1/invoices/ubl-submissions` sends the stored `ehf_xml`
+unchanged as `multipart/form-data`. Ademico validates XSD/Schematron and queues
+the AS4 delivery. Nothing is regenerated from JSON.
 
-Recommand can build a UBL document from its own JSON model, and can detect the
-document type of XML it is given. Both were refused. Building from JSON would
-make Recommand the author of the sales document, which from 2027 *is* the
-legal document for a business customer, and it could quietly differ from the
-EHF Myntos validated and froze. Detecting would let a change in Recommand's
-guesswork change what goes out. So the send is `documentType: "xml"` with the
-stored `ehf_xml` unchanged, and `doctypeId` and `processId` named: Peppol BIS
-Billing 3.0 invoice or credit note, by `SalesDocument.is_credit_note`.
+### Send-only by default; required before first business invoice
 
-### Send only
+E-invoicing is the default in Myntos, and from 1 January 2027 it is mandatory
+for B2B sales to other bokføringspliktige. Whenever this deployment has Ademico
+configured (`available: true`), a company must activate EHF sending before
+issuing its first business invoice (`buyer_is_business: true`):
 
-Each company is created with `isSmpRecipient` off. Registering a Norwegian
-organisasjonsnummer to **receive** puts it in ELMA, Norway's Peppol registry,
-and a participant can be registered with only one access point: it would take
-over whatever inbox the company receives its supplier invoices in today, in
-another program, from an access point Myntos does not run. Myntos also has
-nowhere to put an incoming invoice yet. Receiving is in «Det Myntos ikke gjør
-ennå» on `/funksjoner/`; building it means a place for incoming documents, a
-webhook from Recommand, and an explicit «move my inbox here» step that says
-what it takes over.
+- On `/faktura/`, companies with `can_send: false` see the «Sett opp e-faktura
+  (EHF) før første faktura» card ahead of the form, with one-click inline
+  activation («Aktiver e-faktura (EHF)») once confirmed through Altinn, or a
+  direct link to ID-porten confirmation. Private-consumer (B2C) invoicing stays
+  reachable through «Skriv faktura uten e-faktura».
+- In the API (`GET …/kontroll` and `POST …/faktura/{id}/utsted`), business
+  drafts carry a blocking violation (`field: "peppol_registration"`) until
+  `can_send` is true. Private-consumer drafts (`buyer_is_business: false`) are
+  not blocked.
 
-### Who may send as the company
+Registering a company (`POST …/peppol`) creates (or adopts) the legal entity at
+Ademico with `peppolRegistration: false` and `publishInPeppolDirectory: false`.
+That enables **sending** immediately without touching ELMA or taking over any
+inbox the company currently receives supplier invoices in.
 
-The access point sends as whichever company Myntos names under the
-deployment's key. So every check of *who may send as this business* is
-Myntos's, before Recommand is asked:
+Enabling **receiving** (`PUT …/peppol/mottak` with `{"enabled": true}`) is a
+separate, explicit admin action with an on-screen confirmation warning:
+1. It checks that no other active Myntos company already holds receiving for
+   that `orgnr` (`uq_peppol_registration_receiving_orgnr`, 409
+   `receiving_already_claimed`).
+2. It updates the Ademico registration to `peppolRegistration: true` and
+   `publishInPeppolDirectory: true`, publishing `0192:<orgnr>` in SML/SMP
+   (ELMA) for `PEPPOL_BIS_BILLING_UBL_INVOICE_V3` and
+   `PEPPOL_BIS_BILLING_UBL_CREDIT_NOTE_V3`.
+3. If the orgnr is already registered to receive at another access point (e.g.
+   Fiken or Tripletex), Ademico returns `PARTICIPANT_ERROR`, which Myntos
+   translates into 409 `receiving_conflict` telling the admin to switch off
+   receiving in the previous program first.
+4. Turning receiving off (`{"enabled": false}`) sets `peppolRegistration: false`
+   at Ademico, freeing the orgnr in SML/SMP while keeping sending active.
 
-1. **The company must be confirmed through Altinn** (`Company.verified_at`,
-   stamped only by `confirm_company_ownership`) before it can be registered.
-   Without that, a new account that typed somebody else's orgnr would be one
-   click from sending invoices in their name, and the link to the access
-   point's identity check (step 3) would be in the wrong person's hands.
-2. **Only an «Administrator» or «Eier»** registers (`ORGANIZATION_MANAGE`),
-   and no key may (`_NOT_FOR_AGENTS` in `tests/test_agent_surface.py`): it
-   decides which business invoices go out in the name of.
-3. **Recommand's own identity check.** Registering answers with a
-   `verificationUrl`; somebody who signs for the company proves who they are
-   on Recommand's page (the KYC is done by Didit, Spain, and kept in the EU).
-   Nothing is sent until Recommand says `isVerified`. Myntos never stores the
-   link: it is a credential while it lives, and asking again gives a fresh one.
-   `GET …/peppol` asks Recommand on every read until the check is done, and
-   stores `verified_at` once it is, so the page knows when the person comes
-   back from the other tab.
+### Who may act as the company
 
-An existing Recommand company with the same orgnr is **adopted** rather than
-duplicated (`find_company`). Peppol names the sender by orgnr, so two
-companies at the access point for one orgnr would be two senders claiming to
-be the same business. This happens when two sets of books in Myntos are both
-confirmed for one company (ARCHITECTURE.md § Confirmed ownership allows it,
-after asking): they share one registration, and one identity check counts for
-both. Both passed Altinn, so neither is a stranger.
+Ademico accepts requests for any legal entity under the deployment's
+credentials, so Myntos enforces ownership before Ademico is called:
+1. **Altinn confirmation required** (`Company.verified_at`). Unconfirmed
+   companies are refused with 409 `company_not_confirmed`.
+2. **Admins and owners only** (`ORGANIZATION_MANAGE`) may register or toggle
+   receiving, and **no agent key** may call either route (`_NOT_FOR_AGENTS`).
+3. **One receiving inbox per orgnr** across all active companies in Myntos.
+   Closing a company (`domain/identity/closure.py`) clears its
+   `receiving_enabled` flag so locked books cannot steal incoming invoices.
 
-## Sending
+### Direct public Peppol SML/SMP recipient lookup
 
-### Sent by default, in the press that issues
+Ademico's REST API has no participant-lookup endpoint. Instead,
+`GET …/peppol/mottaker` queries OpenPeppol's public BDXL SML DNS `NAPTR` record
+(`<base32(sha256("0192:<orgnr>"))>.iso6523-actorid-upis.participant.sml.prod.tech.peppol.org`)
+and reads the participant's public SMP XML ServiceGroup (e.g.
+`https://smp.elma-smp.no/iso6523-actorid-upis::0192%3A<orgnr>`) to verify
+support for BIS Billing 3.0 Invoice or CreditNote. No credentials or accounting
+data leave Myntos.
 
-From 1 January 2027 an invoice to another bokføringspliktig is only delivered
-when it travels as EHF, so on `/faktura/` sending is not a second step. When
-the company can send and the buyer has an orgnr, the review asks the access
-point whether that customer can receive (`GET …/peppol/mottaker`), and if so
-its main button is «Utsted og send som EHF», with a sentence under it naming
-the customer and the orgnr the invoice goes to. «Utsted uten å sende» beside
-it is for an invoice to be sent later. The first version had a separate «Send
-som EHF» on the issued invoice, and that left room for an invoice issued,
-booked and then never sent, which from 2027 is an invoice the customer has
-not lawfully received. `delivery()` in `src/lib/peppol.ts` decides it.
+### A webhook, with a sweep behind it
 
-Why the questions are where they are:
+Ademico reports events for **every** legal entity under this deployment's
+credentials: deliveries (`DOCUMENT_SENT`, `DOCUMENT_SEND_FAILED`), a buyer's
+answer (`INVOICE_RESPONSE_RECEIVED`, `MLR_RECEIVED`) and received documents
+(`DOCUMENT_RECEIVED`). Until 2026-11-25 Myntos asked for them every minute
+(`GET /api/peppol/v1/notifications`). Now Ademico pushes each event to
+`POST /api/v1/webhooks/ademico` as it happens (`peppol_sync.handle_push`), and
+a slow sweep catches whatever no push brought.
 
-- **The lookup is made before the press, not after it.** The review is the
-  only confirmation an EHF send gets: no `confirm()` follows, so the review
-  has to say where the invoice goes before the button that sends it can be
-  pressed, and the buttons wait for the answer. A customer who cannot receive
-  gets «Utsted fakturaen» and a sentence telling the person to send the PDF,
-  rather than an invoice issued and booked and then a refusal
-  (`recipient_not_on_peppol`).
-- **A lookup that fails is not a no.** The send then goes and says itself if
-  the customer cannot take it. Holding back every invoice while the lookup
-  is down would make the PDF the default again for as long as it lasted.
-- **Issuing and sending stay two requests.** Issuing numbers, books and
-  freezes the document in one transaction in our database; handing a file to
-  an access point abroad cannot be part of that transaction, and an invoice
-  must not fail to be issued because Belgium did not answer. The page sends
-  right after the issue commits, and a send that fails leaves the invoice
-  issued, with the reason and «Send som EHF» on the card.
-- **A credit note follows its invoice.** «Krediter» on an invoice that went
-  as EHF (pending or delivered, not failed) sends the credit note as EHF in
-  the same confirmed press, so the customer's system stops saying they owe
-  it. The `confirm()` names the customer and orgnr. An invoice that went as a
-  PDF is credited as a PDF.
+**What Ademico is told.** `PUT /api/peppol/v1/settings/webhooks` with
+`active: true`, the URL in `ADEMICO_WEBHOOK_URL`, Basic Auth with user
+`ademico` and password `ADEMICO_WEBHOOK_SECRET`, and `bulk: false`: one event
+per request, so a retry repeats only the event that could not be confirmed,
+and each request stays well inside Ademico's timeout (a received invoice costs
+Myntos two calls back to Ademico). `PUT` rather than `PATCH`, so nothing set by
+hand in Ademico's portal survives beside it. From `backend/`:
+`uv run python -m myntos.integrations.peppol_sync show|on|off`. It never prints
+the secret.
 
-The API keeps the two requests apart (`POST …/utsted`, then
-`POST …/send`), because an agent's send is `key_send` and waits for a person,
-while its issue may not (the skill says so step by step).
+**A push is a hint, never a fact.** Ademico cannot sign a webhook body; Basic
+Auth is all it can send. So a push only says *which document to look at*.
+Before anything is stored, that document is read back from Ademico with the
+deployment's own credentials (`GET …/documents?transmissionId=…&direction=…`),
+and only Ademico's answer counts:
+- Its `receiver` decides whose inbox. Routing by the push's own `receiver`
+  would let one forged field put one company's supplier invoice in another
+  company's inbox.
+- Its `documentStatus` decides delivery. A push claiming a failure loses to a
+  record that says delivered. The push's `details` are only used as the
+  reason the seller reads for a failure Ademico itself reports.
+- A delivery event for a send Myntos never made is not looked up at all.
 
-### One send per document
+Mollie's webhook takes the same stance (`api/v1/ki.py`).
 
-`POST …/faktura/{document_id}/send` takes the document row `FOR UPDATE`
-first, so two presses in two tabs cannot both pass the check for an earlier
-send; the second waits for the first to commit and then finds it. The partial
-unique index `uq_peppol_transmission_live` (one non-failed transmission per
-document) holds the same rule where a lock cannot: a second process, a future
-code path. A `failed` transmission may be followed by another; a `pending` or
-`delivered` one may not (`already_sent`), because an invoice that arrives
-twice can be paid twice.
+**What the webhook answers.**
+- 503 when no secret or no access point is configured.
+- 401 without the exact credentials, logged at WARNING (anyone can knock; a
+  wrong secret at Ademico shows up as the sweep's ERROR instead).
+- 503 when Ademico cannot confirm an event yet, so Ademico pushes it again: a
+  received document its list does not show yet, a `DOCUMENT_SENT` or
+  `DOCUMENT_SEND_FAILED` whose record still reads as pending, or Ademico not
+  answering.
+- 200 otherwise, including for an event Myntos does not act on and for a body
+  it cannot read. That last one is logged at ERROR with the body's type and
+  key names only, never its values: Ademico does not document what it pushes,
+  so this is the line that says its format is not what Myntos expects.
+- A handled event is also deleted from the pull queue, in case Ademico keeps a
+  copy there. A 404 there means it does not.
 
-What each answer from Recommand leaves behind:
+**The sweep is not optional.** Ademico documents neither the body it pushes,
+nor whether it retries a push that failed, nor whether a pushed event also
+stays in the queue, and every `./update.sh` is a window in which a push meets
+a closed port. So every `PEPPOL_SWEEP_INTERVAL_SECONDS` (900), and on
+`POST …/peppol/synkroniser` (API fallback),
+`peppol_sync.sync_once`:
+1. drains `GET …/notifications` as the old poller did, which finds everything
+   if Ademico keeps pushed events there and nothing if it does not;
+2. lists the invoices and credit notes Ademico received in the last 7 days
+   (`GET …/documents?direction=RECEIVING&startDateTime=…Z`) and stores any
+   Myntos has not;
+3. asks Ademico about every send still `pending` that is between 2 minutes and
+   30 days old, at most 100 a sweep.
 
-| Recommand | Myntos stores | The person is told |
-| --- | --- | --- |
-| 200, Peppol delivery `pending`/`delivered`/`failed` | A `peppol_transmission` row with that status | «EHF-en er sendt over Peppol …» or the failure, quoted |
-| 422, recipient not reachable | Nothing | `recipient_not_on_peppol`: send the PDF |
-| 400, document refused | Nothing | `access_point_refused`, with Recommand's findings |
-| Timeout during the send | Nothing | `send_uncertain`: ask the customer before sending again |
-| 401, any other error, no answer | Nothing | `access_point_unavailable`: try again |
+Once a webhook secret is set, a background sweep that finds anything at all
+logs it at ERROR («Peppol sweep found N received documents and M delivery
+updates that no webhook brought»), which reaches `/drift/`
+([operator.md](../operator.md)): the webhook is off at Ademico, its secret
+differs from `.env`, or the backend was down when a push came and Ademico did
+not try again. Without a secret the sweep is the only channel, and says what
+it found at INFO.
 
-**The timeout is the one honest gap.** Recommand's send has no idempotency key,
-and a send cut off by Myntos's own timeout (90 seconds, `_SEND_TIMEOUT`, long
-because Recommand hands the document over AS4 before it answers) may or may
-not have gone. Storing it as sent would block a resend that might be needed;
-storing nothing lets the person press again. Myntos stores nothing and says so
-in words that make them ask the customer first. The fix, when it matters:
-after a timeout, look for the document in Recommand's list of the company's
-sent documents before answering, and store what it finds.
+**Storing a received document** is the same whichever channel names it. The
+single active Myntos company receiving for that `0192:<orgnr>` is found, the
+raw UBL XML is downloaded via `GET …/invoices/{transmissionId}/ubl`, parsed
+with an Expat DTD-refusing parser (`ubl_reader.py`), and stored as the frozen
+XML with its SHA-256 digest, parsed lines and VAT breakdown. The
+`transmissionId` is checked across all companies before anything is
+downloaded, every commit completes **before** `DELETE …/notifications/{id}`,
+and `uq_peppol_incoming_company_transmission` keeps one copy when a push and
+the sweep store the same document at the same moment. So the push, the queue
+and the sweep may all see one document, and it is stored once.
 
-A 401 is logged as a warning (a rotated or mistyped key), and nothing that
-crosses the wire is logged at all: the request is an invoice and the answer
-may quote it.
+### Booking received EHFs
 
-### Delivery status
-
-`pending` means handed to the network with no receipt from the customer's
-side. `GET …/forsendelse` asks Recommand again while it is pending and stores
-the answer with `status_checked_at`; the invoice page does that for every
-pending row after the list is drawn. An access point that cannot be reached
-leaves the stored status, which is still the last true thing known.
-
-There is **no webhook** yet. Recommand can call one on delivery, which would
-make `pending` resolve without anybody opening the page, but it needs a
-public endpoint that verifies Recommand's signature, and asking on read is
-enough while nothing else depends on the status.
-
-### Agents
-
-Sending is `key_send("sende fakturaen som EHF til kunden")`: a key's request
-always waits for its person on `/godkjenning/`, whatever its scopes, because an
-invoice that has gone cannot be called back (CLAUDE.md rule 8). The approval
-names the invoice through the `document_id` target in
-`auth/approval_targets.py`. Reading where the company stands and following a
-send are `KEY_READ`. Registering is closed to keys (above).
-
-## Where the data goes
-
-Recommand states that it hosts in the EEA, on AWS, Google Cloud, DigitalOcean
-and Hetzner, all listed as «EU», and that identity verification data is
-processed and stored in the EU. Two entries on its list of subprocessors
-matter here, and both are why something above is the way it is:
-
-- **Postmark (USA)** sends Recommand's mail. Myntos never asks it to mail
-  anything (above).
-- **Cloudflare (listed «EU/Global»)** terminates TLS in front of Recommand's
-  API, so the invoice is decrypted at a Cloudflare edge before it reaches
-  Recommand. Myntos calls from Norway and lands on a Nordic edge in practice,
-  but Cloudflare promises no location for it: the same caveat as Myntos's own
-  site, and written down for the same reason.
-
-What Recommand receives: at registration, the company's name, orgnr, business
-address and (if VAT registered) `NO<orgnr>MVA`. When a review opens for a
-buyer with an orgnr, that orgnr as a Peppol address and the document type
-(`POST /api/v1/verify-document-support`), and nothing else: no amount, no name,
-nothing Myntos stores. With each send, the EHF, which
-holds the buyer's name, orgnr and address, the lines and the amounts, and any
-reference typed on the invoice. From there it goes to the access point the
-customer chose, which may be anywhere on the Peppol network, the way a
-recipient's mail server is wherever they chose.
-
-Recommand is a sub-processor of the companies' accounting data, listed on
-`/personvern/` (§ 3f2 and the table in § 6), which name the lookup as well.
+Received supplier invoices and credit notes appear under `/innkommende/` with
+status `ny`, `bokfort` or `avvist`. Nothing is ever deleted (bokføringsloven
+§ 13):
+- `POST …/peppol/innkommende/{incoming_id}/bokfor` posts an immutable voucher
+  through `ledger_service.record_cash_flow`, automatically matches or creates
+  the supplier party by `seller_orgnr` (when `create_supplier=true`), archives
+  a readable PDF in the append-only bilag store (the supplier's embedded PDF
+  when present, otherwise a rendered A4 summary from `incoming_pdf.py`), and
+  locks the row `FOR UPDATE` so an incoming invoice can never be booked twice.
+- Foreign-currency EHFs require the user to supply the paid NOK amount.
+- Dismissing (`…/avvis`) moves an unbooked invoice out of `ny` without deleting
+  it; `…/gjenapne` returns it to `ny`.
 
 ## Configuration
 
 ```
-RECOMMAND_API_KEY=…
-RECOMMAND_API_SECRET=…
-# RECOMMAND_API_BASE_URL=https://app.recommand.eu   (the default)
+ADEMICO_USER=lindeman_technologies
+ADEMICO_PASSWORD=…
+ADEMICO_TOKEN=…
+ADEMICO_WEBHOOK_SECRET=…     # openssl rand -hex 32
+# ADEMICO_WEBHOOK_URL=https://api.myntos.no/api/v1/webhooks/ademico
+# ADEMICO_API_BASE_URL=https://peppol-api1.ademico-software.com/domibus
+# PEPPOL_SML_ZONE=participant.sml.prod.tech.peppol.org
+# PEPPOL_SWEEP_INTERVAL_SECONDS=900
 ```
 
-Both halves or nothing: a blank half counts as no key, and then `GET …/peppol`
-answers `available: false`, the «E-faktura» card is hidden and the invoice
-page offers the files to download as before. One key for the whole
-deployment; each Myntos company is a company under it. Like every setting,
-an edited `.env` does nothing until the backend restarts.
+All three credentials or nothing: a blank user, password or token counts as
+unconfigured (`available: false`). As with every setting, editing `.env` takes
+effect only after restarting `myntos-backend`.
 
-## Before the first customer
+Without `ADEMICO_WEBHOOK_SECRET` the webhook answers 503 and the sweep is the
+only channel, so invoices arrive within the sweep interval rather than at once.
+Switching the webhook on goes in this order, because Ademico starts pushing
+the moment it is told to and a backend without the secret refuses every push:
+1. Back up `.env`, add `ADEMICO_WEBHOOK_SECRET`, restart (`./update.sh`).
+2. `uv run python -m myntos.integrations.peppol_sync on` from `backend/`, which
+   prints what Ademico now has.
 
-The stand-in in `test_peppol.py` answers the way the OpenAPI document says
-Recommand does. It is not a recording. One answer has been checked against the
-live API (2026-11-01, read-only, production's key): `GET /api/v1/companies`
-lists companies with `id`, `enterpriseNumber`, `isVerified` and
-`isSmpRecipient` among their fields, which is what `find_company` reads. The
-rest is owed before a customer relies on it:
+Switching it off is the reverse: `peppol_sync off`, then remove the secret.
+Changing the secret is a restart and `on` again, with the pushes in between
+refused and left to the sweep.
 
-1. **A test run against a separate Recommand team** with its own key, from
-   the TT02 copy, never production's key: register a company, finish the
-   identity check, send an invoice and a credit note, and compare each answer
-   with the stand-in. Correct the stand-in where it differs.
-2. **One real invoice between two companies the owner controls**, the second
-   receiving through any access point: check that it arrives, that its
-   status in Myntos moves from «Sendt som EHF» to «Levert som EHF», and how
-   the receiving program shows the sender.
-3. **A data processing agreement with Recommand.** `/personvern/` § 6 says
-   every supplier in its table «har databehandleravtale med oss», and the
-   table now names Recommand. Accept theirs (or have one signed) before the
-   page goes out.
-4. **Read the privacy page's new wording** (§ 3f2 and the table) with the eyes
-   of the companies, who are the controllers: adding a sub-processor of their
-   accounting data is the kind of change `/personvern/` § 12 promises to
-   announce by e-mail.
+## Before the first external customer
+
+1. **Test run end to end against Ademico TEST** (`secrets/ademico-test.env`,
+   `https://test-peppol-api1.ademico-software.com/domibus`) from TT02 or a
+   scratch run: register a company, send an invoice and credit note, receive it
+   through the webhook and through the sweep, and book it. The webhook needs a
+   public URL in front of a backend configured for TEST: pointed at
+   production's, every TEST push is read back from PROD, not found, and
+   answered 503. Look at the body Ademico actually pushes while there (see
+   Known gaps).
+2. **One real invoice in PROD** between two companies the owner controls:
+   verify sending, delivery status update, receiving into `/innkommende/`, and
+   booking with archived PDF.
+3. **Signed DPA (*databehandleravtale*) with Ademico Software** and EEA hosting
+   confirmation before serving third-party customer companies (required by
+   `/personvern/` § 6 and CLAUDE.md rule 5).
+4. **Optional hardening:** request PROD OAuth2 (`client_id`/`client_secret`)
+   credentials from Ademico Support on ticket `PEPPOLS-7735` if moving off
+   Basic Auth.
 
 ## Known gaps
 
-- **The timeout** (above): a send cut off by our own timeout is not looked
-  up afterwards.
-- **No webhook** (above): `pending` resolves only when somebody looks.
-- **No receiving** (above).
-- **The lookup answers for a document type, not a promise.** A customer who
-  is on Peppol when the review opens can still refuse the document; that
-  comes back as a failed transmission, quoted, with «Send EHF på nytt».
-- **Norwegian buyers only.** The recipient is `0192:<orgnr>`. A foreign buyer
-  needs their own Peppol participant id on the party, the same gap as in
-  [efaktura.md](efaktura.md#known-gaps).
+- **Ademico's webhook is half documented.** The settings are; the body it
+  pushes, whether and how often it retries a push that failed, how long it
+  waits for an answer, and whether a pushed event also stays in the pull
+  queue are not. Myntos accepts a single notification, a JSON array of them,
+  or `{"notifications": [...]}`, and the sweep covers the rest. Asked on
+  ticket `PEPPOLS-7735`; narrow `ademico.notifications_from_push` once
+  answered.
+- **The sweep looks back 7 days for received documents.** One that no push,
+  no queue entry and no sweep brought within a week (a backend down that
+  long) is the operator's to find in Ademico's portal.
+- **Timeout during send:** a send cut off by `_SEND_TIMEOUT` (90 s) returns
+  502 `send_uncertain` without storing a row so the user asks the customer
+  before retrying.
+- **Norwegian buyers/receivers only (`0192:<orgnr>`).** Foreign Peppol schemes
+  are not yet supported on outgoing sends or incoming routing.
+- **Single-line booking:** booking an incoming EHF posts a single cash-flow
+  entry (like `/kontantstrom/`); mixed-VAT supplier bills can be split via
+  composite entries or manual vouchers if needed.

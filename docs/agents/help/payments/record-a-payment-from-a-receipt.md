@@ -44,10 +44,17 @@ counts.
    about what the payment was for, such as «Skjerm til kontoret». Myntos reads
    the bilag with that sentence in mind. See
    [Describe what a payment was for](https://myntos.no/llms/help/payments/describe-a-payment.md).
-3. Click «Last opp faktura, kvittering eller skjermbilder», or drag the files
-   onto that box. Choose every file that belongs to the payment: an order, the
-   chat where the price was agreed and the bank line can all be one bilag. On
-   a phone, «Ta bilde av kvitteringen» opens the camera.
+   Under the box, «KI-nivå» chooses the model that reads it: «Gratis», or
+   «Medium» or «Smart» if the company has a KI plan. Choose before picking
+   the files; a change afterwards is used the next time the bilag is read or
+   a question answered
+   ([Choose the KI level](https://myntos.no/llms/help/ai/choose-a-ki-level.md)).
+3. Click «Last opp faktura, kvittering eller skjermbilder», drag the files onto
+   that box, or paste an image straight into «Beskrivelse» (Ctrl+V / Cmd+V).
+   Choose every file that belongs to the payment: an order, the chat where the
+   price was agreed and the bank line can all be one bilag. On a phone, «Ta
+   bilde av kvitteringen» opens the camera. «Legg ved bilag» under «Beskrivelse»
+   opens the same file picker.
 4. Wait while it says «Leser bilaget …» (or «Leser 3 dokumenter … bilder tar
    litt tid.»). Pictures take longer than PDFs. The description is written
    into the box as it is read.
@@ -87,7 +94,8 @@ counts.
 | «ikke lest» after a file | Nothing could be read from that file, or it was not read at all just then (see the next two rows) | Go by the warning above the form, or check the fields by hand |
 | «Vi fikk ikke lest bildene denne gangen. Prøv igjen om litt, eller fyll inn feltene selv.» | The pictures were never read: Myntos's AI did not answer just then. Nothing is known to be wrong with them | Do not retake them. Wait a minute, then write something in «Beskrivelse» or pick a file again with «Legg til flere filer»; either reads the bilag again. Or fill in the fields |
 | «Vi fikk ikke lest tekst ut av bildene. Prøv et skarpere bilde, eller fyll inn feltene selv.» | The pictures were read and no text came out of them | Take a sharper photo, or fill in the fields |
-| «KI er ikke brukt på dette bilaget, …» | The company has switched off Myntos's AI, or it was unavailable, so only the PDF's own text was read | Fill in what is missing. An administrator can switch AI back on under «KI» in the top menu |
+| «KI er ikke brukt på dette bilaget, …» | The company has switched off Myntos's AI, or it was unavailable, so only the PDF's own text was read | Fill in what is missing. An administrator can switch AI back on under «Innstillinger» → «KI i Myntos» (`https://myntos.no/organisasjon/#ki`) |
+| «… svaret kommer fra den gratis modellen. …» | «Medium» or «Smart» was chosen, but the company's KI plan has ended or its weekly quota is spent, or the larger model did not answer. «Gratis» read the bilag | Check the fields as usual. See [Choose the KI level](https://myntos.no/llms/help/ai/choose-a-ki-level.md) |
 | «PDF-en er passordbeskyttet, så vi fikk ikke lest innholdet.» | The PDF is locked | Upload an unlocked copy, or fill in the fields |
 | «Vi fikk ikke lest bilaget: … Fyll ut skjemaet selv.» | The file is not a PDF or picture, is over 25 MB, or reading failed | Use a PDF or picture under 25 MB, or fill in the form |
 | «Selskapet er ikke mva-registrert, så mvaen på bilaget kan ikke trekkes fra. …» | The company is not VAT-registered, so the whole amount is the cost | Nothing; this is correct |
@@ -105,8 +113,9 @@ counts.
   kept for five years, so attach only what documents this payment.
 - The uploaded files are not stored until «Registrer betaling» is pressed.
   Removing a file with «Fjern», or leaving the page, leaves nothing behind.
-- When Myntos's AI reads the bilag, it runs on Myntos's own servers in Norway
-  (Løynd); nothing is sent to an outside AI provider.
+- When Myntos's AI reads the bilag, it is Løynd, the KI service Myntos uses,
+  inside the EEA. Pictures are always read on Løynd's own machines in Norway;
+  nothing is stored there or sent to any other AI provider.
 - Picking a different «Penger inn» / «Penger ut» reads the bilag again, and
   editing the description or answering a question fills the form in again
   with it. Fields the person changed by hand are left alone.

@@ -1,0 +1,1649 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Aksjonærregisteroppgave | Myntos"
+  description="Før aksjeeierboken for aksjeselskapet, kontroller mot regnskapet og send aksjonærregisteroppgaven (RF-1086) direkte til Skatteetaten."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Aksjonærregisteroppgave (RF-1086)</p>
+      <h1 data-session-company></h1>
+      <p class="muted orgnr" id="orgnr"></p>
+    </div>
+    <div class="head-actions year-nav" role="group" aria-label="Inntektsår">
+      <button type="button" class="btn btn-ghost btn-small" id="year-prev" aria-label="Året før"
+        >‹</button
+      >
+      <span class="year" id="year"></span>
+      <button type="button" class="btn btn-ghost btn-small" id="year-next" aria-label="Året etter"
+        >›</button
+      >
+    </div>
+  </header>
+
+  <p class="lead">
+    Alle aksjeselskaper skal føre aksjeeierbok (aksjeloven § 4-5) og levere
+    aksjonærregisteroppgaven (RF-1086) til Skatteetaten innen 31. januar hvert år. Oppgaven sendes
+    direkte fra Myntos med selskapets godkjente Altinn-systembruker.
+  </p>
+
+  <p class="status" id="page-status" role="status" hidden></p>
+  <div class="empty" id="loading">Henter aksjeeierboken …</div>
+
+  <div id="content" hidden>
+    {/* Feil som stopper innsendingen står øverst, med merknader rett under. */}
+    <ul class="findings errors" id="errors" hidden></ul>
+    <ul class="findings notes" id="notes" hidden></ul>
+
+    {/* --- Aksjekapital og aksjeklasser ----------------------------------- */}
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title" id="year-title">Aksjekapital og aksjeklasser</h2>
+          <p class="card-hint">
+            Post 1-6 i hovedskjemaet (RF-1086). Aksjekapitalen ved årets slutt avstemmes mot konto
+            2000 i regnskapet.
+          </p>
+        </div>
+        <div class="card-actions" id="class-actions" hidden>
+          <button type="button" class="btn btn-ghost btn-small" id="prefill-btn" hidden>
+            Hent fra fjorårets oppgave
+          </button>
+          <button type="button" class="btn btn-primary btn-small" id="toggle-class-form">
+            Ny aksjeklasse
+          </button>
+        </div>
+      </div>
+
+      <dl class="totals">
+        <dt>Aksjekapital 01.01 (hele selskapet)</dt>
+        <dd id="cap-opening"></dd>
+        <dt>Aksjekapital 31.12 (hele selskapet)</dt>
+        <dd class="grand" id="cap-closing"></dd>
+        <dt>Konto 2000 i regnskapet (31.12)</dt>
+        <dd id="cap-ledger"></dd>
+      </dl>
+
+      <div class="table-scroll" id="classes-wrap" hidden>
+        <table class="data">
+          <thead>
+            <tr>
+              <th>Klasse</th>
+              <th class="num">Aksjer 01.01 → 31.12</th>
+              <th class="num">Pålydende 31.12</th>
+              <th class="num">Aksjekapital 31.12</th>
+              <th class="num">Innbetalt AK</th>
+              <th class="num">Overkurs</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="classes-body"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="classes-empty" hidden>
+        Ingen aksjeklasse registrert ennå. Legg til 01 Ordinære aksjer, eller hent fra fjorårets
+        oppgave hos Skatteetaten.
+      </p>
+
+      <form id="class-form" class="subform" novalidate hidden>
+        <h3>Ny aksjeklasse</h3>
+        <div class="form-grid">
+          <label class="field">
+            <span>Aksjeklassekode</span>
+            <select name="code" id="class-code"></select>
+          </label>
+          <label class="field">
+            <span>Navn</span>
+            <input type="text" name="name" id="class-name" value="Ordinære aksjer" maxlength="80" />
+          </label>
+          <label class="field">
+            <span>ISIN (valgfritt)</span>
+            <input type="text" name="isin" maxlength="35" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>Inngående år (fjoråret, la stå tomt for nystiftet)</span>
+            <input type="number" name="opening_year" id="class-opening-year" min="1900" max="2100" />
+          </label>
+          <label class="field">
+            <span>Inngående antall aksjer</span>
+            <input type="number" name="opening_shares" value="0" min="0" />
+          </label>
+          <label class="field">
+            <span>Inngående pålydende per aksje (kr)</span>
+            <input type="text" name="opening_par_value" value="0" inputmode="decimal" />
+          </label>
+          <label class="field">
+            <span>Inngående aksjekapital (kr)</span>
+            <input type="text" name="opening_share_capital" value="0.00" inputmode="decimal" />
+          </label>
+          <label class="field">
+            <span>Inngående innbetalt aksjekapital (kr)</span>
+            <input type="text" name="opening_paid_in_capital" value="0.00" inputmode="decimal" />
+          </label>
+          <label class="field">
+            <span>Inngående innbetalt overkurs (kr)</span>
+            <input type="text" name="opening_paid_in_premium" value="0.00" inputmode="decimal" />
+          </label>
+        </div>
+        <p class="card-hint">
+          For et nystiftet selskap i året lar du inngående verdier stå på 0 og registrerer
+          stiftelsen som en hendelse under.
+        </p>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-small" id="class-save">
+            Lagre aksjeklasse
+          </button>
+          <button type="button" class="btn btn-ghost btn-small" id="class-cancel">Avbryt</button>
+        </div>
+        <p class="status" id="class-status" role="status" hidden></p>
+      </form>
+      <p class="status" id="prefill-status" role="status" hidden></p>
+    </section>
+
+    {/* --- Aksjeeierbok (aksjonærer) -------------------------------------- */}
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">Aksjeeierbok</h2>
+          <p class="card-hint">
+            Hver aksjonær med beholdning ved årets start eller slutt, eller med hendelser i året,
+            får sitt eget underskjema (RF-1086-U). Fødselsnummer vises maskert i oversikten.
+          </p>
+        </div>
+        <div class="card-actions" id="holder-actions" hidden>
+          <button type="button" class="btn btn-primary btn-small" id="toggle-holder-form">
+            Legg til aksjonær
+          </button>
+        </div>
+      </div>
+
+      <div class="table-scroll" id="holders-wrap" hidden>
+        <table class="data">
+          <thead>
+            <tr>
+              <th>Aksjonær</th>
+              <th>Type</th>
+              <th>Identifikator</th>
+              <th class="num">01.01</th>
+              <th class="num">31.12</th>
+              <th class="num">Eierandel</th>
+              <th class="num">Utbytte</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="holders-body"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="holders-empty" hidden>
+        Ingen aksjonærer registrert ennå. Legg til eierne av selskapet for å bygge aksjeeierboken.
+      </p>
+
+      <form id="holder-form" class="subform" novalidate hidden>
+        <h3 id="holder-form-title">Ny aksjonær</h3>
+        <input type="hidden" name="edit_id" id="holder-edit-id" value="" />
+        <div class="form-grid">
+          <label class="field">
+            <span>Type aksjonær</span>
+            <select name="kind" id="holder-kind">
+              <option value="person">Norsk person</option>
+              <option value="selskap">Norsk selskap (AS mv.)</option>
+              <option value="utenlandsk">Utenlandsk aksjonær</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Navn</span>
+            <input type="text" name="name" id="holder-name" maxlength="150" autocomplete="off" />
+          </label>
+          <label class="field" id="holder-fnr-field">
+            <span>Fødselsnummer / D-nummer (11 siffer)</span>
+            <input
+              type="text"
+              name="national_id"
+              id="holder-fnr"
+              inputmode="numeric"
+              maxlength="15"
+              autocomplete="off"
+            />
+            <span class="field-hint" id="holder-fnr-hint">
+              Brukes kun i RF-1086-U til Skatteetaten. La feltet stå tomt ved redigering for å
+              beholde lagret nummer.
+            </span>
+          </label>
+          <label class="field" id="holder-org-field" hidden>
+            <span>Organisasjonsnummer (9 siffer)</span>
+            <input
+              type="text"
+              name="orgnr"
+              id="holder-orgnr"
+              inputmode="numeric"
+              maxlength="12"
+              autocomplete="off"
+            />
+          </label>
+          <label class="field" id="holder-utl-field" hidden>
+            <span>Utenlandsk ID (UTL + 9 siffer, valgfritt)</span>
+            <input
+              type="text"
+              name="foreign_id"
+              id="holder-foreign-id"
+              maxlength="12"
+              autocomplete="off"
+            />
+          </label>
+          <label class="field">
+            <span>Landkode (ISO-2)</span>
+            <input type="text" name="country_code" id="holder-country" value="NO" maxlength="2" />
+          </label>
+          <label class="field">
+            <span>Adresse (valgfritt)</span>
+            <input type="text" name="address" id="holder-address" maxlength="105" />
+          </label>
+          <label class="field">
+            <span>Postnummer</span>
+            <input type="text" name="postal_code" id="holder-postal" maxlength="15" />
+          </label>
+          <label class="field">
+            <span>Poststed</span>
+            <input type="text" name="city" id="holder-city" maxlength="35" />
+          </label>
+          <label class="field">
+            <span>E-post (valgfritt)</span>
+            <input type="email" name="email" id="holder-email" maxlength="150" />
+          </label>
+        </div>
+
+        <div id="holder-openings" class="opening-grid" hidden></div>
+
+        <label class="check">
+          <input type="checkbox" name="is_own_shares" id="holder-own" />
+          <span>Egne aksjer (selskapet eier aksjene selv)</span>
+        </label>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-small" id="holder-save">
+            Lagre aksjonær
+          </button>
+          <button type="button" class="btn btn-ghost btn-small" id="holder-cancel">Avbryt</button>
+        </div>
+        <p class="status" id="holder-status" role="status" hidden></p>
+      </form>
+    </section>
+
+    {/* --- Hendelser i året ----------------------------------------------- */}
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">Hendelser i året</h2>
+          <p class="card-hint">
+            Registrer stiftelse, nyemisjon, kjøp og salg, utbytte, splitt, spleis, fondsemisjon,
+            kapitalendringer eller likvidasjon i inntektsåret.
+          </p>
+        </div>
+        <div class="card-actions" id="event-actions" hidden>
+          <button type="button" class="btn btn-primary btn-small" id="toggle-event-form">
+            Registrer hendelse
+          </button>
+        </div>
+      </div>
+
+      <ol class="events" id="events-list" hidden></ol>
+      <p class="empty" id="events-empty" hidden>
+        Ingen hendelser registrert i dette inntektsåret. Dersom eierforhold og aksjekapital var
+        uendret gjennom året, trengs ingen hendelser.
+      </p>
+
+      <form id="event-form" class="subform" novalidate hidden>
+        <h3>Ny aksjehendelse</h3>
+        <div class="form-grid">
+          <label class="field">
+            <span>Aksjeklasse</span>
+            <select name="share_class_id" id="ev-class"></select>
+          </label>
+          <label class="field">
+            <span>Hendelsestype</span>
+            <select name="event_type" id="ev-type">
+              <option value="stiftelse">Stiftelse</option>
+              <option value="nyemisjon">Nyemisjon</option>
+              <option value="overdragelse">Overdragelse (kjøp/salg/arv/gave)</option>
+              <option value="utbytte">Utbytte</option>
+              <option value="splitt">Aksjesplitt</option>
+              <option value="spleis">Aksjespleis</option>
+              <option value="fondsemisjon">Fondsemisjon</option>
+              <option value="kapitalforhoyelse_palydende">Kapitalforhøyelse (økt pålydende)</option>
+              <option value="kapitalnedsettelse">Kapitalnedsettelse</option>
+              <option value="likvidasjon">Likvidasjon</option>
+            </select>
+          </label>
+          <label class="field" id="ev-subtype-wrap" hidden>
+            <span>Undertype</span>
+            <select name="subtype" id="ev-subtype"></select>
+          </label>
+          <label class="field">
+            <span>Dato</span>
+            <input type="date" name="event_date" id="ev-date" />
+          </label>
+          <label class="field">
+            <span>Beskrivelse (valgfritt)</span>
+            <input type="text" name="description" maxlength="255" />
+          </label>
+          <label class="field" id="ev-shares-wrap">
+            <span>Antall aksjer (samlet)</span>
+            <input type="number" name="total_shares" id="ev-shares" min="0" />
+          </label>
+          <label class="field" id="ev-par-wrap">
+            <span>Pålydende etter hendelsen (kr)</span>
+            <input type="text" name="par_value_after" id="ev-par" inputmode="decimal" />
+          </label>
+          <label class="field" id="ev-amount-wrap">
+            <span>Samlet beløp / aksjekapital (kr)</span>
+            <input type="text" name="total_amount" id="ev-amount" inputmode="decimal" />
+          </label>
+          <label class="field" id="ev-premium-wrap">
+            <span>Samlet overkurs (kr, valgfritt)</span>
+            <input type="text" name="premium_amount" id="ev-premium" inputmode="decimal" />
+          </label>
+          <label class="field" id="ev-pershare-wrap" hidden>
+            <span>Beløp per aksje (kr, valgfritt)</span>
+            <input type="text" name="amount_per_share" id="ev-pershare" inputmode="decimal" />
+          </label>
+        </div>
+
+        <div class="lines-block">
+          <div class="lines-head">
+            <h4>Fordeling på aksjonærer</h4>
+            <button type="button" class="btn btn-ghost btn-small" id="ev-add-line">
+              Legg til linje
+            </button>
+          </div>
+          <div id="ev-lines"></div>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-small" id="ev-save">
+            Lagre hendelse
+          </button>
+          <button type="button" class="btn btn-ghost btn-small" id="ev-cancel">Avbryt</button>
+        </div>
+        <p class="status" id="ev-status" role="status" hidden></p>
+      </form>
+    </section>
+
+    {/* --- Kontroll og innsending (RF-1086) ------------------------------- */}
+    <section class="card" id="innsending">
+      <h2 class="card-title">Kontroll og innsending til Skatteetaten</h2>
+
+      <p class="card-hint" id="step-read_only" hidden>
+        Det er den som kan føre i regnskapet, som sender inn aksjonærregisteroppgaven.
+      </p>
+      <p class="card-hint" id="step-blocked" hidden>
+        Rett feilene som står øverst på siden. Deretter kan aksjonærregisteroppgaven sendes inn.
+      </p>
+      <p class="card-hint" id="step-not_configured" hidden>
+        Direkte innsending av aksjonærregisteroppgaven er ikke satt opp i denne installasjonen ennå.
+        Du kan likevel laste ned ferdig validert RF-1086 XML over.
+      </p>
+      <div id="step-needs_systembruker" hidden>
+        <p class="card-hint">
+          For å sende aksjonærregisteroppgaven direkte til Skatteetaten må selskapet ha en godkjent
+          Altinn-systembruker.
+        </p>
+        <div class="form-actions">
+          <a class="btn btn-primary" href="/organisasjon/#altinn">
+            Sett opp Altinn-systembruker →
+          </a>
+        </div>
+      </div>
+
+      <form id="send-form" class="review" novalidate hidden>
+        <div class="form-grid">
+          <label class="field" id="send-class-wrap">
+            <span>Aksjeklasse som skal sendes</span>
+            <select id="send-class"></select>
+          </label>
+          <label class="field">
+            <span>Kontakt-e-post til Skatteetaten</span>
+            <input type="email" id="send-email" maxlength="150" required />
+          </label>
+          <label class="field">
+            <span>Kontaktperson (navn)</span>
+            <input type="text" id="send-name" maxlength="150" />
+          </label>
+          <label class="field">
+            <span>Rolle (valgfritt)</span>
+            <input type="text" id="send-role" placeholder="Daglig leder" maxlength="40" />
+          </label>
+          <label class="field">
+            <span>Telefon (valgfritt)</span>
+            <input type="text" id="send-phone" maxlength="30" />
+          </label>
+        </div>
+
+        <p class="card-hint">
+          Forhåndsvis eller last ned XML før innsending:
+          <a id="send-preview-xml" href="#" target="_blank" rel="noopener noreferrer"
+            >Last ned hovedskjema (RF-1086 XML)</a
+          >
+        </p>
+
+        <label class="check">
+          <input type="checkbox" id="send-confirm" />
+          <span id="send-confirm-text"></span>
+        </label>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary" id="send-submit" disabled>
+            Send inn aksjonærregisteroppgaven
+          </button>
+        </div>
+        <p class="status" id="send-status" role="status" hidden></p>
+      </form>
+
+      <div id="history" hidden>
+        <h3>Innsendinger for året</h3>
+        <ol class="filings" id="filings"></ol>
+      </div>
+    </section>
+  </div>
+</BaseLayout>
+
+<style>
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .orgnr {
+    margin: 0.2rem 0 0;
+    font-family: var(--font-numeric);
+    font-size: 0.9rem;
+  }
+  .year-nav {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .year {
+    font-family: var(--font-numeric);
+    font-size: 1.15rem;
+    font-weight: 700;
+    min-width: 3.5rem;
+    text-align: center;
+  }
+  .card-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem 1rem;
+    margin-bottom: 0.75rem;
+  }
+  .card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .totals {
+    display: grid;
+    grid-template-columns: minmax(12rem, 20rem) minmax(0, 1fr);
+    gap: 0.35rem 1.25rem;
+    margin: 0.75rem 0 1.25rem;
+  }
+  .totals dt {
+    color: var(--muted);
+    font-size: 0.92rem;
+  }
+  .totals dd {
+    margin: 0;
+    font-family: var(--font-numeric);
+  }
+  .totals dd.grand {
+    font-weight: 700;
+  }
+  .findings {
+    margin: 0 0 1.25rem;
+    padding: 0.9rem 1.1rem 0.9rem 2rem;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .findings.errors {
+    border-color: var(--negative);
+    background: var(--danger-bg);
+  }
+  .findings.notes {
+    border-color: var(--gold);
+    background: var(--gold-soft);
+  }
+  .findings :global(li + li) {
+    margin-top: 0.45rem;
+  }
+  .subform {
+    margin-top: 1.25rem;
+    padding-top: 1.1rem;
+    border-top: 1px solid var(--border);
+  }
+  .subform h3 {
+    margin: 0 0 0.75rem;
+  }
+  .form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    gap: 0.85rem 1rem;
+    margin-bottom: 0.85rem;
+  }
+  .opening-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    gap: 0.75rem 1rem;
+    margin: 0.75rem 0;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+  }
+  .form-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.85rem;
+  }
+  .check {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.55rem;
+    margin: 0.75rem 0;
+    font-size: 0.94rem;
+  }
+  .lines-block {
+    margin: 1rem 0;
+    padding: 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+  }
+  .lines-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.65rem;
+  }
+  .lines-head h4 {
+    margin: 0;
+  }
+  #ev-lines :global(.line-row) {
+    display: grid;
+    grid-template-columns: minmax(11rem, 1.4fr) repeat(auto-fit, minmax(7.5rem, 1fr)) auto;
+    gap: 0.5rem;
+    align-items: end;
+    padding: 0.5rem 0;
+    border-top: 1px solid var(--border);
+  }
+  #ev-lines :global(.line-row:first-child) {
+    border-top: none;
+  }
+  .events,
+  .filings {
+    list-style: none;
+    margin: 0.75rem 0 0;
+    padding: 0;
+  }
+  .events :global(li),
+  .filings :global(li) {
+    padding: 0.75rem 0;
+    border-top: 1px solid var(--border);
+  }
+  .events :global(li:first-child),
+  .filings :global(li:first-child) {
+    border-top: none;
+  }
+  .events :global(.ev-head),
+  .filings :global(.filing-head) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+  }
+  .events :global(.ev-meta),
+  .filings :global(.filing-meta) {
+    color: var(--muted);
+    font-size: 0.88rem;
+    margin: 0.25rem 0 0;
+  }
+  .filings :global(.filing-docs) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.9rem;
+    margin-top: 0.45rem;
+    font-size: 0.88rem;
+  }
+  .filings :global(.badge) {
+    display: inline-block;
+    padding: 0.18rem 0.55rem;
+    border-radius: var(--radius-pill);
+    font-size: 0.78rem;
+    font-weight: 700;
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .filings :global(.badge[data-tone='error']) {
+    background: var(--danger-bg);
+    color: var(--negative);
+  }
+  .table-actions {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  .review {
+    margin-top: 0.75rem;
+  }
+  @media (max-width: 40rem) {
+    .totals {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    aksjonaerDocumentUrl,
+    aksjonaerXmlUrl,
+    createShareClass,
+    createShareEvent,
+    createShareholder,
+    deleteShareClass,
+    deleteShareEvent,
+    deleteShareholder,
+    getAksjonaer,
+    importAksjonaerPrefill,
+    sendAksjonaer,
+    updateShareholder,
+    type AksjonaerFinding,
+    type AksjonaerYear,
+    type Company,
+    type ShareEventLinePayload,
+    type Shareholder,
+  } from '../lib/api';
+  import {
+    confirmSentence,
+    eventTypeLabel,
+    filingStatusLabel,
+    formatShares,
+    shareholderIdentifier,
+    shareholderKindLabel,
+    submissionStep,
+  } from '../lib/aksjonaer';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import { isoDate, kroner, orgnummer } from '../lib/format';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const classForm = el<HTMLFormElement>('#class-form');
+  const classStatus = el<HTMLParagraphElement>('#class-status');
+  const prefillStatus = el<HTMLParagraphElement>('#prefill-status');
+  const holderForm = el<HTMLFormElement>('#holder-form');
+  const holderStatus = el<HTMLParagraphElement>('#holder-status');
+  const eventForm = el<HTMLFormElement>('#event-form');
+  const eventStatus = el<HTMLParagraphElement>('#ev-status');
+  const sendForm = el<HTMLFormElement>('#send-form');
+  const sendStatus = el<HTMLParagraphElement>('#send-status');
+  const sendConfirm = el<HTMLInputElement>('#send-confirm');
+  const sendSubmit = el<HTMLButtonElement>('#send-submit');
+
+  let company: Company;
+  let year: number | null = null;
+  let view: AksjonaerYear | null = null;
+
+  const mayWrite = (): boolean => canInCompany(company, 'ledger:write');
+
+  function yearFromHash(hash: string): number | null {
+    const match = /^#(\d{4})$/.exec(hash.trim());
+    if (!match) return null;
+    const parsed = Number(match[1]);
+    return parsed >= 2000 && parsed <= 2100 ? parsed : null;
+  }
+
+  function cell(text: string, className?: string): HTMLTableCellElement {
+    const td = document.createElement('td');
+    if (className) td.className = className;
+    td.textContent = text;
+    return td;
+  }
+
+  function dateTime(value: string): string {
+    return new Date(value).toLocaleString('nb-NO', { dateStyle: 'medium', timeStyle: 'short' });
+  }
+
+  function allFindings(data: AksjonaerYear): AksjonaerFinding[] {
+    const list: AksjonaerFinding[] = [...data.findings];
+    for (const sc of data.classes) list.push(...sc.findings);
+    return list;
+  }
+
+  function renderFindings(data: AksjonaerYear): void {
+    const items = allFindings(data);
+    const errors = items.filter((f) => f.severity === 'feil');
+    const notes = items.filter((f) => f.severity === 'merknad');
+    el('#errors').replaceChildren(
+      ...errors.map((f) => {
+        const li = document.createElement('li');
+        li.textContent = f.message;
+        return li;
+      }),
+    );
+    show(el('#errors'), errors.length > 0);
+    el('#notes').replaceChildren(
+      ...notes.map((f) => {
+        const li = document.createElement('li');
+        li.textContent = f.message;
+        return li;
+      }),
+    );
+    show(el('#notes'), notes.length > 0);
+  }
+
+  function renderClasses(data: AksjonaerYear): void {
+    el('#year').textContent = String(data.year);
+    el('#year-title').textContent = `Aksjekapital og aksjeklasser for ${data.year}`;
+    el('#cap-opening').textContent = kroner(data.company_opening_capital);
+    el('#cap-closing').textContent = kroner(data.company_closing_capital);
+    el('#cap-ledger').textContent =
+      data.ledger_share_capital !== null
+        ? kroner(data.ledger_share_capital)
+        : 'Ingen føringer på konto 2000 ennå';
+
+    const writable = mayWrite();
+    show(el('#class-actions'), writable);
+    show(el('#prefill-btn'), writable && data.submission_available && data.systembruker_approved);
+
+    // Populate share class code options.
+    const codeSelect = el<HTMLSelectElement>('#class-code');
+    const existingCodes = new Set(data.classes.map((c) => c.code));
+    codeSelect.replaceChildren(
+      ...Object.entries(data.codes.share_classes).map(([code, label]) => {
+        const opt = document.createElement('option');
+        opt.value = code;
+        opt.textContent = `${code} ${label}`;
+        opt.disabled = existingCodes.has(code);
+        return opt;
+      }),
+    );
+    const firstAvailable = Array.from(codeSelect.options).find((o) => !o.disabled);
+    if (firstAvailable) {
+      codeSelect.value = firstAvailable.value;
+      el<HTMLInputElement>('#class-name').value =
+        data.codes.share_classes[firstAvailable.value] ?? 'Ordinære aksjer';
+    }
+
+    const tbody = el('#classes-body');
+    tbody.replaceChildren(
+      ...data.classes.map((sc) => {
+        const tr = document.createElement('tr');
+        tr.append(
+          cell(`${sc.code} ${sc.name}`),
+          cell(`${formatShares(sc.opening.shares)} → ${formatShares(sc.closing.shares)}`, 'num'),
+          cell(kroner(sc.closing.par_value), 'num'),
+          cell(kroner(sc.closing.share_capital), 'num'),
+          cell(kroner(sc.closing.paid_in_capital), 'num'),
+          cell(kroner(sc.closing.paid_in_premium), 'num'),
+        );
+        const tdAct = document.createElement('td');
+        const wrap = document.createElement('span');
+        wrap.className = 'table-actions';
+        const xmlLink = document.createElement('a');
+        xmlLink.className = 'btn btn-ghost btn-small';
+        xmlLink.href = aksjonaerXmlUrl(company.id, data.year, sc.code, 'hovedskjema');
+        xmlLink.textContent = 'XML';
+        wrap.append(xmlLink);
+
+        if (writable) {
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'btn btn-ghost btn-small';
+          delBtn.textContent = 'Slett';
+          delBtn.addEventListener('click', () => {
+            delBtn.disabled = true;
+            setStatus(pageStatus, '');
+            void deleteShareClass(company.id, sc.id)
+              .then(() => refresh())
+              .catch((error: unknown) => {
+                setStatus(
+                  pageStatus,
+                  error instanceof ApiError ? error.message : 'Klarte ikke å slette aksjeklassen.',
+                );
+              })
+              .finally(() => {
+                delBtn.disabled = false;
+              });
+          });
+          wrap.append(delBtn);
+        }
+        tdAct.append(wrap);
+        tr.append(tdAct);
+        return tr;
+      }),
+    );
+    show(el('#classes-wrap'), data.classes.length > 0);
+    show(el('#classes-empty'), data.classes.length === 0);
+  }
+
+  function openHolderForm(holder?: Shareholder): void {
+    if (!view) return;
+    setStatus(holderStatus, '');
+    el<HTMLInputElement>('#holder-edit-id').value = holder ? String(holder.id) : '';
+    el('#holder-form-title').textContent = holder ? `Rediger ${holder.name}` : 'Ny aksjonær';
+    el<HTMLSelectElement>('#holder-kind').value = holder?.kind ?? 'person';
+    el<HTMLInputElement>('#holder-name').value = holder?.name ?? '';
+    el<HTMLInputElement>('#holder-fnr').value = '';
+    el<HTMLInputElement>('#holder-orgnr').value = holder?.orgnr ?? '';
+    el<HTMLInputElement>('#holder-foreign-id').value = holder?.foreign_id ?? '';
+    el<HTMLInputElement>('#holder-country').value = holder?.country_code ?? 'NO';
+    el<HTMLInputElement>('#holder-address').value = holder?.address ?? '';
+    el<HTMLInputElement>('#holder-postal').value = holder?.postal_code ?? '';
+    el<HTMLInputElement>('#holder-city').value = holder?.city ?? '';
+    el<HTMLInputElement>('#holder-email').value = holder?.email ?? '';
+    el<HTMLInputElement>('#holder-own').checked = holder?.is_own_shares ?? false;
+
+    syncHolderKindFields();
+    renderOpeningInputs(holder);
+    show(holderForm, true);
+  }
+
+  function syncHolderKindFields(): void {
+    const kind = el<HTMLSelectElement>('#holder-kind').value;
+    show(el('#holder-fnr-field'), kind === 'person');
+    show(el('#holder-org-field'), kind === 'selskap');
+    show(el('#holder-utl-field'), kind === 'utenlandsk');
+  }
+
+  function renderOpeningInputs(holder?: Shareholder): void {
+    const host = el('#holder-openings');
+    if (!view || view.classes.length === 0) {
+      host.replaceChildren();
+      show(host, false);
+      return;
+    }
+    host.replaceChildren(
+      ...view.classes.map((sc) => {
+        const label = document.createElement('label');
+        label.className = 'field';
+        const span = document.createElement('span');
+        span.textContent = `Inngående aksjer i ${sc.code} ${sc.name}`;
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.min = '0';
+        input.dataset.openingClass = String(sc.id);
+        input.value = String(holder?.opening_holdings[String(sc.id)] ?? 0);
+        label.append(span, input);
+        return label;
+      }),
+    );
+    show(host, true);
+  }
+
+  function renderShareholders(data: AksjonaerYear): void {
+    const writable = mayWrite();
+    show(el('#holder-actions'), writable);
+
+    // Aggregate holdings per shareholder across classes for the main table.
+    const statsByHolder = new Map<
+      number,
+      { opening: number; closing: number; pct: string; div: number; classCode: string }
+    >();
+    for (const sc of data.classes) {
+      for (const h of sc.shareholders) {
+        const prev = statsByHolder.get(h.shareholder_id);
+        if (!prev) {
+          statsByHolder.set(h.shareholder_id, {
+            opening: h.opening_shares,
+            closing: h.closing_shares,
+            pct: h.ownership_percent,
+            div: Number(h.dividends_total),
+            classCode: sc.code,
+          });
+        } else {
+          prev.opening += h.opening_shares;
+          prev.closing += h.closing_shares;
+          prev.div += Number(h.dividends_total);
+        }
+      }
+    }
+
+    const tbody = el('#holders-body');
+    tbody.replaceChildren(
+      ...data.shareholders.map((holder) => {
+        const tr = document.createElement('tr');
+        const st = statsByHolder.get(holder.id);
+        tr.append(
+          cell(holder.is_own_shares ? `${holder.name} (egne aksjer)` : holder.name),
+          cell(shareholderKindLabel(holder.kind)),
+          cell(shareholderIdentifier(holder)),
+          cell(formatShares(st?.opening ?? 0), 'num'),
+          cell(formatShares(st?.closing ?? 0), 'num'),
+          cell(st ? `${st.pct} %` : '0,00 %', 'num'),
+          cell(kroner((st?.div ?? 0).toFixed(2)), 'num'),
+        );
+        const tdAct = document.createElement('td');
+        const wrap = document.createElement('span');
+        wrap.className = 'table-actions';
+        if (st) {
+          const xmlLink = document.createElement('a');
+          xmlLink.className = 'btn btn-ghost btn-small';
+          xmlLink.href = aksjonaerXmlUrl(
+            company.id,
+            data.year,
+            st.classCode,
+            'underskjema',
+            holder.id,
+          );
+          xmlLink.textContent = 'XML';
+          wrap.append(xmlLink);
+        }
+        if (writable) {
+          const editBtn = document.createElement('button');
+          editBtn.type = 'button';
+          editBtn.className = 'btn btn-ghost btn-small';
+          editBtn.textContent = 'Endre';
+          editBtn.addEventListener('click', () => openHolderForm(holder));
+          wrap.append(editBtn);
+
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'btn btn-ghost btn-small';
+          delBtn.textContent = 'Slett';
+          delBtn.addEventListener('click', () => {
+            delBtn.disabled = true;
+            setStatus(pageStatus, '');
+            void deleteShareholder(company.id, holder.id)
+              .then(() => refresh())
+              .catch((error: unknown) => {
+                setStatus(
+                  pageStatus,
+                  error instanceof ApiError ? error.message : 'Klarte ikke å slette aksjonæren.',
+                );
+              })
+              .finally(() => {
+                delBtn.disabled = false;
+              });
+          });
+          wrap.append(delBtn);
+        }
+        tdAct.append(wrap);
+        tr.append(tdAct);
+        return tr;
+      }),
+    );
+    show(el('#holders-wrap'), data.shareholders.length > 0);
+    show(el('#holders-empty'), data.shareholders.length === 0);
+  }
+
+  function syncEventFormFields(): void {
+    if (!view) return;
+    const type = el<HTMLSelectElement>('#ev-type').value;
+    const subtypeSelect = el<HTMLSelectElement>('#ev-subtype');
+    const subtypeMap: Record<string, Record<string, string>> = {
+      stiftelse: view.codes.emisjon_subtypes,
+      nyemisjon: view.codes.emisjon_subtypes,
+      overdragelse: view.codes.overdragelse_subtypes,
+      utbytte: view.codes.utbytte_subtypes,
+      fondsemisjon: view.codes.fondsemisjon_subtypes,
+      kapitalnedsettelse: view.codes.kapitalnedsettelse_subtypes,
+    };
+    const choices = subtypeMap[type];
+    if (choices) {
+      subtypeSelect.replaceChildren(
+        ...Object.entries(choices).map(([code, label]) => {
+          const opt = document.createElement('option');
+          opt.value = code;
+          opt.textContent = label;
+          return opt;
+        }),
+      );
+      show(el('#ev-subtype-wrap'), true);
+    } else {
+      subtypeSelect.replaceChildren();
+      show(el('#ev-subtype-wrap'), false);
+    }
+
+    const needsShares = [
+      'stiftelse',
+      'nyemisjon',
+      'splitt',
+      'spleis',
+      'fondsemisjon',
+      'likvidasjon',
+    ].includes(type);
+    const needsPar = [
+      'stiftelse',
+      'nyemisjon',
+      'splitt',
+      'spleis',
+      'fondsemisjon',
+      'kapitalforhoyelse_palydende',
+      'kapitalnedsettelse',
+    ].includes(type);
+    const needsAmount = [
+      'stiftelse',
+      'nyemisjon',
+      'utbytte',
+      'fondsemisjon',
+      'kapitalforhoyelse_palydende',
+      'kapitalnedsettelse',
+      'likvidasjon',
+    ].includes(type);
+    const needsPremium = ['stiftelse', 'nyemisjon', 'kapitalforhoyelse_palydende'].includes(type);
+    const needsPerShare = ['utbytte', 'fondsemisjon', 'kapitalforhoyelse_palydende', 'kapitalnedsettelse'].includes(type);
+
+    show(el('#ev-shares-wrap'), needsShares);
+    show(el('#ev-par-wrap'), needsPar);
+    show(el('#ev-amount-wrap'), needsAmount);
+    show(el('#ev-premium-wrap'), needsPremium);
+    show(el('#ev-pershare-wrap'), needsPerShare);
+  }
+
+  function addEventLineRow(): void {
+    if (!view) return;
+    const type = el<HTMLSelectElement>('#ev-type').value;
+    const row = document.createElement('div');
+    row.className = 'line-row';
+
+    const holderWrap = document.createElement('label');
+    holderWrap.className = 'field';
+    const holderLbl = document.createElement('span');
+    holderLbl.textContent = 'Aksjonær';
+    const holderSel = document.createElement('select');
+    holderSel.dataset.field = 'shareholder_id';
+    holderSel.replaceChildren(
+      ...view.shareholders.map((h) => {
+        const opt = document.createElement('option');
+        opt.value = String(h.id);
+        opt.textContent = h.name;
+        return opt;
+      }),
+    );
+    holderWrap.append(holderLbl, holderSel);
+    row.append(holderWrap);
+
+    if (type === 'overdragelse') {
+      const roleWrap = document.createElement('label');
+      roleWrap.className = 'field';
+      const roleLbl = document.createElement('span');
+      roleLbl.textContent = 'Rolle';
+      const roleSel = document.createElement('select');
+      roleSel.dataset.field = 'role';
+      const optIn = document.createElement('option');
+      optIn.value = 'mottaker';
+      optIn.textContent = 'Kjøper / mottaker';
+      const optOut = document.createElement('option');
+      optOut.value = 'avgiver';
+      optOut.textContent = 'Selger / avgiver';
+      roleSel.append(optIn, optOut);
+      roleWrap.append(roleLbl, roleSel);
+      row.append(roleWrap);
+    }
+
+    const sharesWrap = document.createElement('label');
+    sharesWrap.className = 'field';
+    const sharesLbl = document.createElement('span');
+    sharesLbl.textContent = 'Antall aksjer';
+    const sharesInp = document.createElement('input');
+    sharesInp.type = 'number';
+    sharesInp.min = '0';
+    sharesInp.value = '0';
+    sharesInp.dataset.field = 'shares';
+    sharesWrap.append(sharesLbl, sharesInp);
+    row.append(sharesWrap);
+
+    const amtWrap = document.createElement('label');
+    amtWrap.className = 'field';
+    const amtLbl = document.createElement('span');
+    amtLbl.textContent = 'Beløp (kr)';
+    const amtInp = document.createElement('input');
+    amtInp.type = 'text';
+    amtInp.inputMode = 'decimal';
+    amtInp.dataset.field = 'amount';
+    amtWrap.append(amtLbl, amtInp);
+    row.append(amtWrap);
+
+    if (type === 'utbytte') {
+      const wtWrap = document.createElement('label');
+      wtWrap.className = 'field';
+      const wtLbl = document.createElement('span');
+      wtLbl.textContent = 'Kildeskatt (kr, valgfri)';
+      const wtInp = document.createElement('input');
+      wtInp.type = 'text';
+      wtInp.inputMode = 'decimal';
+      wtInp.dataset.field = 'withholding_tax';
+      wtWrap.append(wtLbl, wtInp);
+      row.append(wtWrap);
+    }
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'btn btn-ghost btn-small';
+    removeBtn.textContent = 'Fjern';
+    removeBtn.addEventListener('click', () => row.remove());
+    row.append(removeBtn);
+
+    el('#ev-lines').append(row);
+  }
+
+  function renderEvents(data: AksjonaerYear): void {
+    const writable = mayWrite();
+    show(el('#event-actions'), writable && data.classes.length > 0 && data.shareholders.length > 0);
+
+    const classSel = el<HTMLSelectElement>('#ev-class');
+    classSel.replaceChildren(
+      ...data.classes.map((sc) => {
+        const opt = document.createElement('option');
+        opt.value = String(sc.id);
+        opt.textContent = `${sc.code} ${sc.name}`;
+        return opt;
+      }),
+    );
+    const evDate = el<HTMLInputElement>('#ev-date');
+    if (!evDate.value || !evDate.value.startsWith(String(data.year))) {
+      evDate.value = `${data.year}-01-15`;
+    }
+
+    const list = el('#events-list');
+    list.replaceChildren(
+      ...data.events.map((ev) => {
+        const li = document.createElement('li');
+        const head = document.createElement('div');
+        head.className = 'ev-head';
+        const title = document.createElement('strong');
+        title.textContent = `${isoDate(ev.event_date)} · ${eventTypeLabel(ev.event_type)} (klasse ${ev.share_class_code})`;
+        head.append(title);
+
+        if (writable) {
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'btn btn-ghost btn-small';
+          delBtn.textContent = 'Slett';
+          delBtn.addEventListener('click', () => {
+            delBtn.disabled = true;
+            setStatus(pageStatus, '');
+            void deleteShareEvent(company.id, ev.id)
+              .then(() => refresh())
+              .catch((error: unknown) => {
+                setStatus(
+                  pageStatus,
+                  error instanceof ApiError ? error.message : 'Klarte ikke å slette hendelsen.',
+                );
+              })
+              .finally(() => {
+                delBtn.disabled = false;
+              });
+          });
+          head.append(delBtn);
+        }
+        li.append(head);
+
+        const parts: string[] = [];
+        if (ev.description) parts.push(ev.description);
+        if (ev.total_shares !== null) parts.push(`${formatShares(ev.total_shares)} aksjer`);
+        if (ev.total_amount !== null) parts.push(kroner(ev.total_amount));
+        if (ev.lines.length > 0) {
+          const lineSummary = ev.lines
+            .map((l) => {
+              const roleTxt = l.role === 'avgiver' ? 'ut' : 'inn';
+              const qty = l.shares > 0 ? ` ${formatShares(l.shares)} (${roleTxt})` : '';
+              const amt = l.amount ? ` ${kroner(l.amount)}` : '';
+              return `${l.shareholder_name}${qty}${amt}`;
+            })
+            .join(', ');
+          parts.push(lineSummary);
+        }
+        if (parts.length > 0) {
+          const meta = document.createElement('p');
+          meta.className = 'ev-meta';
+          meta.textContent = parts.join(' · ');
+          li.append(meta);
+        }
+        return li;
+      }),
+    );
+    show(list, data.events.length > 0);
+    show(el('#events-empty'), data.events.length === 0);
+  }
+
+  function updateSendConfirmation(): void {
+    if (!view || view.classes.length === 0) return;
+    const classSel = el<HTMLSelectElement>('#send-class');
+    const chosenId = Number(classSel.value);
+    const sc = view.classes.find((c) => c.id === chosenId) ?? view.classes[0];
+    if (!sc) return;
+
+    el('#send-confirm-text').textContent = confirmSentence({
+      companyName: view.company_name,
+      orgnr: view.orgnr,
+      year: view.year,
+      shareClassName: `${sc.code} ${sc.name}`,
+      shareholderCount: sc.shareholders.length,
+    });
+    const previewLink = el<HTMLAnchorElement>('#send-preview-xml');
+    previewLink.href = aksjonaerXmlUrl(company.id, view.year, sc.code, 'hovedskjema');
+    sendSubmit.disabled = !sendConfirm.checked || sc.blocked;
+  }
+
+  function renderSubmission(data: AksjonaerYear): void {
+    const step = submissionStep(data, mayWrite());
+    show(el('#step-read_only'), step === 'read_only');
+    show(el('#step-blocked'), step === 'blocked');
+    show(el('#step-not_configured'), step === 'not_configured');
+    show(el('#step-needs_systembruker'), step === 'needs_systembruker');
+    show(sendForm, step === 'ready');
+
+    if (step === 'ready') {
+      const classSel = el<HTMLSelectElement>('#send-class');
+      classSel.replaceChildren(
+        ...data.classes.map((sc) => {
+          const opt = document.createElement('option');
+          opt.value = String(sc.id);
+          opt.textContent = `${sc.code} ${sc.name} (${sc.shareholders.length} aksjonærer)`;
+          return opt;
+        }),
+      );
+      show(el('#send-class-wrap'), data.classes.length > 1);
+      const emailInp = el<HTMLInputElement>('#send-email');
+      if (!emailInp.value && data.contact_email_default) {
+        emailInp.value = data.contact_email_default;
+      }
+      const nameInp = el<HTMLInputElement>('#send-name');
+      if (!nameInp.value && data.contact_name_default) {
+        nameInp.value = data.contact_name_default;
+      }
+      sendConfirm.checked = false;
+      updateSendConfirmation();
+    }
+
+    const filingsList = el('#filings');
+    filingsList.replaceChildren(
+      ...data.filings.map((f) => {
+        const li = document.createElement('li');
+        const head = document.createElement('div');
+        head.className = 'filing-head';
+        const title = document.createElement('strong');
+        title.textContent = `RF-1086 for ${f.year} · Aksjeklasse ${f.share_class_code} (${f.underskjema_count} underskjemaer)`;
+        const badge = document.createElement('span');
+        badge.className = 'badge';
+        badge.textContent = filingStatusLabel(f.status);
+        if (f.status === 'feilet') badge.dataset.tone = 'error';
+        head.append(title, badge);
+        li.append(head);
+
+        const meta = document.createElement('p');
+        meta.className = 'filing-meta';
+        const bits = [`Sendt ${dateTime(f.submitted_at)}`];
+        if (f.leveranse_referanse) bits.push(`Leveransereferanse: ${f.leveranse_referanse}`);
+        if (f.forsendelse_id) bits.push(`Forsendelse: ${f.forsendelse_id}`);
+        meta.textContent = bits.join(' · ');
+        li.append(meta);
+
+        if (f.error) {
+          const err = document.createElement('p');
+          err.className = 'filing-meta';
+          err.textContent = `Feilmelding: ${f.error}`;
+          li.append(err);
+        }
+
+        const docsWrap = document.createElement('div');
+        docsWrap.className = 'filing-docs';
+        if (f.documents.length > 0) {
+          for (const doc of f.documents) {
+            const a = document.createElement('a');
+            a.href = aksjonaerDocumentUrl(company.id, f.id, doc.document_type);
+            a.textContent = doc.filename;
+            docsWrap.append(a);
+          }
+        } else {
+          const a = document.createElement('a');
+          a.href = aksjonaerDocumentUrl(company.id, f.id, 'hovedskjema');
+          a.textContent = 'Hovedskjema (XML)';
+          docsWrap.append(a);
+        }
+        li.append(docsWrap);
+        return li;
+      }),
+    );
+    show(el('#history'), data.filings.length > 0);
+  }
+
+  async function refresh(): Promise<void> {
+    const data = await getAksjonaer(company.id, year ?? undefined);
+    view = data;
+    year = data.year;
+    renderFindings(data);
+    renderClasses(data);
+    renderShareholders(data);
+    renderEvents(data);
+    renderSubmission(data);
+  }
+
+  // --- Event wiring ---------------------------------------------------------------
+
+  el('#class-code').addEventListener('change', () => {
+    if (!view) return;
+    const code = el<HTMLSelectElement>('#class-code').value;
+    el<HTMLInputElement>('#class-name').value =
+      view.codes.share_classes[code] ?? `Aksjeklasse ${code}`;
+  });
+
+  el('#toggle-class-form').addEventListener('click', () => {
+    setStatus(classStatus, '');
+    show(classForm, classForm.hidden);
+  });
+  el('#class-cancel').addEventListener('click', () => show(classForm, false));
+
+  classForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const fd = new FormData(classForm);
+    const openingYearRaw = String(fd.get('opening_year') ?? '').trim();
+    const saveBtn = el<HTMLButtonElement>('#class-save');
+    saveBtn.disabled = true;
+    setStatus(classStatus, '');
+    void createShareClass(company.id, {
+      code: String(fd.get('code') ?? '01'),
+      name: String(fd.get('name') ?? '').trim(),
+      isin: String(fd.get('isin') ?? '').trim() || null,
+      opening_year: openingYearRaw ? Number(openingYearRaw) : null,
+      opening_shares: Number(fd.get('opening_shares') ?? 0),
+      opening_par_value: String(fd.get('opening_par_value') ?? '0').replace(',', '.'),
+      opening_share_capital: String(fd.get('opening_share_capital') ?? '0.00').replace(',', '.'),
+      opening_paid_in_capital: String(fd.get('opening_paid_in_capital') ?? '0.00').replace(
+        ',',
+        '.',
+      ),
+      opening_paid_in_premium: String(fd.get('opening_paid_in_premium') ?? '0.00').replace(
+        ',',
+        '.',
+      ),
+    })
+      .then(async () => {
+        show(classForm, false);
+        classForm.reset();
+        await refresh();
+      })
+      .catch((error: unknown) => {
+        setStatus(
+          classStatus,
+          error instanceof ApiError ? error.message : 'Klarte ikke å opprette aksjeklassen.',
+        );
+      })
+      .finally(() => {
+        saveBtn.disabled = false;
+      });
+  });
+
+  el('#prefill-btn').addEventListener('click', () => {
+    if (year === null) return;
+    const btn = el<HTMLButtonElement>('#prefill-btn');
+    btn.disabled = true;
+    setStatus(prefillStatus, 'Henter fjorårets aksjonærregisteroppgave fra Skatteetaten …', 'ok');
+    void importAksjonaerPrefill(company.id, year)
+      .then(async (res) => {
+        setStatus(
+          prefillStatus,
+          `Importerte ${res.share_classes_imported} aksjeklasse(r) og ${res.shareholders_imported} aksjonær(er) fra Skatteetaten.`,
+          'ok',
+        );
+        await refresh();
+      })
+      .catch((error: unknown) => {
+        setStatus(
+          prefillStatus,
+          error instanceof ApiError
+            ? error.message
+            : 'Klarte ikke å hente prefill fra Skatteetaten.',
+        );
+      })
+      .finally(() => {
+        btn.disabled = false;
+      });
+  });
+
+  el('#toggle-holder-form').addEventListener('click', () => {
+    if (holderForm.hidden) {
+      openHolderForm();
+    } else {
+      show(holderForm, false);
+    }
+  });
+  el('#holder-cancel').addEventListener('click', () => show(holderForm, false));
+  el('#holder-kind').addEventListener('change', syncHolderKindFields);
+
+  holderForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const editId = el<HTMLInputElement>('#holder-edit-id').value.trim();
+    const kind = el<HTMLSelectElement>('#holder-kind').value as 'person' | 'selskap' | 'utenlandsk';
+    const openingHoldings: Record<number, number> = {};
+    for (const inp of holderForm.querySelectorAll<HTMLInputElement>('input[data-opening-class]')) {
+      const scId = Number(inp.dataset.openingClass);
+      const qty = Number(inp.value || '0');
+      if (!Number.isNaN(scId) && !Number.isNaN(qty)) openingHoldings[scId] = qty;
+    }
+
+    const fnrRaw = el<HTMLInputElement>('#holder-fnr').value.trim();
+    const payload = {
+      kind,
+      name: el<HTMLInputElement>('#holder-name').value.trim(),
+      national_id: kind === 'person' ? (fnrRaw || (editId ? undefined : null)) : null,
+      orgnr: kind === 'selskap' ? el<HTMLInputElement>('#holder-orgnr').value.trim() || null : null,
+      foreign_id:
+        kind === 'utenlandsk'
+          ? el<HTMLInputElement>('#holder-foreign-id').value.trim() || null
+          : null,
+      country_code: el<HTMLInputElement>('#holder-country').value.trim().toUpperCase() || 'NO',
+      address: el<HTMLInputElement>('#holder-address').value.trim() || null,
+      postal_code: el<HTMLInputElement>('#holder-postal').value.trim() || null,
+      city: el<HTMLInputElement>('#holder-city').value.trim() || null,
+      email: el<HTMLInputElement>('#holder-email').value.trim() || null,
+      is_own_shares: el<HTMLInputElement>('#holder-own').checked,
+      opening_holdings: openingHoldings,
+    };
+
+    const saveBtn = el<HTMLButtonElement>('#holder-save');
+    saveBtn.disabled = true;
+    setStatus(holderStatus, '');
+    const req = editId
+      ? updateShareholder(company.id, Number(editId), payload)
+      : createShareholder(company.id, payload);
+    void req
+      .then(async () => {
+        show(holderForm, false);
+        await refresh();
+      })
+      .catch((error: unknown) => {
+        setStatus(
+          holderStatus,
+          error instanceof ApiError ? error.message : 'Klarte ikke å lagre aksjonæren.',
+        );
+      })
+      .finally(() => {
+        saveBtn.disabled = false;
+      });
+  });
+
+  el('#toggle-event-form').addEventListener('click', () => {
+    setStatus(eventStatus, '');
+    if (eventForm.hidden) {
+      syncEventFormFields();
+      el('#ev-lines').replaceChildren();
+      addEventLineRow();
+      show(eventForm, true);
+    } else {
+      show(eventForm, false);
+    }
+  });
+  el('#ev-cancel').addEventListener('click', () => show(eventForm, false));
+  el('#ev-type').addEventListener('change', () => {
+    syncEventFormFields();
+    el('#ev-lines').replaceChildren();
+    addEventLineRow();
+  });
+  el('#ev-add-line').addEventListener('click', addEventLineRow);
+
+  eventForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const fd = new FormData(eventForm);
+    const type = String(fd.get('event_type') ?? '');
+    const subtype = String(fd.get('subtype') ?? '').trim() || null;
+    const dec = (name: string): string | null => {
+      const raw = String(fd.get(name) ?? '').trim();
+      return raw ? raw.replace(',', '.') : null;
+    };
+    const intVal = (name: string): number | null => {
+      const raw = String(fd.get(name) ?? '').trim();
+      return raw ? Number(raw) : null;
+    };
+
+    const lines: ShareEventLinePayload[] = [];
+    for (const row of el('#ev-lines').querySelectorAll<HTMLElement>('.line-row')) {
+      const holderSel = row.querySelector<HTMLSelectElement>('[data-field="shareholder_id"]');
+      const roleSel = row.querySelector<HTMLSelectElement>('[data-field="role"]');
+      const sharesInp = row.querySelector<HTMLInputElement>('[data-field="shares"]');
+      const amtInp = row.querySelector<HTMLInputElement>('[data-field="amount"]');
+      const wtInp = row.querySelector<HTMLInputElement>('[data-field="withholding_tax"]');
+      if (!holderSel) continue;
+      lines.push({
+        shareholder_id: Number(holderSel.value),
+        role: (roleSel?.value as 'mottaker' | 'avgiver') ?? 'mottaker',
+        shares: Number(sharesInp?.value || '0'),
+        amount: amtInp?.value.trim() ? amtInp.value.trim().replace(',', '.') : null,
+        withholding_tax: wtInp?.value.trim() ? wtInp.value.trim().replace(',', '.') : null,
+      });
+    }
+
+    const saveBtn = el<HTMLButtonElement>('#ev-save');
+    saveBtn.disabled = true;
+    setStatus(eventStatus, '');
+    void createShareEvent(company.id, {
+      share_class_id: Number(fd.get('share_class_id')),
+      event_type: type,
+      subtype,
+      event_date: String(fd.get('event_date') ?? ''),
+      description: String(fd.get('description') ?? '').trim() || null,
+      total_shares: intVal('total_shares'),
+      par_value_after: dec('par_value_after'),
+      total_amount: dec('total_amount'),
+      premium_amount: dec('premium_amount'),
+      amount_per_share: dec('amount_per_share'),
+      lines,
+    })
+      .then(async () => {
+        show(eventForm, false);
+        await refresh();
+      })
+      .catch((error: unknown) => {
+        setStatus(
+          eventStatus,
+          error instanceof ApiError ? error.message : 'Klarte ikke å lagre hendelsen.',
+        );
+      })
+      .finally(() => {
+        saveBtn.disabled = false;
+      });
+  });
+
+  el('#send-class').addEventListener('change', () => {
+    sendConfirm.checked = false;
+    updateSendConfirmation();
+  });
+  sendConfirm.addEventListener('change', updateSendConfirmation);
+
+  sendForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (!view || !sendConfirm.checked) return;
+    const shareClassId = Number(el<HTMLSelectElement>('#send-class').value);
+    sendSubmit.disabled = true;
+    sendConfirm.disabled = true;
+    setStatus(sendStatus, 'Sender hovedskjema og underskjemaer til Skatteetaten …', 'ok');
+
+    void sendAksjonaer(company.id, {
+      aar: view.year,
+      share_class_id: Number.isNaN(shareClassId) ? null : shareClassId,
+      contact_email: el<HTMLInputElement>('#send-email').value.trim() || null,
+      contact_name: el<HTMLInputElement>('#send-name').value.trim() || null,
+      contact_role: el<HTMLInputElement>('#send-role').value.trim() || null,
+      contact_phone: el<HTMLInputElement>('#send-phone').value.trim() || null,
+      bekreftet: true,
+    })
+      .then(async (filing) => {
+        setStatus(
+          sendStatus,
+          `Aksjonærregisteroppgaven for ${filing.year} er bekreftet mottatt av Skatteetaten` +
+            (filing.leveranse_referanse ? ` (referanse ${filing.leveranse_referanse}).` : '.'),
+          'ok',
+        );
+        await refresh();
+      })
+      .catch(async (error: unknown) => {
+        setStatus(
+          sendStatus,
+          error instanceof ApiError
+            ? error.message
+            : 'Innsendingen av aksjonærregisteroppgaven feilet.',
+        );
+        await refresh().catch(() => undefined);
+      })
+      .finally(() => {
+        sendConfirm.disabled = false;
+        updateSendConfirmation();
+      });
+  });
+
+  function changeYear(step: number): void {
+    if (year === null) return;
+    year += step;
+    history.replaceState(null, '', `/aksjonaer/#${year}`);
+    setStatus(sendStatus, '');
+    setStatus(prefillStatus, '');
+    void refresh().catch((error: unknown) => {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Klarte ikke å hente året.');
+    });
+  }
+
+  el('#year-prev').addEventListener('click', () => changeYear(-1));
+  el('#year-next').addEventListener('click', () => changeYear(1));
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      const current = currentCompany(companies);
+      if (current === undefined) return;
+      company = current;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      year = yearFromHash(window.location.hash);
+      await refresh();
+      el('#loading').hidden = true;
+      el('#content').hidden = false;
+    } catch (error: unknown) {
+      el('#loading').hidden = true;
+      setStatus(
+        pageStatus,
+        error instanceof ApiError ? error.message : 'Klarte ikke å hente aksjonærregisteroppgaven.',
+      );
+    }
+  });
+</script>

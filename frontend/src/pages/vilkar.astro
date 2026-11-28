@@ -10,7 +10,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
  *   /personvern = hva vi lagrer om deg
  * Ansvarsavsnittet nedenfor gjentar derfor ikke /ansvar, det inkorporerer den.
  */
-const oppdatert = '22. oktober 2026';
+const oppdatert = '25. november 2026';
 ---
 
 <BaseLayout
@@ -60,7 +60,7 @@ const oppdatert = '22. oktober 2026';
       hva de gjør med tilgangen.
     </li>
     <li>
-      Kontoer er personlige. Ikke del én pålogging mellom flere personer. Inviter dem i stedet;
+      Kontoer er personlige. Ikke del samme pålogging mellom flere personer. Inviter dem i stedet;
       det koster ingenting.
     </li>
   </ul>
@@ -77,14 +77,55 @@ const oppdatert = '22. oktober 2026';
     utilgjengelig uten forvarsel.
   </p>
 
-  <h2>4. Pris</h2>
+  {/*
+    Til 2026-11-25 sa dette avsnittet at vi aldri ville ta betalt for noen
+    funksjon. KI-planene er en slik funksjon, så løftet er skrevet om, ikke
+    strøket: regnskapsprogrammet er fortsatt gratis for alltid, og «Gratis»-
+    nivået på KI er med for alle. Avsnitt 12 krever e-post til registrerte
+    brukere før en endring av betydning trer i kraft, og dette er en.
+  */}
+  <h2 id="pris">4. Pris</h2>
   <p>
-    Tjenesten koster <strong>0 kr</strong>, og den skal alltid være gratis. Vi innfører ikke
-    betaling for tjenesten eller for noen funksjon i den, heller ikke for funksjoner som kommer
-    senere. Det finnes ingen betalingsløsning i Myntos, og vi tar ikke imot kortopplysninger. Se
-    <a href="/priser/">prissiden</a> for hva vi mener med det. Du kan dessuten alltid ta hele
-    regnskapet med deg ut samme dag, fordi eksport er et lovkrav og ikke en funksjon vi kan låse.
+    Regnskapsprogrammet koster <strong>0 kr</strong>, og det skal alltid være gratis. Vi tar ikke
+    betalt for føring, bilagsarkiv, faktura, merverdiavgift, innlevering eller noe annet i
+    regnskapsprogrammet, heller ikke for det som kommer senere, og KI-en på nivået «Gratis» er med
+    for alle. Se <a href="/priser/">prissiden</a> for hva vi mener med det. Du kan dessuten alltid
+    ta hele regnskapet med deg ut samme dag, fordi eksport er et lovkrav og ikke en funksjon vi kan
+    låse.
   </p>
+  {/* 28. november 2026: Oppdatert for ukentlige kvoter i prosent (beregnet fra
+      faktisk forbruk på betalte nivåer) og månedlig fakturering av KI-abonnement
+      (EHF og e-post med PDF). Ordlyden gjennomgås av eieren før publisering. */}
+  <p id="ki-planer">
+    Det eneste som koster penger, er en <strong>KI-plan</strong>: de større KI-nivåene «Medium» og
+    «Smart» for et selskap. Den er et valg, og ingenting i regnskapsprogrammet krever den. For en
+    KI-plan gjelder dette:
+  </p>
+  <ul>
+    <li>
+      En KI-plan er et månedlig abonnement for ett selskap med en fast ukentlig kvote på «Medium» og
+      «Smart» (vist i prosent på <a href="/ki/about/#planer">siden om KI</a>). Ukekvoten nullstilles
+      hver mandag kl. 00:00 norsk tid.
+    </li>
+    <li>
+      Prisen er den som står ved planen, med 25 % merverdiavgift, og faktureres månedlig på
+      forskudd fra Lindeman Technologies AS. Fakturaen sendes som EHF over Peppol når selskapet kan
+      motta EHF, og som PDF på e-post (samt tilgjengelig i Myntos). Endrer vi prisene, varsles det
+      før neste fakturaperiode.
+    </li>
+    <li>
+      Du kan bytte plan eller si opp abonnementet når som helst uten bindingstid. Ved oppsigelse
+      beholder selskapet planen ut inneværende fakturaperiode, og det utstedes ingen ny faktura.
+    </li>
+    <li>
+      Er ukekvoten brukt opp, svarer «Gratis» resten av uken uten ekstra kostnad. Ubrukt kvote fra
+      en uke overføres ikke til neste uke.
+    </li>
+    <li>
+      Bare eieren av selskapet kan aktivere, endre eller si opp en KI-plan, og abonnementet er
+      selskapets.
+    </li>
+  </ul>
 
   <h2>5. Dine data</h2>
   <p>

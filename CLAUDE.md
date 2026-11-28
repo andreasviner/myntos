@@ -21,12 +21,13 @@ paragraph explaining why is the part worth keeping.
 | [docs/agents/README.md](docs/agents/README.md) | **Writing or changing a skill or a help article**, which every route and every page change needs. The two halves of what agents read, the areas and their order, the exact shape of each file |
 | [docs/landbruk.md](docs/landbruk.md) | Anything with `segment="landbruk"`, `company.landbruk` or a farm account or category, and any other industry add-on. Myntos is for everyone: an industry gets an add-on, never a different product. The farm VAT rates, why a settlement from Tine is a sale, and the farm's list of what is built and what the law still requires |
 | [docs/anlegg.md](docs/anlegg.md) | Anything about driftsmidler, the anleggsregister, saldoavskrivning or the `AVSKR` journal. The rates are a year's, the saldo is derived and never stored, and the books follow the tax figures |
+| [docs/analyse.md](docs/analyse.md) | Anything about `/analyse/`, «Dyp KI-analyse», «KI-revisor», the charts, the `ki_*` analysis tables, or KI reading the books in the background. **A plan being built by several agents (2026-11-26):** its tables, JSON shapes and work packages are the contract, so build against them and change them there. The default page asks no model; every number comes from the books; tags and summaries are stamped and never shown |
 | [docs/gdpr.md](docs/gdpr.md) | Account deletion, deleting a company, the session list, or any column that points at `app_user`. What is the person's to erase and what is the books' to keep, why a deleted bookkeeper leaves a tombstone with their name, and why a deleted company's books stay locked for five years before the purge |
 | [docs/data-sharing.md](docs/data-sharing.md) | `Company.data_sharing`, the «Del data for å forbedre Myntos» choice, `/datadeling/`, and **anything that collects data from companies to improve Myntos**. Nothing by default; what a level covers may only narrow without asking again; the top level is the bilag as they are, in red |
 | [docs/feedback.md](docs/feedback.md) | The feedback box (`/tilbakemelding/`, `/api/v1/tilbakemeldinger`) and anything that might log, store or mail who sent it. Anonymous by construction: four things keep it so, and the access log is one of them |
 | [docs/operator.md](docs/operator.md) | The operator's page (`/drift/`, `/api/v1/drift`), its key, and **any log call at ERROR**: what fails is kept without its data, which only works while every log line is a template with its values as arguments |
 | [docs/frontend-conventions.md](docs/frontend-conventions.md) | Adding or changing a page. `hidden`, session and chrome, forms, the text rules |
-| [docs/integrations/](docs/integrations/) | Maskinporten, ID-porten, Altinn, MVA, SAF-T, EHF, sending EHF over Peppol (Recommand), bank statements, BankID login (Idura), Landbrukets Dataflyt. One file per counterparty |
+| [docs/integrations/](docs/integrations/) | Maskinporten, ID-porten, Altinn (including systembruker), MVA, Aksjonærregisteroppgaven (RF-1086), SAF-T, EHF, sending and receiving EHF over Peppol (Ademico), bank statements, BankID login (Idura), Landbrukets Dataflyt, paying for KI plans (Mollie). One file per counterparty |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Deciding what to build next: what is being built, phase by phase |
 | [docs/FEATURES.md](docs/FEATURES.md) | Choosing what to build after that: everything Fiken, Tripletex and the rest have that Myntos lacks, ranked, with sources |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Commits, style, running the checks |
@@ -85,8 +86,13 @@ paragraph explaining why is the part worth keeping.
    whatever a route sends out (a check or a filing with Skatteetaten now, EHF
    or a payment later) is `key_send` and waits for the key's person every
    time, whatever its scopes, going with their own ID-porten login where the
-   state requires it. A key never moves money, changes a kontonummer, manages
-   access or approves requests. See
+   state requires it. One exception, the owner's decision of 2026-11-26: **an
+   AI agent's send always waits for its person; a server integration key, made
+   by an owner, bound to IP addresses and limited to invoicing, may send
+   invoices on its own; nothing else may.** A route opens to such a key only
+   with `| FAKTURA_INTEGRATION` on its `openapi_extra`, never one that goes
+   with ID-porten (docs/agents-and-api.md rule 15). A key never moves money,
+   changes a kontonummer, manages access or approves requests. See
    [docs/agents-and-api.md](docs/agents-and-api.md) and, for writing either
    kind of file, [docs/agents/README.md](docs/agents/README.md).
 

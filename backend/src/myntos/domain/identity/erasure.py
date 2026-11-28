@@ -49,6 +49,8 @@ from enum import StrEnum
 from sqlalchemy import delete, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from myntos.aarsregnskap.models import AarsregnskapDraft, AarsregnskapFiling
+from myntos.aksjonaer.models import AksjonaerFiling, ShareClass, ShareEvent
 from myntos.core.clock import utc_now
 from myntos.domain.arsoppgjor.models import FinancialYearEvent
 from myntos.domain.bank.models import BankStatementFile, BankStatementLine
@@ -90,7 +92,9 @@ from myntos.domain.ledger.models import (
     PartyOpeningBalance,
     Transaction,
 )
+from myntos.domain.mottak.models import IncomingMailDocument
 from myntos.domain.mva.models import MvaFiling, MvaFilingElsewhere
+from myntos.domain.peppol.models import PeppolIncomingDocument
 from myntos.skattemelding.models import SkattemeldingFiling
 
 # The address a tombstone is left with. ``.invalid`` is reserved (RFC 2606), so
@@ -173,6 +177,15 @@ async def has_books(db: AsyncSession, company_id: int) -> bool:
         # closed or reopened year is a record of what was done to the books.
         exists().where(BankStatementFile.company_id == company_id),
         exists().where(FinancialYearEvent.company_id == company_id),
+        # Received EHF invoices and emailed bilag are archived primary documentation (§ 13).
+        exists().where(PeppolIncomingDocument.company_id == company_id),
+        exists().where(IncomingMailDocument.company_id == company_id),
+        # Aksjeeierbok (aksjeloven § 4-5) and RF-1086 filings are statutory company records.
+        exists().where(ShareClass.company_id == company_id),
+        exists().where(AksjonaerFiling.company_id == company_id),
+        # Annual accounts (regnskapsloven § 3-1) and RR-0002 filings are statutory records.
+        exists().where(AarsregnskapDraft.company_id == company_id),
+        exists().where(AarsregnskapFiling.company_id == company_id),
     )
     for check in checks:
         if await db.scalar(select(check)):
@@ -221,6 +234,17 @@ async def _is_named_by_records(db: AsyncSession, user_id: int) -> bool:
         exists().where(
             DataSharingChoice.chosen_by_user_id == user_id,
             DataSharingChoice.level != DataSharingLevel.NONE.value,
+        ),
+        # Who recorded a shareholder event or filed RF-1086 to Skatteetaten.
+        exists().where(ShareEvent.created_by_user_id == user_id),
+        exists().where(AksjonaerFiling.submitted_by_user_id == user_id),
+        # Who updated annual accounts drafts or prepared/signed RR-0002 filings.
+        exists().where(AarsregnskapDraft.updated_by_user_id == user_id),
+        exists().where(
+            or_(
+                AarsregnskapFiling.created_by_user_id == user_id,
+                AarsregnskapFiling.signed_by_user_id == user_id,
+            )
         ),
     )
     for check in checks:

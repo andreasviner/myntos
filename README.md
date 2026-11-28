@@ -42,7 +42,7 @@ what it does.
 | E-faktura (EHF / Peppol BIS Billing 3.0) | Generated and frozen at issue, ahead of the 2027-01-01 requirement in lov 19. juni 2026 nr. 39, and sent over Peppol through Recommand's access point in the same press that issues it, once the company is registered for e-invoicing; a credit note follows its invoice. Send only: **receiving is not built**. See [docs/integrations/efaktura.md](docs/integrations/efaktura.md) and [docs/integrations/peppol.md](docs/integrations/peppol.md) | Working (sending) |
 | Double-entry ledger (hovedbok) | SAF-T-aligned data model from day one | Working |
 | Bilagsføring with document archive | PDFs and photos (PNG, JPEG, WebP, GIF and HEIC) attached to a posted voucher; append-only, validated by magic number, digest stored, original kept byte for byte; a photo's thumbnail is made from a copy stripped of EXIF and GPS | Working |
-| Faktura read into the entry form | Upload the bilag first, a PDF or a photo, or several files for one bilag: date, amount, VAT, invoice number and counterparty are read out of the text layer, and photos and screenshots are transcribed by Løynd; the category is chosen from a numbered menu by a small model hosted in Norway ([Løynd](https://loynd.no)), optional and off without a key. Nothing posts until the user confirms — see [/ki](https://myntos.no/ki/) | Working |
+| Faktura read into the entry form | Upload the bilag first, a PDF or a photo, or several files for one bilag: date, amount, VAT, invoice number and counterparty are read out of the text layer, and photos and screenshots are transcribed by Løynd; the category is chosen from a numbered menu by [Løynd](https://loynd.no)'s model, inside the EEA: its own model in Norway at the level «Gratis», a larger one at «Medium» or «Smart» for a company with a KI plan. Optional, and off without a key. Nothing posts until the user confirms — see [/ki](https://myntos.no/ki/) | Working |
 | An invoice that fills itself in | The buyer comes from Enhetsregisteret on the organisasjonsnummer (name, address, and the number an EHF invoice is addressed by); the KID is assigned at issue as kundenummer + fakturanummer + kontrollsiffer, so the bank's OCR file posts to the right kundereskontro; the lines can be copied from the last invoice to the same customer, or set up from a sentence describing the sale by the same Norwegian model. Every amount is still computed by the ledger, and § 5-1 is still checked at issue | Working |
 | Customers and suppliers | SAF-T parties with balance accounts, optional on any payment | Working |
 | Bank import | camt.053 statements at `/bank/`, checked against their own closing balance, archived and deduplicated; each movement matched to the voucher that books it, or posted as a new one through the register. See [docs/integrations/bank.md](docs/integrations/bank.md) | Working |
@@ -184,7 +184,9 @@ decides:
 
 Decided 2026-10-22, replacing the proprietary license of 2026-10-10, so that
 the self-hosting the website promises is actually granted. Myntos itself is
-offered as a hosted service, free for good
-([myntos.no/priser](https://myntos.no/priser/)); see
+offered as a hosted service, free for good, «Gratis» KI included; the one
+thing sold is a month of the larger KI models, paid in advance through Mollie
+and never renewed ([myntos.no/priser](https://myntos.no/priser/),
+[docs/integrations/mollie.md](docs/integrations/mollie.md)); see
 [docs/ROADMAP.md](docs/ROADMAP.md). The Elastic License is not OSI-approved,
 so please don't describe Myntos as open source — it isn't.

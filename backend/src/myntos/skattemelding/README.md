@@ -14,6 +14,8 @@ and not under `tests/`.
 | `naeringsspesifikasjon_v7_ekstern.xsd` | `src/resources/xsd/` | The same for **2026**. Not final: Skatteetaten edits it until about 15 January |
 | `skattemeldingUpersonlig_v5_ekstern.xsd` | `src/resources/xsd/` | An aksjeselskap's own skattemelding for **2025**, which Myntos fetches as an utkast and sends back with `formueOgGjeld` and `opplysningOmSkattesubjekt` added |
 | `skattemeldingUpersonlig_v6_ekstern.xsd` | `src/resources/xsd/` | The same for **2026** |
+| `skattemelding_v13_ekstern.xsd` | `src/resources/xsd/` | A personal taxpayer's skattemelding (used for ENK owners) for **2025**, returned with all personal items preserved and derived totals stripped |
+| `skattemelding_v14_ekstern.xsd` | `src/resources/xsd/` | The same for **2026** |
 | `skattemeldingognaeringsspesifikasjonrequest_v2.xsd` | `src/resources/xsd/` | The envelope that carries the skattemelding and the næringsspesifikasjon to validation and to Altinn, every year |
 | `skattemeldingognaeringsspesifikasjonresponse_v2.xsd` | `src/resources/xsd/` | What validation answers |
 
@@ -26,6 +28,8 @@ one:
 | `naeringsspesifikasjon_v7_ekstern.xsd` | `e38aa38644131a65` |
 | `skattemeldingUpersonlig_v5_ekstern.xsd` | `d8e74eda092540a9` |
 | `skattemeldingUpersonlig_v6_ekstern.xsd` | `c05bcbfbaf8101f6` |
+| `skattemelding_v13_ekstern.xsd` | `f32f74eff8254e22` |
+| `skattemelding_v14_ekstern.xsd` | `c24c34ca63f10daa` |
 | `skattemeldingognaeringsspesifikasjonrequest_v2.xsd` | `ac6f939fe895a9a0` |
 | `skattemeldingognaeringsspesifikasjonresponse_v2.xsd` | `60109b3338bb81d0` |
 
@@ -54,11 +58,17 @@ SHA-256:
 | `2025_egenkapitalendringstype.xml.gz` | `c76add26b77cb760` |
 | `2025_midlertidigForskjellstype.xml.gz` | `f41475e6116a5b60` |
 | `2025_regeltypeForAarsregnskap.xml.gz` | `d528aae34c757c98` |
+| `2025_naeringstype.xml.gz` | `b3693c8b903e7926` |
+| `2025_skjermingsgrunnlagstype.xml.gz` | `a787d171982d3de6` |
+| `2025_satserIFormuesOgInntektsskatt.xml.gz` | `b23ce83be67bc9a4` |
 | `2026_resultatregnskapOgBalanse.xml.gz` | `4d3de4f82e36b0c7` |
 | `2026_permanentForskjellstype.xml.gz` | `e4b944562c44698e` |
 | `2026_egenkapitalendringstype.xml.gz` | `4e595e54b675e645` |
 | `2026_midlertidigForskjellstype.xml.gz` | `ea10c7ce2e62ac64` |
 | `2026_regeltypeForAarsregnskap.xml.gz` | `3e400ef3cb97e3e1` |
+| `2026_naeringstype.xml.gz` | `a711f1865596a591` |
+| `2026_skjermingsgrunnlagstype.xml.gz` | `a4e636e3a42a6b53` |
+| `2026_satserIFormuesOgInntektsskatt.xml.gz` | `6e6c3f2f976f9e1e` |
 
 The result and balance list is what says, per post, whether it is added or
 subtracted (`kategori`), and which kinds of business and which regnskapsplikt

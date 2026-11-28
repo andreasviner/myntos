@@ -111,6 +111,7 @@ from myntos.domain.ledger.models import (
     TransactionLineAnalysis,
 )
 from myntos.domain.ledger.orgnr import validate_orgnr
+from myntos.domain.mottak.allocation import ensure_inbox_address
 from myntos.integrations.brreg import RegisteredUnit
 
 # The two accounts the register pays through, and the two VAT accounts a
@@ -236,6 +237,7 @@ async def create_company(
             role=OrganizationRole.OWNER,
         )
     )
+    await ensure_inbox_address(db, company=company)
     await db.flush()
     return company
 

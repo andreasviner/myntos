@@ -1,0 +1,1970 @@
+---
+import KiLevelPicker from '../components/KiLevelPicker.astro';
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+{/*
+  Mottatt — samlet innboks for e-faktura (EHF over Peppol) og bilag mottatt
+  på selskapets egen @myntos.no-adresse.
+
+  Viser alltid kilden (EHF eller E-post) med tydelig bryter for å filtrere på
+  bare e-faktura eller bare e-postfaktura, og gir full synlighet på hvem som
+  sendte hver e-postfaktura (From, teknisk avsender, Reply-To, SPF/DKIM/DMARC
+  og godkjente avsendere).
+*/}
+<BaseLayout
+  title="Mottatt | Myntos"
+  description="Se, kontroller avsender og bokfør leverandørfakturaer mottatt som EHF over Peppol eller på selskapets @myntos.no-adresse."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Mottatt</p>
+      <h1 data-session-company></h1>
+      <p class="muted orgnr" id="orgnr"></p>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-ghost" href="/organisasjon/#efaktura">E-fakturainnstillinger</a>
+    </div>
+  </header>
+
+  <p class="status" id="page-status" role="status" hidden></p>
+  <div class="empty" id="loading">Henter mottatte fakturaer og bilag …</div>
+
+  <section id="inbox-body" hidden>
+    <div class="channel-grid">
+      <article class="card channel-card">
+        <div class="channel-head">
+          <div>
+            <p class="eyebrow">E-faktura (EHF over Peppol)</p>
+            <h2 class="channel-title" id="ehf-channel-title">Sjekker status …</h2>
+          </div>
+          <span class="badge" id="ehf-channel-badge"></span>
+        </div>
+        <p class="card-hint" id="ehf-channel-hint"></p>
+        <p class="channel-link" id="ehf-channel-action" hidden>
+          <a href="/organisasjon/#efaktura">Slå på mottak av e-faktura under Innstillinger →</a>
+        </p>
+      </article>
+
+      <article class="card channel-card">
+        <div class="channel-head">
+          <div>
+            <p class="eyebrow">E-postfaktura</p>
+            <div class="address-row">
+              <code class="inbox-address" id="mail-address">—</code>
+              <button type="button" class="btn btn-ghost btn-small" id="copy-address-btn">
+                Kopier
+              </button>
+            </div>
+          </div>
+          <span class="badge" id="mail-channel-badge"></span>
+        </div>
+        <p class="card-hint" id="mail-channel-hint"></p>
+        <p class="notice notice-compact" id="mail-not-configured" hidden>
+          E-postmottak er ikke aktivert i denne installasjonen ennå, men adressen er reservert for
+          selskapet ditt.
+        </p>
+        <div class="channel-actions" id="mail-settings-toggle-wrap" hidden>
+          <button
+            type="button"
+            class="btn btn-ghost btn-small"
+            id="mail-settings-toggle"
+            aria-expanded="false"
+            aria-controls="mail-settings-panel"
+          >
+            Sikkerhet og godkjente avsendere
+          </button>
+        </div>
+
+        <form id="mail-settings-panel" class="mail-settings" hidden novalidate>
+          <label class="checkbox-row" for="mail-enabled">
+            <input type="checkbox" id="mail-enabled" />
+            <span>Ta imot fakturaer og kvitteringer på denne e-postadressen</span>
+          </label>
+
+          <fieldset class="policy-group">
+            <legend>Hvem får sende til innboksen?</legend>
+            <label class="radio-row">
+              <input type="radio" name="sender-policy" value="alle_med_varsel" />
+              <span>
+                <strong>Alle, med avsendervarsel</strong> — alle kan sende, men ukjente eller
+                mistenkelige avsendere merkes tydelig før bokføring.
+              </span>
+            </label>
+            <label class="radio-row">
+              <input type="radio" name="sender-policy" value="kun_godkjente" />
+              <span>
+                <strong>Kun godkjente avsendere</strong> — avviser automatisk e-post fra alle andre
+                enn selskapets egne brukere og listen under.
+              </span>
+            </label>
+          </fieldset>
+
+          <div class="trusted-block" id="member-emails-block" hidden>
+            <p class="field-label">Egne brukere (alltid godkjent)</p>
+            <ul class="chip-list" id="member-emails-list"></ul>
+          </div>
+
+          <div class="trusted-block">
+            <p class="field-label">Godkjente eksterne avsendere og domener</p>
+            <p class="field-hint">
+              Skriv inn en full e-postadresse (<code>faktura@leverandor.no</code>) eller et domene
+              (<code>@leverandor.no</code>).
+            </p>
+            <div class="allowlist-add">
+              <input
+                type="text"
+                id="allowlist-input"
+                placeholder="faktura@leverandor.no eller @leverandor.no"
+                autocomplete="off"
+              />
+              <button type="button" class="btn btn-ghost btn-small" id="allowlist-add-btn">
+                Legg til
+              </button>
+            </div>
+            <ul class="chip-list" id="allowlist-chips"></ul>
+            <p class="muted small-note" id="allowlist-empty">Ingen eksterne avsendere lagt til ennå.</p>
+          </div>
+
+          <p class="status" id="mail-settings-status" role="status" hidden></p>
+
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-small" id="mail-settings-save">
+              Lagre innstillinger
+            </button>
+          </div>
+        </form>
+      </article>
+    </div>
+
+    <div class="toolbar">
+      <div class="source-switch" role="radiogroup" aria-label="Velg kilde for mottatte fakturaer">
+        <button
+          type="button"
+          class="switch-option"
+          role="radio"
+          aria-checked="true"
+          data-source="alle"
+        >
+          Alle <span class="switch-count" id="count-alle">0</span>
+        </button>
+        <button
+          type="button"
+          class="switch-option"
+          role="radio"
+          aria-checked="false"
+          data-source="ehf"
+        >
+          Kun e-faktura (EHF) <span class="switch-count" id="count-ehf">0</span>
+        </button>
+        <button
+          type="button"
+          class="switch-option"
+          role="radio"
+          aria-checked="false"
+          data-source="epost"
+        >
+          Kun e-postfaktura <span class="switch-count" id="count-epost">0</span>
+        </button>
+      </div>
+
+      <div class="filter-bar" role="tablist" aria-label="Statusfilter for mottatte dokumenter">
+        <button type="button" class="btn btn-small btn-primary" data-filter="ny">Nye</button>
+        <button type="button" class="btn btn-small btn-ghost" data-filter="bokfort">Bokført</button>
+        <button type="button" class="btn btn-small btn-ghost" data-filter="avvist">Avvist</button>
+        <button type="button" class="btn btn-small btn-ghost" data-filter="alle">Alle</button>
+      </div>
+    </div>
+
+    <div class="inbox-grid">
+      <div class="card">
+        <div class="table-scroll">
+          <table class="data">
+            <thead>
+              <tr>
+                <th>Kilde</th>
+                <th>Dato</th>
+                <th>Leverandør / Emne</th>
+                <th>Avsender</th>
+                <th class="num">Beløp / Fil</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="incoming-rows"></tbody>
+          </table>
+        </div>
+        <p class="empty" id="incoming-empty" hidden>Ingen mottatte dokumenter i denne visningen.</p>
+      </div>
+
+      {/* --- Detaljkort for EHF --- */}
+      <div class="card detail-card" id="ehf-detail-card" hidden>
+        <div class="detail-head">
+          <div>
+            <p class="eyebrow" id="detail-kind"></p>
+            <h2 id="detail-title"></h2>
+            <p class="muted" id="detail-seller-meta"></p>
+          </div>
+          <div class="detail-downloads">
+            <a class="btn btn-ghost btn-small" id="detail-pdf" href="#" target="_blank" rel="noopener">
+              Last ned PDF
+            </a>
+            <a class="btn btn-ghost btn-small" id="detail-xml" href="#" target="_blank" rel="noopener">
+              Last ned EHF (XML)
+            </a>
+          </div>
+        </div>
+
+        <dl class="meta-grid" id="detail-meta"></dl>
+
+        <div id="detail-lines-wrap" hidden>
+          <h3>Linjer</h3>
+          <div class="table-scroll">
+            <table class="data">
+              <thead>
+                <tr>
+                  <th>Beskrivelse</th>
+                  <th class="num">Antall</th>
+                  <th class="num">Mva</th>
+                  <th class="num">Beløp</th>
+                </tr>
+              </thead>
+              <tbody id="detail-lines"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <p class="meta-note" id="detail-note" hidden></p>
+
+        <div id="detail-booked-box" class="booked-box" hidden>
+          <p id="detail-booked-text"></p>
+          <a class="btn btn-ghost btn-small" href="/bilag/">Se i bilagsoversikten</a>
+        </div>
+
+        <div id="detail-reopen-box" hidden>
+          <p class="card-hint">
+            Denne e-fakturaen er avvist og ligger ikke lenger under Nye. Den opprinnelige EHF-filen
+            bevares likevel i regnskapet.
+          </p>
+          <button type="button" class="btn btn-ghost" id="reopen-btn">Åpne på nytt</button>
+        </div>
+
+        <form id="book-form" novalidate hidden>
+          <h3>Bokfør som bilag</h3>
+          <p class="card-hint" id="book-currency-hint" hidden></p>
+
+          <label class="field" for="book-type">
+            <span>Hva gjaldt fakturaen?</span>
+            <select id="book-type" required></select>
+          </label>
+
+          <div class="form-row">
+            <label class="field" for="book-date">
+              <span>Dato</span>
+              <input type="date" id="book-date" required />
+            </label>
+            <label class="field" for="book-amount">
+              <span>Beløp i NOK (inkl. mva)</span>
+              <input type="text" id="book-amount" inputmode="decimal" required />
+            </label>
+          </div>
+
+          <div class="form-row">
+            <label class="field" for="book-tax">
+              <span>Mva-kode</span>
+              <select id="book-tax"></select>
+            </label>
+            <label class="field" for="book-method">
+              <span>Betalt via</span>
+              <select id="book-method">
+                <option value="bank">Bank (1920)</option>
+                <option value="kontant">Kontant (1900)</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="field" for="book-desc">
+            <span>Beskrivelse</span>
+            <input type="text" id="book-desc" maxlength="255" required />
+          </label>
+
+          <label class="checkbox-row" for="book-supplier">
+            <input type="checkbox" id="book-supplier" checked />
+            <span>Knytt til leverandør automatisk (opprett hvis den ikke finnes)</span>
+          </label>
+
+          <p class="status" id="detail-status" role="status" hidden></p>
+
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="book-submit">Bokfør bilag</button>
+            <button type="button" class="btn btn-ghost" id="dismiss-btn">Avvis</button>
+          </div>
+        </form>
+      </div>
+
+      {/* --- Detaljkort for E-postfaktura --- */}
+      <div class="card detail-card" id="mail-detail-card" hidden>
+        <div class="detail-head">
+          <div>
+            <p class="eyebrow">E-postfaktura</p>
+            <h2 id="mail-detail-title"></h2>
+            <p class="muted" id="mail-detail-file-meta"></p>
+          </div>
+          <div class="detail-downloads">
+            <button type="button" class="btn btn-ghost btn-small" id="mail-open-file-btn">
+              Åpne vedlegg
+            </button>
+            <a class="btn btn-ghost btn-small" id="mail-download-link" href="#" download>
+              Last ned
+            </a>
+          </div>
+        </div>
+
+        <section class="security-box" id="mail-security-box" data-tone="muted">
+          <div class="security-head">
+            <h3>Avsender og sikkerhet</h3>
+            <span class="badge trust-badge" id="mail-trust-badge"></span>
+          </div>
+          <dl class="security-meta" id="mail-security-meta"></dl>
+          <div class="auth-row" id="mail-auth-row"></div>
+          <ul class="warning-list" id="mail-warnings" hidden></ul>
+          <div class="approve-sender-row" id="mail-approve-row" hidden>
+            <button type="button" class="btn btn-ghost btn-small" id="approve-sender-btn">
+              Godkjenn avsender
+            </button>
+            <button type="button" class="btn btn-ghost btn-small" id="approve-domain-btn">
+              Godkjenn hele domenet
+            </button>
+          </div>
+        </section>
+
+        <div class="mail-excerpt" id="mail-excerpt-wrap" hidden>
+          <p class="field-label">Tekst i e-posten (kun ren tekst)</p>
+          <pre id="mail-excerpt"></pre>
+        </div>
+
+        <div class="mail-preview" id="mail-preview-wrap" hidden>
+          <img id="mail-preview-img" alt="Forhåndsvisning av mottatt vedlegg" hidden />
+          <object id="mail-preview-pdf" type="application/pdf" hidden>
+            <p class="card-hint">
+              Nettleseren kunne ikke vise PDF-en direkte. Bruk «Åpne vedlegg» eller «Last ned» over.
+            </p>
+          </object>
+        </div>
+
+        <div id="mail-booked-box" class="booked-box" hidden>
+          <p id="mail-booked-text"></p>
+          <a class="btn btn-ghost btn-small" href="/bilag/">Se i bilagsoversikten</a>
+        </div>
+
+        <div id="mail-reopen-box" hidden>
+          <p class="card-hint">
+            Denne e-postfakturaen er avvist og ligger ikke lenger under Nye. Vedlegget bevares i
+            regnskapet og kan åpnes på nytt ved behov.
+          </p>
+          <button type="button" class="btn btn-ghost" id="mail-reopen-btn">Åpne på nytt</button>
+        </div>
+
+        <form id="mail-book-form" novalidate hidden>
+          <div class="book-form-head">
+            <h3>Bokfør som bilag</h3>
+            <button type="button" class="btn btn-ghost btn-small" id="mail-ki-btn" hidden>
+              Les vedlegg med KI
+            </button>
+          </div>
+          <div class="mail-ki-picker">
+            <KiLevelPicker id="innkommende-vedlegg" />
+          </div>
+          <p class="card-hint" id="mail-ki-hint" hidden></p>
+
+          <label class="field" for="mail-book-type">
+            <span>Hva gjaldt fakturaen?</span>
+            <select id="mail-book-type" required></select>
+          </label>
+
+          <div class="form-row">
+            <label class="field" for="mail-book-date">
+              <span>Dato</span>
+              <input type="date" id="mail-book-date" required />
+            </label>
+            <label class="field" for="mail-book-amount">
+              <span>Beløp i NOK (inkl. mva)</span>
+              <input type="text" id="mail-book-amount" inputmode="decimal" required />
+            </label>
+          </div>
+
+          <div class="form-row">
+            <label class="field" for="mail-book-tax">
+              <span>Mva-kode</span>
+              <select id="mail-book-tax"></select>
+            </label>
+            <label class="field" for="mail-book-method">
+              <span>Betalt via</span>
+              <select id="mail-book-method">
+                <option value="bank">Bank (1920)</option>
+                <option value="kontant">Kontant (1900)</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="field" for="mail-book-party">
+            <span>Leverandør (valgfritt)</span>
+            <select id="mail-book-party"></select>
+          </label>
+
+          <label class="field" for="mail-book-desc">
+            <span>Beskrivelse</span>
+            <input type="text" id="mail-book-desc" maxlength="255" required />
+          </label>
+
+          <p class="status" id="mail-detail-status" role="status" hidden></p>
+
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="mail-book-submit">Bokfør bilag</button>
+            <button type="button" class="btn btn-ghost" id="mail-dismiss-btn">Avvis</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .head-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .orgnr {
+    margin: 0.2rem 0 0;
+  }
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--muted);
+    margin: 0 0 0.35rem;
+  }
+  .channel-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+  }
+  @media (max-width: 820px) {
+    .channel-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .channel-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .channel-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+  .channel-title {
+    margin: 0;
+    font-size: 1.05rem;
+  }
+  .address-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .inbox-address {
+    font-size: 1rem;
+    font-weight: 700;
+    padding: 0.2rem 0.55rem;
+    border-radius: var(--radius-small);
+    background: var(--surface-alt, var(--accent-soft));
+    word-break: break-all;
+  }
+  .channel-link {
+    margin: 0.2rem 0 0;
+  }
+  .channel-actions {
+    margin-top: 0.25rem;
+  }
+  .notice {
+    margin: 0 0 0.75rem;
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius-small);
+    background: var(--gold-soft);
+    color: var(--fg);
+  }
+  .notice-compact {
+    margin: 0.25rem 0;
+    padding: 0.55rem 0.75rem;
+    font-size: 0.9rem;
+  }
+  .mail-settings {
+    margin-top: 0.75rem;
+    padding-top: 0.85rem;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+  .policy-group {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    padding: 0.75rem;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .policy-group legend {
+    font-weight: 600;
+    font-size: 0.9rem;
+    padding: 0 0.35rem;
+  }
+  .radio-row {
+    display: flex;
+    gap: 0.55rem;
+    align-items: flex-start;
+    font-size: 0.92rem;
+    cursor: pointer;
+  }
+  .radio-row input {
+    margin-top: 0.25rem;
+  }
+  .trusted-block {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  .field-label {
+    font-weight: 600;
+    font-size: 0.88rem;
+    margin: 0;
+  }
+  .field-hint {
+    font-size: 0.84rem;
+    color: var(--muted);
+    margin: 0;
+  }
+  .small-note {
+    font-size: 0.85rem;
+    margin: 0;
+  }
+  .allowlist-add {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .allowlist-add input {
+    flex: 1 1 13rem;
+  }
+  .chip-list {
+    list-style: none;
+    padding: 0;
+    margin: 0.2rem 0 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .chip-list :global(li) {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    font-size: 0.84rem;
+    background: var(--bg);
+  }
+  .chip-list :global(.chip-remove) {
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    padding: 0 0.1rem;
+  }
+  .chip-list :global(.chip-remove:hover) {
+    color: var(--fg);
+  }
+
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem 1rem;
+    margin-bottom: 1rem;
+  }
+  .source-switch {
+    display: inline-flex;
+    flex-wrap: wrap;
+    padding: 0.25rem;
+    border-radius: var(--radius-small);
+    border: 1px solid var(--border);
+    background: var(--surface, var(--bg));
+    gap: 0.25rem;
+  }
+  .switch-option {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--fg);
+    font: inherit;
+    font-size: 0.92rem;
+    font-weight: 600;
+    padding: 0.45rem 0.85rem;
+    border-radius: calc(var(--radius-small) - 2px);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+  .switch-option:hover {
+    background: var(--accent-soft);
+  }
+  .switch-option[aria-checked='true'] {
+    background: var(--accent);
+    color: var(--accent-fg, #fff);
+  }
+  .switch-count {
+    font-size: 0.78rem;
+    font-variant-numeric: tabular-nums;
+    padding: 0.05rem 0.4rem;
+    border-radius: 999px;
+    background: rgba(127, 127, 127, 0.18);
+  }
+  .switch-option[aria-checked='true'] .switch-count {
+    background: rgba(255, 255, 255, 0.22);
+  }
+  .filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+  }
+
+  .inbox-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    gap: 1.25rem;
+    align-items: start;
+  }
+  @media (max-width: 1020px) {
+    .inbox-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  .num {
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  #incoming-rows :global(tr) {
+    cursor: pointer;
+  }
+  #incoming-rows :global(tr[data-selected='true']) {
+    background: var(--accent-soft);
+  }
+  #incoming-rows :global(.num) {
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  #incoming-rows :global(.sender-cell) {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    align-items: flex-start;
+  }
+  #incoming-rows :global(.sender-line) {
+    font-size: 0.88rem;
+    word-break: break-word;
+  }
+  #incoming-rows :global(.source-badge[data-source='ehf']) {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  #incoming-rows :global(.source-badge[data-source='epost']) {
+    background: var(--gold-soft);
+    color: var(--fg);
+  }
+  #incoming-rows :global(.badge[data-status='bokfort']) {
+    background: var(--accent-soft);
+    color: var(--positive);
+  }
+  #incoming-rows :global(.badge[data-status='avvist']) {
+    color: var(--muted);
+  }
+  :global(.badge[data-tone='ok']) {
+    background: var(--accent-soft);
+    color: var(--positive);
+  }
+  :global(.badge[data-tone='warn']) {
+    background: var(--gold-soft);
+    color: var(--fg);
+  }
+  :global(.badge[data-tone='danger']) {
+    background: rgba(196, 45, 45, 0.14);
+    color: var(--negative, #b42318);
+  }
+  :global(.badge[data-tone='muted']) {
+    color: var(--muted);
+  }
+
+  .detail-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+  .detail-head h2 {
+    margin: 0;
+  }
+  .detail-downloads {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: flex-start;
+  }
+  .meta-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+    gap: 0.65rem 1rem;
+    margin: 0 0 1rem;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+  }
+  #detail-meta :global(dt),
+  .security-meta :global(dt) {
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+  #detail-meta :global(dd),
+  .security-meta :global(dd) {
+    margin: 0.15rem 0 0;
+    font-weight: 600;
+    word-break: break-word;
+  }
+  #detail-meta :global(dd) {
+    font-variant-numeric: tabular-nums;
+  }
+  #detail-lines :global(.num) {
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .security-box {
+    margin: 0 0 1rem;
+    padding: 0.85rem 1rem;
+    border-radius: var(--radius-small);
+    border: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+  }
+  .security-box[data-tone='ok'] {
+    border-color: var(--positive);
+    background: var(--accent-soft);
+  }
+  .security-box[data-tone='warn'] {
+    border-color: var(--gold, #b58900);
+    background: var(--gold-soft);
+  }
+  .security-box[data-tone='danger'] {
+    border-color: var(--negative, #b42318);
+    background: rgba(196, 45, 45, 0.08);
+  }
+  .security-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .security-head h3 {
+    margin: 0;
+    font-size: 0.98rem;
+  }
+  .security-meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    gap: 0.55rem 0.9rem;
+    margin: 0;
+  }
+  .auth-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .warning-list {
+    margin: 0;
+    padding-left: 1.2rem;
+    font-size: 0.9rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .approve-sender-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding-top: 0.25rem;
+  }
+  .mail-excerpt {
+    margin-bottom: 1rem;
+  }
+  .mail-excerpt pre {
+    margin: 0.35rem 0 0;
+    padding: 0.7rem 0.85rem;
+    border-radius: var(--radius-small);
+    border: 1px solid var(--border);
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: inherit;
+    font-size: 0.88rem;
+    max-height: 11rem;
+    overflow: auto;
+  }
+  .mail-preview {
+    margin-bottom: 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    overflow: hidden;
+    background: var(--bg);
+  }
+  .mail-preview img {
+    display: block;
+    max-width: 100%;
+    max-height: 26rem;
+    margin: 0 auto;
+    object-fit: contain;
+  }
+  .mail-preview object {
+    display: block;
+    width: 100%;
+    height: 28rem;
+  }
+
+  .booked-box {
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius-small);
+    background: var(--accent-soft);
+  }
+  #book-form,
+  #mail-book-form {
+    margin-top: 1.25rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
+  .book-form-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .book-form-head h3 {
+    margin: 0;
+  }
+  .mail-ki-picker :global(.ki-picker > .ki-level) {
+    margin-top: 0;
+  }
+  .mail-ki-picker :global(.ki-input-hint:not([hidden])) {
+    margin-bottom: 0.75rem;
+  }
+  .form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+  @media (max-width: 600px) {
+    .form-row {
+      grid-template-columns: 1fr;
+    }
+  }
+  .checkbox-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin: 0.5rem 0;
+  }
+  .form-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin-top: 0.9rem;
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    bookIncomingEhf,
+    bookIncomingMail,
+    dismissIncomingEhf,
+    dismissIncomingMail,
+    fetchIncomingMailBlob,
+    getCompanyCatalogue,
+    getInboundEmailSettings,
+    getIncomingEhf,
+    getIncomingMail,
+    getPeppol,
+    incomingEhfPdfUrl,
+    incomingEhfXmlUrl,
+    incomingMailFileUrl,
+    interpretDocument,
+    listIncomingEhf,
+    listIncomingMail,
+    listParties,
+    reopenIncomingEhf,
+    reopenIncomingMail,
+    updateInboundEmailSettings,
+    type CashFlowType,
+    type Company,
+    type CompanyCatalogue,
+    type InboundEmailSettings,
+    type IncomingEhfDetail,
+    type IncomingEhfStatus,
+    type IncomingEhfSummary,
+    type IncomingMailDetail,
+    type IncomingMailSummary,
+    type Party,
+    type PeppolStanding,
+    type SenderPolicy,
+  } from '../lib/api';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { clearStatus, el, setStatus, show } from '../lib/dom';
+  import { isoDate, kontonummer, kroner, orgnummer, todayIso } from '../lib/format';
+  import { mountKiInputs } from '../lib/kiinput';
+  import {
+    authResultBadge,
+    extractSenderDomainRule,
+    formatByteSize,
+    formatSenderDisplay,
+    mergeInboxItems,
+    parseSourceFilter,
+    senderPolicyLabel,
+    trustBadge,
+    type SourceFilter,
+  } from '../lib/mottak';
+  import { incomingStatusLabel } from '../lib/peppol';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+  import { fillTaxSelect, narrowTaxSelect } from '../lib/taxcodes';
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const detailStatus = el<HTMLParagraphElement>('#detail-status');
+  const mailDetailStatus = el<HTMLParagraphElement>('#mail-detail-status');
+  const mailSettingsStatus = el<HTMLParagraphElement>('#mail-settings-status');
+  const rowsBody = el<HTMLTableSectionElement>('#incoming-rows');
+  const ehfTypeSelect = el<HTMLSelectElement>('#book-type');
+  const ehfTaxSelect = el<HTMLSelectElement>('#book-tax');
+  const mailTypeSelect = el<HTMLSelectElement>('#mail-book-type');
+  const mailTaxSelect = el<HTMLSelectElement>('#mail-book-tax');
+  const mailPartySelect = el<HTMLSelectElement>('#mail-book-party');
+
+  let selskap: Company | null = null;
+  let catalogue: CompanyCatalogue | null = null;
+  let suppliers: Party[] = [];
+  let peppolStanding: PeppolStanding | null = null;
+  let emailSettings: InboundEmailSettings | null = null;
+  let draftAllowlist: string[] = [];
+
+  let activeSource: SourceFilter = parseSourceFilter(
+    new URLSearchParams(window.location.search).get('kilde'),
+  );
+  let activeFilter: IncomingEhfStatus | 'alle' = 'ny';
+
+  let ehfItems: IncomingEhfSummary[] = [];
+  let mailItems: IncomingMailSummary[] = [];
+  let selectedKey: string | null = null;
+  let selectedEhf: IncomingEhfDetail | null = null;
+  let selectedMail: IncomingMailDetail | null = null;
+  let currentPreviewUrl: string | null = null;
+  let currentPreviewBlob: Blob | null = null;
+
+  function activeCompany(): Company {
+    if (selskap === null) throw new Error('Intet valgt selskap');
+    return selskap;
+  }
+
+  // Nivåvalg for «Les vedlegg med KI». Bruker selskapet som er aktivt når
+  // brukeren trykker, ikke en tidlig kopi.
+  const ki = mountKiInputs(() => activeCompany().id);
+
+  function revokePreview(): void {
+    if (currentPreviewUrl !== null) {
+      URL.revokeObjectURL(currentPreviewUrl);
+      currentPreviewUrl = null;
+    }
+    currentPreviewBlob = null;
+    el<HTMLImageElement>('#mail-preview-img').src = '';
+    el<HTMLObjectElement>('#mail-preview-pdf').data = '';
+    show(el('#mail-preview-img'), false);
+    show(el('#mail-preview-pdf'), false);
+    show(el('#mail-preview-wrap'), false);
+  }
+
+  function formatMoney(amount: string, currency: string): string {
+    if (currency === 'NOK') return kroner(amount);
+    return `${amount.replace('.', ',')} ${currency}`;
+  }
+
+  function drawChannelCards(): void {
+    const company = activeCompany();
+    const mayManage = canInCompany(company, 'organization:manage');
+
+    // --- EHF card ---
+    const ehfBadge = el('#ehf-channel-badge');
+    if (!peppolStanding || !peppolStanding.available) {
+      el('#ehf-channel-title').textContent = 'Ikke konfigurert';
+      ehfBadge.textContent = 'Av';
+      ehfBadge.dataset.tone = 'muted';
+      el('#ehf-channel-hint').textContent =
+        'E-faktura over Peppol er ikke satt opp i denne installasjonen av Myntos.';
+      show(el('#ehf-channel-action'), false);
+    } else if (peppolStanding.can_receive) {
+      el('#ehf-channel-title').textContent = 'Mottak over Peppol (ELMA) er aktivt';
+      ehfBadge.textContent = 'På';
+      ehfBadge.dataset.tone = 'ok';
+      el('#ehf-channel-hint').textContent =
+        'Leverandørfakturaer sendt til organisasjonsnummeret ditt kommer hit av seg selv, som regel med en gang og ellers innen et kvarter.';
+      show(el('#ehf-channel-action'), false);
+    } else if (peppolStanding.can_send) {
+      el('#ehf-channel-title').textContent = 'Sending er på, mottak er av';
+      ehfBadge.textContent = 'Kun sending';
+      ehfBadge.dataset.tone = 'warn';
+      el('#ehf-channel-hint').textContent =
+        'Aktivering av e-faktura på Faktura slår kun på sending, slik at vi aldri tar over mottaket fra et annet program uten ditt valg.';
+      show(el('#ehf-channel-action'), true);
+    } else {
+      el('#ehf-channel-title').textContent = 'Mottak av e-faktura er ikke slått på';
+      ehfBadge.textContent = 'Av';
+      ehfBadge.dataset.tone = 'muted';
+      el('#ehf-channel-hint').textContent =
+        'Slå på mottak under Innstillinger for å ta imot leverandørfakturaer rett inn som EHF.';
+      show(el('#ehf-channel-action'), true);
+    }
+
+    // --- Email card ---
+    if (emailSettings !== null) {
+      el('#mail-address').textContent = emailSettings.address;
+      const mailBadge = el('#mail-channel-badge');
+      if (!emailSettings.enabled) {
+        mailBadge.textContent = 'Avskrudd';
+        mailBadge.dataset.tone = 'muted';
+        el('#mail-channel-hint').textContent =
+          'E-postmottak er slått av for dette selskapet. Nye e-poster blir avvist.';
+      } else if (emailSettings.sender_policy === 'kun_godkjente') {
+        mailBadge.textContent = 'Kun godkjente';
+        mailBadge.dataset.tone = 'ok';
+        el('#mail-channel-hint').textContent =
+          'Send PDF eller bilde til adressen over. Bare egne brukere og godkjente avsendere slippes inn.';
+      } else {
+        mailBadge.textContent = 'Aktiv';
+        mailBadge.dataset.tone = 'ok';
+        el('#mail-channel-hint').textContent =
+          'Send eller videresend fakturaer (PDF eller bilde) til adressen over. Hver e-post viser hvem som sendte den og om avsenderen er godkjent.';
+      }
+      show(el('#mail-not-configured'), !emailSettings.available);
+      show(el('#mail-settings-toggle-wrap'), mayManage);
+
+      el<HTMLInputElement>('#mail-enabled').checked = emailSettings.enabled;
+      for (const radio of document.querySelectorAll<HTMLInputElement>('input[name="sender-policy"]')) {
+        radio.checked = radio.value === emailSettings.sender_policy;
+      }
+      const memberList = el('#member-emails-list');
+      memberList.replaceChildren();
+      for (const addr of emailSettings.member_emails) {
+        const li = document.createElement('li');
+        li.textContent = addr;
+        memberList.append(li);
+      }
+      show(el('#member-emails-block'), emailSettings.member_emails.length > 0);
+      draftAllowlist = [...emailSettings.allowed_senders];
+      drawAllowlistChips();
+    }
+  }
+
+  function drawAllowlistChips(): void {
+    const list = el('#allowlist-chips');
+    list.replaceChildren();
+    show(el('#allowlist-empty'), draftAllowlist.length === 0);
+    for (const entry of draftAllowlist) {
+      const li = document.createElement('li');
+      const span = document.createElement('span');
+      span.textContent = entry;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'chip-remove';
+      btn.setAttribute('aria-label', `Fjern ${entry}`);
+      btn.textContent = '×';
+      btn.addEventListener('click', () => {
+        draftAllowlist = draftAllowlist.filter((item) => item !== entry);
+        drawAllowlistChips();
+      });
+      li.append(span, btn);
+      list.append(li);
+    }
+  }
+
+  function drawSwitchAndFilterButtons(): void {
+    el('#count-alle').textContent = String(ehfItems.length + mailItems.length);
+    el('#count-ehf').textContent = String(ehfItems.length);
+    el('#count-epost').textContent = String(mailItems.length);
+
+    for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-source]')) {
+      const active = btn.dataset.source === activeSource;
+      btn.setAttribute('aria-checked', String(active));
+    }
+    for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-filter]')) {
+      const active = btn.dataset.filter === activeFilter;
+      btn.classList.toggle('btn-primary', active);
+      btn.classList.toggle('btn-ghost', !active);
+    }
+  }
+
+  function drawList(): void {
+    drawSwitchAndFilterButtons();
+    const visible = mergeInboxItems(ehfItems, mailItems, activeSource);
+    rowsBody.replaceChildren();
+    show(el('#incoming-empty'), visible.length === 0);
+
+    for (const item of visible) {
+      const tr = document.createElement('tr');
+      tr.dataset.selected = String(selectedKey === item.key);
+      tr.addEventListener('click', () => {
+        if (item.source === 'ehf') {
+          void openEhfDetail(item.id);
+        } else {
+          void openMailDetail(item.id);
+        }
+      });
+
+      const sourceCell = document.createElement('td');
+      const sourceBadge = document.createElement('span');
+      sourceBadge.className = 'badge source-badge';
+      sourceBadge.dataset.source = item.source;
+      sourceBadge.textContent = item.source === 'ehf' ? 'EHF' : 'E-post';
+      sourceCell.append(sourceBadge);
+
+      const dateCell = document.createElement('td');
+      const mainCell = document.createElement('td');
+      const senderCell = document.createElement('td');
+      senderCell.className = 'sender-cell';
+      const amountCell = document.createElement('td');
+      amountCell.className = 'num';
+      const statusCell = document.createElement('td');
+      const statusBadge = document.createElement('span');
+      statusBadge.className = 'badge';
+
+      if (item.source === 'ehf') {
+        const ehf = item.ehf;
+        dateCell.textContent = ehf.issue_date
+          ? isoDate(ehf.issue_date)
+          : isoDate(ehf.received_at.slice(0, 10));
+        mainCell.textContent = `${ehf.seller_name} · nr. ${ehf.invoice_number}`;
+
+        const senderLine = document.createElement('span');
+        senderLine.className = 'sender-line muted';
+        senderLine.textContent = ehf.seller_orgnr
+          ? `Org.nr. ${orgnummer(ehf.seller_orgnr)}`
+          : ehf.seller_peppol_id;
+        senderCell.append(senderLine);
+
+        amountCell.textContent = formatMoney(ehf.gross_amount, ehf.currency);
+        statusBadge.dataset.status = ehf.status;
+        statusBadge.textContent = incomingStatusLabel(ehf.status);
+      } else {
+        const mail = item.mail;
+        dateCell.textContent = isoDate(mail.received_at.slice(0, 10));
+        mainCell.textContent = mail.subject || mail.filename;
+
+        const senderLine = document.createElement('span');
+        senderLine.className = 'sender-line';
+        senderLine.textContent = mail.sender_email;
+        const trust = trustBadge(mail.sender_trust);
+        const tBadge = document.createElement('span');
+        tBadge.className = 'badge';
+        tBadge.dataset.tone = trust.tone;
+        tBadge.textContent = trust.shortLabel;
+        senderCell.append(senderLine, tBadge);
+
+        amountCell.textContent = formatByteSize(mail.byte_size);
+        statusBadge.dataset.status = mail.status;
+        statusBadge.textContent = incomingStatusLabel(mail.status);
+      }
+
+      statusCell.append(statusBadge);
+      tr.append(sourceCell, dateCell, mainCell, senderCell, amountCell, statusCell);
+      rowsBody.append(tr);
+    }
+  }
+
+  function populateTypeSelect(select: HTMLSelectElement, kind: 'faktura' | 'kreditnota'): void {
+    select.replaceChildren();
+    if (catalogue === null) return;
+    const wantedDirection = kind === 'kreditnota' ? 'inn' : 'ut';
+    const matching = catalogue.types.filter((t) =>
+      kind === 'kreditnota' ? t.direction === 'inn' && t.reverses !== null : t.direction === wantedDirection,
+    );
+    const ordered: CashFlowType[] =
+      matching.length > 0 ? matching : catalogue.types.filter((t) => t.direction === wantedDirection);
+    const rest = catalogue.types.filter((t) => !ordered.includes(t));
+
+    const addGroup = (label: string, groupTypes: CashFlowType[]): void => {
+      if (groupTypes.length === 0) return;
+      const group = document.createElement('optgroup');
+      group.label = label;
+      for (const item of groupTypes) {
+        const option = document.createElement('option');
+        option.value = item.code;
+        option.textContent = `${item.label} (${item.account_number})`;
+        group.append(option);
+      }
+      select.append(group);
+    };
+
+    addGroup(kind === 'kreditnota' ? 'Kreditering / refusjon' : 'Utgifter og kjøp', ordered);
+    addGroup('Andre kategorier', rest);
+  }
+
+  function syncTaxSelect(typeSel: HTMLSelectElement, taxSel: HTMLSelectElement): void {
+    if (catalogue === null) return;
+    const chosen = catalogue.types.find((t) => t.code === typeSel.value) ?? null;
+    narrowTaxSelect(taxSel, chosen ? chosen.books_as : null);
+  }
+
+  function populateSupplierSelect(): void {
+    mailPartySelect.replaceChildren();
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = 'Ingen leverandør valgt';
+    mailPartySelect.append(none);
+    for (const party of suppliers) {
+      const option = document.createElement('option');
+      option.value = String(party.id);
+      option.textContent = party.orgnr ? `${party.name} (${orgnummer(party.orgnr)})` : party.name;
+      mailPartySelect.append(option);
+    }
+  }
+
+  function drawEhfDetail(doc: IncomingEhfDetail): void {
+    revokePreview();
+    selectedEhf = doc;
+    selectedMail = null;
+    selectedKey = `ehf-${doc.id}`;
+    drawList();
+    show(el('#mail-detail-card'), false);
+    show(el('#ehf-detail-card'), true);
+    clearStatus(detailStatus);
+
+    const company = activeCompany();
+    const kind = doc.document_type === 'kreditnota' ? 'Innkommende kreditnota' : 'Innkommende faktura';
+    el('#detail-kind').textContent = `${kind} · EHF`;
+    el('#detail-title').textContent = `${doc.seller_name} – nr. ${doc.invoice_number}`;
+    el('#detail-seller-meta').textContent = doc.seller_orgnr
+      ? `Org.nr. ${orgnummer(doc.seller_orgnr)}`
+      : doc.seller_peppol_id;
+
+    el<HTMLAnchorElement>('#detail-pdf').href = incomingEhfPdfUrl(company.id, doc.id);
+    el<HTMLAnchorElement>('#detail-xml').href = incomingEhfXmlUrl(company.id, doc.id);
+
+    const meta = el<HTMLDListElement>('#detail-meta');
+    meta.replaceChildren();
+    const addMeta = (label: string, value: string): void => {
+      const wrap = document.createElement('div');
+      const dt = document.createElement('dt');
+      dt.textContent = label;
+      const dd = document.createElement('dd');
+      dd.textContent = value;
+      wrap.append(dt, dd);
+      meta.append(wrap);
+    };
+    addMeta('Fakturadato', doc.issue_date ? isoDate(doc.issue_date) : '—');
+    addMeta('Forfallsdato', doc.due_date ? isoDate(doc.due_date) : '—');
+    addMeta('Sum eks. mva', formatMoney(doc.net_amount, doc.currency));
+    addMeta('Mva', formatMoney(doc.vat_amount, doc.currency));
+    addMeta('Å betale', formatMoney(doc.gross_amount, doc.currency));
+    if (doc.payment_reference) addMeta('KID', doc.payment_reference);
+    if (doc.seller_bank_account) addMeta('Kontonummer', kontonummer(doc.seller_bank_account));
+    if (doc.buyer_reference) addMeta('Deres referanse', doc.buyer_reference);
+
+    const linesBody = el<HTMLTableSectionElement>('#detail-lines');
+    linesBody.replaceChildren();
+    show(el('#detail-lines-wrap'), doc.lines.length > 0);
+    for (const line of doc.lines) {
+      const tr = document.createElement('tr');
+      const d = document.createElement('td');
+      d.textContent = line.description;
+      const q = document.createElement('td');
+      q.className = 'num';
+      q.textContent = `${line.quantity} ${line.unit_code}`;
+      const v = document.createElement('td');
+      v.className = 'num';
+      v.textContent = line.vat_percent !== null ? `${line.vat_percent} %` : '—';
+      const a = document.createElement('td');
+      a.className = 'num';
+      a.textContent = formatMoney(line.net_amount, doc.currency);
+      tr.append(d, q, v, a);
+      linesBody.append(tr);
+    }
+
+    const noteEl = el('#detail-note');
+    noteEl.textContent = doc.note ?? '';
+    show(noteEl, Boolean(doc.note));
+
+    const mayWrite = canInCompany(company, 'ledger:write');
+    show(el('#detail-booked-box'), doc.status === 'bokfort');
+    if (doc.status === 'bokfort') {
+      el('#detail-booked-text').textContent = doc.booked_at
+        ? `Bokført ${isoDate(doc.booked_at.slice(0, 10))}.`
+        : 'Bokført i regnskapet.';
+    }
+    show(el('#detail-reopen-box'), doc.status === 'avvist' && mayWrite);
+    show(el('#book-form'), doc.status === 'ny' && mayWrite);
+
+    if (doc.status === 'ny' && mayWrite && catalogue !== null) {
+      populateTypeSelect(ehfTypeSelect, doc.document_type);
+      fillTaxSelect(ehfTaxSelect, catalogue.tax_codes);
+      syncTaxSelect(ehfTypeSelect, ehfTaxSelect);
+      ehfTaxSelect.value = doc.suggested_tax_code;
+      el<HTMLInputElement>('#book-date').value = doc.issue_date ?? todayIso();
+      const amountInput = el<HTMLInputElement>('#book-amount');
+      const currencyHint = el('#book-currency-hint');
+      if (doc.currency === 'NOK') {
+        amountInput.value = doc.gross_amount.replace('-', '');
+        show(currencyHint, false);
+      } else {
+        amountInput.value = '';
+        currencyHint.textContent = `Fakturaen er i ${doc.currency}. Skriv inn beløpet i norske kroner (NOK) slik det ble betalt fra banken.`;
+        show(currencyHint, true);
+      }
+      const descPrefix = doc.document_type === 'kreditnota' ? 'kreditnota' : 'faktura';
+      el<HTMLInputElement>('#book-desc').value = `${doc.seller_name}, ${descPrefix} ${doc.invoice_number}`;
+    }
+  }
+
+  async function loadMailPreview(companyId: number, mailId: number, contentType: string): Promise<void> {
+    revokePreview();
+    const blob = await fetchIncomingMailBlob(companyId, mailId);
+    // Ignore stale preview if user clicked another document while fetching.
+    if (blob === null || selectedMail === null || selectedMail.id !== mailId) return;
+    currentPreviewBlob = blob;
+    currentPreviewUrl = URL.createObjectURL(blob);
+    if (contentType === 'application/pdf') {
+      const obj = el<HTMLObjectElement>('#mail-preview-pdf');
+      obj.data = currentPreviewUrl;
+      show(obj, true);
+      show(el('#mail-preview-wrap'), true);
+    } else if (contentType.startsWith('image/')) {
+      const img = el<HTMLImageElement>('#mail-preview-img');
+      img.src = currentPreviewUrl;
+      show(img, true);
+      show(el('#mail-preview-wrap'), true);
+    }
+  }
+
+  function drawMailDetail(doc: IncomingMailDetail): void {
+    selectedMail = doc;
+    selectedEhf = null;
+    selectedKey = `epost-${doc.id}`;
+    drawList();
+    show(el('#ehf-detail-card'), false);
+    show(el('#mail-detail-card'), true);
+    clearStatus(mailDetailStatus);
+
+    const company = activeCompany();
+    el('#mail-detail-title').textContent = doc.subject || doc.filename;
+    el('#mail-detail-file-meta').textContent =
+      `${doc.filename} · ${formatByteSize(doc.byte_size)} · Mottatt ${isoDate(doc.received_at.slice(0, 10))}`;
+    el<HTMLAnchorElement>('#mail-download-link').href = incomingMailFileUrl(company.id, doc.id);
+
+    // --- Sender & security panel ---
+    const trust = trustBadge(doc.sender_trust);
+    const secBox = el('#mail-security-box');
+    secBox.dataset.tone = trust.tone;
+    const badgeEl = el('#mail-trust-badge');
+    badgeEl.textContent = trust.label;
+    badgeEl.dataset.tone = trust.tone;
+
+    const secMeta = el<HTMLDListElement>('#mail-security-meta');
+    secMeta.replaceChildren();
+    const addSec = (label: string, value: string): void => {
+      const wrap = document.createElement('div');
+      const dt = document.createElement('dt');
+      dt.textContent = label;
+      const dd = document.createElement('dd');
+      dd.textContent = value;
+      wrap.append(dt, dd);
+      secMeta.append(wrap);
+    };
+    addSec('Sendt av (From)', formatSenderDisplay(doc));
+    addSec('Teknisk avsender (SMTP)', doc.envelope_from);
+    if (doc.reply_to) addSec('Svaradresse (Reply-To)', doc.reply_to);
+    addSec('Mottatt på', doc.recipient_address);
+
+    const authRow = el('#mail-auth-row');
+    authRow.replaceChildren();
+    const checks: [string, string | null][] = [
+      ['SPF', doc.spf_result],
+      ['DKIM', doc.dkim_result],
+      ['DMARC', doc.dmarc_result],
+    ];
+    for (const [label, value] of checks) {
+      const info = authResultBadge(value);
+      const pill = document.createElement('span');
+      pill.className = 'badge';
+      pill.dataset.tone = info.tone;
+      pill.textContent = `${label}: ${info.label}`;
+      authRow.append(pill);
+    }
+
+    const warningsEl = el<HTMLUListElement>('#mail-warnings');
+    warningsEl.replaceChildren();
+    for (const warning of doc.security_warnings) {
+      const li = document.createElement('li');
+      li.textContent = warning;
+      warningsEl.append(li);
+    }
+    show(warningsEl, doc.security_warnings.length > 0);
+
+    const mayManage = canInCompany(company, 'organization:manage');
+    const alreadyApproved =
+      emailSettings !== null &&
+      (emailSettings.member_emails.includes(doc.sender_email.toLowerCase()) ||
+        emailSettings.allowed_senders.includes(doc.sender_email.toLowerCase()));
+    const domainRule = extractSenderDomainRule(doc.sender_email);
+    const domainAlreadyApproved =
+      domainRule !== null &&
+      emailSettings !== null &&
+      emailSettings.allowed_senders.includes(domainRule);
+    const showApprove = mayManage && !alreadyApproved;
+    show(el('#mail-approve-row'), showApprove);
+    if (showApprove) {
+      el('#approve-sender-btn').textContent = `Godkjenn ${doc.sender_email}`;
+      const domainBtn = el<HTMLButtonElement>('#approve-domain-btn');
+      if (domainRule !== null && !domainAlreadyApproved) {
+        domainBtn.textContent = `Godkjenn hele ${domainRule}`;
+        show(domainBtn, true);
+      } else {
+        show(domainBtn, false);
+      }
+    }
+
+    const excerptWrap = el('#mail-excerpt-wrap');
+    el('#mail-excerpt').textContent = doc.body_excerpt ?? '';
+    show(excerptWrap, Boolean(doc.body_excerpt));
+
+    void loadMailPreview(company.id, doc.id, doc.content_type);
+
+    const mayWrite = canInCompany(company, 'ledger:write');
+    show(el('#mail-booked-box'), doc.status === 'bokfort');
+    if (doc.status === 'bokfort') {
+      el('#mail-booked-text').textContent = doc.booked_at
+        ? `Bokført ${isoDate(doc.booked_at.slice(0, 10))}.`
+        : 'Bokført i regnskapet.';
+    }
+    show(el('#mail-reopen-box'), doc.status === 'avvist' && mayWrite);
+    show(el('#mail-book-form'), doc.status === 'ny' && mayWrite);
+
+    if (doc.status === 'ny' && mayWrite && catalogue !== null) {
+      populateTypeSelect(mailTypeSelect, 'faktura');
+      fillTaxSelect(mailTaxSelect, catalogue.tax_codes);
+      syncTaxSelect(mailTypeSelect, mailTaxSelect);
+      populateSupplierSelect();
+      el<HTMLInputElement>('#mail-book-date').value = doc.received_at.slice(0, 10) || todayIso();
+      el<HTMLInputElement>('#mail-book-amount').value = '';
+      el<HTMLInputElement>('#mail-book-desc').value = (doc.subject || doc.filename).slice(0, 255);
+      show(el('#mail-ki-btn'), company.ki_enabled);
+      show(el('#mail-ki-hint'), false);
+    }
+  }
+
+  async function openEhfDetail(incomingId: number): Promise<void> {
+    clearStatus(pageStatus);
+    try {
+      const detail = await getIncomingEhf(activeCompany().id, incomingId);
+      drawEhfDetail(detail);
+    } catch (error) {
+      setStatus(
+        pageStatus,
+        error instanceof ApiError ? error.message : 'Fikk ikke hentet e-fakturaen.',
+      );
+    }
+  }
+
+  async function openMailDetail(mailId: number): Promise<void> {
+    clearStatus(pageStatus);
+    try {
+      const detail = await getIncomingMail(activeCompany().id, mailId);
+      drawMailDetail(detail);
+    } catch (error) {
+      setStatus(
+        pageStatus,
+        error instanceof ApiError ? error.message : 'Fikk ikke hentet e-postfakturaen.',
+      );
+    }
+  }
+
+  async function refreshList(): Promise<void> {
+    const company = activeCompany();
+    const statusParam = activeFilter === 'alle' ? undefined : activeFilter;
+    const [ehfs, mails] = await Promise.all([
+      listIncomingEhf(company.id, statusParam),
+      listIncomingMail(company.id, statusParam),
+    ]);
+    ehfItems = ehfs;
+    mailItems = mails;
+
+    const visible = mergeInboxItems(ehfItems, mailItems, activeSource);
+    if (selectedKey !== null && !visible.some((item) => item.key === selectedKey)) {
+      selectedKey = null;
+      selectedEhf = null;
+      selectedMail = null;
+      revokePreview();
+      show(el('#ehf-detail-card'), false);
+      show(el('#mail-detail-card'), false);
+    }
+    drawList();
+  }
+
+  async function approveSenderEntry(entry: string): Promise<void> {
+    if (emailSettings === null || selectedMail === null) return;
+    clearStatus(mailDetailStatus);
+    const nextList = Array.from(new Set([...emailSettings.allowed_senders, entry.toLowerCase()]));
+    try {
+      emailSettings = await updateInboundEmailSettings(activeCompany().id, {
+        allowed_senders: nextList,
+      });
+      drawChannelCards();
+      const refreshed = await getIncomingMail(activeCompany().id, selectedMail.id);
+      drawMailDetail(refreshed);
+      await refreshList();
+      setStatus(mailDetailStatus, `La til ${entry} i godkjente avsendere.`, 'ok');
+    } catch (error) {
+      setStatus(
+        mailDetailStatus,
+        error instanceof ApiError ? error.message : 'Fikk ikke lagret godkjent avsender.',
+      );
+    }
+  }
+
+  function wireControls(): void {
+    // Source toggle (Alle / Kun e-faktura / Kun e-postfaktura)
+    for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-source]')) {
+      btn.addEventListener('click', () => {
+        activeSource = parseSourceFilter(btn.dataset.source);
+        const url = new URL(window.location.href);
+        if (activeSource === 'alle') url.searchParams.delete('kilde');
+        else url.searchParams.set('kilde', activeSource);
+        window.history.replaceState({}, '', url.toString());
+
+        const visible = mergeInboxItems(ehfItems, mailItems, activeSource);
+        if (selectedKey !== null && !visible.some((item) => item.key === selectedKey)) {
+          selectedKey = null;
+          selectedEhf = null;
+          selectedMail = null;
+          revokePreview();
+          show(el('#ehf-detail-card'), false);
+          show(el('#mail-detail-card'), false);
+        }
+        drawList();
+      });
+    }
+
+    // Status filter tabs
+    for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-filter]')) {
+      btn.addEventListener('click', () => {
+        activeFilter = (btn.dataset.filter as IncomingEhfStatus | 'alle') || 'ny';
+        drawSwitchAndFilterButtons();
+        void refreshList();
+      });
+    }
+
+    // Copy @myntos.no address
+    const copyBtn = el<HTMLButtonElement>('#copy-address-btn');
+    copyBtn.addEventListener('click', () => {
+      const addr = emailSettings?.address;
+      if (!addr) return;
+      void navigator.clipboard.writeText(addr).then(() => {
+        copyBtn.textContent = 'Kopiert!';
+        window.setTimeout(() => {
+          copyBtn.textContent = 'Kopier';
+        }, 1800);
+      });
+    });
+
+    // Collapsible email security settings
+    const toggleBtn = el<HTMLButtonElement>('#mail-settings-toggle');
+    const settingsPanel = el<HTMLFormElement>('#mail-settings-panel');
+    toggleBtn.addEventListener('click', () => {
+      const open = settingsPanel.hidden;
+      show(settingsPanel, open);
+      toggleBtn.setAttribute('aria-expanded', String(open));
+    });
+
+    const allowlistInput = el<HTMLInputElement>('#allowlist-input');
+    const addAllowlistEntry = (): void => {
+      const value = allowlistInput.value.trim().toLowerCase();
+      if (!value) return;
+      if (!draftAllowlist.includes(value)) {
+        draftAllowlist.push(value);
+        drawAllowlistChips();
+      }
+      allowlistInput.value = '';
+    };
+    el<HTMLButtonElement>('#allowlist-add-btn').addEventListener('click', addAllowlistEntry);
+    allowlistInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        addAllowlistEntry();
+      }
+    });
+
+    const saveSettingsBtn = el<HTMLButtonElement>('#mail-settings-save');
+    settingsPanel.addEventListener('submit', (event) => {
+      event.preventDefault();
+      addAllowlistEntry();
+      saveSettingsBtn.disabled = true;
+      clearStatus(mailSettingsStatus);
+      const checkedPolicy = document.querySelector<HTMLInputElement>(
+        'input[name="sender-policy"]:checked',
+      )?.value as SenderPolicy | undefined;
+      void updateInboundEmailSettings(activeCompany().id, {
+        enabled: el<HTMLInputElement>('#mail-enabled').checked,
+        sender_policy: checkedPolicy ?? 'alle_med_varsel',
+        allowed_senders: draftAllowlist,
+      })
+        .then(async (updated) => {
+          emailSettings = updated;
+          drawChannelCards();
+          await refreshList();
+          if (selectedMail !== null) {
+            const refreshed = await getIncomingMail(activeCompany().id, selectedMail.id);
+            drawMailDetail(refreshed);
+          }
+          setStatus(
+            mailSettingsStatus,
+            `Lagret (${senderPolicyLabel(updated.sender_policy)}).`,
+            'ok',
+          );
+        })
+        .catch((error: unknown) => {
+          setStatus(
+            mailSettingsStatus,
+            error instanceof ApiError ? error.message : 'Fikk ikke lagret innstillingene.',
+          );
+        })
+        .finally(() => {
+          saveSettingsBtn.disabled = false;
+        });
+    });
+
+    ehfTypeSelect.addEventListener('change', () => syncTaxSelect(ehfTypeSelect, ehfTaxSelect));
+    mailTypeSelect.addEventListener('change', () => syncTaxSelect(mailTypeSelect, mailTaxSelect));
+
+    // --- EHF actions ---
+    const bookForm = el<HTMLFormElement>('#book-form');
+    const bookSubmit = el<HTMLButtonElement>('#book-submit');
+    bookForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (selectedEhf === null) return;
+      bookSubmit.disabled = true;
+      clearStatus(detailStatus);
+      const rawAmount = el<HTMLInputElement>('#book-amount').value.trim().replace(',', '.');
+      void bookIncomingEhf(activeCompany().id, selectedEhf.id, {
+        type_code: ehfTypeSelect.value,
+        occurred_on: el<HTMLInputElement>('#book-date').value || null,
+        gross_amount: rawAmount || null,
+        tax_code: ehfTaxSelect.value || null,
+        payment_method: el<HTMLSelectElement>('#book-method').value as 'bank' | 'kontant',
+        description: el<HTMLInputElement>('#book-desc').value.trim() || null,
+        create_supplier: el<HTMLInputElement>('#book-supplier').checked,
+      })
+        .then(async (updated) => {
+          drawEhfDetail(updated);
+          setStatus(detailStatus, 'E-fakturaen er bokført og lagt i bilagsarkivet.', 'ok');
+          await refreshList();
+        })
+        .catch((error: unknown) => {
+          setStatus(
+            detailStatus,
+            error instanceof ApiError ? error.message : 'Fikk ikke bokført e-fakturaen.',
+          );
+        })
+        .finally(() => {
+          bookSubmit.disabled = false;
+        });
+    });
+
+    const dismissBtn = el<HTMLButtonElement>('#dismiss-btn');
+    dismissBtn.addEventListener('click', () => {
+      if (selectedEhf === null) return;
+      dismissBtn.disabled = true;
+      clearStatus(detailStatus);
+      void dismissIncomingEhf(activeCompany().id, selectedEhf.id)
+        .then(async (updated) => {
+          drawEhfDetail(updated);
+          await refreshList();
+        })
+        .catch((error: unknown) => {
+          setStatus(
+            detailStatus,
+            error instanceof ApiError ? error.message : 'Fikk ikke avvist e-fakturaen.',
+          );
+        })
+        .finally(() => {
+          dismissBtn.disabled = false;
+        });
+    });
+
+    const reopenBtn = el<HTMLButtonElement>('#reopen-btn');
+    reopenBtn.addEventListener('click', () => {
+      if (selectedEhf === null) return;
+      reopenBtn.disabled = true;
+      clearStatus(detailStatus);
+      void reopenIncomingEhf(activeCompany().id, selectedEhf.id)
+        .then(async (updated) => {
+          drawEhfDetail(updated);
+          await refreshList();
+        })
+        .catch((error: unknown) => {
+          setStatus(
+            detailStatus,
+            error instanceof ApiError ? error.message : 'Fikk ikke åpnet e-fakturaen på nytt.',
+          );
+        })
+        .finally(() => {
+          reopenBtn.disabled = false;
+        });
+    });
+
+    // --- Email invoice actions ---
+    el<HTMLButtonElement>('#mail-open-file-btn').addEventListener('click', () => {
+      if (currentPreviewUrl !== null) {
+        window.open(currentPreviewUrl, '_blank', 'noopener');
+      } else if (selectedMail !== null) {
+        window.open(incomingMailFileUrl(activeCompany().id, selectedMail.id), '_blank', 'noopener');
+      }
+    });
+
+    el<HTMLButtonElement>('#approve-sender-btn').addEventListener('click', () => {
+      if (selectedMail === null) return;
+      void approveSenderEntry(selectedMail.sender_email);
+    });
+
+    el<HTMLButtonElement>('#approve-domain-btn').addEventListener('click', () => {
+      if (selectedMail === null) return;
+      const rule = extractSenderDomainRule(selectedMail.sender_email);
+      if (rule !== null) void approveSenderEntry(rule);
+    });
+
+    const mailKiBtn = el<HTMLButtonElement>('#mail-ki-btn');
+    mailKiBtn.addEventListener('click', () => {
+      if (selectedMail === null) return;
+      const doc = selectedMail;
+      mailKiBtn.disabled = true;
+      clearStatus(mailDetailStatus);
+      const hint = el('#mail-ki-hint');
+      hint.textContent = 'Leser vedlegget med KI (Løynd) …';
+      show(hint, true);
+      void (async () => {
+        const blob =
+          currentPreviewBlob ?? (await fetchIncomingMailBlob(activeCompany().id, doc.id));
+        if (blob === null) throw new Error('Fikk ikke hentet vedlegget.');
+        const file = new File([blob], doc.filename, { type: doc.content_type });
+        const niva = ki.level('innkommende-vedlegg');
+        const suggestion = await interpretDocument(
+          activeCompany().id,
+          [file],
+          doc.subject || undefined,
+          'ut',
+          niva,
+        );
+        ki.answered(niva, suggestion.ki_level);
+        if (suggestion.type_code) {
+          mailTypeSelect.value = suggestion.type_code;
+          syncTaxSelect(mailTypeSelect, mailTaxSelect);
+        }
+        if (suggestion.tax_code) mailTaxSelect.value = suggestion.tax_code;
+        if (suggestion.occurred_on) {
+          el<HTMLInputElement>('#mail-book-date').value = suggestion.occurred_on;
+        }
+        if (suggestion.gross_amount) {
+          el<HTMLInputElement>('#mail-book-amount').value = suggestion.gross_amount;
+        }
+        if (suggestion.description) {
+          el<HTMLInputElement>('#mail-book-desc').value = suggestion.description;
+        }
+        if (suggestion.party_id !== null) {
+          mailPartySelect.value = String(suggestion.party_id);
+        }
+        hint.textContent =
+          suggestion.warnings.length > 0
+            ? suggestion.warnings.join(' ')
+            : 'Forslaget er fylt ut fra vedlegget. Kontroller beløp, dato og mva-kode før bokføring.';
+      })()
+        .catch((error: unknown) => {
+          show(hint, false);
+          setStatus(
+            mailDetailStatus,
+            error instanceof ApiError ? error.message : 'Fikk ikke lest vedlegget med KI.',
+          );
+        })
+        .finally(() => {
+          mailKiBtn.disabled = false;
+        });
+    });
+
+    const mailBookForm = el<HTMLFormElement>('#mail-book-form');
+    const mailBookSubmit = el<HTMLButtonElement>('#mail-book-submit');
+    mailBookForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (selectedMail === null) return;
+      const rawAmount = el<HTMLInputElement>('#mail-book-amount').value.trim().replace(',', '.');
+      const occurredOn = el<HTMLInputElement>('#mail-book-date').value;
+      if (!occurredOn || !rawAmount) {
+        setStatus(mailDetailStatus, 'Oppgi både dato og beløp før du bokfører.');
+        return;
+      }
+      mailBookSubmit.disabled = true;
+      clearStatus(mailDetailStatus);
+      const rawParty = mailPartySelect.value;
+      void bookIncomingMail(activeCompany().id, selectedMail.id, {
+        type_code: mailTypeSelect.value,
+        occurred_on: occurredOn,
+        gross_amount: rawAmount,
+        tax_code: mailTaxSelect.value || null,
+        payment_method: el<HTMLSelectElement>('#mail-book-method').value as 'bank' | 'kontant',
+        party_id: rawParty ? Number(rawParty) : null,
+        description: el<HTMLInputElement>('#mail-book-desc').value.trim() || null,
+      })
+        .then(async (updated) => {
+          drawMailDetail(updated);
+          setStatus(mailDetailStatus, 'E-postfakturaen er bokført og lagt i bilagsarkivet.', 'ok');
+          await refreshList();
+        })
+        .catch((error: unknown) => {
+          setStatus(
+            mailDetailStatus,
+            error instanceof ApiError ? error.message : 'Fikk ikke bokført e-postfakturaen.',
+          );
+        })
+        .finally(() => {
+          mailBookSubmit.disabled = false;
+        });
+    });
+
+    const mailDismissBtn = el<HTMLButtonElement>('#mail-dismiss-btn');
+    mailDismissBtn.addEventListener('click', () => {
+      if (selectedMail === null) return;
+      mailDismissBtn.disabled = true;
+      clearStatus(mailDetailStatus);
+      void dismissIncomingMail(activeCompany().id, selectedMail.id)
+        .then(async (updated) => {
+          drawMailDetail(updated);
+          await refreshList();
+        })
+        .catch((error: unknown) => {
+          setStatus(
+            mailDetailStatus,
+            error instanceof ApiError ? error.message : 'Fikk ikke avvist e-postfakturaen.',
+          );
+        })
+        .finally(() => {
+          mailDismissBtn.disabled = false;
+        });
+    });
+
+    const mailReopenBtn = el<HTMLButtonElement>('#mail-reopen-btn');
+    mailReopenBtn.addEventListener('click', () => {
+      if (selectedMail === null) return;
+      mailReopenBtn.disabled = true;
+      clearStatus(mailDetailStatus);
+      void reopenIncomingMail(activeCompany().id, selectedMail.id)
+        .then(async (updated) => {
+          drawMailDetail(updated);
+          await refreshList();
+        })
+        .catch((error: unknown) => {
+          setStatus(
+            mailDetailStatus,
+            error instanceof ApiError ? error.message : 'Fikk ikke åpnet e-postfakturaen på nytt.',
+          );
+        })
+        .finally(() => {
+          mailReopenBtn.disabled = false;
+        });
+    });
+  }
+
+  async function init(): Promise<void> {
+    const session = await loadSession();
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      const company = currentCompany(companies);
+      if (!company) {
+        location.href = '/nytt-selskap/';
+        return;
+      }
+      selskap = company;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      void ki.refresh();
+
+      const [standing, settings, cat, parties] = await Promise.all([
+        getPeppol(company.id),
+        getInboundEmailSettings(company.id),
+        getCompanyCatalogue(company.id),
+        listParties(company.id),
+      ]);
+      peppolStanding = standing;
+      emailSettings = settings;
+      catalogue = cat;
+      suppliers = parties.filter((party) => party.party_type === 'leverandor');
+
+      drawChannelCards();
+      wireControls();
+      await refreshList();
+      show(el('#loading'), false);
+      show(el('#inbox-body'), true);
+    } catch (error) {
+      show(el('#loading'), false);
+      setStatus(
+        pageStatus,
+        error instanceof ApiError
+          ? error.message
+          : 'Fikk ikke lastet mottatte fakturaer. Prøv igjen.',
+      );
+    }
+  }
+
+  void init();
+</script>

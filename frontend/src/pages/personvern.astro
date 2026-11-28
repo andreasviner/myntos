@@ -20,10 +20,18 @@ import BaseLayout from '../layouts/BaseLayout.astro';
  * KI-agenter (3e2), som er skrevet ut fra docs/agents-and-api.md regel 8, og
  * avsnittet om deling for å gjøre Myntos bedre (3d3), som er skrevet ut fra
  * docs/data-sharing.md, og avsnittet om e-faktura (3f2), som er skrevet ut fra
- * docs/integrations/peppol.md og Recommands personvernerklæring og liste over
- * underleverandører (lest 1. november 2026).
+ * docs/integrations/peppol.md og Ademico Softwares dokumentasjon (lest 25. november 2026).
+ * Det samme gjelder KI-nivåene i 3d2 og KI-planene i 3d4 (25. november 2026),
+ * skrevet ut fra backend/src/myntos/integrations/loynd.py og mollie.py og
+ * Løynds egen liste over underdatabehandlere på loynd.no/trust. OVHcloud
+ * nevnes her og ikke på /ki/ eller /priser/, fordi det er her en
+ * underdatabehandler skal stå. Det samme gjelder tilleggene i
+ * underleverandørtabellen, 3d2 og avsnitt 8 om lesing av bilag og «Dyp
+ * KI-analyse» på «Analyse» (WP5b/WP6, 27. november 2026), skrevet ut fra
+ * backend/src/myntos/domain/analyse/ og docs/analyse.md; ordlyden må gjennomgås
+ * av eieren før publisering.
  */
-const oppdatert = '1. november 2026';
+const oppdatert = '27. november 2026';
 
 const grunnlag = [
   {
@@ -67,6 +75,11 @@ const grunnlag = [
     basis: 'Berettiget interesse i et program som leser bilag riktig, på selskapets eget valg, GDPR art. 6(1)(f). Se avsnitt 3d3',
   },
   {
+    formal: 'Selge og levere en KI-plan',
+    data: 'Hvilket selskap og hvilken plan, prisen, abonnementets start- og sluttdato, faktura-e-post og fakturahistorikk, eventuell Mollie-referanse ved engangskjøp, ukentlig forbruk på betalte nivåer, og hvem som aktiverte eller sa opp',
+    basis: 'Avtalen om KI-planen, GDPR art. 6(1)(b). Se avsnitt 3d4',
+  },
+  {
     formal: 'Behandle regnskapsdataene du legger inn',
     data: 'Bilag, føringer, kunder og leverandører',
     basis: 'Vi er databehandler her, se avsnitt 3d',
@@ -84,16 +97,26 @@ const underleverandorer = [
   },
   {
     // Egen rad, fordi stedet er et annet: Cloudflare lover ikke at e-post
-    // behandles i EØS, slik R2-bøtta gjør. Derfor inneholder e-postene ingen
-    // regnskapsdata. Se docs/ARCHITECTURE.md, «What the mail provider sees».
-    navn: 'Cloudflare Email Sending',
-    rolle: 'Utgående e-post: invitasjoner, lenker som bekrefter e-postadressen, lenker til nytt passord, og beskjeder om hvordan du logger inn. Ser mottakeradressen, emnet og teksten, aldri regnskapsdata',
-    sted: 'Cloudflares globale nett; ikke bundet til EØS',
+    // behandles i EØS, slik R2-bøtta gjør. Utgående e-post inneholder ingen
+    // regnskapsdata; for innkommende bilag på @myntos.no er det avsenderen som
+    // sender e-post over vanlig internett-SMTP via Cloudflare Email Routing.
+    // Se docs/ARCHITECTURE.md og docs/integrations/mottak.md.
+    navn: 'Cloudflare Email Sending og Email Routing',
+    rolle: 'Utgående e-post (invitasjoner, verifisering, passordlenker; aldri regnskapsdata) og innkommende e-post til selskapets egen @myntos.no-adresse for bilagsmottak (videresendes direkte til Myntos i Norge og lagres i EØS)',
+    sted: 'Cloudflares globale nett i transit; ikke bundet til EØS. Lagrede vedlegg og metadata ligger utelukkende i EØS (Norge/EU)',
   },
   {
     navn: 'Løynd',
-    rolle: 'KI-forslag: bilag du laster opp (selve filene: PDF-er til tekstuthenting, bilder leses av modellen), offentlige opplysninger om selskapet fra Enhetsregisteret, en frivillig setning du selv skriver om bilaget, og salgsbeskrivelsen du skriver i fakturaskjemaet. Kan slås helt av per selskap. Se avsnitt 3d2 og /ki',
-    sted: 'Norge, med inferensservere på norsk jord og ingen lagring',
+    rolle: 'KI-forslag, «Analyse» og KI-chat: bilag du laster opp (selve filene: PDF-er til tekstuthenting, bilder leses av modellen), offentlige opplysninger om selskapet fra Enhetsregisteret, en frivillig setning du selv skriver om bilaget, salgsbeskrivelsen du skriver i fakturaskjemaet, bilder du legger i en KI-boks, bilagsopplysninger fra perioden når noen åpner «Analyse» (dato, beløp, konto, beskrivelse, linjetekst og motpartsnavn, ikke selve bilagsfilene), et sammenstilt sammendrag av periodens tall, fordelinger, største motparter, faste kostnader og sammendrag av de største bilagene når noen starter «Dyp KI-analyse», og et sammendrag av regnskapet samt relevante bokførte bilag når noen stiller spørsmål i KI-chat. Kan slås helt av per selskap under Innstillinger. Se avsnitt 3d2, 3d4 og /ki/about/',
+    // 27. november 2026: KI-nivået «Tenkende» er omdøpt til «Smart», og KI-chat er lagt til. Ordlyden gjennomgås av eieren før publisering.
+    sted: 'EØS, uten lagring. Nivået «Gratis», alle bilder og bakgrunnslesing av bilag for «Analyse» på Løynds egne servere i Norge; «Medium» og «Smart» (også for «Dyp KI-analyse» og KI-chat når det velges) der når de er ledige, og ellers hos OVHcloud (AI Endpoints) i Frankrike, som er Løynds underdatabehandler',
+  },
+  {
+    // Bare når en eier kjøper en KI-plan. Se avsnitt 3d4 og
+    // backend/src/myntos/integrations/mollie.py.
+    navn: 'Mollie (Mollie B.V.)',
+    rolle: 'Tar imot betalingen for en KI-plan, bare når en eier kjøper en. Får beløpet, planens navn og en tilfeldig referanse fra oss, ikke selskapets navn eller noe fra regnskapet. Kort- eller kontoopplysningene gir du til Mollie selv, og for dem er Mollie selv behandlingsansvarlig',
+    sted: 'EØS. Selskapet er i Nederland',
   },
   {
     navn: 'Databaseleverandør i EØS',
@@ -113,13 +136,11 @@ const underleverandorer = [
     sted: 'EU. Selskapet er i Danmark, og lover i sin databehandleravtale å ikke overføre personopplysninger ut av EU',
   },
   {
-    // Bare for selskaper som registrerer seg for e-faktura. Myntos sender aldri
-    // e-postfeltet deres, så underleverandøren som sender e-post for dem
-    // (Postmark, USA) får ingenting fra oss. Se avsnitt 3f2 og
+    // Bare for selskaper som registrerer seg for e-faktura. Se avsnitt 3f2 og
     // docs/integrations/peppol.md.
-    navn: 'Recommand (BRBX BV)',
-    rolle: 'Tilgangspunkt for e-faktura over Peppol, bare for selskaper som registrerer seg for det. Får selskapets navn, organisasjonsnummer og forretningsadresse, kundens organisasjonsnummer når vi spør om kunden kan ta imot EHF, og hver faktura som sendes, med kundens navn, adresse og fakturalinjene. Identitetskontrollen ved registreringen gjøres hos dem, av underleverandøren Didit',
-    sted: 'EØS. Selskapet er i Belgia og oppgir at driften er i EØS; identitetskontrollen behandles og lagres i EU',
+    navn: 'Ademico Software',
+    rolle: 'Tilgangspunkt for e-faktura over Peppol, bare for selskaper som registrerer seg for det. Får selskapets navn, organisasjonsnummer og forretningsadresse, hver faktura som sendes, og leverandørfakturaer som sendes til selskapet dersom mottak er slått på',
+    sted: 'EØS. Selskapet er i Belgia og driver tilgangspunktet i EØS',
   },
   {
     navn: 'Skatteetaten, Altinn, Digitaliseringsdirektoratet',
@@ -152,7 +173,7 @@ const underleverandorer = [
         Vi bruker ingenting fra regnskapet til å gjøre Myntos bedre, med mindre selskapet selv velger
         å dele det. Standard er ingenting.
       </li>
-      <li>Vi bruker én informasjonskapsel, og den holder deg innlogget.</li>
+      <li>Vi bruker bare en informasjonskapsel, og den holder deg innlogget.</li>
       <li>Data lagres i EØS.</li>
       <li>
         Gir dere en egen KI-assistent en nøkkel, henter den regnskapet selv, og modellen dere valgte
@@ -288,16 +309,29 @@ const underleverandorer = [
     nødvendig for å rette en feil eller stanse misbruk.
   </p>
 
-  <h3>d2. KI-forslag</h3>
+  {/* WP5b/WP6 (27. november 2026): oppdatert for bakgrunnslesing, «Dyp KI-analyse»
+      på «Analyse» og navnebytte fra «Tenkende» til «Smart». Ordlyden gjennomgås
+      av eieren før publisering. */}
+  <h3>d2. KI-forslag og analyse</h3>
   <p>
-    To ting du gjør selv sender tekst til <a href="https://loynd.no" rel="noopener">Løynd</a>, som
-    kjører modellen på servere i Norge. Ingenting av dette skjer i bakgrunnen, og ingenting
-    bokføres uten at du bekrefter det.
+    Det du gjør i en KI-boks, når du laster opp et bilag eller når du starter «Dyp KI-analyse»,
+    sender tekst eller bilder til <a href="https://loynd.no" rel="noopener">Løynd</a> når du ber om
+    det. Når noen i selskapet åpner «Analyse» med KI på, leser Myntos i tillegg bilagene i perioden
+    i bakgrunnen gjennom Løynd (se punktene om «Analyse» under). Ingenting bokføres uten at du
+    bekrefter det.
+  </p>
+  <p>
+    <strong>Hvor modellen kjører, avhenger av KI-nivået</strong> du velger under boksen. «Gratis»
+    kjører på Løynds egne servere i Norge. «Medium» og «Smart», som krever en
+    <a href="#ki-planer">KI-plan</a>, er større modeller som Løynd kjører på egne servere i Norge
+    når de er ledige, og ellers hos OVHcloud (AI Endpoints) i Frankrike, som er Løynds
+    underdatabehandler, uten lagring og uten trening. Bilder leses alltid på Løynds egne servere i
+    Norge, uansett nivå: de større modellene får bare teksten. Ingenting forlater EØS.
   </p>
   <ul>
     <li>
       <strong>Når du laster opp et bilag:</strong> <em>selve filene</em>, til Løynds
-      tekstuthenting. Det er én forespørsel per fil, og du kan laste opp så mange et bilag trenger.
+      tekstuthenting. Det er en forespørsel for hver fil, og du kan laste opp så mange et bilag trenger.
       PDF-er åpnes og teksten gis tilbake. <strong>Bilder leses av modellen selv</strong>, som
       skriver av teksten den ser på bildet; det er den eneste måten et fotografert
       kvitteringsbilde kan bli til tekst, og bildet sendes ikke noe annet sted. Ingenting av det
@@ -307,7 +341,7 @@ const underleverandorer = [
       <strong>Deretter to spørsmål om teksten</strong>, om de første 2000 tegnene av hvert dokument og høyst 28 000 tegn i alt, sammen med
       filenes navn og titler: hvilken kategori i kontantstrømregisteret passer, og hva står det
       på bilaget der vår egen lesning kom tom tilbake? Kategorien svarer modellen med ett tall
-      fra en fast liste. Det andre svaret er fem linjer: dato, valuta, selger, én setning om
+      fra en fast liste. Det andre svaret er fem linjer: dato, valuta, selger, en kort setning om
       hva som ble kjøpt, og eventuelt ett spørsmål tilbake til deg om noe dokumentene ikke
       svarer på. Datoen og selgernavnet må være avskrevet ordrett fra selve dokumentet,
       ellers kastes de, og datoen leses uansett av oss. Beløp kommer aldri fra modellen.
@@ -338,13 +372,46 @@ const underleverandorer = [
       disk og aldri for andre enn deg.
     </li>
     <li>
+      <strong>Når du legger et bilde i en KI-boks</strong> («Legg ved bilde»): bildet eller PDF-en,
+      til Løynds egne servere i Norge, som skriver av teksten og gir den tilbake i boksen.
+      Ingenting av det lagres, verken hos Løynd eller hos oss, og teksten går ingen andre steder
+      før du selv trykker på knappen i boksen.
+    </li>
+    <li>
       <strong>Når du ber om fakturalinjer:</strong> beskrivelsen du selv skrev i boksen, inntil
       800 tegn. Modellen stiller den opp som linjer. Verken kjøperens navn, organisasjonsnummer
       eller adresse følger med, og modellen regner ikke ut noe: summene beregnes hos oss.
     </li>
+    <li>
+      <strong>Når noen i selskapet åpner «Analyse»:</strong> bilagene i perioden (og
+      sammenligningsperioden året før) som ikke er lest fra før, sendes i bakgrunnen for å finne ut
+      hva hver inntekt og kostnad gjaldt. Det som sendes, er dato, beløp, konto, beskrivelse,
+      linjetekst, eventuell tekst fra «Beskriv bilaget», motpartens navn der bilaget har en, og de
+      samme offentlige opplysningene om selskapet fra Enhetsregisteret. Selve PDF-ene og bildene
+      sendes ikke. Motpartsnavn og bilagstekster kan inneholde personopplysninger, for eksempel
+      navnet på en privatperson eller et enkeltpersonforetak. Lesingen kjører alltid på nivået
+      «Gratis» på Løynds egne servere i Norge, uten lagring og uten trening hos Løynd. For å slippe
+      å spørre om det samme bilaget på nytt, lagrer Myntos et kort sammendrag og merker per bilag i
+      vår egen database i EØS. Dette brukes bare til selskapets egen analyse, er ikke datadeling, og
+      slettes sammen med selskapet (se avsnitt 8).
+    </li>
+    <li>
+      <strong>Når noen starter «Dyp KI-analyse» på «Analyse»:</strong> først leses eventuelle
+      uleste bilag i perioden (og sammenligningsperioden) på «Gratis» slik punktet over beskriver.
+      Deretter sendes et sammenstilt sammendrag for perioden: offentlige opplysninger om selskapet
+      fra Enhetsregisteret, nøkkeltall, månedsrekker, fordelinger per kontogruppe og hva bilagene
+      gjelder, de ti største motpartene på hver side, faste kostnader, og sammendrag av de femten
+      største bilagene (aldri selve PDF-ene eller bildene). Motpartsnavn og bilagssammendrag kan
+      inneholde personopplysninger. Selve analysen kjører på KI-nivået som er valgt («Gratis» i
+      Norge, eller «Medium» eller «Smart» via Løynd og eventuelt OVHcloud i Frankrike når
+      selskapet har en KI-plan), uten lagring og uten trening hos Løynd. Den ferdige rapporten
+      lagres i vår egen database i EØS så samme uendrede periode og nivå ikke må spørres på nytt.
+      Rapporten brukes bare i selskapet, er ikke datadeling, og slettes sammen med selskapet (se
+      avsnitt 8).
+    </li>
   </ul>
   <ul>
-    <li>Ingen andre data følger med: ikke hovedboken, ikke partsregisteret, ikke kontoen din.</li>
+    <li>Ingen andre data følger med: ikke resten av hovedboken, ikke hele partsregisteret, ikke kontoen din.</li>
     <li>
       Løynd lagrer ikke det som sendes inn, bilagene dine trener ingen modell, og ingenting av
       det blir til et søk på nettet.
@@ -362,14 +429,19 @@ const underleverandorer = [
       eller bilaget.
     </li>
     <li>
-      <strong>Du kan slå det helt av.</strong> Bryteren står per selskap på
-      <a href="/ki/">siden om KI</a>. Er den av, forlater ingen dokumenter programmet, heller ikke
-      til tekstuthenting, og heller ikke setningen du skrev. Skjemaene fylles da ut av vår egen
-      lesing av PDF-en, og bilder kan ikke leses. De lagres som bilag som før.
+      {/* 27. november 2026: KI-bryteren er flyttet til Innstillinger for selskapet
+          (/organisasjon/#ki) og om-siden til /ki/about/. Ordlyden gjennomgås av eieren før publisering. */}
+      <strong>Du kan slå det helt av.</strong> Bryteren står per selskap under
+      <a href="/organisasjon/#ki">Innstillinger for selskapet</a>. Er den av, forlater ingen
+      dokumenter eller bilagsopplysninger programmet, heller ikke til KI-chat, tekstuthenting,
+      «Analyse» eller setningen du skrev. Lesing av bilag og «Dyp KI-analyse» for «Analyse» stopper,
+      «Dyp KI-analyse» og KI-chat kan ikke brukes, og det som eventuelt ble lest tidligere brukes
+      ikke så lenge KI er av. Skjemaene fylles da ut av vår egen lesing av PDF-en, og bilder kan
+      ikke leses. De lagres som bilag som før.
     </li>
     <li>
       Kjører du Myntos selv uten API-nøkkel, skjer dette ikke i det hele tatt. Hele funksjonen er
-      beskrevet på <a href="/ki/">siden om KI</a>.
+      beskrevet på <a href="/ki/about/">siden om KI</a>.
     </li>
   </ul>
 
@@ -400,6 +472,34 @@ const underleverandorer = [
     valget, og når.
   </p>
 
+  {/* 28. november 2026: Oppdatert for KI-chat (lagrede samtaler per selskap),
+      ukentlige kvoter i prosent (beregnet fra forbruk på betalte nivåer) og
+      månedlig fakturering av KI-abonnement (EHF og e-post med PDF).
+      Ordlyden gjennomgås av eieren før publisering. */}
+  <h3 id="ki-planer">d4. KI-chat, KI-planer og fakturering</h3>
+  <p>
+    Når du bruker KI-chat på <strong>KI</strong>, sender Myntos et sammendrag av selskapets tall
+    (resultatregnskap, balanse, utestående fakturaer, frister og relevante bokførte bilag for
+    spørsmålet) til Løynd, uten lagring eller trening hos Løynd. Samtaletrådene lagres per selskap i
+    databasen vår i EØS slik at du kan lese dem igjen senere, og slettes når du sletter samtalen
+    eller når selskapet slettes.
+  </p>
+  <p>
+    Velger en eier en KI-plan på <a href="/ki/about/#planer">siden om KI</a>, aktiveres et månedlig
+    abonnement som faktureres fra Lindeman Technologies AS. Fakturaen utstedes etter
+    bokføringsforskriften § 5-1 og sendes som EHF over Peppol (via Ademico) når selskapet kan motta
+    EHF, samt som PDF til den oppgitte faktura-e-postadressen (og kan lastes ned i Myntos). Dette er
+    Lindeman Technologies AS sin egen salgsfaktura, ikke regnskapsdata fra selskapets bøker. Dersom
+    en installasjon tilbyr engangskjøp med kort via Mollie, får Mollie bare beløpet, planens navn og
+    en tilfeldig referanse, og kortopplysningene behandles direkte av Mollie som egen
+    behandlingsansvarlig.
+  </p>
+  <p>
+    Hos oss lagres hvilket selskap og hvilken plan abonnementet gjelder, prisen, start- og
+    sluttdato for perioden, hvem som aktiverte eller sa opp, fakturahistorikk og samlet ukentlig
+    forbruk på betalte nivåer.
+  </p>
+
   <h3>e. Invitasjoner</h3>
   <p>
     Inviterer du en kollega, lagrer vi e-postadressen invitasjonen er sendt til, rollen den gir,
@@ -417,7 +517,7 @@ const underleverandorer = [
   <p>
     Når du oppretter en konto med passord, sender vi en lenke som bekrefter at e-postadressen er
     din, og ber du om nytt passord, sender vi en lenke som setter det. Begge lenkene lagres bare
-    som hash, virker én gang, og går ut av seg selv: bekreftelsen etter to døgn, passordlenken
+    som hash, virker bare en gang, og går ut av seg selv: bekreftelsen etter to døgn, passordlenken
     etter en halvtime. Logger kontoen inn med BankID, får du i stedet en e-post om det, uten lenke,
     og ber du om å bytte fra BankID til e-post, sender vi en lenke som setter passordet. Den lagres
     og går ut som passordlenken. E-postene har ingen sporingspiksler og ingen lenker som går via
@@ -490,21 +590,39 @@ const underleverandorer = [
 
   <h3 id="efaktura">f2. E-faktura over Peppol</h3>
   <p>
-    Når et selskap registreres for e-faktura, sender vi selskapets navn, organisasjonsnummer,
-    forretningsadresse, og mva-nummeret hvis det er mva-registrert, til tilgangspunktet
-    <strong>Recommand</strong>, som
-    frakter fakturaene over Peppol-nettverket. Vi sender ingen e-postadresse eller telefonnummer.
-    Identitetskontrollen som følger, gjøres på Recommands egen side av den som signerer for
-    selskapet. Vi ser ikke det som vises der, og lagrer det ikke.
+    Når et selskap registreres for e-faktura, sender vi selskapets navn, organisasjonsnummer og
+    forretningsadresse til tilgangspunktet <strong>Ademico Software</strong>, som frakter
+    fakturaene over Peppol-nettverket. Vi sender ingen e-postadresse eller telefonnummer.
+    Registreringen er bare for sending; mottak av leverandørfakturaer slås bare på når en
+    administrator velger det selv, og da publiseres selskapets organisasjonsnummer i
+    Peppol-nettverket (ELMA/SMP).
   </p>
   <p>
-    Før en faktura til en kunde med organisasjonsnummer utstedes, spør vi Recommand om kunden kan
-    ta imot EHF over Peppol. Da sender vi bare kundens organisasjonsnummer og hva slags dokument
-    det gjelder. Når en faktura sendes, går EHF-filen til Recommand og derfra til tilgangspunktet
-    kunden har valgt. Den inneholder det fakturaen inneholder: kundens navn, organisasjonsnummer og adresse,
-    linjene og beløpene, og en referanse hvis du har skrevet inn en. Med regnskapet lagrer vi at
-    fakturaen ble sendt, til hvilken Peppol-adresse, og svaret om den kom fram. Fakturaer sendes
-    aldri på e-post.
+    Før en faktura til en kunde med organisasjonsnummer utstedes, gjør Myntos et offentlig oppslag
+    i Peppol-nettverket (SML/SMP) med bare kundens organisasjonsnummer for å se om kunden kan ta
+    imot EHF. Når en faktura sendes, går EHF-filen til Ademico og derfra til tilgangspunktet
+    kunden har valgt. Den inneholder det fakturaen inneholder: kundens navn, organisasjonsnummer
+    og adresse, linjene og beløpene, og en referanse hvis du har skrevet inn en. Når mottak er
+    slått på, henter Myntos innkommende leverandørfakturaer fra Ademico og lagrer den opprinnelige
+    EHF-filen sammen med regnskapet i henhold til bokføringsloven § 13. Fakturaer sendes aldri på
+    e-post.
+  </p>
+
+  <h3 id="epostmottak">f3. Mottak av fakturaer og bilag på e-post</h3>
+  <p>
+    Hvert selskap får sin egen adresse på <code>@myntos.no</code> (for eksempel
+    <code>test@myntos.no</code>) som kan brukes til å sende PDF-fakturaer og kvitteringsbilder rett
+    inn under <strong>Mottatt</strong>. Vi lagrer avsenderadresse (From, teknisk SMTP-avsender og
+    eventuell Reply-To), emnefelt, et utdrag av ren tekst (aldri HTML), resultatet av
+    SPF-/DKIM-/DMARC-kontroll og selve vedleggene i EØS-lageret vårt (R2 med jurisdiksjon
+    «eu» og PostgreSQL i EØS).
+  </p>
+  <p>
+    Vanlig e-post over internett (SMTP) og Cloudflare Email Routing gir ikke garanti for at
+    selve e-posttransporten skjer utelukkende i EØS. Hvis selskapet krever ren EØS-transport hele
+    veien for leverandørfakturaer, bør du bruke <strong>e-faktura (EHF over Peppol)</strong> eller
+    laste opp bilag direkte i Myntos. En administrator kan når som helst slå av e-postmottak eller
+    begrense innboksen til kun godkjente avsendere under <strong>Mottatt</strong>.
   </p>
 
   <h2>4. Behandlingsgrunnlag</h2>
@@ -533,7 +651,7 @@ const underleverandorer = [
 
   <h2>5. Informasjonskapsler</h2>
   <p>
-    Myntos bruker <strong>én</strong> informasjonskapsel: <code>myntos_session</code>, som holder
+    Myntos bruker <strong>bare en</strong> informasjonskapsel: <code>myntos_session</code>, som holder
     deg innlogget. Den er nødvendig for at tjenesten skal virke, settes bare når du logger inn, og
     er teknisk sikret (HttpOnly, Secure, SameSite). Den inneholder en tilfeldig verdi uten
     opplysninger om deg. Ingen kapsler brukes til markedsføring eller måling. Derfor er det heller
@@ -635,6 +753,18 @@ const underleverandorer = [
       det igjen. Last ned SAF-T-filene før du sletter selskapet; de er selskapets egen kopi.
     </li>
     <li>
+      <strong>KI-planer:</strong> så lenge selskapet finnes i Myntos, og de slettes med det.
+      Sletter du kontoen, står kjøpet igjen på selskapet. Hvem som kjøpte det, blir stående bare
+      hvis navnet ditt uansett blir stående på noe du har ført.
+    </li>
+    <li>
+      <strong>KI-analysene (sammendrag og merker per bilag, samt rapporter fra «Dyp KI-analyse»):</strong>
+      lagres i databasen vår i EØS så lenge selskapet finnes i Myntos, og slettes sammen med
+      selskapet og bilagene når selskapet slettes for godt. Når KI er slått av for selskapet, leses
+      ingen nye bilag, «Dyp KI-analyse» kan ikke startes, og ingenting av det som er lagret brukes
+      på «Analyse».
+    </li>
+    <li>
       <strong>Tekniske innloggingsforsøk og utløpte invitasjoner:</strong> kortlevde, og ryddes
       bort som vedlikehold.
     </li>
@@ -645,7 +775,7 @@ const underleverandorer = [
     <li>Passord lagres som Argon2id-hash, aldri i lesbar form.</li>
     <li>Økt-, invitasjons- og API-nøkler lagres bare som SHA-256-hash.</li>
     <li>
-      En API-nøkkel virker bare én gang før den byttes til kortlivede nøkler som fornyes, og en
+      En API-nøkkel virker bare en gang før den byttes til kortlivede nøkler som fornyes, og en
       gammel nøkkel som dukker opp igjen stopper hele nøkkelen. Alt en nøkkel vil sende ut av
       Myntos, som en melding til Skatteetaten, venter på at personen godkjenner det, hver gang.
       Ingen nøkkel kan flytte penger, endre kontonummer eller endre hvem som har tilgang.

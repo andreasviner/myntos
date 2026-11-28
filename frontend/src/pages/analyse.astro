@@ -1,0 +1,1236 @@
+---
+import KiLevelPicker from '../components/KiLevelPicker.astro';
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+{/* Analysen slik docs/analyse.md, «The Analyse page», beskriver den. Hvert tall
+    kommer fra regnskapet gjennom GET …/analyse, og setningene er faste maler i
+    backend. Med KI på leser KI bilagene i bakgrunnen (WP5b), og en kake deles
+    etter hva bilagene gjelder når 90 % av beløpet på den siden er lest: KI
+    velger bare hvilken bit en linje havner i, aldri et tall. Med KI av spør
+    ingenting på siden en modell, og kakene er per konto. Under tallene ligger
+    «Gå dypere» (WP6: «Dyp KI-analyse» med valg av KI-nivå og framdrift) og
+    «Tidligere analyser» som åpner rapporter på stedet med det samme
+    diagramsettet. */}
+<BaseLayout
+  title="Analyse | Myntos"
+  description="Inntekter, kostnader og resultat før skatt over tid, lest av regnskapet i Myntos."
+  width="wide"
+>
+  <header class="page-head">
+    <p class="eyebrow">Analyse</p>
+    {/* Selskapet er overskriften: tallene er ett regnskaps. */}
+    <h1 data-session-company></h1>
+    <p class="muted orgnr" id="orgnr"></p>
+  </header>
+
+  <p class="status" id="page-status" hidden></p>
+  <div class="empty" id="loading">Henter …</div>
+
+  <div id="content" hidden>
+    <div class="period-bar">
+      {/* Tre faste valg og ikke to datofelt: det er disse spørsmålene folk
+          stiller («hvordan går året?», «hvordan har det siste året vært?»,
+          «hvordan gikk i fjor?»), og en periode man må taste inn blir sjelden
+          sammenlignbar med noe. Eldre år står i en liste bare når regnskapet
+          har dem. */}
+      <div class="period-choice" role="group" aria-label="Periode">
+        <button type="button" class="btn btn-ghost btn-small" data-periode="i-ar" aria-pressed="true">
+          I år
+        </button>
+        <button type="button" class="btn btn-ghost btn-small" data-periode="siste-12" aria-pressed="false">
+          Siste 12 måneder
+        </button>
+        <button type="button" class="btn btn-ghost btn-small" data-periode="i-fjor" aria-pressed="false" hidden>
+          I fjor
+        </button>
+        <label class="older" id="older" hidden>
+          <span class="visually-hidden">Eldre år</span>
+          <select id="older-year" data-chosen="false"></select>
+        </label>
+      </div>
+      <label class="check">
+        <input type="checkbox" id="compare" checked />
+        <span>Sammenlign med året før</span>
+      </label>
+    </div>
+    <p class="muted period-text" id="period-text" aria-live="polite"></p>
+
+    <div id="figures">
+      <div class="grid stats">
+        <div class="card stat">
+          <p class="stat-label">Inntekter</p>
+          <p class="stat-value" id="value-inntekter"></p>
+          <p class="stat-note" id="change-inntekter" hidden></p>
+        </div>
+        <div class="card stat">
+          <p class="stat-label">Kostnader</p>
+          <p class="stat-value" id="value-kostnader"></p>
+          <p class="stat-note" id="change-kostnader" hidden></p>
+        </div>
+        <div class="card stat">
+          {/* «før skatt» står i navnet fordi skattekostnaden og disponeringen
+              (konto 83-89) er holdt utenfor: uten det ville tallet blitt lest
+              som årsresultatet på /regnskap/, og det er det ikke. */}
+          <p class="stat-label">Resultat før skatt</p>
+          <p class="stat-value" id="value-resultat"></p>
+          <p class="stat-note" id="change-resultat" hidden></p>
+        </div>
+      </div>
+
+      <div class="sentences" id="sentences" hidden></div>
+
+      {/* Diagrammene bygges av lib/charts.ts. Hvert kort er et spor i et
+          rutenett, ikke et flex-barn, fordi diagrammet tegnes til bredden det
+          får og trenger en bredde som ikke avhenger av innholdet. */}
+      <div class="chart-pair" id="time-charts"></div>
+      {/* Tomme søyler før det første og etter det siste bilaget er måneder
+          regnskapet ikke dekker, ikke måneder uten salg. Uten en setning leser
+          man dem som null. */}
+      <p class="card-hint book-span" id="book-span" hidden></p>
+      {/* Mens KI leser: en stille linje, ingen spinner. Kakene er riktige
+          imens, bare fordelt etter konto, og siden henter dem på nytt selv når
+          lesingen er ferdig. Går lesingen galt, sier siden ingenting: tallene
+          står like fullt. */}
+      <p class="card-hint ki-reading" id="ki-reading" hidden>
+        <span id="ki-reading-text"></span>
+        <a href="/ki/about/#analyse">Slik bruker Myntos KI</a>
+      </p>
+      <div class="chart-pair" id="split-charts"></div>
+
+      {/* Oversikten viser penger inn og ut av banken, med mva, lån og uttak.
+          Her er det resultatregnskapet, så de to tallene for «inntekter» er
+          ikke de samme, og det må stå der man ser dem. */}
+      <p class="note basis-note">
+        Tallene er fra regnskapet, ikke fra banken, så de kan avvike fra «Inn i år» på
+        <a href="/">oversikten</a>.
+      </p>
+    </div>
+
+    <div class="card" id="period-empty" hidden>
+      <h2 class="card-title">Ingen bilag i perioden</h2>
+      <p class="card-hint" id="period-empty-text"></p>
+    </div>
+
+    {/* Punkt 8: «Gå dypere» (WP6). Med KI av vises ingen knapper; uten
+        ledger:write skjules startknappen, mens tidligere rapporter fortsatt
+        kan leses under. */}
+    <section class="card deep-card" id="deep-card" hidden>
+      <div class="deep-head">
+        <div>
+          <h2 class="card-title">Gå dypere</h2>
+          <p class="card-hint" id="deep-intro">
+            La KI se nærmere på mønstre, faste kostnader, endringer og hva det kan være verdt å
+            følge opp i valgt periode. <a href="/ki/about/#analyse">Slik bruker Myntos KI</a>
+          </p>
+        </div>
+      </div>
+
+      <p class="card-hint" id="deep-ki-off" hidden>
+        KI er slått av for dette selskapet.
+        <a href="/organisasjon/#ki" id="deep-turn-on" hidden>Slå på KI</a>
+      </p>
+
+      <div id="deep-controls" hidden>
+        <KiLevelPicker id="analyse-dyp" />
+        <div class="deep-actions">
+          <button type="button" class="btn btn-primary" id="deep-start">Dyp KI-analyse</button>
+          <span class="card-hint deep-btn-hint">
+            Gjenbruker det som allerede er lest. Samme periode og nivå koster ingenting på nytt.
+          </span>
+        </div>
+      </div>
+
+      {/* Framdrift mens analysen pågår: brukeren kan lukke siden, og analysen
+          blir liggende her når den er ferdig (frontend-conventions.md). */}
+      <div class="progress" id="deep-progress" hidden>
+        <div class="bar" id="deep-bar-wrap" data-indeterminate="true">
+          <span id="deep-bar"></span>
+        </div>
+        <div class="deep-progress-row">
+          <p class="card-hint" id="deep-step" aria-live="polite"></p>
+          <button type="button" class="btn btn-ghost btn-small" id="deep-cancel">Avbryt</button>
+        </div>
+        <p class="card-hint deep-leave-note">Du kan lukke siden. Analysen blir liggende her.</p>
+      </div>
+
+      <div class="deep-notices" id="deep-notices" hidden></div>
+      <p class="status" id="deep-status" role="status" hidden></p>
+    </section>
+
+    {/* Punkt 9: «Tidligere analyser», nyeste først, med åpning på stedet og
+        varsel hvis regnskapet har fått nye bilag siden rapporten ble laget. */}
+    <section class="card reports-card" id="reports-card" hidden>
+      <h2 class="card-title">Tidligere analyser</h2>
+      <ul class="report-list" id="report-list"></ul>
+      <article class="report-view" id="report-view" hidden aria-live="polite"></article>
+    </section>
+  </div>
+
+  <div class="card" id="empty" hidden>
+    <h2 class="card-title">Ingen inntekter eller kostnader er ført ennå.</h2>
+    <p class="card-hint">
+      Når det er ført bilag, ser du her hva selskapet tjener og bruker, måned for måned. Det første
+      bilaget fører du under <a href="/kontantstrom/">Betaling</a>.
+    </p>
+  </div>
+</BaseLayout>
+
+<style>
+  .page-head {
+    margin-bottom: 1rem;
+  }
+  .page-head h1 {
+    margin: 0;
+    font-size: clamp(1.6rem, 1.2rem + 1.6vw, 2.2rem);
+  }
+  .orgnr {
+    margin: 0.2rem 0 0;
+  }
+  .eyebrow {
+    margin: 0 0 0.4rem;
+  }
+  .period-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem 1.5rem;
+  }
+  .period-choice {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .period-choice button[aria-pressed='true'],
+  .older select[data-chosen='true'] {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 700;
+  }
+  /* Like høy som knappene ved siden av, og ikke hele bredden som et skjemafelt. */
+  .older select {
+    width: auto;
+    padding: 0.42rem 0.85rem;
+    font-size: 0.9rem;
+    line-height: 1.2;
+  }
+  .check {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    width: fit-content;
+    cursor: pointer;
+  }
+  .period-text {
+    margin: 0.6rem 0 1rem;
+    font-size: 0.92rem;
+  }
+  /* Mens en ny periode hentes står de gamle tallene, dempet, i stedet for at
+     siden blir tom og hopper. */
+  #figures[aria-busy='true'] {
+    opacity: 0.55;
+    transition: opacity 150ms ease;
+  }
+  /* `.card + .card` gir hvert kort etter det første en toppmarg, som i et
+     rutenett skyver alle unntatt det første ned. */
+  .stats > .card,
+  .chart-pair > :global(.card) {
+    margin-top: 0;
+  }
+  .sentences {
+    margin: 1.25rem 0 0;
+    max-width: 46rem;
+  }
+  .sentences :global(p) {
+    margin: 0 0 0.35rem;
+    font-size: 1.05rem;
+    line-height: 1.55;
+  }
+  .chart-pair {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 1.25rem;
+  }
+  @media (max-width: 720px) {
+    .chart-pair {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  .book-span {
+    margin-top: 0.6rem;
+  }
+  .ki-reading {
+    margin-top: 0.6rem;
+  }
+  /* Linjen under kostnadskaken med KI av bygges av skriptet, så den trenger
+     en global regel for å bli stylet i det hele tatt. */
+  #split-charts :global(.ki-off) {
+    margin: 0.75rem 0 0;
+  }
+  .basis-note {
+    margin-bottom: 0;
+  }
+  .deep-card,
+  .reports-card {
+    margin-top: 1.25rem;
+  }
+  .deep-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.65rem 1rem;
+    margin-top: 0.9rem;
+  }
+  .deep-btn-hint {
+    margin: 0;
+  }
+  /* Framdriftslinje, samme form som på /tidligere-program/. */
+  .progress {
+    margin-top: 1rem;
+  }
+  .bar {
+    height: 0.5rem;
+    border-radius: var(--radius-pill);
+    background: var(--border);
+    overflow: hidden;
+  }
+  .bar span {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: var(--accent);
+    border-radius: inherit;
+    transition: width 200ms ease;
+  }
+  .bar[data-indeterminate='true'] span {
+    width: 35%;
+    animation: glide 1.4s ease-in-out infinite;
+  }
+  @keyframes glide {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(300%);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .bar[data-indeterminate='true'] span {
+      animation: none;
+      width: 100%;
+      opacity: 0.4;
+    }
+  }
+  .deep-progress-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    margin-top: 0.6rem;
+  }
+  .deep-progress-row .card-hint {
+    margin: 0;
+  }
+  .deep-leave-note {
+    margin: 0.35rem 0 0;
+  }
+  .deep-notices {
+    margin-top: 0.75rem;
+    display: grid;
+    gap: 0.4rem;
+  }
+  .deep-notices :global(p) {
+    margin: 0;
+    padding: 0.6rem 0.85rem;
+    border-radius: var(--radius-small);
+    border: 1px solid var(--border-strong);
+    background: var(--surface-2);
+    font-size: 0.9rem;
+    color: var(--fg);
+  }
+  .report-list {
+    list-style: none;
+    margin: 0.75rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: 0.5rem;
+  }
+  .report-list :global(li) {
+    margin: 0;
+  }
+  .report-list :global(.report-row) {
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.35rem 1rem;
+    padding: 0.75rem 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    background: var(--surface-2);
+    color: var(--fg);
+    text-align: left;
+    font: inherit;
+    cursor: pointer;
+    transition: border-color 120ms ease, background-color 120ms ease;
+  }
+  .report-list :global(.report-row:hover),
+  .report-list :global(.report-row[aria-expanded='true']) {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .report-list :global(.report-row-title) {
+    font-weight: 700;
+  }
+  .report-list :global(.report-row-meta) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem 0.75rem;
+    font-size: 0.86rem;
+    color: var(--muted);
+  }
+  .report-list :global(.report-stale-pill) {
+    display: inline-block;
+    padding: 0.05rem 0.5rem;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--fg);
+    font-size: 0.78rem;
+    font-weight: 600;
+  }
+  .report-view {
+    margin-top: 1.25rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+  }
+  .report-view :global(.report-head) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+  }
+  .report-view :global(.report-title) {
+    margin: 0;
+    font-size: 1.3rem;
+  }
+  .report-view :global(.report-meta) {
+    margin: 0.25rem 0 0;
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
+  .report-view :global(.report-stale-bar) {
+    margin: 0.9rem 0 0;
+    padding: 0.7rem 0.9rem;
+    border-radius: var(--radius-small);
+    border: 1px solid var(--border-strong);
+    background: var(--surface-2);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    font-size: 0.9rem;
+  }
+  .report-view :global(.report-summary) {
+    margin: 1rem 0 0;
+    max-width: 50rem;
+    font-size: 1.02rem;
+    line-height: 1.6;
+  }
+  .report-view :global(.report-section) {
+    margin-top: 1.4rem;
+    padding-top: 1.1rem;
+    border-top: 1px solid var(--border);
+  }
+  .report-view :global(.report-section h3) {
+    margin: 0 0 0.45rem;
+    font-size: 1.08rem;
+  }
+  .report-view :global(.report-section p) {
+    margin: 0;
+    max-width: 50rem;
+    line-height: 1.6;
+  }
+  .report-view :global(.report-chart) {
+    margin-top: 0.9rem;
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-small);
+    background: var(--surface);
+  }
+  .report-view :global(.report-suggestions) {
+    margin-top: 1.5rem;
+    padding-top: 1.1rem;
+    border-top: 1px solid var(--border);
+  }
+  .report-view :global(.report-suggestions h3) {
+    margin: 0 0 0.65rem;
+    font-size: 1.08rem;
+  }
+  .report-view :global(.report-suggestions ul) {
+    margin: 0;
+    padding-left: 1.25rem;
+    display: grid;
+    gap: 0.6rem;
+    max-width: 50rem;
+  }
+  .report-view :global(.report-suggestions li p) {
+    margin: 0.15rem 0 0;
+    color: var(--muted);
+    line-height: 1.55;
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    cancelAnalysisRun,
+    getAnalysis,
+    getAnalysisReport,
+    getAnalysisRun,
+    listAnalysisReports,
+    listFinancialYears,
+    startAnalysis,
+    type AnalysisFigures,
+    type AnalysisPeriod,
+    type AnalysisReport,
+    type AnalysisReportSummary,
+    type AnalysisRun,
+    type Chart,
+    type Company,
+  } from '../lib/api';
+  import {
+    DEEP_POLL_MS,
+    DEFAULT_CHOICE,
+    against,
+    changeText,
+    deepProgress,
+    endsAfterBooks,
+    isGoing,
+    olderYears,
+    osloToday,
+    periodHasBooks,
+    queryFor,
+    readingText,
+    rememberChoice,
+    rememberedChoice,
+    reportStampText,
+    runErrorText,
+    staleReportText,
+    startsBeforeBooks,
+    toOre,
+    usableChoice,
+    watchReading,
+    yearOf,
+    type AnalysisChoice,
+    type PeriodChoice,
+    type Tile,
+  } from '../lib/analyse';
+  import { monthLong, renderChart, valueText } from '../lib/charts';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { clearStatus, el, setStatus, show } from '../lib/dom';
+  import { isoDate, orgnummer } from '../lib/format';
+  import { mountKiInputs, type KiInputs } from '../lib/kiinput';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+
+  const TILES: Tile[] = ['inntekter', 'kostnader', 'resultat'];
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const figuresBox = el<HTMLDivElement>('#figures');
+  const choiceButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-periode]')];
+  const olderSelect = el<HTMLSelectElement>('#older-year');
+  const compareBox = el<HTMLInputElement>('#compare');
+
+  let company: Company | undefined;
+  let years: number[] = [];
+  let choice: AnalysisChoice = DEFAULT_CHOICE;
+  // Bare det siste svaret tegnes: et tregt svar for perioden man forlot skal
+  // ikke male over den man valgte etterpå.
+  let asked = 0;
+  // Lesingen siden følger nå, så et nytt svar med den samme ikke starter en
+  // ny spørring ved siden av den gamle.
+  let watching: { runId: number; stop: () => void } | null = null;
+  // Etter en lesing som ikke ble ferdig følger siden ikke den neste av seg
+  // selv: en lesing som feiler igjen og igjen skulle ellers hentet siden på
+  // nytt hvert tredje sekund. Et nytt valg av periode følger igjen.
+  let follow = true;
+
+  // Tilstand for «Gå dypere» og «Tidligere analyser» (WP6).
+  const deepStatus = el<HTMLParagraphElement>('#deep-status');
+  const deepStartBtn = el<HTMLButtonElement>('#deep-start');
+  const deepCancelBtn = el<HTMLButtonElement>('#deep-cancel');
+  let kiInputs: KiInputs | null = null;
+  let lastFigures: AnalysisFigures | null = null;
+  let deepWatching: { runId: number; stop: () => void } | null = null;
+  let reports: AnalysisReportSummary[] = [];
+  let openReportId: number | null = null;
+  let openReport: AnalysisReport | null = null;
+
+  function browserStorage(): Storage | null {
+    try {
+      return window.localStorage;
+    } catch {
+      return null;
+    }
+  }
+
+  function decodeButton(value: string | undefined): PeriodChoice {
+    return value === 'siste-12' || value === 'i-fjor' ? value : 'i-ar';
+  }
+
+  function option(value: string, label: string, disabled = false): HTMLOptionElement {
+    const node = document.createElement('option');
+    node.value = value;
+    node.textContent = label;
+    node.disabled = disabled;
+    return node;
+  }
+
+  function drawYears(today: string): void {
+    show(el('[data-periode="i-fjor"]'), years.includes(yearOf(today) - 1));
+    const older = olderYears(years, today);
+    olderSelect.replaceChildren(
+      option('', 'Eldre år', true),
+      ...older.map((year) => option(String(year), String(year))),
+    );
+    show(el('#older'), older.length > 0);
+  }
+
+  function drawChoice(): void {
+    for (const button of choiceButtons) {
+      button.setAttribute('aria-pressed', String(decodeButton(button.dataset.periode) === choice.periode));
+    }
+    const year = typeof choice.periode === 'number';
+    olderSelect.value = year ? String(choice.periode) : '';
+    olderSelect.dataset.chosen = String(year);
+    compareBox.checked = choice.sammenlign;
+  }
+
+  function drawPeriodText(figures: AnalysisFigures): void {
+    const { periode, sammenligning } = figures;
+    const span = `Fra ${isoDate(periode.fra)} til ${isoDate(periode.til)}`;
+    let text = `${span}.`;
+    if (sammenligning !== null) {
+      text = `${span}, sammenlignet med ${isoDate(sammenligning.fra)} til ${isoDate(sammenligning.til)}.`;
+    } else if (choice.sammenlign) {
+      // Backend sammenligner bare med et år regnskapet dekker hele av: «+300 %»
+      // mot to måneder med bilag ville vært riktig regning og feil påstand.
+      text = `${span}. Regnskapet i Myntos dekker ikke hele samme periode året før, så tallene sammenlignes ikke.`;
+    }
+    el('#period-text').textContent = text;
+  }
+
+  function drawTiles(figures: AnalysisFigures, today: string): void {
+    const { nokkeltall } = figures;
+    const measured = against(figures.periode, today);
+    for (const tile of TILES) {
+      const value = el(`#value-${tile}`);
+      value.textContent = valueText('kr', nokkeltall[tile], true);
+      const note = el(`#change-${tile}`);
+      const text =
+        nokkeltall.forrige === null ? null : changeText(tile, nokkeltall[tile], nokkeltall.forrige[tile], measured);
+      note.textContent = text ?? '';
+      show(note, text !== null);
+    }
+    const result = toOre(nokkeltall.resultat);
+    el('#value-resultat').classList.toggle('amount-out', result !== null && result < 0n);
+  }
+
+  function drawSentences(tekst: string[]): void {
+    const box = el('#sentences');
+    box.replaceChildren(
+      ...tekst.map((sentence) => {
+        const line = document.createElement('p');
+        line.textContent = sentence;
+        return line;
+      }),
+    );
+    show(box, tekst.length > 0);
+  }
+
+  /**
+   * Et diagram i et kort. `data-dataset` sier hva det er delt etter, slik at
+   * siden og WP5b kan se om en kake er per konto eller per `hva` uten å lese
+   * tittelen; `data-side` sier hvilken kake det er. Teksten «Fordelt etter hva
+   * bilagene gjelder, lest av KI.» under en kake per `hva` kommer med
+   * diagrammet fra backend (`caption`), så den står der også når en agent
+   * tegner det.
+   */
+  function chartCard(chart: Chart, side?: 'inntekter' | 'kostnader', after?: HTMLElement): HTMLElement {
+    const card = document.createElement('section');
+    card.className = 'card chart-card';
+    card.dataset.dataset = chart.dataset.name;
+    if (side !== undefined) card.dataset.side = side;
+    card.append(renderChart(chart));
+    if (after !== undefined) card.append(after);
+    return card;
+  }
+
+  /**
+   * Linjen under kostnadskaken når KI er av. Bare for den som kan slå KI på
+   * (`organization:manage`, som /ki/ krever): en linje om noe man ikke selv
+   * kan gjøre noe med er bare støy.
+   */
+  function kiOffLine(figures: AnalysisFigures): HTMLElement | undefined {
+    if (figures.ki !== null || company === undefined || !canInCompany(company, 'organization:manage')) return undefined;
+    const line = document.createElement('p');
+    line.className = 'card-hint ki-off';
+    const link = document.createElement('a');
+    link.href = '/organisasjon/#ki';
+    link.textContent = 'Slå på KI';
+    line.append('Med KI på fordeler Myntos kostnadene etter hva de gjelder, ikke bare etter konto. ', link);
+    return line;
+  }
+
+  function stopWatching(): void {
+    watching?.stop();
+    watching = null;
+  }
+
+  /**
+   * Linjen mens KI leser (punkt 6b), og spørringen som følger lesingen. Når
+   * den er over, hentes tallene en gang til, og så er det slutt: siden spør
+   * ikke mer om den lesingen.
+   */
+  function drawReading(figures: AnalysisFigures): void {
+    const reading = figures.ki?.lesing ?? null;
+    const line = el('#ki-reading');
+    const text = el('#ki-reading-text');
+    if (reading === null || !follow || company === undefined) {
+      stopWatching();
+      show(line, false);
+      return;
+    }
+    text.textContent = readingText(reading);
+    show(line, true);
+    if (watching?.runId === reading.id) return;
+    stopWatching();
+    const companyId = company.id;
+    const runId = reading.id;
+    watching = {
+      runId,
+      stop: watchReading({
+        fetchRun: () => getAnalysisRun(companyId, runId),
+        onProgress: (run) => {
+          text.textContent = readingText(run);
+        },
+        onEnd: (status) => {
+          watching = null;
+          follow = status === 'done';
+          void load();
+        },
+      }),
+    };
+  }
+
+  function mainValues(chart: Chart | undefined): Array<string | null> {
+    return chart?.series.find((series) => series.role === 'hoved')?.values ?? [];
+  }
+
+  /** Linjen under månedsdiagrammene når perioden går utenfor regnskapet, i den ene eller begge ender. */
+  function drawBookSpan(figures: AnalysisFigures, months: Chart | undefined): void {
+    const sentences: string[] = [];
+    const first = startsBeforeBooks(months?.x?.labels ?? [], mainValues(months));
+    if (first !== null) sentences.push(`Regnskapet i Myntos begynner i ${monthLong(first)}, så månedene før står tomme.`);
+    if (figures.bokfort_til !== null && endsAfterBooks(figures.bokfort_til, figures.periode)) {
+      sentences.push(`Det siste bilaget er datert ${isoDate(figures.bokfort_til)}, så månedene etter står tomme til noe er ført.`);
+    }
+    const line = el('#book-span');
+    line.textContent = sentences.join(' ');
+    show(line, sentences.length > 0);
+  }
+
+  function drawFigures(figures: AnalysisFigures, today: string): void {
+    clearStatus(pageStatus);
+    const nothingBooked = figures.bokfort_til === null;
+    show(el('#content'), !nothingBooked);
+    show(el('#empty'), nothingBooked);
+    if (figures.bokfort_til === null) {
+      stopWatching();
+      return;
+    }
+
+    drawPeriodText(figures);
+    const [incomeMonths, costMonths, incomeSplit, costSplit] = figures.diagrammer;
+    const anything = periodHasBooks(mainValues(incomeMonths)) || periodHasBooks(mainValues(costMonths));
+    show(figuresBox, anything);
+    show(el('#period-empty'), !anything);
+    if (!anything) {
+      stopWatching();
+      el('#period-empty-text').textContent =
+        `Regnskapet har ingen bilag fra disse datoene. Det siste bilaget er datert ${isoDate(figures.bokfort_til)}.`;
+      lastFigures = figures;
+      show(el('#deep-card'), false);
+      drawReportsCard();
+      return;
+    }
+
+    drawTiles(figures, today);
+    drawSentences(figures.tekst);
+    el('#time-charts').replaceChildren(
+      ...[incomeMonths, costMonths].filter((chart) => chart !== undefined).map((chart) => chartCard(chart)),
+    );
+    drawBookSpan(figures, incomeMonths);
+    drawReading(figures);
+    el('#split-charts').replaceChildren(
+      ...(incomeSplit === undefined ? [] : [chartCard(incomeSplit, 'inntekter')]),
+      ...(costSplit === undefined ? [] : [chartCard(costSplit, 'kostnader', kiOffLine(figures))]),
+    );
+    lastFigures = figures;
+    drawDeepCard();
+    drawReportsCard();
+  }
+
+  // --- «Gå dypere» og «Tidligere analyser» (WP6) ------------------------------------
+
+  function stopDeepWatching(): void {
+    deepWatching?.stop();
+    deepWatching = null;
+  }
+
+  function showNotices(notices: string[]): void {
+    const box = el('#deep-notices');
+    box.replaceChildren();
+    for (const notice of notices) {
+      const p = document.createElement('p');
+      const link = document.createElement('a');
+      link.href = '/ki/about/#planer';
+      link.textContent = 'Se KI-planene';
+      p.append(notice, ' ', link);
+      box.append(p);
+    }
+    show(box, notices.length > 0);
+  }
+
+  function drawDeepProgress(run: AnalysisRun): void {
+    const { label, fraction } = deepProgress(run);
+    el('#deep-step').textContent = label;
+    const wrap = el('#deep-bar-wrap');
+    const bar = el('#deep-bar');
+    if (fraction === null) {
+      wrap.dataset.indeterminate = 'true';
+      bar.style.width = '';
+    } else {
+      delete wrap.dataset.indeterminate;
+      bar.style.width = `${Math.round(fraction * 100)}%`;
+    }
+  }
+
+  function drawDeepCard(): void {
+    const card = el('#deep-card');
+    if (company === undefined || lastFigures === null || lastFigures.bokfort_til === null) {
+      show(card, false);
+      return;
+    }
+    const kiOn = lastFigures.ki !== null;
+    const canWrite = canInCompany(company, 'ledger:write');
+    const canManage = canInCompany(company, 'organization:manage');
+    const running = deepWatching !== null;
+
+    if (!kiOn) {
+      show(card, true);
+      show(el('#deep-ki-off'), true);
+      show(el('#deep-turn-on'), canManage);
+      show(el('#deep-controls'), false);
+      show(el('#deep-progress'), false);
+      return;
+    }
+
+    // Uten ledger:write vises ingen startknapp (punkt 8), men tidligere analyser
+    // er fortsatt synlige i kortet under.
+    if (!canWrite && !running) {
+      show(card, false);
+      return;
+    }
+
+    show(card, true);
+    show(el('#deep-ki-off'), false);
+    show(el('#deep-controls'), !running && canWrite);
+    show(el('#deep-progress'), running);
+    deepCancelBtn.hidden = !canWrite;
+  }
+
+  function watchDeepRun(run: AnalysisRun): void {
+    if (company === undefined || !isGoing(run.status)) return;
+    if (deepWatching?.runId === run.id) {
+      drawDeepProgress(run);
+      return;
+    }
+    stopDeepWatching();
+    drawDeepProgress(run);
+    showNotices(run.notices);
+    clearStatus(deepStatus);
+    const companyId = company.id;
+    const runId = run.id;
+    deepWatching = {
+      runId,
+      stop: watchReading<AnalysisRun>({
+        interval: DEEP_POLL_MS,
+        fetchRun: () => getAnalysisRun(companyId, runId),
+        onProgress: (next) => {
+          drawDeepProgress(next);
+          if (next.notices.length > 0) showNotices(next.notices);
+        },
+        onEnd: (status, finalRun) => {
+          deepWatching = null;
+          drawDeepCard();
+          if (finalRun !== undefined && finalRun.notices.length > 0) {
+            showNotices(finalRun.notices);
+          }
+          void kiInputs?.refresh();
+          if (status === 'done') {
+            void loadReports(finalRun?.report_id ?? undefined);
+          } else if (status === 'cancelled') {
+            setStatus(
+              deepStatus,
+              finalRun?.error_code === 'ki_turned_off'
+                ? runErrorText('ki_turned_off')
+                : 'Analysen ble avbrutt.',
+            );
+          } else {
+            setStatus(deepStatus, runErrorText(finalRun?.error_code ?? null));
+          }
+        },
+      }),
+    };
+    drawDeepCard();
+  }
+
+  async function startDeep(periodeOverride?: AnalysisPeriod): Promise<void> {
+    if (company === undefined || lastFigures === null) return;
+    const targetPeriod = periodeOverride ?? lastFigures.periode;
+    const chosenLevel = kiInputs?.level('analyse-dyp') ?? 'free';
+    deepStartBtn.disabled = true;
+    clearStatus(deepStatus);
+    showNotices([]);
+    try {
+      const result = await startAnalysis(company.id, {
+        type: 'dyp',
+        fra: targetPeriod.fra,
+        til: targetPeriod.til,
+        niva: chosenLevel,
+      });
+      if (result.rapport !== null) {
+        openReportId = result.rapport.id;
+        openReport = result.rapport;
+        await loadReports();
+        void kiInputs?.refresh();
+        return;
+      }
+      if (result.kjoring !== null) {
+        if (isGoing(result.kjoring.status)) {
+          watchDeepRun(result.kjoring);
+        } else if (result.kjoring.status === 'done') {
+          await loadReports(result.kjoring.report_id ?? undefined);
+          void kiInputs?.refresh();
+        } else {
+          setStatus(deepStatus, runErrorText(result.kjoring.error_code));
+        }
+      }
+    } catch (error: unknown) {
+      setStatus(
+        deepStatus,
+        error instanceof ApiError ? error.message : 'Vi fikk ikke startet analysen. Prøv igjen.',
+      );
+    } finally {
+      deepStartBtn.disabled = false;
+    }
+  }
+
+  function renderReportView(rep: AnalysisReport): void {
+    const view = el('#report-view');
+    view.replaceChildren();
+
+    const head = document.createElement('div');
+    head.className = 'report-head';
+    const titleWrap = document.createElement('div');
+    const title = document.createElement('h3');
+    title.className = 'report-title';
+    title.textContent = rep.overskrift;
+    const meta = document.createElement('p');
+    meta.className = 'report-meta';
+    meta.textContent = `${reportStampText(rep.created_at, rep.niva)} · ${isoDate(rep.periode.fra)} til ${isoDate(rep.periode.til)}`;
+    titleWrap.append(title, meta);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'btn btn-ghost btn-small';
+    closeBtn.textContent = 'Lukk';
+    closeBtn.addEventListener('click', () => {
+      openReportId = null;
+      openReport = null;
+      drawReportsCard();
+    });
+    head.append(titleWrap, closeBtn);
+    view.append(head);
+
+    if (rep.utdatert !== null && rep.utdatert.nye_bilag > 0) {
+      const stale = document.createElement('div');
+      stale.className = 'report-stale-bar';
+      const staleText = document.createElement('span');
+      staleText.textContent = `${staleReportText(rep.utdatert.nye_bilag)}.`;
+      stale.append(staleText);
+      if (company !== undefined && canInCompany(company, 'ledger:write') && lastFigures?.ki !== null) {
+        const rerun = document.createElement('button');
+        rerun.type = 'button';
+        rerun.className = 'btn btn-ghost btn-small';
+        rerun.textContent = 'Lag ny';
+        rerun.addEventListener('click', () => void startDeep(rep.periode));
+        stale.append(rerun);
+      }
+      view.append(stale);
+    }
+
+    if (rep.sammendrag !== '') {
+      const summary = document.createElement('p');
+      summary.className = 'report-summary';
+      summary.textContent = rep.sammendrag;
+      view.append(summary);
+    }
+
+    for (const sec of rep.avsnitt) {
+      const section = document.createElement('section');
+      section.className = 'report-section';
+      const h3 = document.createElement('h3');
+      h3.textContent = sec.tittel;
+      const body = document.createElement('p');
+      body.textContent = sec.tekst;
+      section.append(h3, body);
+      if (sec.diagram !== null) {
+        const box = document.createElement('div');
+        box.className = 'report-chart';
+        box.append(renderChart(sec.diagram));
+        section.append(box);
+      }
+      view.append(section);
+    }
+
+    if (rep.forslag.length > 0) {
+      const block = document.createElement('section');
+      block.className = 'report-suggestions';
+      const h3 = document.createElement('h3');
+      h3.textContent = 'Forslag å se nærmere på';
+      const list = document.createElement('ul');
+      for (const item of rep.forslag) {
+        const li = document.createElement('li');
+        const strong = document.createElement('strong');
+        strong.textContent = item.tittel;
+        const text = document.createElement('p');
+        text.textContent = item.tekst;
+        li.append(strong, text);
+        list.append(li);
+      }
+      block.append(h3, list);
+      view.append(block);
+    }
+
+    show(view, true);
+  }
+
+  async function openReportById(reportId: number): Promise<void> {
+    if (company === undefined) return;
+    if (openReportId === reportId && openReport !== null) {
+      openReportId = null;
+      openReport = null;
+      drawReportsCard();
+      return;
+    }
+    openReportId = reportId;
+    openReport = null;
+    drawReportsCard();
+    try {
+      const fetched = await getAnalysisReport(company.id, reportId);
+      if (openReportId !== reportId) return;
+      openReport = fetched;
+      drawReportsCard();
+    } catch (error: unknown) {
+      openReportId = null;
+      setStatus(
+        deepStatus,
+        error instanceof ApiError ? error.message : 'Vi fikk ikke hentet rapporten.',
+      );
+      drawReportsCard();
+    }
+  }
+
+  function drawReportsCard(): void {
+    const card = el('#reports-card');
+    const list = el('#report-list');
+    const view = el('#report-view');
+    const kiOn = lastFigures?.ki !== null;
+    if (!kiOn || reports.length === 0) {
+      show(card, false);
+      show(view, false);
+      return;
+    }
+    list.replaceChildren(
+      ...reports.map((item) => {
+        const li = document.createElement('li');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'report-row';
+        button.setAttribute('aria-expanded', String(openReportId === item.id));
+
+        const title = document.createElement('span');
+        title.className = 'report-row-title';
+        title.textContent = item.overskrift;
+
+        const meta = document.createElement('span');
+        meta.className = 'report-row-meta';
+        const dates = document.createElement('span');
+        dates.textContent = `${isoDate(item.periode.fra)} til ${isoDate(item.periode.til)}`;
+        const stamp = document.createElement('span');
+        stamp.textContent = reportStampText(item.created_at, item.niva);
+        meta.append(dates, stamp);
+
+        if (item.utdatert !== null && item.utdatert.nye_bilag > 0) {
+          const pill = document.createElement('span');
+          pill.className = 'report-stale-pill';
+          pill.textContent = staleReportText(item.utdatert.nye_bilag);
+          meta.append(pill);
+        }
+
+        button.append(title, meta);
+        button.addEventListener('click', () => void openReportById(item.id));
+        li.append(button);
+        return li;
+      }),
+    );
+
+    if (openReport !== null && openReport.id === openReportId) {
+      renderReportView(openReport);
+    } else if (openReportId !== null) {
+      view.replaceChildren();
+      const loading = document.createElement('p');
+      loading.className = 'card-hint';
+      loading.textContent = 'Henter rapport …';
+      view.append(loading);
+      show(view, true);
+    } else {
+      show(view, false);
+    }
+    show(card, true);
+  }
+
+  async function loadReports(autoOpenId?: number): Promise<void> {
+    if (company === undefined) return;
+    try {
+      const res = await listAnalysisReports(company.id, 'dyp');
+      reports = res.rapporter;
+      if (res.aktiv_kjoring !== undefined && res.aktiv_kjoring !== null && isGoing(res.aktiv_kjoring.status)) {
+        watchDeepRun(res.aktiv_kjoring);
+      }
+      drawReportsCard();
+      if (autoOpenId !== undefined) {
+        openReportId = null;
+        openReport = null;
+        await openReportById(autoOpenId);
+      }
+    } catch {
+      // Stille feil: tallene over er fortsatt riktige.
+    }
+  }
+
+  deepStartBtn.addEventListener('click', () => void startDeep());
+  deepCancelBtn.addEventListener('click', async () => {
+    if (company === undefined || deepWatching === null) return;
+    const runId = deepWatching.runId;
+    deepCancelBtn.disabled = true;
+    try {
+      await cancelAnalysisRun(company.id, runId);
+      stopDeepWatching();
+      drawDeepCard();
+      setStatus(deepStatus, 'Analysen ble avbrutt.');
+    } catch (error: unknown) {
+      setStatus(
+        deepStatus,
+        error instanceof ApiError ? error.message : 'Vi fikk ikke avbrutt analysen.',
+      );
+    } finally {
+      deepCancelBtn.disabled = false;
+    }
+  });
+
+  async function load(first = false): Promise<void> {
+    if (company === undefined) return;
+    const ask = ++asked;
+    figuresBox.setAttribute('aria-busy', 'true');
+    try {
+      const today = osloToday();
+      const figures = await getAnalysis(company.id, queryFor(choice, today));
+      if (ask !== asked) return;
+      drawFigures(figures, today);
+    } catch (error: unknown) {
+      if (ask !== asked) return;
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet analysen.');
+    } finally {
+      if (ask === asked) {
+        figuresBox.removeAttribute('aria-busy');
+        if (first) el('#loading').hidden = true;
+      }
+    }
+  }
+
+  function choose(next: AnalysisChoice): void {
+    choice = next;
+    follow = true;
+    drawChoice();
+    if (company !== undefined) rememberChoice(browserStorage(), company.id, choice);
+    void load();
+  }
+
+  for (const button of choiceButtons) {
+    button.addEventListener('click', () => {
+      const periode = decodeButton(button.dataset.periode);
+      if (periode !== choice.periode) choose({ ...choice, periode });
+    });
+  }
+  olderSelect.addEventListener('change', () => {
+    if (olderSelect.value !== '') choose({ ...choice, periode: Number(olderSelect.value) });
+  });
+  compareBox.addEventListener('change', () => choose({ ...choice, sammenlign: compareBox.checked }));
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      company = currentCompany(companies);
+      if (company === undefined) return;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      if (!canInCompany(company, 'ledger:read')) {
+        setStatus(pageStatus, 'Du har ikke tilgang til å lese regnskapet.');
+        el('#loading').hidden = true;
+        return;
+      }
+      const today = osloToday();
+      years = (await listFinancialYears(company.id)).map((year) => year.year);
+      choice = usableChoice(rememberedChoice(browserStorage(), company.id), years, today);
+      drawYears(today);
+      drawChoice();
+      const companyId = company.id;
+      kiInputs = mountKiInputs(() => companyId);
+      void kiInputs.refresh();
+    } catch (error: unknown) {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Vi fikk ikke hentet analysen.');
+      el('#loading').hidden = true;
+      return;
+    }
+    await load(true);
+    void loadReports();
+  });
+</script>

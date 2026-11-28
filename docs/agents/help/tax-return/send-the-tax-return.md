@@ -1,6 +1,6 @@
 ---
 title: Send the tax return
-description: How a person sends (files) an aksjeselskap's tax return (skattemelding) with the næringsspesifikasjon to Skatteetaten from the Skattemelding page in Myntos, after the check, and what happens with a revisor. Use when someone asks how to send, file or deliver the skattemelding from Myntos, or when their AI has asked them to file it.
+description: How a person sends (files) an aksjeselskap's (AS) or enkeltpersonforetak's (ENK) tax return (skattemelding) with the næringsspesifikasjon to Skatteetaten from the Skattemelding page in Myntos, after the check, how an ENK owner finishes personal items on skatteetaten.no, and what happens with a revisor. Use when someone asks how to send, file or deliver the skattemelding from Myntos, or when their AI has asked them to file it.
 pages: /skattemelding/ /godkjenning/
 skill: myntos-skattemelding
 ---
@@ -9,15 +9,16 @@ skill: myntos-skattemelding
 
 Sending files the tax return with Skatteetaten through Altinn, exactly as it
 was checked. **A sent skattemelding cannot be withdrawn.** It can be replaced
-by sending a new one for the same year. An aksjeselskap files by 31 May the
+by sending a new one for the same year. Both AS and ENK file by 31 May the
 year after.
 
 ## They might ask
 
 - «Hvordan sender jeg skattemeldingen fra Myntos?»
+- «Hvordan leverer jeg skattemeldingen for enkeltpersonforetaket mitt?»
 - «KI-en min ba meg sende skattemeldingen. Hva gjør jeg?»
 - «Hvordan leverer jeg næringsspesifikasjonen?»
-- "How do I file my company's tax return from Myntos?"
+- "How do I file my AS or ENK tax return from Myntos?"
 
 ## Before they start
 
@@ -31,16 +32,24 @@ year after.
    Skatteetaten's answer and the tax it computed. If an AI asked them to file,
    the request under «Godkjenning» has a button «Gå til skattemeldingen» that
    leads here.
-2. Tick «Jeg har gått gjennom skattemeldingen og vil sende den inn for …»,
-   which names the company, its organisation number, the income year and the
-   skattemessig resultat. Check all four.
+2. Tick «Jeg har gått gjennom skattemeldingen og vil sende den inn for …» (or
+   for an ENK hand-off, «Jeg har gått gjennom næringsspesifikasjonen og vil
+   overføre den til min personlige skattemelding for …»), which names the
+   company, its organisation number, the income year and the skattemessig
+   resultat. Check all four.
 3. Press «Send inn skattemeldingen». This is the step that cannot be undone.
 4. The page says one of:
    - «Skattemeldingen er sendt, og svaret fra Skatteetaten er lagret.»
    - «Skattemeldingen er sendt. Svaret fra Skatteetaten kommer litt senere.»
    - «Skattemeldingen er sendt. Nå må revisoren bekrefte den i Skatteetatens
      løsning.»
-5. Under «Skattemeldinger for året», the year reads «Sendt og mottatt»,
+5. **For an ENK sent as «Send inn næringsdelen og fullfør på skatteetaten.no
+   (anbefalt)»:** the box «Fullfør på skatteetaten.no» appears below with the
+   button «Åpne skattemeldingen på skatteetaten.no». Open it, check the
+   personal items (salary, bank accounts, loans, deductions) and press «Lever»
+   on skatteetaten.no before 31 May so the personal tax return is formally
+   delivered.
+6. Under «Skattemeldinger for året», the year reads «Sendt og mottatt»,
    «Sendt, venter på svar» or «Sendt, venter på revisor»:
    [Get Skatteetaten's answer](https://myntos.no/llms/help/tax-return/get-skatteetatens-answer.md).
 
@@ -50,12 +59,15 @@ year after.
 | --- | --- | --- |
 | No box «Send inn», and «Regnskapet for året er endret etter kontrollen. …» | Something was entered in the year after the check | Check again, read the new figures, then send |
 | «bekreft det skattemessige resultatet i skattemeldingen du kontrollerte før den sendes» | The confirmation did not match the checked figure | Reload, check again, tick and send |
-| «Innsendingen stoppet underveis. Ingenting er bekreftet sendt. …» | Altinn stopped partway | Look in Altinn's inbox for the company before trying again; then check again and send |
+| «Innsendingen stoppet underveis. Ingenting er bekreftet sendt. …» | Altinn stopped partway | Look in Altinn's inbox before trying again; then check again and send |
 | «logg inn med ID-porten for å kontrollere og sende skattemeldingen» | The ID-porten login ran out | Reload and log in again |
 
 ## Good to know
 
-- **A company with a revisor**: the box says «Revisoren må bekrefte
+- **An ENK hand-off:** the link «Åpne skattemeldingen på skatteetaten.no» also
+  stays on the filing under «Skattemeldinger for året», so the owner can open
+  it later.
+- **A company with a revisor:** the box says «Revisoren må bekrefte
   næringsspesifikasjonen i Skatteetatens løsning etter at du har sendt.» The
   revisor confirms in Skatteetaten's own viewer («Åpne hos Skatteetaten» on
   the filing), and Skatteetaten processes the return only after that.

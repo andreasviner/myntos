@@ -574,11 +574,14 @@ async def extract_streaming(
         finished = True
     except Exception as error:
         # Named, because this is a blanket catch and a blanket catch that says
-        # nothing is a place bugs go to be quiet. The message carries the type
-        # and never the prompt.
-        logger.info(
-            "the model's answer stopped early (%s); reading what arrived", type(error).__name__
-        )
+        # nothing is a place bugs go to be quiet. Logged at ERROR unless the
+        # transport already recorded the failure, never carrying the prompt.
+        if not getattr(error, "logged", False):
+            logger.error(
+                "the model's answer stopped early (%s); reading what arrived",
+                type(error).__name__,
+                exc_info=error,
+            )
     if finished and on_exchange is not None:
         on_exchange(Exchange(system=_SYSTEM, prompt=prompt, reply=pieces.answer))
     shown = document_text if title is None else f"{title}\n{document_text}"

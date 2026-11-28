@@ -51,6 +51,7 @@ from myntos.api.deps import (
     Storage,
     key_post,
 )
+from myntos.api.v1.ki import ki_request
 from myntos.core.clock import utc_now
 from myntos.domain.bilag import (
     classification,
@@ -414,6 +415,10 @@ class SuggestionResponse(BaseModel):
     # Løynd could not be reached. The user is entitled to know that the empty
     # category field is not the model's considered opinion.
     ki_used: bool
+    # Which level answered (`free`, `medium`, `thinking`), or null when no model
+    # was asked. Lower than the `niva` asked for when the company had no plan
+    # with tokens left, and then `warnings` says so first.
+    ki_level: loynd.Level | None = None
 
 
 class CreateCashFlowRequest(BaseModel):
@@ -487,6 +492,7 @@ async def _ask_for_category(
     returning: bool = False,
     segments: frozenset[str] = frozenset(),
     on_exchange: Callable[[followup.Exchange], None] | None = None,
+    model: loynd.Model,
 ) -> classification.Classification:
     """Which category Løynd puts the document in, and which it nearly chose.
 
@@ -497,7 +503,7 @@ async def _ask_for_category(
     try:
         return await classification.classify(
             document_text,
-            ask=loynd.complete,
+            ask=model.complete,
             allowed=allowed,
             title=title,
             context=context,
@@ -505,7 +511,11 @@ async def _ask_for_category(
             segments=segments,
             on_exchange=on_exchange,
         )
-    except loynd.LoyndError:
+    except loynd.LoyndError as error:
+        if not error.logged and not isinstance(error, loynd.LoyndNotConfiguredError):
+            logger.error(
+                "Løynd failed while classifying a bilag (%s)", type(error).__name__, exc_info=error
+            )
         return classification.Classification()
 
 
@@ -517,6 +527,7 @@ async def _ask_for_fields(
     on_description: Callable[[str], Awaitable[None]],
     context: "bilag_context.BilagContext | None" = None,
     on_exchange: Callable[[followup.Exchange], None] | None = None,
+    model: loynd.Model,
 ) -> extraction.Extraction:
     """What Løynd reads in the places our own parser came up empty.
 
@@ -530,14 +541,20 @@ async def _ask_for_fields(
     try:
         return await extraction.extract_streaming(
             document_text,
-            ask=loynd.stream,
+            ask=model.stream,
             today=today,
             title=title,
             on_description=on_description,
             context=context,
             on_exchange=on_exchange,
         )
-    except loynd.LoyndError:
+    except loynd.LoyndError as error:
+        if not error.logged and not isinstance(error, loynd.LoyndNotConfiguredError):
+            logger.error(
+                "Løynd failed while extracting bilag fields (%s)",
+                type(error).__name__,
+                exc_info=error,
+            )
         return extraction.Extraction()
 
 
@@ -705,7 +722,11 @@ async def _read_document(
             document = await loynd.extract_file(
                 content=content, filename=filename, content_type=content_type
             )
-        except loynd.LoyndError:
+        except loynd.LoyndError as error:
+            if not error.logged and not isinstance(error, loynd.LoyndNotConfiguredError):
+                logger.error(
+                    "Løynd failed while reading a bilag (%s)", type(error).__name__, exc_info=error
+                )
             unanswered = True
         else:
             if not document.empty:
@@ -1188,6 +1209,10 @@ class _Reading:
     #: The app or shop a picture showed, when it was asked (vendor.py). A
     #: follow-up has no pictures to ask, so the first answer stands.
     vendor: str | None = None
+    #: The level the person asked for, which an answer asks at again unless it
+    #: says otherwise. What was asked for, not what answered: a month bought
+    #: between the read and the answer should be the month the answer uses.
+    level: loynd.Level = loynd.Level.FREE
 
     def menu(self) -> tuple[classification.MenuItem, ...]:
         return classification.build_menu(
@@ -1243,6 +1268,7 @@ async def _propose(
     uploads: list[tuple[bytes, str, str]],
     forklaring: str | None,
     retning: CashFlowDirection | None = None,
+    niva: loynd.Level = loynd.Level.FREE,
 ) -> AsyncIterator[tuple[str, object]]:
     """Read the bilag and build the proposal, reporting progress as it goes.
 
@@ -1278,6 +1304,11 @@ async def _propose(
     # nothing else, including no upload to Løynd's extractor: "off" has to mean
     # the documents do not leave the building, or it means nothing.
     use_loynd = context.company.ki_enabled and loynd.is_configured()
+    # Which model answers, decided before anything is asked: the level the
+    # person picked if the company's plan covers it, the free one otherwise.
+    # The pictures are read by Løynd's own vision model whatever the level
+    # (myntos.api.v1.ki.read_file says why); this is the text questions.
+    ki = await ki_request(db, context.company.id, niva) if use_loynd else None
     # Converted only when a model is going to look: with KI off there is no
     # reader for a photo at all, and decoding one would be work for nothing.
     if use_loynd:
@@ -1355,6 +1386,7 @@ async def _propose(
         today=today,
         retning=retning,
         long_bilag=long_bilag,
+        level=niva,
     )
     propose = await _proposer(context, db, kept)
     suggestion = await asyncio.to_thread(propose, reading)
@@ -1364,7 +1396,8 @@ async def _propose(
     # document says where our own reading came up empty. The category menu is
     # restricted to the direction when a registered party settled that question,
     # so a recognised customer cannot come back as an expense.
-    if use_loynd:
+    if ki is not None:
+        model = ki.model
         kept.menu_allowed = suggestion.direction
         kept.menu_returning = reading.shows_a_return
         kept.menu_segments = landbruk.segments_for(context.company)
@@ -1413,6 +1446,7 @@ async def _propose(
                         returning=kept.menu_returning,
                         segments=kept.menu_segments,
                         on_exchange=keep_category,
+                        model=model,
                     ),
                     _ask_for_fields(
                         extracted.text,
@@ -1421,6 +1455,7 @@ async def _propose(
                         on_description=on_description,
                         context=bilag_ctx,
                         on_exchange=keep_fields,
+                        model=model,
                     ),
                 )
             finally:
@@ -1468,6 +1503,13 @@ async def _propose(
         ki_used=use_loynd,
         context_used=not bilag_ctx.is_empty,
     )
+    if ki is not None:
+        # Counted once, here, after the last question. A read the browser walks
+        # away from in the middle closes this generator before it gets here, and
+        # is not counted: nobody got the proposal either.
+        notices = await ki.finish(db)
+        proposal.warnings = [*notices, *proposal.warnings]
+        proposal.ki_level = ki.level
     # Kept only when a model was asked. Without one there is no conversation to
     # continue, and reading the bilag again with the parser costs nothing.
     #
@@ -1489,6 +1531,7 @@ async def _continue(
     kept: _Reading,
     answers: list[followup.Answer],
     forklaring: str | None,
+    niva: loynd.Level,
 ) -> SuggestionResponse:
     """The proposal again, after the user answered, without reading the bilag again.
 
@@ -1522,6 +1565,8 @@ async def _continue(
     # Built before the two questions rather than inside them: both would read
     # the same database session at once otherwise.
     folded = await afresh() if kept.category is None or kept.fields is None else bilag_ctx
+    ki = await ki_request(db, context.company.id, niva)
+    model = ki.model
 
     async def category() -> classification.Classification:
         if kept.category is None:
@@ -1532,12 +1577,19 @@ async def _continue(
                 context=folded,
                 returning=kept.menu_returning,
                 segments=kept.menu_segments,
+                model=model,
             )
         try:
             return await classification.classify_again(
-                kept.category, said, menu=kept.menu(), ask=loynd.complete
+                kept.category, said, menu=kept.menu(), ask=model.complete
             )
-        except loynd.LoyndError:
+        except loynd.LoyndError as error:
+            if not error.logged and not isinstance(error, loynd.LoyndNotConfiguredError):
+                logger.error(
+                    "Løynd failed while reclassifying a bilag (%s)",
+                    type(error).__name__,
+                    exc_info=error,
+                )
             return classification.Classification()
 
     async def fields() -> extraction.Extraction:
@@ -1548,17 +1600,24 @@ async def _continue(
                 title=kept.extracted.title,
                 on_description=_ignore,
                 context=folded,
+                model=model,
             )
         try:
             return await extraction.extract_again(
                 kept.fields,
                 said,
-                ask=loynd.complete,
+                ask=model.complete,
                 document_text=kept.extracted.text,
                 today=kept.today,
                 title=kept.extracted.title,
             )
-        except loynd.LoyndError:
+        except loynd.LoyndError as error:
+            if not error.logged and not isinstance(error, loynd.LoyndNotConfiguredError):
+                logger.error(
+                    "Løynd failed while re-extracting bilag fields (%s)",
+                    type(error).__name__,
+                    exc_info=error,
+                )
             return extraction.Extraction()
 
     found, model_reading = await asyncio.gather(category(), fields())
@@ -1566,7 +1625,7 @@ async def _continue(
     async def remembered() -> str | None:
         return kept.vendor
 
-    return await _settle(
+    proposal = await _settle(
         context,
         kept=kept,
         propose=propose,
@@ -1579,6 +1638,10 @@ async def _continue(
         ki_used=True,
         context_used=True,
     )
+    notices = await ki.finish(db)
+    proposal.warnings = [*notices, *proposal.warnings]
+    proposal.ki_level = ki.level
+    return proposal
 
 
 async def _ignore(_: str) -> None:
@@ -1811,6 +1874,9 @@ async def suggest_from_document(
     # read. Their word, so it decides the direction and narrows the category
     # menu, and the model is told it. See interpretation.suggest.
     retning: Annotated[CashFlowDirection | None, Form()] = None,
+    # How much model reads it: free, medium or thinking. A paid level without a
+    # plan to cover it is read at free, and the proposal says so.
+    niva: Annotated[loynd.Level, Form()] = loynd.Level.FREE,
 ) -> SuggestionResponse:
     """Read the uploaded bilag and propose what the entry form should hold.
 
@@ -1863,7 +1929,12 @@ async def suggest_from_document(
 
     proposal: SuggestionResponse | None = None
     async for name, payload in _propose(
-        context, db, uploads=await _uploaded(files), forklaring=forklaring, retning=retning
+        context,
+        db,
+        uploads=await _uploaded(files),
+        forklaring=forklaring,
+        retning=retning,
+        niva=niva,
     ):
         if name == _EVENT_SUGGESTION and isinstance(payload, SuggestionResponse):
             proposal = payload
@@ -1882,6 +1953,7 @@ async def stream_suggestion_from_document(
     # read. Their word, so it decides the direction and narrows the category
     # menu, and the model is told it. See interpretation.suggest.
     retning: Annotated[CashFlowDirection | None, Form()] = None,
+    niva: Annotated[loynd.Level, Form()] = loynd.Level.FREE,
 ) -> Response:
     """The same proposal as ``/forslag``, reported as it is worked out.
 
@@ -1909,7 +1981,7 @@ async def stream_suggestion_from_document(
     async def frames() -> AsyncIterator[str]:
         try:
             async for name, payload in _propose(
-                context, db, uploads=uploads, forklaring=forklaring, retning=retning
+                context, db, uploads=uploads, forklaring=forklaring, retning=retning, niva=niva
             ):
                 yield _frame(name, payload)
         except Exception:
@@ -1979,6 +2051,8 @@ class AnswerSuggestionRequest(BaseModel):
     answers: list[SuggestionAnswerRequest] = Field(
         default_factory=list, max_length=followup.MAX_ANSWERS
     )
+    # The level to answer at. Left out, the one the bilag was read at.
+    niva: loynd.Level | None = None
 
 
 @router.post(
@@ -2043,6 +2117,7 @@ async def answer_suggestion(
             for item in payload.answers
         ],
         forklaring=forklaring,
+        niva=payload.niva or kept.level,
     )
     proposal.reading_id = reading_id
     return proposal

@@ -53,7 +53,11 @@ breaking one breaks what a company agreed to.
    `none` and writes no log row, because a row would claim a decision nobody
    made. `ki_enabled` is not read as a yes. It lets Myntos send a bilag to a
    model to answer the company's own question, and says nothing about Myntos
-   keeping it.
+   keeping it. Summaries and tags stored in the `ki_*` tables for the company's
+   own use on `/analyse/` ([analyse.md](analyse.md)) are not data sharing
+   either: they answer the company's own question, stay scoped to its
+   `company_id`, are never read for Myntos's own use, and go with the company
+   at the purge.
 2. **A level may only narrow without asking again.** Collecting anything a
    level's text on `/datadeling/` does not name means asking every company on
    that level again, and until it answers its old choice stands. Narrowing a

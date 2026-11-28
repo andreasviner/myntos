@@ -12,15 +12,20 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from myntos import __version__
+from myntos.api.analyse_ki import get_analysis_ki
 from myntos.api.deps import get_document_storage, get_mailer, get_working_files
 from myntos.api.errors import (
     approval_held_handler,
     domain_error_handler,
+    http_error_handler,
     unhandled_error_middleware,
+    validation_error_handler,
 )
 from myntos.api.v1.feedback import keep_out_of_the_access_log
 from myntos.api.v1.router import api_router
@@ -30,16 +35,22 @@ from myntos.auth.operator import OperatorError
 from myntos.core.config import get_settings
 from myntos.core.security import BodySizeLimitMiddleware, security_headers_middleware
 from myntos.db.session import get_engine
+from myntos.domain.analyse import jobs as analyse_jobs
 from myntos.domain.faktura.errors import FakturaError
 from myntos.domain.feedback import service as feedback_service
 from myntos.domain.feedback.errors import FeedbackError
 from myntos.domain.identity import closure
 from myntos.domain.identity.errors import IdentityError
+from myntos.domain.ki import invoicing as ki_invoicing
+from myntos.domain.ki.errors import KiError
 from myntos.domain.ledger.errors import LedgerError
+from myntos.domain.mottak import parser as mottak_parser
+from myntos.domain.mottak.errors import MottakError
 from myntos.domain.peppol.errors import PeppolError
 from myntos.domain.server_errors import recorder
 from myntos.domain.server_errors import service as server_error_service
 from myntos.domain.server_errors.errors import ServerErrorLogError
+from myntos.integrations import peppol_sync
 from myntos.integrations.brreg import BrregError
 from myntos.saft import intake, jobs, reader
 from myntos.storage.base import DocumentStorage
@@ -62,6 +73,9 @@ _IMPORT_UPLOAD_PATH = re.compile(r"^/api/v1/companies/\d+/saft/innlesing$")
 # about as large for a year. FastAPI reads these bodies before it knows who
 # sent them, so their ceiling stays at what Altinn takes in one attachment.
 _SAFT_UPLOAD_PATHS = re.compile(r"^/api/v1/companies/\d+/(saft/|inngaende-balanse/saft$)")
+# Inbound email webhook receives raw RFC 5322 MIME (not multipart/form-data)
+# up to Cloudflare Email Routing's 25 MiB ceiling plus framing.
+_INBOUND_EMAIL_WEBHOOK_PATH = re.compile(r"^/api/v1/webhooks/inbound-email$")
 
 # Where production answers, named in the published document so that a client
 # generated from it, or an agent reading it cold, calls the right host.
@@ -120,6 +134,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     storage = app.dependency_overrides.get(get_document_storage, get_document_storage)
     working = app.dependency_overrides.get(get_working_files, get_working_files)
     jobs.resume_in_background(sessions, storage, working)
+    # And KI reading a company's books, with the model through its dependency
+    # too, so a test's fake Løynd answers a resumed run (docs/analyse.md «Runs»).
+    analysis = app.dependency_overrides.get(get_analysis_ki, get_analysis_ki)
+    analyse_jobs.resume_in_background(sessions, analysis)
     loop = asyncio.get_running_loop()
     purging = loop.create_task(_purge_daily(sessions, storage, working))
     # The error log's counts are written every few seconds and once more on
@@ -128,9 +146,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # outbox gets the operator's notice and no real mail leaves a test run.
     mailer = app.dependency_overrides.get(get_mailer, get_mailer)()
     recording = loop.create_task(recorder.store_regularly(sessions(), mailer))
+    # Ademico pushes deliveries and received EHF to the webhook as they
+    # happen; this sweep, every 15 minutes, finds whatever no push brought.
+    peppol_sweeping = loop.create_task(peppol_sync.sweep_regularly(sessions()))
+    # Monthly KI subscriptions renew and issue their section 5-1 invoices here.
+    ki_billing = loop.create_task(ki_invoicing.sweep_regularly(sessions, storage, mailer))
     yield
     purging.cancel()
     recording.cancel()
+    peppol_sweeping.cancel()
+    ki_billing.cancel()
     await recorder.store_pending(sessions(), mailer)
 
 
@@ -267,6 +292,7 @@ def create_app() -> FastAPI:
             (_IMPORT_UPLOAD_PATH, intake.MAX_UPLOAD_BYTES),
             (_SAFT_UPLOAD_PATHS, reader.MAX_UPLOAD_BYTES),
         ),
+        large_bodies=((_INBOUND_EMAIL_WEBHOOK_PATH, mottak_parser.MAX_RAW_EMAIL_BYTES),),
     )
     app.add_middleware(
         CORSMiddleware,
@@ -287,12 +313,20 @@ def create_app() -> FastAPI:
     app.add_exception_handler(LedgerError, domain_error_handler)
     app.add_exception_handler(FakturaError, domain_error_handler)
     app.add_exception_handler(PeppolError, domain_error_handler)
+    app.add_exception_handler(MottakError, domain_error_handler)
     app.add_exception_handler(BrregError, domain_error_handler)
     app.add_exception_handler(FeedbackError, domain_error_handler)
     app.add_exception_handler(OperatorError, domain_error_handler)
     app.add_exception_handler(ServerErrorLogError, domain_error_handler)
+    app.add_exception_handler(KiError, domain_error_handler)
     # Not an error: a key's request stored to wait for its person (rule 13).
     app.add_exception_handler(ApprovalHeld, approval_held_handler)
+    # FastAPI 422 validation failures (e.g. frontend/backend contract mismatch)
+    # are logged at ERROR with route template and no input values before sending 422.
+    app.add_exception_handler(RequestValidationError, validation_error_handler)
+    # Explicit HTTPExceptions (502/503 from Altinn, Skatteetaten, OIDC, etc.)
+    # bypass domain_error_handler; log 5xx at ERROR so they land on /drift/.
+    app.add_exception_handler(StarletteHTTPException, http_error_handler)
 
     app.include_router(api_router, prefix="/api/v1")
     # Anonymous feedback stays anonymous in the journal too (docs/feedback.md).

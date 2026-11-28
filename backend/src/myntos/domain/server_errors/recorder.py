@@ -14,10 +14,10 @@ the pending counts are stored every few seconds by :func:`store_regularly`,
 which the application's lifespan runs, and once more when it stops. A restart
 in between loses at most those seconds, which the journal still has.
 
-The same write tells the operator, when ``SERVER_ERROR_NOTIFY_TO`` is set, that
-a kind of failure is new or open again: one mail for the first after a quiet
-hour, as feedback does (:mod:`myntos.domain.server_errors.mail` says what it
-may carry).
+The same write tells the operator, when ``SERVER_ERROR_NOTIFY_TO`` or
+``DEVELOPER_MAIL`` is set, that a kind of failure is new or open again: one
+mail for the first after a quiet hour, as feedback does
+(:mod:`myntos.domain.server_errors.mail` says what it may carry).
 """
 
 from __future__ import annotations
@@ -325,7 +325,7 @@ async def _notify(news: list[Failure], *, open_now: int, mailer: Mailer | None) 
     were open.
     """
     settings = get_settings()
-    to = settings.server_error_notify_to
+    to = settings.error_notify_to
     if not to:
         return
     now = utc_now()

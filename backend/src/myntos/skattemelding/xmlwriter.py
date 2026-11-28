@@ -118,32 +118,45 @@ def _local(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
-def _overridden(element: ET.Element) -> bool:
-    """A derived figure the person set themselves on skatteetaten.no (``erOverstyrt``)."""
-    for child in element:
-        if _local(child.tag) == "erOverstyrt":
-            return "".join(child.itertext()).strip() == "true"
+def _has_override_descendant(element: ET.Element) -> bool:
+    """Whether ``element`` contains any descendant marked ``erOverstyrt=true``."""
+    for node in element.iter():
+        if _local(node.tag) == "erOverstyrt" and "".join(node.itertext()).strip() == "true":
+            return True
     return False
 
 
-def _strip_derived(schema: Schema, element: ET.Element, type_name: str) -> None:
+def _strip_derived(schema: Schema, element: ET.Element, type_name: str) -> bool:
+    """Remove derived elements; return True if ``element`` itself must be dropped.
+
+    When a required child (``min_occurs > 0``) is derived:
+    - If ``element`` holds a user override (``erOverstyrt=true``), keep that
+      required derived child so the overridden element stays XSD-valid (e.g.
+      ``naeringstype`` inside an overridden ``naeringsinntektMv``).
+    - Otherwise ``element`` cannot survive without it, so tell the caller to
+      drop ``element`` if the schema permits (``min_occurs == 0``).
+    """
     children = schema.children(type_name)
     if children is None:
-        return
+        return False
     specs = {child.name: child for child in children}
+    keep_required = _has_override_descendant(element)
     for child in list(element):
         spec = specs.get(_local(child.tag))
         if spec is None:
             continue
-        if spec.derived and not _overridden(child):
-            element.remove(child)
-            continue
+        if spec.derived and not _has_override_descendant(child):
+            if spec.min_occurs == 0:
+                element.remove(child)
+                continue
+            if keep_required:
+                continue
+            return True
         had_children = len(child) > 0
-        _strip_derived(schema, child, spec.type_name)
-        # A section that held only derived figures goes too, rather than
-        # going back as an empty element Skatteetaten never wrote.
-        if had_children and len(child) == 0 and spec.min_occurs == 0:
+        drop_child = _strip_derived(schema, child, spec.type_name)
+        if (drop_child or (had_children and len(child) == 0)) and spec.min_occurs == 0:
             element.remove(child)
+    return False
 
 
 def merge(schema: Schema, content: bytes, additions: Node) -> tuple[bytes, tuple[str, ...]]:

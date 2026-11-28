@@ -43,6 +43,7 @@ invoice cannot be edited, only credited and written again.
 | What they see | Why | What to do |
 | --- | --- | --- |
 | «Selskapet har ikke noe kontonummer, så ingen faktura kan utstedes.» at the top of the page, or «selskapet har ikke noe kontonummer, …» in the review | The company has no bank account number, so the invoice would not say where to pay | An «Administrator» or «Eier» adds it on the company page: [Add a bank account](https://myntos.no/llms/help/company-and-access/add-a-bank-account.md). Then reload the «Faktura» page, open the draft with «Endre» and press «Se over fakturaen» again |
+| «selskapet må være satt opp for e-faktura (EHF) før du kan utstede faktura til en bedrift …» | The company is not set up for e-faktura (EHF) yet | Press «Aktiver e-faktura (EHF)» right in the review (or «Bekreft selskapet med ID-porten» first, if prompted), or ask an «Administrator» / «Eier»: [Register for e-invoicing](https://myntos.no/llms/help/company-and-access/register-for-e-invoicing.md). If the buyer is a private person, untick «Kjøperen er bokføringspliktig (næringsdrivende)» |
 | «kjøperens navn mangler» | No buyer name | Fill in «Navn» under «Kjøper», or choose a customer |
 | «kjøperen må identifiseres med adresse eller organisasjonsnummer, navnet alene er ikke nok» | Only a name | Fill in «Adresse» and «Postnummer», or «Organisasjonsnummer» |
 | «leveringstidspunktet mangler» | No delivery date | Fill in «Leveringsdato» |

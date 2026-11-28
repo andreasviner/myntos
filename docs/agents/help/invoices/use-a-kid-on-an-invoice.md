@@ -10,9 +10,10 @@ skill: myntos-faktura
 A KID is the number the customer types into their bank together with the
 amount. It comes back with the payment and tells the seller which invoice was
 paid. Myntos makes one for every invoice by default, when the invoice is
-issued: the invoice number and a check digit, with no zeros in front. Invoice
-1 gets «18», invoice 42 gets «422». Before issue the form shows what it will
-probably be.
+issued: the issue date (`YYYYMMDD`), the invoice number, and a check digit (at
+least ten digits, with no leading zeros). On 25 November 2026, invoice 1 gets
+«2026112512» and invoice 42 gets «20261125429». Before issue the form shows what
+it will probably be.
 
 ## They might ask
 
@@ -41,15 +42,15 @@ probably be.
 | What they see | Why | What to do |
 | --- | --- | --- |
 | «kontrollsifferet i KID-en … går ikke opp, verken etter mod10 eller mod11. …» in the review | The typed KID's check digit is wrong | Check the number, or press «Bruk automatisk KID». It is a warning, not a stop, but the customer's bank will probably refuse it |
-| The preview number changes | Another invoice was issued first, or another customer was chosen | Nothing to do; the number is only fixed at issue |
+| The preview number changes | Another invoice was issued first, or the date rolled over to a new day | Nothing to do; the number is only fixed at issue |
 
 ## Good to know
 
 - Any bank takes a KID like this from the person paying: it checks only the
   check digit (mod10). A company with an OCR agreement with its bank that
   fixes the length of the KID types its own instead («Endre selv»).
-- An invoice issued earlier may have a longer KID with zeros in front, such
-  as «000000000018». It keeps it, and it still works.
+- An invoice issued earlier may have a different KID length, such as «18» or
+  «000000000018». It keeps it, and it still works.
 - The KID is the same whichever customer the invoice is to: the invoice
   number already says who it is.
 - A credit note never gets a KID: nothing is paid on it.

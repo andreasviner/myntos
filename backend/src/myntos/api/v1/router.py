@@ -3,8 +3,11 @@
 from fastapi import APIRouter
 
 from myntos.api.v1 import (
+    aarsregnskap,
     account,
     agent,
+    aksjonaer,
+    analyse,
     anlegg,
     approvals,
     arsoppgjor,
@@ -19,11 +22,14 @@ from myntos.api.v1 import (
     feedback,
     frister,
     health,
+    integration_keys,
+    ki,
     kontoplan,
     landbruk,
     landbruk_arsoppgjor,
     manuelt_bilag,
     members,
+    mottak,
     mva,
     mva_justering,
     operator,
@@ -38,6 +44,7 @@ from myntos.api.v1 import (
     skatt,
     skattemelding,
     sletting,
+    systembruker,
 )
 
 api_router = APIRouter()
@@ -52,8 +59,13 @@ api_router.include_router(parties.router)
 api_router.include_router(cashflow.router)
 api_router.include_router(faktura.router)
 api_router.include_router(peppol.router)
+api_router.include_router(mottak.router)
+api_router.include_router(ki.router)
 api_router.include_router(enhetsregisteret.router)
 api_router.include_router(skatt.router)
+api_router.include_router(systembruker.router)
+api_router.include_router(aksjonaer.router)
+api_router.include_router(aarsregnskap.router)
 api_router.include_router(mva.router)
 api_router.include_router(frister.router)
 api_router.include_router(skattemelding.router)
@@ -63,6 +75,7 @@ api_router.include_router(saft_innlesing.router)
 api_router.include_router(saft_vedlegg.router)
 api_router.include_router(bilag.router)
 api_router.include_router(regnskap.router)
+api_router.include_router(analyse.router)
 api_router.include_router(account.router)
 api_router.include_router(bank.router)
 api_router.include_router(arsoppgjor.router)
@@ -74,6 +87,7 @@ api_router.include_router(landbruk.router)
 api_router.include_router(landbruk_arsoppgjor.router)
 api_router.include_router(mva_justering.router)
 api_router.include_router(agent.router)
+api_router.include_router(integration_keys.router)
 api_router.include_router(approvals.router)
 api_router.include_router(feedback.router)
 api_router.include_router(operator.router)

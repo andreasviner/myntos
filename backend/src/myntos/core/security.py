@@ -76,16 +76,21 @@ class BodySizeLimitMiddleware:
         body: int,
         upload: int,
         large_uploads: tuple[tuple[re.Pattern[str], int], ...],
+        large_bodies: tuple[tuple[re.Pattern[str], int], ...] = (),
     ) -> None:
         self.app = app
         self.body = body
         self.upload = upload
         self.large_uploads = large_uploads
+        self.large_bodies = large_bodies
 
     def _limit(self, scope: Scope) -> tuple[int, int]:
         """The most this request may send, and the limit to name in a refusal."""
         content_type = _header(scope, b"content-type") or ""
         if not content_type.lower().startswith("multipart/"):
+            for paths, limit in self.large_bodies:
+                if paths.match(scope["path"]):
+                    return limit, limit
             return self.body, self.body
         for paths, limit in self.large_uploads:
             if paths.match(scope["path"]):

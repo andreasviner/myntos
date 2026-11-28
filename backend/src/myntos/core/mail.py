@@ -90,6 +90,16 @@ class InlineImage:
 
 
 @dataclass(frozen=True, slots=True)
+class MailAttachment:
+    """A file attached to a message (for example an issued invoice PDF)."""
+
+    filename: str
+    data: bytes
+    maintype: str = "application"
+    subtype: str = "pdf"
+
+
+@dataclass(frozen=True, slots=True)
 class Mail:
     """One message, composed but not yet addressed to a transport."""
 
@@ -110,6 +120,8 @@ class Mail:
     # part, because there would be nothing to relate them to; a text-only
     # message is still a complete message.
     images: tuple[InlineImage, ...] = ()
+    # File attachments (such as a PDF copy of a monthly KI invoice).
+    attachments: tuple[MailAttachment, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,6 +191,13 @@ def build_message(mail: Mail, settings: Settings) -> EmailMessage:
     if mail.html is not None:
         message.add_alternative(mail.html, subtype="html")
         _relate_images(message, mail.images)
+    for attachment in mail.attachments:
+        message.add_attachment(
+            attachment.data,
+            maintype=attachment.maintype,
+            subtype=attachment.subtype,
+            filename=_header_safe(attachment.filename),
+        )
     return message
 
 

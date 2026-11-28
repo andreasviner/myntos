@@ -14,10 +14,16 @@
 import type {
   SkattemeldingAvvik,
   SkattemeldingFiling,
+  SkattemeldingInnsendingstype,
   SkattemeldingPost,
   SkattemeldingStatus,
   SkattemeldingYear,
 } from './api';
+
+export const INNSENDINGSTYPE_LABELS: Record<SkattemeldingInnsendingstype, string> = {
+  ikkeKomplett: 'Næringsdel (fullføres på skatteetaten.no)',
+  komplett: 'Komplett skattemelding',
+};
 
 export const STATUS_LABELS: Record<SkattemeldingStatus, string> = {
   validert: 'Kontrollert, ikke sendt',
@@ -197,4 +203,40 @@ export function checkableFrom(lastDay: string): string {
   if (year === undefined || month === undefined || day === undefined) return lastDay;
   const next = new Date(Date.UTC(year, month - 1, day + 1));
   return next.toISOString().slice(0, 10);
+}
+
+/**
+ * Parse a 4-digit Norwegian kommunenummer. Returns empty string when omitted
+ * (optional field), a 4-digit string when valid, or null when malformed.
+ */
+export function parseKommunenummer(text: string): string | null {
+  const cleaned = text.trim();
+  if (cleaned === '') return '';
+  return /^\d{4}$/.test(cleaned) ? cleaned : null;
+}
+
+/**
+ * Parse the owner's percentage share (0 to 100, up to two decimals) without floats.
+ * Returns a normalized decimal string ("100" or "50.50") or null when invalid.
+ */
+export function parseOwnerShare(text: string): string | null {
+  const cleaned = text.replace(/[\s\u00a0\u202f%]/g, '').replace(',', '.');
+  const match = /^(\d{1,3})(?:\.(\d{1,2}))?$/.exec(cleaned);
+  if (match === null) return null;
+  const whole = Number(match[1]);
+  const frac = match[2] ?? '';
+  if (whole > 100 || (whole === 100 && frac !== '' && Number(frac) > 0)) return null;
+  return frac === '' ? String(whole) : `${whole}.${frac}`;
+}
+
+/** True when a filed ENK return was sent as `ikkeKomplett` and awaits completion on skatteetaten.no. */
+export function needsPersonalHandoff(
+  filing: Pick<SkattemeldingFiling, 'status' | 'innsendingstype' | 'skatteetaten_portal_url'>,
+): boolean {
+  return (
+    isFiled(filing.status) &&
+    filing.innsendingstype === 'ikkeKomplett' &&
+    typeof filing.skatteetaten_portal_url === 'string' &&
+    filing.skatteetaten_portal_url.length > 0
+  );
 }

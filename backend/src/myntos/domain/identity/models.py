@@ -719,6 +719,41 @@ class AgentKeyStop(enum.StrEnum):
     BANKID = "bankid"
     ACCOUNT_DELETED = "account_deleted"
     COMPANY_CLOSED = "company_closed"
+    # An integration key's person is no longer an owner of the books. Only an
+    # owner may hold one (docs/agents-and-api.md rule 15), so a role taken
+    # away stops it, where an agent key would only lose what the role gave.
+    NOT_OWNER = "not_owner"
+
+
+class AgentKeyKind(enum.StrEnum):
+    """Who holds a key: an AI agent or a program, or a server's integration.
+
+    - ``agent``: everything rules 3 to 13 of docs/agents-and-api.md describe.
+      A connection key pasted into a chat, exchanged for a rotating chain,
+      scopes the person chose, every send waiting for the person.
+    - ``integration``: a server's static secret (``myntos_ik_``), made by an
+      owner, bound to the IP addresses the owner gave, and able to call the
+      routes of one ``purpose`` and nothing else. It sends invoices without
+      asking, which no agent key may: the owner's decision of 2026-11-26
+      (rule 15). Never pasted into a chat, so it has no exchange and no
+      chain, and kept in a server's settings, so it has no yearly expiry.
+    """
+
+    AGENT = "agent"
+    INTEGRATION = "integration"
+
+
+class IntegrationPurpose(enum.StrEnum):
+    """What an integration key is for, and so which routes it may call.
+
+    One so far. Each route an integration key may call says which purpose it
+    belongs to (:data:`myntos.api.deps.INTEGRATION_EXTENSION`), so a new
+    purpose is a new word here and on its routes, never a wider old one.
+    """
+
+    # Invoicing: parties, drafts, issuing, the PDF and the EHF, the Peppol
+    # lookup, the send and its transmission. Never payments or credit notes.
+    FAKTURA = "faktura"
 
 
 class AgentTokenKind(enum.StrEnum):
@@ -732,6 +767,26 @@ def _stop_type() -> Enum:
         name="agent_key_stop",
         native_enum=False,
         length=32,
+        values_callable=lambda e: [member.value for member in e],
+    )
+
+
+def _key_kind_type() -> Enum:
+    return Enum(
+        AgentKeyKind,
+        name="agent_key_kind",
+        native_enum=False,
+        length=16,
+        values_callable=lambda e: [member.value for member in e],
+    )
+
+
+def _integration_purpose_type() -> Enum:
+    return Enum(
+        IntegrationPurpose,
+        name="integration_purpose",
+        native_enum=False,
+        length=16,
         values_callable=lambda e: [member.value for member in e],
     )
 
@@ -773,6 +828,15 @@ class AgentKey(Base):
 
     Every credential is stored as a SHA-256 digest only, like a session.
 
+    **An integration key is the same row** with ``kind`` ``integration``
+    (:class:`AgentKeyKind`): a server's static secret, ``secret_hash``, in
+    place of the connection key and the chain, ``allowed_ips`` and
+    ``purpose`` in place of the scopes, and no ``expires_at``. One table
+    rather than two because everything that follows a key follows it too: the
+    voucher stamp, the stops for the person's events, the refusal counter, the
+    mails. ``ck_agent_key_credential_matches_kind`` keeps a row one or the
+    other, never half of each.
+
     ``user_id`` cascades, which is safe for a reason worth stating: a voucher
     registered with a key names the key's person as its author too, so a
     person any voucher names is kept as a tombstone (docs/gdpr.md) and their
@@ -783,7 +847,17 @@ class AgentKey(Base):
     __tablename__ = "agent_key"
     __table_args__ = (
         UniqueConstraint("connection_key_hash", name="uq_agent_key_connection_key_hash"),
+        UniqueConstraint("secret_hash", name="uq_agent_key_secret_hash"),
         CheckConstraint("expires_at > created_at", name="expires_after_creation"),
+        CheckConstraint(
+            "(kind = 'agent' AND connection_key_hash IS NOT NULL"
+            " AND connection_key_expires_at IS NOT NULL AND expires_at IS NOT NULL"
+            " AND secret_hash IS NULL)"
+            " OR (kind = 'integration' AND secret_hash IS NOT NULL"
+            " AND allowed_ips IS NOT NULL AND purpose IS NOT NULL"
+            " AND connection_key_hash IS NULL)",
+            name="credential_matches_kind",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -801,11 +875,16 @@ class AgentKey(Base):
     # (:class:`AgentApproval`) instead of running. Never overlaps ``scopes``,
     # and never holds ``read``, which every key does on its own.
     approval_scopes: Mapped[str] = mapped_column(String(64), default="", server_default="")
-    connection_key_hash: Mapped[str] = mapped_column(String(TOKEN_HASH_LENGTH))
-    connection_key_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # NULL for an integration key, which has no connection key to exchange.
+    connection_key_hash: Mapped[str | None] = mapped_column(String(TOKEN_HASH_LENGTH))
+    connection_key_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     exchanged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # A year after creation for an agent key. NULL for an integration key,
+    # which works until it is stopped: a server cannot notice a deadline, and
+    # invoicing that stops one morning without anybody being told is worse
+    # than a key the owner sees, with its last use, on the page.
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Slid at most once a minute, as a session's is, so a busy agent does not
     # turn this row into a write on every request.
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -814,8 +893,27 @@ class AgentKey(Base):
     last_used_client: Mapped[str | None] = mapped_column(String(255))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_reason: Mapped[AgentKeyStop | None] = mapped_column(_stop_type(), nullable=True)
+    # Kept in the database too, unlike most defaults here: every row written
+    # before integration keys existed, or by anything that does not know about
+    # them, is an agent key.
+    kind: Mapped[AgentKeyKind] = mapped_column(
+        _key_kind_type(), default=AgentKeyKind.AGENT, server_default=AgentKeyKind.AGENT.value
+    )
+    # The integration key's secret (``myntos_ik_``), as a SHA-256 digest.
+    secret_hash: Mapped[str | None] = mapped_column(String(TOKEN_HASH_LENGTH))
+    # Where an integration key may be used from: IPv4 and IPv6 networks in
+    # CIDR form, a single address as /32 or /128, space-separated, as
+    # :func:`myntos.auth.integration_keys.parse_addresses` wrote them.
+    allowed_ips: Mapped[str | None] = mapped_column(Text)
+    purpose: Mapped[IntegrationPurpose | None] = mapped_column(
+        _integration_purpose_type(), nullable=True
+    )
 
     user: Mapped[User] = relationship()
+
+    @property
+    def is_integration(self) -> bool:
+        return self.kind is AgentKeyKind.INTEGRATION
 
     @property
     def scope_set(self) -> frozenset[AgentKeyScope]:

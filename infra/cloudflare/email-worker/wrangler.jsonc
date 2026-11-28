@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "myntos-inbound-email",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "WEBHOOK_URL": "https://api.myntos.no/api/v1/webhooks/inbound-email"
+  }
+}

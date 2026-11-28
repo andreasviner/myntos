@@ -59,11 +59,11 @@ export interface Sammenligning {
   kilder: Kilde[];
 }
 
-/** Det som skiller Myntos fra alle programmene her, sagt én gang. */
+/** Det som skiller Myntos fra alle programmene her, samlet på ett sted. */
 export const myntosFelles: string[] = [
-  'Gratis for alltid, også skattemeldingen for aksjeselskap og alt som kommer senere',
+  'Regnskapet er gratis for alltid, også skattemeldingen for aksjeselskap og alt som kommer senere',
   'Offentlig kildekode: du kan lese hvordan tallene blir til, og drifte Myntos selv',
-  'KI-en som leser bilagene, kjører i Norge, lagrer ingenting og kan slås av for hele selskapet',
+  'KI-en som leser bilagene, er med uten tillegg, kjører i EØS, lagrer ingenting og kan slås av for hele selskapet',
   'Hele API-et uten tillegg i prisen, også for ChatGPT, Claude eller en modell du kjører selv',
 ];
 
@@ -101,7 +101,7 @@ export const sammenligninger: Sammenligning[] = [
       { hva: 'Skattemelding for enkeltpersonforetak', myntos: 'Ikke i Myntos ennå', dem: '1 290 kr/år' },
       { hva: 'Bank', myntos: 'Kontoutskrift som fil (camt.053), 0 kr', dem: 'Bankkobling, 69 kr/mnd' },
       { hva: 'KID på fakturaen', myntos: '0 kr', dem: '69 kr/mnd' },
-      { hva: 'Sende EHF', myntos: 'Over Peppol, 0 kr', dem: 'Inkludert' },
+      { hva: 'EHF (sende og motta)', myntos: 'Over Peppol, 0 kr', dem: 'Inkludert' },
       { hva: 'Lønn', myntos: 'Ikke i Myntos ennå', dem: '69 kr per bruker/mnd' },
       { hva: 'API og egne integrasjoner', myntos: '0 kr, også for KI-assistenter', dem: '99 kr/mnd' },
     ],
@@ -170,7 +170,7 @@ export const sammenligninger: Sammenligning[] = [
         dem: 'Bankintegrasjon 49 kr/mnd, og 4 kr per betaling fra programmet',
       },
       { hva: 'Innbetaling med KID', myntos: 'KID på fakturaen, 0 kr', dem: '4 kr per innbetaling' },
-      { hva: 'Sende EHF', myntos: 'Over Peppol, 0 kr', dem: '4 kr per EHF, sendt eller mottatt' },
+      { hva: 'EHF (sende og motta)', myntos: 'Over Peppol, 0 kr', dem: '4 kr per EHF, sendt eller mottatt' },
       {
         hva: 'Lønn',
         myntos: 'Ikke i Myntos ennå',
@@ -191,7 +191,6 @@ export const sammenligninger: Sammenligning[] = [
       'Lønn, a-melding og reiseregning',
       'Årsregnskapet til Regnskapsregisteret, og aksjonærregisteroppgaven, som siden juni 2026 bare kan sendes fra et regnskapsprogram',
       'Skattemelding med næringsspesifikasjon for enkeltpersonforetak',
-      'Mottak av EHF, så leverandørfakturaene kommer rett inn i programmet',
       'Bankintegrasjon, med betaling av regninger fra programmet',
       'Å registrere at en kunde har betalt fakturaen',
       'Prosjekt, timeregistrering, lager og attestering',
@@ -205,7 +204,6 @@ export const sammenligninger: Sammenligning[] = [
     ],
     velgDem: [
       'du har ansatte eller tar ut lønn',
-      'du vil ta imot leverandørfakturaer som EHF i programmet',
       'du vil levere årsregnskapet og aksjonærregisteroppgaven fra samme program som regnskapet',
       'du fører prosjekter, timer eller lager',
       'du vil betale regningene rett fra regnskapsprogrammet',

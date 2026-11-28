@@ -286,15 +286,69 @@ Not tried in production yet: whether Altinn creates an instance for a deleted
 party, and whether a former daglig leder still holds the right to file for
 it there. The first real case is the owner's own AS, deleted 2026-07-21.
 
+### Enkeltpersonforetak (ENK) skattemelding and næringsspesifikasjon (built 2026-11-28)
+
+An enkeltpersonforetak (ENK) files its næringsspesifikasjon together with the
+owner's personal skattemelding (`skattemeldingPersonlig`, XSD `skattemelding_v13`
+for 2025 and `skattemelding_v14` for 2026), always on the owner's 11-digit
+**fødselsnummer** (never the orgnr). Code lives in `skattemelding/personlig.py`
+alongside `naeringsspesifikasjon.py`, `service.py`, `codes.py`, `schema.py`,
+and `api/v1/skattemelding.py`:
+
+- **Identity and privacy:** The check and submission use `attempt.pid` from the
+  logged-in owner's ID-porten session (409 if the login has no `pid`) as the
+  Skatteetaten path identifier and as `instanceOwner.personNumber` on the
+  Altinn 3 instance. The request envelope omits `<tin>` (optional in
+  `request_v2.xsd` and omitted in Skatteetaten's official ENK examples), and
+  `answers` never stores the fødselsnummer.
+- **Preserving personal items:** `personlig.complete` merges the fetched
+  personal skattemelding with empty additions so every prefilled or user-edited
+  personal post (salary, bank accounts, mortgages, private deductions,
+  oppgavegiver) stays untouched. On a re-filing of a `Fastsatt` return, derived
+  totals and non-overridden derived `<naering>` stubs (`naeringsinntektMv`,
+  `samletGjeldOgFormuesobjekterINaering`) are stripped before merging, while
+  any `erOverstyrt="true"` value is kept.
+- **Hand-off default (`ikkeKomplett`):** ENK checks default to
+  `innsendingstype="ikkeKomplett"` so the næringsspesifikasjon is transferred
+  to the owner's personal return and the UI shows a direct link to
+  `skatt.skatteetaten.no/web/skattemeldingen/{year}` (test: `skatt-test.sits.no`)
+  to review personal items and submit. The owner may also opt into `komplett`
+  for direct full submission.
+- **Regnskapsplikt and auto-derived posts:** ENK defaults to
+  `ingenRegnskapsplikt` (switching to `fullRegnskapsplikt` above 20 million NOK
+  in assets per regnskapsloven § 1-2). Under `ingenRegnskapsplikt`,
+  Skatteetaten's Kotlin calculators auto-create result and balance posts
+  (`6000`, `3895`, `3890`, `7890`, saldo asset posts `1080` to `1280`, `1296`,
+  `2095`, `2096`, `1500`, `1400`, `1401`) from their specifications. Myntos
+  keeps all posts in the preview and omits auto-created posts from the XML when
+  emitting the corresponding specification (`saldoavskrevetAnleggsmiddel`,
+  `gevinstOgTapskonto`, `spesifikasjonAvOmloepsmiddel` including
+  `buskap.year_count` for farms) so Skatteetaten never double-counts them.
+- **Beregnet personinntekt (skatteloven § 12-10 ff.):** `personlig.compute_personinntekt`
+  builds `spesifikasjonAvSkjermingsgrunnlag` (saldi, inventory, receivables,
+  supplier debt, foretaksgjeld), reads `personinntekt.skjermingsrente` from the
+  vendored yearly `satserIFormuesOgInntektsskatt` code list (4.6 % for
+  2025/2026), applies finance adjustments (`8150` interest on foretaksgjeld
+  deducted once), `antallMaanederDrevetIAar`, and `andelAvPersoninntektTilordnetInnehaver`.
+  Only inputs are written to XML; Skatteetaten computes the derived deduction
+  and final personinntekt.
+- **Formue and equity:** ENK formue sums posts marked `overfoeresTilSME="true"`
+  (excluding bank deposits `1920`, bank loans `2220`, self-produced farm feed
+  `1401`, real estate, and shares). Pre-closing movements on `2055`/`2060`
+  populate `privatkonto` and `kontantinnskudd` in `egenkapitalavstemming`.
+- **No forhåndsfastsetting:** Skatteetaten refuses `PART_TYPE_ER_IKKE_STOETTET`
+  for personal returns, so `service.is_final` is always false for ENK.
+
 **Not built**, and what each means for a user:
 
-- **An enkeltpersonforetak.** Its næringsspesifikasjon goes with the owner's
-  personal skattemelding, on fødselsnummer; the review says `enk_ikke_ferdig`
-  and the owner files on skatteetaten.no. ANS, DA and the other forms are
-  refused the same way.
+- **Other organisation forms (ANS, DA, SA, NUF, ...):** refused with
+  `organisasjonsform_ikke_stottet`; only AS and ENK are filed from Myntos.
 - **Real estate and shares in the formue**: their formue value is not their
   book value, so they are left out and named in the findings; the person adds
   them on skatteetaten.no after filing.
+- **Farming tax cards (`jordbrukskonto` § 14-82, `skogOgToemmerkonto` § 14-81):**
+  added on skatteetaten.no when applicable (livestock/feed counts from
+  `/buskap/` are already included in `spesifikasjonAvSkattemessigVarelager`).
 - **Saldo groups beyond a–j** (time-limited rights, non-depreciable assets,
   `anlegg_ikke_stottet`), and attachments (PDF `skattemelding-vedlegg`).
 - **The async job API** (`…/v2/jobb/…`), mandatory above 10 MB of base64
@@ -305,6 +359,10 @@ it there. The first real case is the owner's own AS, deleted 2026-07-21.
   correction before the deadline is a new egenfastsetting from the same page.
 - **A forhåndsfastsetting in last year's format** (`fjoraaretsSkattemelding`),
   above; refused by name, filed on skatteetaten.no.
+- **Live TT02 ENK smoke test:** all ENK XMLs (næringsspesifikasjon v6/v7,
+  skattemeldingPersonlig v13/v14, request v2) are validated against official
+  Skatteetaten XSDs in the test suite; live TT02 submission with a synthetic
+  Tenor ENK owner is still pending.
 
 ## Taxpayer groups (2026)
 
@@ -325,7 +383,9 @@ Needs only `altinn:instances.read/write`; flow = instantiate → fill
 hovedskjema/underskjema → attachments → lock → **sign** (auto-submits).
 Same pattern: systembruker can fill, **signing requires ID-porten** (a
 personnummer is legally attached). Reuses our Maskinporten/Altinn plumbing
-wholesale. Support: `#annual-accounts-systeminnsending` on
+wholesale. **Built 2026-11-28**: see [aarsregnskap.md](aarsregnskap.md) for the
+full specification, RR-0002 / RR-0002-U XSDs, Altinn 3 state machine, routes,
+and deployment notes. Support: `#annual-accounts-systeminnsending` on
 digdir-samarbeid.slack.com.
 
 ## Onboarding (manual, slow — ROADMAP phase 0b)
@@ -367,9 +427,9 @@ FEATURES.md row it is for, so a reviewer asking what it is for gets an answer.
 | `skatteetaten:innrapporteringamelding` | A-melding, and its avstemmingsrapport (A07) | 14, 43 | resources `ske-innrapportering-amelding`, `ske-avstemmingsinformasjon-amelding` |
 | `skatteetaten:skattekorttilarbeidsgiver` | Tax cards for payroll | 14 | resource `ske-skattekort-til-arbeidsgiver` |
 | `skatteetaten:innrapporteringbetalingerselvstendignaeringsdrivende` | RF-1321, payments to sole traders | not ranked yet; the API is ready if the duty turns out to apply to Myntos's customers | resource `ske-innrapportering-betalinger-selvstendig-naeringsdrivende` |
-| `skatteetaten:kravogbetalinger` | Krav og betalinger: what a company owes Skatteetaten, has paid and has been repaid | 41, 43, 45 | access package `krav-og-utlegg` |
-| `skatteetaten:frister` | Frister: a company's own deadlines | 22 | access package `krav-og-utlegg` |
-| `skatteetaten:skattdialogdokument` | Skatteetaten's letters and the skatteoppgjør, through Dialogporten | 41 | the resource the dialog belongs to. `formueinntekt/skattemelding` reaches it today only for a transition period |
+| `skatteetaten:kravogbetalinger` | Krav og betalinger: what a company owes Skatteetaten, has paid and has been repaid | 41, 43, 45 | resource `ske-krav-og-betalinger` (the `krav-og-utlegg` package reaches it too, and covers more) |
+| `skatteetaten:frister` | Frister: a company's own deadlines | 22 | resource `ske-frister` (likewise) |
+| `skatteetaten:skattdialogdokument` | Skatteetaten's letters and the skatteoppgjør, through Dialogporten | 41 | nothing to apply for: Skatteetaten (2026-11-19) says `formueinntekt/skattemelding` reaches it. This row used to say that held only for a transition period, and their answer does not say so, so ask again if Dialogporten starts refusing it |
 
 **Krav og betalinger and Frister are sharing APIs, but not the kind refused
 above.** Rettighetspakke `regnskapssystem` gives an end-user system a
@@ -382,16 +442,45 @@ company's *own* data on three conditions, quoted from Skatteetaten:
 Myntos is the company's databehandler for it (personvern § 3d). These two are
 ordered through the brukerstøtte form, not on the scope application.
 
-**Where it stands (2026-11-06).** Skatteetaten granted Lindeman Technologies AS
-«Frister API - Regnskapssystem» and «Krav og betalinger API - Regnskapssystem»,
-in test and production, on the brukerstøtte case. The case's system description
-also named the other four scopes still marked «Tilgang mangler»
-(aksjonærregisteroppgave, skattekort, RF-1321, skattdialogdokument), and
-Skatteetaten answered that it will come back about those. `innrapporteringamelding`
-was not asked for, because Samarbeidsportalen already showed it granted on
-2026-11-03. What the grant does not do by itself:
-- Neither scope reaches a token until it is ticked onto each Maskinporten client
-  (below).
+**Where it stands (probed 2026-11-25).** Every scope in the table above that
+Myntos asked for is granted in production, and the production Maskinporten
+client `a7693ab9` issues a token for each. That is one token request per
+scope, with no API called. How it got there is below.
+
+Skatteetaten granted Lindeman
+Technologies AS «Frister API - Regnskapssystem» and «Krav og betalinger API -
+Regnskapssystem», in test and production, on the brukerstøtte case
+(2026-11-06), and the production Maskinporten client `a7693ab9` issues tokens
+for both. The case's system description named four more scopes, and
+Skatteetaten closed the case on 2026-11-19 without granting them:
+- **`skattdialogdokument` is not needed**: «dere skal allerede ha tilgang til
+  dialogdokument-tjenesten, gjennom scopet skatteetaten:formueinntekt/skattemelding».
+- **The other three (aksjonærregisteroppgave, skattekort, RF-1321) have to be
+  applied for «på vanlig måte»**: ticked as services on the access
+  application, with the bruksvilkår accepted for each one. Naming them in the
+  brukerstøtte form's free text did not count. Only what was ticked under
+  «Velg tjeneste(r)» (Krav og betalinger, Frister) was handled.
+
+On that form the services sit under «Hvilke tjenesteområder»:
+- the aksjonærregisteroppgave under **Aksjonærregisteret**
+- skattekort under **Skattekort til arbeidsgiver**
+- RF-1321 under **Tredjepartsopplysninger**: «tredjepartsopplysninger om
+  betalinger til selvstendig næringsdrivende» on api-dokumentasjon, not
+  Kontrollopplysninger
+
+Kontrollopplysninger is the SAF-T upload (saf-t.md).
+
+All four are ticked onto `a7693ab9`. On 2026-11-21 Maskinporten refused each
+with «Consumer has not been granted access to the scope», which means the grant
+was missing, not the client registration. The three were then applied for on
+the ordinary form. By 2026-11-25 `a7693ab9` issued tokens for all three:
+aksjonærregisteroppgave, skattekort and RF-1321. `innrapporteringamelding` was not asked
+for, because Samarbeidsportalen already showed it granted on 2026-11-03, and
+`a7693ab9` issues it. What the grant does not do by itself:
+- **Test has them too.** The test Maskinporten client `f8293b48` got a new key
+  on 2026-11-25, after the old one was lost in the 2026-09-06 rebuild. It then
+  issued tokens for all seven, so each is granted in test and ticked onto the
+  client (maskinporten.md).
 - **In production, Krav og betalinger may answer for nothing but Lindeman
   Technologies AS during Skatteetaten's pilot.** Its test tab says a
   regnskapssystem may look up every test company in test, "selv om de i
@@ -417,26 +506,35 @@ Left out on purpose:
 - **Third-party reporting that belongs to someone else.** Banks, insurers and
   funds report their own customers. A farm's milk, grain, slaughter, timber and
   eggs are reported by its buyers (Tine, Nortura and the others), not by the
-  farm.
+  farm. «Skattefrie utbetalinger» is RF-1319, payments from public
+  authorities, which the authorities report.
+- **Third-party reporting for kinds of customer Myntos has no add-on for
+  yet**, left off the 2026-11-21 application:
+  - pass og stell (RF-1241, kindergartens and SFO)
+  - boligselskap and boligsameie (RF-1139, RF-1140)
+  - gaver til frivillige (RF-1310)
+
+  Each goes on an application of its own when that add-on is built.
 - **RF-1199** (foreign contractors, OAR): nothing in FEATURES.md asks for it
   yet.
 
 In the same round, outside Skatteetaten:
 - **Maskinporten clients.** Tick each scope onto test `f8293b48` and production
   `a7693ab9` as it is granted. A grant to the organization does nothing until
-  each client has it. `digdir:dialogporten` is granted but not yet on the test
-  client (maskinporten.md).
-- **The system `938193045_myntos`.** One `PUT` of the whole document adds the
-  resources above and the `krav-og-utlegg` package.
-  - `registration_payload` and `request_system_user` send `rights` only, so
-    `accessPackages` has to be added to both first.
-  - The system is registered only in TT02: production's `.env` has no
-    `ALTINN_VENDOR_ORGNR`.
+  each client has it. Both clients issue tokens for all six from the
+  application and for `digdir:dialogporten` (probed 2026-11-25). For test,
+  that was the first probe since its key was lost.
+- **The system `938193045_myntos`, registered in production on 2026-11-25**
+  with every resource in the table above, the skattemelding app, and MVA as the
+  `merverdiavgift` access package. Production refused the MVA app as a resource
+  because it is not delegable there (maskinporten.md, Systembruker). The TT02
+  registration was brought to the same list the same day, with one `PUT`.
   - The system's list is a ceiling, and each company's request still names only
     what that company uses. A company that needs more later approves again, so
     the first request should ask for what the company will use within the year.
-- **ID-porten client.** Add `altinn:clientdelegations/myclients.read`, for the
-  regnskapsfører's client list (FEATURES.md 23).
+- **ID-porten client.** `altinn:clientdelegations/myclients.read`, for the
+  regnskapsfører's client list (FEATURES.md 23), is on production `7af0f9b3`
+  (2026-11-21), not yet on test `5aa404aa`.
 
 ## Gotchas
 

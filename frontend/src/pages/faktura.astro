@@ -1,4 +1,5 @@
 ---
+import KiInput from '../components/KiInput.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 ---
 
@@ -50,20 +51,6 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     plass.
   </p>
 
-  {/* Øverst og ikke bare i notisen nederst: fra 2027 er EHF slik en faktura
-      til en bedrift blir levert, så dette gjelder hver faktura som skrives her,
-      og uten registreringen kan Myntos bare lage filen. Lenken står bare for
-      den som kan registrere selskapet; andre får vite hvem som kan. */}
-  <p class="notice" id="efaktura-missing" hidden>
-    Fra <span id="efaktura-missing-date"></span> skal fakturaer til andre bokføringspliktige sendes
-    som EHF over Peppol. Selskapet er ikke registrert for e-faktura ennå, så Myntos kan ikke sende
-    dem for deg.
-    <span id="efaktura-missing-link"
-      ><a href="/organisasjon/#efaktura">Sett opp e-faktura under Selskap</a>.</span
-    >
-    <span id="efaktura-missing-others">En administrator setter det opp under Selskap.</span>
-  </p>
-
   <div class="empty" id="loading">Henter …</div>
 
   {/* Ett steg under det andre, hvert i hele bredden. Skjemaet sto i en smal
@@ -76,6 +63,49 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       <p class="card-hint">Rollen din lar deg se fakturaene, men ikke skrive eller utstede.</p>
     </div>
 
+    {/* Fra 1. januar 2027 er e-faktura (EHF over Peppol) lovpålagt ved salg til
+        andre bokføringspliktige, og e-faktura er standard i Myntos. Når
+        installasjonen har tilgangspunkt og selskapet ikke har aktivert sending
+        ennå, møter brukeren dette oppsettet før første faktura — med ett klikk
+        rett på siden straks selskapet er bekreftet i Altinn. Privatkunder
+        (B2C) er unntatt fra kravet og kan faktureres uten EHF via lenken under. */}
+    <div class="card efaktura-setup" id="efaktura-setup-card" hidden>
+      <h2 class="card-title">Sett opp e-faktura (EHF) før første faktura</h2>
+      <p class="card-hint">
+        Fra <span id="efaktura-setup-date"></span> skal fakturaer til andre bedrifter sendes som
+        EHF over Peppol, og e-faktura er standard i Myntos. Når du utsteder en faktura til en
+        bedrift på Peppol, sendes den automatisk som EHF.
+      </p>
+      <p class="card-hint">
+        Oppsettet gjelder bare <strong>sending</strong> og endrer ikke hvor selskapet mottar
+        leverandørfakturaer.
+      </p>
+      <p class="card-hint" id="efaktura-setup-step"></p>
+      <p class="status" id="efaktura-setup-status" hidden></p>
+      <div class="form-actions">
+        <a
+          class="btn btn-primary"
+          id="efaktura-setup-confirm"
+          href="/organisasjon/#eierskap"
+          hidden
+        >
+          Bekreft selskapet med ID-porten
+        </a>
+        <button type="button" class="btn btn-primary" id="efaktura-setup-activate" hidden>
+          Aktiver e-faktura (EHF)
+        </button>
+        <a class="btn btn-ghost" id="efaktura-setup-settings" href="/organisasjon/#selskap" hidden>
+          Oppdater selskapsadresse
+        </a>
+      </div>
+      <p class="card-hint efaktura-setup-escape">
+        Fakturerer du bare en privatperson?
+        <button type="button" class="btn-link" id="efaktura-setup-consumer">
+          Skriv faktura uten e-faktura
+        </button>
+      </p>
+    </div>
+
     <div class="card form-card" id="form-card">
       <h2 class="card-title" id="form-title">Ny faktura</h2>
 
@@ -86,21 +116,26 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           «Linjer». Bare når selskapet har KI på og installasjonen har en modell:
           en knapp som alltid feiler, er verre enn ingen knapp. */}
       <div class="assist" id="fill-card" hidden>
-        <label class="field">
-          <span>Lim inn fakturaopplysningene fra kunden, eller beskriv salget</span>
-          <textarea
-            id="fill-text"
-            rows="4"
-            placeholder="Faktura til Bygg AS for 10 timer rådgivning levert 14. oktober, 1 500 kroner timen. Deres ref: Ola Nordmann"
-          ></textarea>
+        <div class="field">
+          <label class="assist-label" for="fill-text">
+            Lim inn fakturaopplysningene fra kunden, eller beskriv salget
+          </label>
+          {/* Et skjermbilde av kundens e-post er like vanlig som e-posten selv,
+              så bildeknappen leser det til tekst her, der det kan rettes før
+              noe sendes. */}
+          <KiInput id="faktura-fyll">
+            <textarea
+              id="fill-text"
+              rows="4"
+              placeholder="Faktura til Bygg AS for 10 timer rådgivning levert 14. oktober, 1 500 kroner timen. Deres ref: Ola Nordmann"
+            ></textarea>
+            <button slot="actions" type="button" class="btn btn-primary btn-small" id="fill-draft">
+              Fyll ut fakturaen
+            </button>
+          </KiInput>
           <span class="field-hint">
             Vi fyller inn det teksten sier, og bare det. Alt som fylles inn, merkes med KI.
           </span>
-        </label>
-        <div class="assist-actions">
-          <button type="button" class="btn btn-ghost btn-small" id="fill-draft">
-            Fyll ut fakturaen
-          </button>
         </div>
         <p class="status" id="fill-status" hidden></p>
       </div>
@@ -260,18 +295,18 @@ import BaseLayout from '../layouts/BaseLayout.astro';
               den inn øverst beskriver salget her. Vises på samme vilkår som
               boksen øverst. */}
           <div class="assist" id="ki-card" hidden>
-            <label class="field">
-              <span>Beskriv salget, så setter vi opp linjene</span>
-              <textarea
-                id="ki-text"
-                rows="3"
-                placeholder="10 timer rådgivning i mars til 1 500 kroner timen, og to kursmapper à 450"
-              ></textarea>
-            </label>
-            <div class="assist-actions">
-              <button type="button" class="btn btn-ghost btn-small" id="ki-draft">
-                Foreslå linjer
-              </button>
+            <div class="field">
+              <label class="assist-label" for="ki-text">Beskriv salget, så setter vi opp linjene</label>
+              <KiInput id="faktura-linjer">
+                <textarea
+                  id="ki-text"
+                  rows="3"
+                  placeholder="10 timer rådgivning i mars til 1 500 kroner timen, og to kursmapper à 450"
+                ></textarea>
+                <button slot="actions" type="button" class="btn btn-primary btn-small" id="ki-draft">
+                  Foreslå linjer
+                </button>
+              </KiInput>
             </div>
             <p class="status" id="ki-status" hidden></p>
           </div>
@@ -338,6 +373,23 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           <div id="review-findings" hidden>
             <h3 class="findings-title" id="findings-title"></h3>
             <ul class="violations" id="violations"></ul>
+          </div>
+
+          <div class="review-efaktura" id="review-efaktura" hidden>
+            <p class="status" id="review-efaktura-status" hidden></p>
+            <div class="form-actions">
+              <a
+                class="btn btn-primary"
+                id="review-efaktura-confirm"
+                href="/organisasjon/#eierskap"
+                hidden
+              >
+                Bekreft selskapet med ID-porten
+              </a>
+              <button type="button" class="btn btn-primary" id="review-efaktura-activate" hidden>
+                Aktiver e-faktura (EHF)
+              </button>
+            </div>
           </div>
 
           <div class="form-actions">
@@ -624,17 +676,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     resize: vertical;
     font: inherit;
   }
-  .assist-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.8rem;
-    flex-wrap: wrap;
-  }
   .assist .status {
     margin-bottom: 0;
   }
   #fill-card {
     margin-top: 0.4rem;
+  }
+  /* Ledeteksten over KI-boksen, lik `.field > span`. En egen klasse, fordi
+     boksen under har radioknapper, og en <label> rundt dem ville gjort hele
+     rammen til en etikett for tekstfeltet. */
+  .assist-label {
+    display: block;
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-bottom: 0.35rem;
   }
   /* A field the box at the top filled in, until the person changes it. Tinted
      like a proposed line, and marked «KI» after its label, because a value a
@@ -909,6 +964,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     font-size: 0.92rem;
     margin-bottom: 1rem;
   }
+  .efaktura-setup .form-actions {
+    margin-top: 1rem;
+  }
+  .efaktura-setup .form-actions .btn {
+    flex: 0 1 auto;
+  }
+  .efaktura-setup-escape {
+    margin-top: 1rem;
+    padding-top: 0.85rem;
+    border-top: 1px solid var(--border);
+  }
+  .review-efaktura {
+    margin-bottom: 1rem;
+  }
   /* The review and the issued invoice: what to read and press on the left, the
      PDF on the right. Stacked on a narrow screen with the buttons first, since a
      PDF at the top of a phone screen puts them out of reach. A browser that
@@ -1083,6 +1152,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     listParties,
     lookupUnit,
     registerInvoicePayment,
+    registerPeppol,
     reverseCashFlow,
     sendFaktura,
     updateFaktura,
@@ -1102,6 +1172,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   import { normaliseAmount } from '../lib/amount';
   import { el, setStatus, show } from '../lib/dom';
   import { isoDate, kontonummer, kroner, todayIso } from '../lib/format';
+  import { mountKiInputs } from '../lib/kiinput';
   import {
     FILLABLE_FIELDS,
     describeFill,
@@ -1111,12 +1182,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     type FormState,
   } from '../lib/invoice-proposal';
   import {
+    ACTIVATE_LABEL,
     ISSUE_AND_SEND_LABEL,
     ISSUE_ONLY_LABEL,
     SEND_AGAIN_LABEL,
     SEND_LABEL,
     delivery,
     deliverySentence,
+    needsSetupGate,
     sendable,
     sendingLabel,
     sendingSentence,
@@ -1154,6 +1227,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   let catalogue: FakturaCatalogue;
   let parties: Party[] = [];
   let mayWrite = false;
+  let mayRegister = false;
+  /** True once the user chose to write a private-consumer (B2C) invoice without EHF setup. */
+  let consumerOnly = false;
   /** The draft being edited, or null when the form is writing a new one. */
   let editing: Faktura | null = null;
   /**
@@ -1546,15 +1622,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     field.value = nextKid;
     if (nextKid === '') {
       hint.textContent =
-        'Settes automatisk når fakturaen utstedes: fakturanummeret og et kontrollsiffer.';
+        'Settes automatisk når fakturaen utstedes: utstedelsesdato, fakturanummer og et kontrollsiffer.';
       return;
     }
-    // Fakturanummeret og et kontrollsiffer, uten nuller foran. Den var
-    // kundenummer og fakturanummer fylt ut med nuller, og 000000000018 skrives
-    // ikke riktig av den som leser den av en papirfaktura (2026-10-23).
+    // Utstedelsesdato (ÅÅÅÅMMDD), fakturanummeret og et kontrollsiffer (fra
+    // 2026-11-25): minst 10 siffer uten ledende nuller å telle feil på.
     hint.textContent =
-      `Settes når fakturaen utstedes. Blir ${nextKid} hvis ingen annen faktura ` +
-      'utstedes først: fakturanummeret og et kontrollsiffer.';
+      `Settes når fakturaen utstedes. Blir ${nextKid} hvis den utstedes i dag ` +
+      'før en annen faktura: dato, fakturanummer og et kontrollsiffer.';
   }
 
   /** Refresh the preview. Quiet on failure: the field explains itself in words. */
@@ -1832,9 +1907,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       return;
     }
     button.disabled = true;
+    const level = ki.level('faktura-linjer');
     setStatus(status, 'Setter opp linjene …', 'ok');
     try {
-      const draft = await draftFakturaLines(company.id, text);
+      const draft = await draftFakturaLines(company.id, text, level);
+      ki.answered(level, draft.ki_level);
       const said = draft.warnings.join(' ');
       if (draft.lines.length === 0) {
         setStatus(status, said || 'Vi fikk ikke laget linjer av beskrivelsen.');
@@ -1926,9 +2003,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       return;
     }
     button.disabled = true;
+    const level = ki.level('faktura-fyll');
     setStatus(status, 'Fyller ut fakturaen …', 'ok');
     try {
-      const proposal = await draftFaktura(company.id, text);
+      const proposal = await draftFaktura(company.id, text, level);
+      ki.answered(level, proposal.ki_level);
       const plan = planFill(proposal, formState(), parties);
       applyFill(plan);
       // Et skjema som alt har linjer, får de nye under, aldri i stedet.
@@ -2010,16 +2089,48 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     form.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
+  function renderSetupCard(): void {
+    el('#efaktura-setup-date').textContent = isoDate(catalogue.e_invoice_mandatory_from);
+    el<HTMLButtonElement>('#efaktura-setup-activate').textContent = ACTIVATE_LABEL;
+    el<HTMLButtonElement>('#review-efaktura-activate').textContent = ACTIVATE_LABEL;
+    const confirmed = peppol?.company_confirmed === true;
+    const step = el('#efaktura-setup-step');
+    if (!confirmed) {
+      step.textContent =
+        'Steg 1: Bekreft selskapet med ID-porten så bare de som kan handle for selskapet kan ' +
+        'sende fakturaer i dets navn. Steg 2: Kom tilbake hit og aktiver e-faktura med ett klikk.';
+    } else if (mayRegister) {
+      step.textContent =
+        'Selskapet er bekreftet i Altinn. Trykk på knappen under for å aktivere e-faktura ' +
+        'med en gang.';
+    } else {
+      step.textContent =
+        'En eier eller administrator må aktivere e-faktura én gang under Organisasjon → ' +
+        'E-faktura før selskapet kan utstede fakturaer til andre bedrifter.';
+    }
+    show(el('#efaktura-setup-confirm'), !confirmed);
+    show(el('#efaktura-setup-activate'), confirmed && mayRegister);
+    show(el('#efaktura-setup-settings'), false);
+  }
+
+  function updateEfakturaNote(): void {
+    el('#efaktura-note').textContent =
+      `Fra ${isoDate(catalogue.e_invoice_mandatory_from)} skal salg til andre bokføringspliktige ` +
+      'faktureres elektronisk (EHF/Peppol). Myntos lager EHF-filen for hver utstedte faktura. ' +
+      efakturaNote(peppol);
+  }
+
   /**
    * Which step the left column is showing.
    *
-   * Three cards, one at a time: the form, the review, and what came out. They
-   * are steps rather than panels stacked down the page, because the review exists so
-   * that issuing is a thing you *read* before you do, and a form still visible
-   * under it invites editing something the review has already checked.
+   * Four cards, one at a time: the EHF setup gate (until sending is active, or
+   * the user explicitly writes a private-consumer invoice), the form, the
+   * review, and what came out.
    */
   function showStep(step: 'form' | 'review' | 'done'): void {
-    show(el('#form-card'), step === 'form' && mayWrite);
+    const gate = step === 'form' && mayWrite && needsSetupGate(peppol) && !consumerOnly && editing === null;
+    show(el('#efaktura-setup-card'), gate);
+    show(el('#form-card'), step === 'form' && mayWrite && !gate);
     show(el('#review-card'), step === 'review');
     show(el('#done-card'), step === 'done');
   }
@@ -2118,17 +2229,24 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   function drawDelivery(saved: Faktura, blocked: boolean, how: Delivery, waiting: boolean): void {
     reviewDelivery = how;
     const sends = how === 'ehf';
+    const setupBlocked = how === 'not-registered';
     issueButton.textContent = sends ? ISSUE_AND_SEND_LABEL : ISSUE_LABEL;
-    issueButton.disabled = blocked || waiting;
+    issueButton.disabled = blocked || waiting || setupBlocked;
     issueOnlyButton.textContent = ISSUE_ONLY_LABEL;
     issueOnlyButton.disabled = waiting;
-    show(issueOnlyButton, sends && !blocked);
+    show(issueOnlyButton, sends && !blocked && !setupBlocked);
+    const confirmed = peppol?.company_confirmed === true;
+    show(el('#review-efaktura'), setupBlocked && (!confirmed || mayRegister));
+    show(el('#review-efaktura-confirm'), setupBlocked && !confirmed);
+    show(el('#review-efaktura-activate'), setupBlocked && confirmed && mayRegister);
+    if (!setupBlocked) setStatus(el('#review-efaktura-status'), '');
     const where = deliverySentence(how, saved, catalogue.e_invoice_mandatory_from);
-    el('#review-note').textContent = blocked
-      ? 'Gå tilbake og rett det som står over. Ingenting er utstedt, og utkastet ligger trygt.'
-      : 'Utstedelse er endelig: fakturaen får nummer i en ubrutt serie, bokføres, og kan ' +
-        'etterpå bare rettes med kreditnota.' +
-        (where === null ? '' : ` ${where}`);
+    el('#review-note').textContent =
+      blocked || setupBlocked
+        ? 'Rett det som står over før du utsteder. Ingenting er utstedt, og utkastet ligger trygt.'
+        : 'Utstedelse er endelig: fakturaen får nummer i en ubrutt serie, bokføres, og kan ' +
+          'etterpå bare rettes med kreditnota.' +
+          (where === null ? '' : ` ${where}`);
   }
 
   // --- The PDF in the page -------------------------------------------------------
@@ -2320,8 +2438,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       );
     }
     return (
-      'Før fakturaene kan sendes over Peppol, må selskapet registreres for e-faktura under ' +
-      'Selskap. Til da sendes filene for hånd.'
+      'Selskapet må være satt opp for e-faktura (EHF) før det kan utstede fakturaer til andre ' +
+      'bedrifter. Oppsettet gjelder bare sending.'
     );
   }
 
@@ -2964,6 +3082,68 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   issueButton.addEventListener('click', () => issue(reviewDelivery === 'ehf'));
   issueOnlyButton.addEventListener('click', () => issue(false));
 
+  async function activateEhfInline(
+    button: HTMLButtonElement,
+    status: HTMLElement,
+    onActivated: () => Promise<void>,
+  ): Promise<void> {
+    button.disabled = true;
+    setStatus(status, 'Aktiverer e-faktura …', 'ok');
+    try {
+      peppol = await registerPeppol(company.id);
+      consumerOnly = false;
+      updateEfakturaNote();
+      renderSetupCard();
+      setStatus(status, '');
+      await onActivated();
+    } catch (error: unknown) {
+      if (error instanceof ApiError && error.code === 'company_address_missing') {
+        show(el('#efaktura-setup-settings'), true);
+      }
+      setStatus(
+        status,
+        error instanceof ApiError
+          ? error.message
+          : 'Fikk ikke aktivert e-faktura akkurat nå. Prøv igjen.',
+      );
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  el<HTMLButtonElement>('#efaktura-setup-activate').addEventListener('click', (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    void activateEhfInline(button, el('#efaktura-setup-status'), async () => {
+      resetForm();
+      setStatus(
+        pageStatus,
+        'E-faktura (EHF) er aktivert. Fakturaer til bedrifter på Peppol sendes nå automatisk som EHF når du utsteder.',
+        'ok',
+      );
+    });
+  });
+
+  el<HTMLButtonElement>('#efaktura-setup-consumer').addEventListener('click', () => {
+    consumerOnly = true;
+    resetForm();
+    setChecked('buyer_is_business', false);
+  });
+
+  el<HTMLButtonElement>('#review-efaktura-activate').addEventListener('click', (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    const draft = editing;
+    if (draft === null) return;
+    void activateEhfInline(button, el('#review-efaktura-status'), async () => {
+      const freshViolations = await checkFaktura(company.id, draft.id);
+      renderReview(draft, freshViolations);
+      setStatus(
+        el('#review-status'),
+        'E-faktura (EHF) er aktivert. Du kan nå utstede og sende fakturaen som EHF.',
+        'ok',
+      );
+    });
+  });
+
   el('#done-send').addEventListener('click', () => {
     if (shown !== null) void sendFromDone(shown, true);
   });
@@ -3006,6 +3186,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   form.querySelector('[name="reverse_charge"]')?.addEventListener('change', recalculate);
   wireBuyerLookup();
 
+  // KI-boksene. Spør om selskapet på stedet, aldri en kopi: `company` er satt
+  // når boksene brukes.
+  const ki = mountKiInputs(() => company.id);
+
   // --- Boot ---------------------------------------------------------------------------
 
   void loadSession().then(async (session) => {
@@ -3042,31 +3226,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         // before there was an access point: the PDF is how the invoice goes.
         peppol = null;
       }
-      el('#efaktura-note').textContent =
-        `Fra ${isoDate(catalogue.e_invoice_mandatory_from)} skal salg til andre bokføringspliktige ` +
-        'faktureres elektronisk (EHF/Peppol). Myntos lager EHF-filen for hver utstedte faktura. ' +
-        efakturaNote(peppol);
+      updateEfakturaNote();
 
       // Spurt om selskapet, ikke om kontoen som eier det. Tilgang er en rad per
       // person per selskap, så en kollega invitert til bare dette selskapet har
       // ingen rolle i kontoen, og fikk «Du har lesetilgang» som «Eier»
       // (2026-10-23).
       mayWrite = canInCompany(company, 'ledger:write');
+      mayRegister = canInCompany(company, 'organization:manage');
       show(el('#readonly'), !mayWrite);
-
-      // Bare for den som skriver fakturaer, og bare når det finnes et
-      // tilgangspunkt å registrere seg hos. Lenken bare for den som kan
-      // registrere selskapet: den går til en knapp som er der for en
-      // administrator, og andre ville møtt en side som sier at noen andre må
-      // gjøre det.
-      el('#efaktura-missing-date').textContent = isoDate(catalogue.e_invoice_mandatory_from);
-      const mayRegister = canInCompany(company, 'organization:manage');
-      show(el('#efaktura-missing-link'), mayRegister);
-      show(el('#efaktura-missing-others'), !mayRegister);
-      show(
-        el('#efaktura-missing'),
-        mayWrite && peppol !== null && peppol.available && !peppol.can_send,
-      );
+      renderSetupCard();
 
       // Both notices are only worth showing to someone who can act on them, and
       // both name the place they are acted on. The VAT one is no longer only a
@@ -3081,6 +3250,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       const kiOffered = mayWrite && catalogue.ai_available && company.ki_enabled;
       show(el('#ki-card'), kiOffered);
       show(el('#fill-card'), kiOffered);
+      // Hvilke nivåer selskapet har nå. Ikke ventet på: boksene virker på
+      // «Gratis» til svaret kommer, og nivåvalget vises når det er kommet.
+      if (kiOffered) void ki.refresh();
 
       // The list first, so "copy the previous invoice" knows whether there is
       // one before the form is drawn.

@@ -22,18 +22,22 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from alembic.script import ScriptDirectory
 
+from myntos.aarsregnskap import models as aarsregnskap_models  # noqa: F401
+from myntos.aksjonaer import models as aksjonaer_models  # noqa: F401
 from myntos.db.base import Base
 
 # Both imported for the side effect of registering their tables on
 # Base.metadata. The migration/model comparison below covers whatever is
 # registered, so a new model module that is not imported here would silently
 # drop out of the check.
+from myntos.domain.altinn import models as altinn_models  # noqa: F401
 from myntos.domain.anlegg import models as anlegg_models  # noqa: F401
 from myntos.domain.arsoppgjor import landbruk_models  # noqa: F401
 from myntos.domain.bank import models as bank_models  # noqa: F401
 from myntos.domain.bilag import models as bilag_models  # noqa: F401
 from myntos.domain.data_sharing import models as data_sharing_models  # noqa: F401
 from myntos.domain.identity import models as identity_models  # noqa: F401
+from myntos.domain.ki import models as ki_models  # noqa: F401
 from myntos.domain.ledger import models  # noqa: F401
 from myntos.domain.mva import models as mva_models  # noqa: F401
 from myntos.domain.server_errors import models as server_error_models  # noqa: F401
@@ -802,4 +806,89 @@ def test_an_attempt_from_before_the_bankid_migration_was_a_sign_in() -> None:
             sa.text("SELECT intent, user_id FROM oauth_login_attempt WHERE id = 1")
         ).one()
         assert tuple(row) == ("login", None)
+    engine.dispose()
+
+
+def test_the_ki_nok_value_migration_backfills_known_plans_and_refuses_to_guess_spend() -> None:
+    """What ``e7a2b5c91d04`` infers and what it leaves at zero rather than inventing.
+
+    Known plan codes (``start``, ``pluss``, ``pro``) receive their NOK weekly and
+    monthly budgets. Unknown codes stay at 0.00, and historical unweighted
+    ``tokens_used`` counts are kept for telemetry while ``value_used_nok`` and
+    ``cost_nok`` start cleanly at 0.000000.
+    """
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as connection:
+        _run_until(
+            connection,
+            "e7a2b5c91d04",
+            [
+                "INSERT INTO organization (id, name, slug, created_at, "
+                "name_is_placeholder) VALUES (1, 'Kvote AS', 'kvote-as', '2026-01-01', 0)",
+                "INSERT INTO company (id, organization_id, orgnr, name, country, "
+                "currency_code, vat_registered, in_foretaksregisteret, plan, "
+                "ki_enabled, agent_access_enabled, data_sharing, vat_period_type, "
+                "vat_category) VALUES "
+                "(1, 1, '910000004', 'Kvote AS', 'NO', 'NOK', 1, 0, 'free', 1, "
+                "0, 'none', 'toMaaneder', 'alminnelig'), "
+                "(2, 1, '910000012', 'Gammel Plan AS', 'NO', 'NOK', 1, 0, 'free', 1, "
+                "0, 'none', 'toMaaneder', 'alminnelig')",
+                "INSERT INTO ki_subscription (id, company_id, plan, status, "
+                "weekly_tokens_allowance, price_excl_vat, vat_amount, price_incl_vat, "
+                "currency, started_at, current_period_start, current_period_end, "
+                "cancel_at_period_end, created_at, updated_at) VALUES "
+                "(1, 1, 'start', 'active', 250000, 49.00, 12.25, 61.25, 'NOK', "
+                "'2026-11-01 00:00:00', '2026-11-01 00:00:00', '2026-12-01 00:00:00', "
+                "0, '2026-11-01 00:00:00', '2026-11-01 00:00:00'), "
+                "(2, 2, 'legacy', 'active', 50000, 19.00, 4.75, 23.75, 'NOK', "
+                "'2026-11-01 00:00:00', '2026-11-01 00:00:00', '2026-12-01 00:00:00', "
+                "0, '2026-11-01 00:00:00', '2026-11-01 00:00:00')",
+                "INSERT INTO ki_weekly_usage (id, company_id, week_start, tokens_used) "
+                "VALUES (1, 1, '2026-11-23', 12345)",
+                "INSERT INTO ki_period (id, company_id, plan, status, reference, "
+                "mollie_mode, amount, vat_amount, currency, tokens_allowance, tokens_used, "
+                "created_at) VALUES "
+                "(1, 1, 'pluss', 'paid', 'ref-pluss', 'live', 186.25, 37.25, 'NOK', "
+                "4000000, 9999, '2026-11-01 00:00:00'), "
+                "(2, 2, 'old', 'paid', 'ref-old', 'live', 61.25, 12.25, 'NOK', "
+                "100000, 500, '2026-11-01 00:00:00')",
+                "INSERT INTO ki_chat_thread (id, company_id, title, created_at, updated_at) "
+                "VALUES (1, 1, 'Spørsmål', '2026-11-25 10:00:00', '2026-11-25 10:00:00')",
+                "INSERT INTO ki_chat_message (id, thread_id, company_id, role, content, "
+                "tokens_used, notices, created_at) VALUES (1, 1, 1, 'assistant', 'Svar', "
+                "800, '[]', '2026-11-25 10:00:01')",
+            ],
+        )
+
+        subs = {
+            row[0]: Decimal(str(row[1]))
+            for row in connection.execute(
+                sa.text("SELECT plan, weekly_value_nok FROM ki_subscription")
+            ).fetchall()
+        }
+        assert subs == {"start": Decimal("9.00"), "legacy": Decimal("0.00")}
+
+        weekly = connection.execute(
+            sa.text("SELECT tokens_used, value_used_nok FROM ki_weekly_usage WHERE id = 1")
+        ).one()
+        assert int(weekly[0]) == 12345
+        assert Decimal(str(weekly[1])) == Decimal("0.000000")
+
+        periods = {
+            row[0]: (Decimal(str(row[1])), Decimal(str(row[2])), int(row[3]))
+            for row in connection.execute(
+                sa.text(
+                    "SELECT plan, value_allowance_nok, value_used_nok, tokens_used FROM ki_period"
+                )
+            ).fetchall()
+        }
+        assert periods == {
+            "pluss": (Decimal("112.00"), Decimal("0.000000"), 9999),
+            "old": (Decimal("0.00"), Decimal("0.000000"), 500),
+        }
+
+        msg_cost = connection.execute(
+            sa.text("SELECT cost_nok FROM ki_chat_message WHERE id = 1")
+        ).scalar()
+        assert Decimal(str(msg_cost)) == Decimal("0.000000")
     engine.dispose()

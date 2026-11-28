@@ -789,7 +789,14 @@ async def _keep_documents(
                     progress=progress,
                 )
             )
-    except (StorageError, SaftImportError) as error:
+    except StorageError as error:
+        logger.exception(
+            "Dokumentene i eksporten til innlesing %s ble ikke tatt vare på (lagerfeil)",
+            import_pk,
+        )
+        await _documents_stopped(sessions, import_pk, result, _documents_reason(error))
+        return
+    except SaftImportError as error:
         logger.warning(
             "Dokumentene i eksporten til innlesing %s ble ikke tatt vare på",
             import_pk,

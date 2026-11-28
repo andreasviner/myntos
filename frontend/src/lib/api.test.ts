@@ -349,3 +349,30 @@ describe('starting a federated flow', () => {
     expect(init.method).toBe('DELETE');
   });
 });
+
+describe('JSON request headers on Peppol and Mottatt mutations', () => {
+  it('sends Content-Type: application/json for setPeppolReceiving and bookIncomingEhf', async () => {
+    const { api, fetchMock } = await load(storedCompany(12), {
+      available: true,
+      company_confirmed: true,
+      registered: true,
+      verified: true,
+      can_send: true,
+      can_receive: true,
+    });
+
+    await api.setPeppolReceiving(12, true);
+    const [url1, init1] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url1.endsWith('/api/v1/companies/12/peppol/mottak')).toBe(true);
+    expect(init1.method).toBe('PUT');
+    expect((init1.headers as Record<string, string>)['Content-Type']).toBe('application/json');
+    expect(JSON.parse(String(init1.body))).toEqual({ enabled: true });
+
+    await api.bookIncomingEhf(12, 7, { type_code: 'datakostnad' });
+    const [url2, init2] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+    expect(url2.endsWith('/api/v1/companies/12/peppol/innkommende/7/bokfor')).toBe(true);
+    expect(init2.method).toBe('POST');
+    expect((init2.headers as Record<string, string>)['Content-Type']).toBe('application/json');
+    expect(JSON.parse(String(init2.body))).toEqual({ type_code: 'datakostnad' });
+  });
+});

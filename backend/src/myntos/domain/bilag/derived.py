@@ -204,9 +204,10 @@ async def _isolated(kind: str, content: bytes) -> bytes:
         except TimeoutError as error:
             process.kill()
             await process.wait()
+            logger.error("Image %s derivation timed out", kind, exc_info=error)
             raise DerivationError("tok for lang tid") from error
     if process.returncode != 0 or not stdout:
-        logger.info(
+        logger.error(
             "No %s could be made (exit %s, %s)",
             kind,
             process.returncode,

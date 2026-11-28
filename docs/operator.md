@@ -86,7 +86,19 @@ What the row keeps:
   time is in it;
 - the logger and the log line's **template**, before its arguments were put in;
 - the route as its **template**, `POST /api/v1/companies/{company_id}/…`, set
-  by `unhandled_error_middleware` through `extra`, or none for background work.
+  by `unhandled_error_middleware`, `domain_error_handler` (for handled 5xx
+  integration/infrastructure errors such as 502/503 from Ademico, Skatteetaten,
+  Løynd or Brønnøysund), `http_error_handler` (for explicit 5xx FastAPI/Starlette
+  `HTTPException`s), and `validation_error_handler` (for FastAPI 422
+  `RequestValidationError`, kept without any request input values) through
+  `extra`, or none for background work. External integration failures that
+  degrade gracefully (Løynd not replying or refusing a paid level, failed KI
+  analysis runs, Brreg, Mollie, Ademico, Norges Bank, Peppol SMP, OIDC/ID-porten
+  token exchanges, image derivation and thumbnail storage) are also logged at
+  ERROR (without user content, prompts or secrets) so they always appear in the
+  journal and on `/drift/`. Handled 4xx refusals are logged at WARNING in the
+  journal (status, code and route template only) so they stay traceable without
+  cluttering `/drift/`.
 
 What it does not keep, by design, and `test_the_table_has_no_column_that_could_name_anybody`
 lists the columns so that adding one sends you here:
@@ -136,7 +148,8 @@ are deleted by the daily purge in `main.py`, resolved or not.
 The page has to be opened to be read, and nobody opens it on a hunch. On
 2026-11-02 an MVA-melding stopped at Altinn with a 500, and the operator
 learnt it from the person who had pressed the button. So, with
-`SERVER_ERROR_NOTIFY_TO=<address>` in `.env`, the write that stores the
+`SERVER_ERROR_NOTIFY_TO=<address>` or `DEVELOPER_MAIL=<address>` in `.env`
+(`SERVER_ERROR_NOTIFY_TO` wins if both are set), the write that stores the
 counts also mails that address when a kind of failure is **new, or open
 again** after being marked resolved. A kind already open does not mail again.
 

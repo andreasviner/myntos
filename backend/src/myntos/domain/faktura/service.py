@@ -751,6 +751,7 @@ async def issue(
     user_id: int | None = None,
     today: date | None = None,
     now: datetime | None = None,
+    peppol_setup_required: bool = False,
 ) -> SalesDocument:
     """Issue a draft: check it, number it, post it, and file it.
 
@@ -772,7 +773,9 @@ async def issue(
     # and the document has to say what is true when it is issued.
     _snapshot_seller(document, company)
 
-    violations = compliance.check(document, today=issue_date)
+    violations = compliance.check(
+        document, today=issue_date, peppol_setup_required=peppol_setup_required
+    )
     blocking = compliance.blocking(violations)
     if blocking:
         raise InvoiceNotCompliantError(blocking)
@@ -790,7 +793,9 @@ async def issue(
     # rendered below — a payment reference the printed invoice does not show is
     # a payment nobody can reconcile.
     if document.payment_reference_auto:
-        document.payment_reference = kid.for_document_number(document.document_number)
+        document.payment_reference = kid.for_document_number(
+            document.document_number, issue_date=issue_date
+        )
 
     computed = totals(document)
     journal = await _sales_journal(db, company)
@@ -1016,6 +1021,15 @@ async def _reverse_voucher(
 # --- Presentation helpers ---------------------------------------------------------------
 
 
-def check_now(document: SalesDocument, *, today: date | None = None) -> list[compliance.Violation]:
+def check_now(
+    document: SalesDocument,
+    *,
+    today: date | None = None,
+    peppol_setup_required: bool = False,
+) -> list[compliance.Violation]:
     """What still stands between this draft and a lawful issue."""
-    return compliance.check(document, today=today or utc_now().date())
+    return compliance.check(
+        document,
+        today=today or utc_now().date(),
+        peppol_setup_required=peppol_setup_required,
+    )

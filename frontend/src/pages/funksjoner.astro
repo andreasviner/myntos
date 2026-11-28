@@ -29,7 +29,7 @@ const sections = [
     id: 'faktura',
     kicker: 'Salg',
     title: 'Faktura og e-faktura',
-    body: 'Fakturaen kontrolleres mot bokføringsforskriften § 5-1 før den utstedes, og får først da et nummer. Et utkast som slettes etterlater ingen luke i serien. Utstedelsen bokfører fordringen og utgående mva, fryser EHF-filen og legger en lesbar PDF i bilagsarkivet. Når selskapet er registrert for e-faktura, sendes EHF-en over Peppol i samme trykk som utsteder fakturaen, til hver kunde som kan ta imot den, adressert til kundens organisasjonsnummer. En utstedt faktura kan bare rettes med kreditnota, slik § 5-2-7 krever.',
+    body: 'Fakturaen kontrolleres mot bokføringsforskriften § 5-1 før den utstedes, og får først da et nummer. Et utkast som slettes etterlater ingen luke i serien. Utstedelsen bokfører fordringen og utgående mva, fryser EHF-filen og legger en lesbar PDF i bilagsarkivet. Når selskapet er registrert for e-faktura, sendes EHF-en over Peppol i samme trykk som utsteder fakturaen, til hver kunde som kan ta imot den, adressert til kundens organisasjonsnummer. Selskapet kan også slå på mottak av leverandørfakturaer som EHF over Peppol og bokføre dem direkte med bilagsarkivering. En utstedt faktura kan bare rettes med kreditnota, slik § 5-2-7 krever.',
     points: [
       'Kontrollen sier hvilken paragraf som mangler noe, ikke bare at noe mangler',
       'Kjøperen hentes fra Enhetsregisteret på organisasjonsnummeret, og KID tildeles ved utstedelse',
@@ -53,12 +53,14 @@ const sections = [
     id: 'skattemelding',
     kicker: 'Innlevering',
     title: 'Skattemelding og næringsspesifikasjon',
-    // For et aksjeselskap: bygget, kontrollert og sendt hele veien i
-    // Skatteetatens testmiljø 22. oktober 2026, og slått på i produksjon samme
-    // dag (de tre innstillingene i docs/integrations/skatteetaten.md, «Filing
-    // from Myntos»). Enkeltpersonforetaket står i `notYet`.
-    body: 'For et aksjeselskap bygger Myntos næringsspesifikasjonen og skattemeldingen fra et avsluttet regnskapsår, lar Skatteetaten kontrollere dem og sender dem gjennom Altinn. Selve innsendingen krever at et menneske logger inn med ID-porten og bekrefter det skattemessige resultatet. Det er Skatteetatens krav, og et vi ikke prøver å gå rundt.',
+    // For både aksjeselskap (AS) og enkeltpersonforetak (ENK): AS ble kontrollert
+    // og sendt hele veien i Skatteetatens testmiljø 22. oktober 2026 og slått på
+    // i produksjon samme dag; ENK (personlig skattemelding, beregnet
+    // personinntekt, skjermingsfradrag og videreføring til skatteetaten.no) ble
+    // lagt til 28. november 2026.
+    body: 'For aksjeselskap (AS) og enkeltpersonforetak (ENK) bygger Myntos næringsspesifikasjonen og skattemeldingen fra et avsluttet regnskapsår, lar Skatteetaten kontrollere dem og sender dem gjennom Altinn. For enkeltpersonforetak sendes næringsdelen på innehaverens fødselsnummer med beregnet personinntekt og skjermingsfradrag, uten å røre lønn, bank, lån eller private fradrag, og som standard leveres den klar til fullføring på skatteetaten.no. Selve innsendingen krever at et menneske logger inn med ID-porten og bekrefter det skattemessige resultatet.',
     points: [
+      'Støtter både aksjeselskap (upersonlig skattemelding) og enkeltpersonforetak (personlig skattemelding med beregnet personinntekt og skjermingsfradrag)',
       'Skatteetaten kontrollerer og regner ut skatten før du sender, og det som sendes er nøyaktig det som ble kontrollert',
       'Det som ble sendt og svaret fra Skatteetaten lagres med året',
       'Innsendingen koster det samme som resten av Myntos: ingenting',
@@ -86,6 +88,23 @@ const sections = [
       'Et avsluttet år åpnes bare igjen med en begrunnelse, som lagres',
       'Avskrivningssatsene er årets, og saldoen regnes ut fra det som er ført',
     ],
+  },
+  {
+    // WP5b/WP6: med KI på fordeler analysen inntekter og kostnader etter hva
+    // bilagene gjelder, og en person kan starte «Dyp KI-analyse» for valgt
+    // periode; uten KI fordeler den fortsatt etter konto.
+    id: 'analyse',
+    kicker: 'Analyse',
+    title: 'Inntekter og kostnader over tid',
+    body: 'Analysen viser hva selskapet tjener og bruker, måned for måned, rett fra regnskapet: inntekter, kostnader og resultat før skatt for året så langt, de siste tolv månedene eller et tidligere år, sammenlignet med samme tid året før. Med KI på leser Myntos bilagene i bakgrunnen på nivået «Gratis» og fordeler inntektene og kostnadene etter hva de gjelder, som drivstoff, husleie eller programvare. Du kan også starte en «Dyp KI-analyse» for perioden på valgt KI-nivå, som ser etter mønstre, faste kostnader og endringer, med diagrammer hentet rett fra regnskapet. Alle tall kommer alltid fra regnskapet, og standardvisningen virker også med KI slått av (da fordelt etter konto).',
+    points: [
+      'Inntekter og kostnader per måned, med året før som lysere søyler bak',
+      'Inntektene og kostnadene fordelt etter hva bilagene gjelder (med KI på) eller etter de største kontoene, med beløp og andel',
+      'Dyp KI-analyse på valgt KI-nivå som lagres på siden og gjenbrukes hvis tallene ikke har endret seg',
+      'De samme tallene som i resultatregnskapet, uten mva, og hvert diagram kan vises som tabell',
+      'Et år sammenlignes bare med et år regnskapet dekker helt, så en prosent bygger aldri på to måneder',
+    ],
+    link: { href: '/ki/about/#analyse', text: 'Slik bruker Myntos KI til analyse' },
   },
   {
     id: 'saft',
@@ -134,6 +153,10 @@ const sections = [
       'Alt nøkkelen vil sende til Skatteetaten, venter på at du godkjenner det, og ingen nøkkel kan flytte penger eller endre kontonummer',
       'Bilag ført av assistenten står med navnet ditt og nøkkelens',
     ],
+    // Avsnittet sier at Myntos ikke sender noe til modellen, og det gjelder
+    // nøkkelen. Myntos sin egen KI sender bilag til Løynd, og den som leser
+    // dette, skal ikke måtte gjette hvilken av de to setningen handler om.
+    link: { href: '/ki/about/', text: 'Myntos sin egen KI: hvor den kjører, nivåene og KI-planene' },
   },
   {
     id: 'apen-kildekode',
@@ -146,6 +169,28 @@ const sections = [
       'Ingenting skjer med tallene dine som ikke kan leses',
     ],
     link: { href: 'https://github.com/andreasviner/myntos', text: 'Kildekoden på GitHub' },
+  },
+  {
+    id: 'aksjonaer',
+    kicker: 'Aksjeselskap',
+    title: 'Aksjeeierbok og aksjonærregisteroppgave (RF-1086)',
+    body: 'Alle aksjeselskaper skal føre aksjeeierbok (aksjeloven § 4-5) og levere aksjonærregisteroppgaven (RF-1086) til Skatteetaten innen 31. januar hvert år. Siden juni 2026 kan oppgaven bare leveres gjennom et sluttbrukersystem. Myntos holder aksjeklasser, aksjonærer og hendelser gjennom året, kontrollerer mot konto 2000 i regnskapet, kan hente fjorårets tall som prefill fra Skatteetaten, og sender hovedskjema og underskjemaer direkte over Altinn 3 systembruker.',
+    points: [
+      'Aksjeeierbok med personlige aksjonærer, selskaper og utenlandske eiere (mod-11-kontroll av fødselsnummer og org.nr.)',
+      'Støtter stiftelse, nyemisjon, kjøp og salg, kontinuitet, utbytte, kildeskatt, splitt, spleis, fondsemisjon, kapitalendringer og likvidasjon',
+      'Henter prefill fra Skatteetaten og sender RF-1086 direkte med Altinn 3 systembruker, med arkivert XML-kopi',
+    ],
+  },
+  {
+    id: 'aarsregnskap',
+    kicker: 'Aksjeselskap',
+    title: 'Årsregnskap til Regnskapsregisteret',
+    body: 'Alle aksjeselskaper leverer årsregnskap til Regnskapsregisteret i Brønnøysundregistrene innen 31. juli året etter regnskapsåret. Myntos bygger resultatregnskap, disponeringer og balanse fra et avsluttet år med sammenligningstall fra fjoråret, fyller ut de lovpålagte notene for små foretak (regnskapsloven § 7-35 flg.) og lar deg legge til egne noter. Årsregnskapet kan klargjøres over Altinn 3 systembruker og signeres og sendes med ID-porten.',
+    points: [
+      'Resultatregnskap, disponering av årsresultat og balanse etter oppstillingsplanen (RR-0002 og RR-0002-U), med støtte for manuelle fjorårstall der fjoråret ble ført i et annet program',
+      'Lovpålagte noter for små foretak (regnskapsprinsipper, ansatte og årsverk, aksjekapital og aksjonærer fra aksjeeierboken, varige driftsmidler fra anleggsregisteret, bundne midler, lån og sikkerhetsstillelser og egne tilleggsnoter)',
+      'Utskriftsklare PDF-er for årsregnskap, styreprotokoll og generalforsamlingsprotokoll, og arkivering av sendt XML og kvittering',
+    ],
   },
 ];
 
@@ -163,25 +208,10 @@ const notYet = [
     text: 'Myntos kjører ikke lønn. Betaler selskapet ut lønn, også til eieren, sendes a-meldingen fra et lønnsprogram.',
   },
   {
-    title: 'Årsregnskapet og aksjonærregisteroppgaven',
-    text: 'Resultatregnskapet og balansen står i Myntos, men årsregnskapet til Regnskapsregisteret og aksjonærregisteroppgaven sendes ikke herfra ennå. Aksjonærregisteroppgaven kan siden juni 2026 bare sendes fra et regnskapsprogram, ikke i Altinn.',
-  },
-  {
-    title: 'Næringsspesifikasjon for enkeltpersonforetak',
-    text: 'Et enkeltpersonforetak kan føre regnskapet og avslutte året i Myntos, men næringsspesifikasjonen følger eierens egen skattemelding og lages ikke her ennå.',
-  },
-  {
     // Bankavstemmingen sier det samme på linjen: «Innbetaling på faktura føres
     // ikke herfra ennå» (docs/integrations/bank.md).
     title: 'Innbetaling mot faktura',
     text: 'At en kunde har betalt fakturaen, kan ikke registreres mot den ennå, så kundefordringen står åpen i regnskapet.',
-  },
-  {
-    // Sendingen er bygget; mottaket venter fordi en registrering for å motta
-    // tar over innboksen selskapet får leverandørfakturaer i i dag
-    // (docs/integrations/peppol.md).
-    title: 'Mottak av e-faktura',
-    text: 'Myntos sender EHF over Peppol, men tar ikke imot. Leverandørfakturaer kommer fram dit de kommer i dag, og føres som bilag.',
   },
   {
     title: 'Kobling direkte mot banken',
@@ -192,7 +222,7 @@ const notYet = [
 
 <BaseLayout
   title="Funksjoner: bilag, faktura, mva og skattemelding | Myntos"
-  description="Hva Myntos gjør: bilag lest av KI, faktura med EHF, mva-melding, skattemelding for AS, bankavstemming, SAF-T inn og ut, og roller. Og det som ikke er bygget ennå."
+  description="Hva Myntos gjør: bilag lest av KI, faktura med EHF, mva-melding, skattemelding for AS og ENK, bankavstemming, SAF-T inn og ut, og roller. Og det som ikke er bygget ennå."
   width="wide"
 >
   <div class="head">

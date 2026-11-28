@@ -18,6 +18,7 @@ import pytest
 from myntos.core.config import Settings
 from myntos.integrations.altinn import systemregister
 from myntos.integrations.altinn.systemregister import (
+    AARSREGNSKAP_RESOURCE,
     MVA_RESOURCE,
     SKATTEMELDING_RESOURCE,
     NotConfiguredError,
@@ -43,7 +44,7 @@ def _settings(**overrides: Any) -> Settings:
     values: dict[str, Any] = {
         "altinn_vendor_orgnr": ORGNR,
         "altinn_system_name": "myntos",
-        "altinn_system_redirect_url": "https://myntos.no/skatt/systembruker/godkjent",
+        "altinn_system_redirect_url": "https://myntos.no/organisasjon/",
         "altinn_platform_base_url": "https://platform.tt02.altinn.no",
         "maskinporten_client_id": CLIENT_ID,
     }
@@ -86,15 +87,46 @@ def test_the_vendor_orgnr_carries_the_iso6523_prefix() -> None:
     }
 
 
-def test_the_declared_rights_are_the_two_apps_we_submit_to() -> None:
+def test_the_declared_rights_are_the_resources_we_were_granted() -> None:
     """``rights`` is a ceiling on what may ever be requested, per customer.
 
-    Listing a resource we do not use asks each customer to agree to more than we
-    need, so the list is asserted rather than left to drift as apps are added.
+    Every customer who approved has to approve again for anything added, so the
+    ceiling is the year's list at once: the two filing apps and one resource per
+    Skatteetaten scope granted by 2026-11-25. Asserted in full so that a PUT
+    rebuilt from the default can never quietly shrink it.
     """
     body = registration_payload(_settings())
     declared = [entry["resource"][0]["value"] for entry in body["rights"]]
-    assert declared == [SKATTEMELDING_RESOURCE, MVA_RESOURCE]
+    assert declared == [
+        SKATTEMELDING_RESOURCE,
+        AARSREGNSKAP_RESOURCE,
+        "ske-innrapportering-aksjonaerregisteroppgave",
+        "ske-frister",
+        "ske-krav-og-betalinger",
+        "ske-innrapportering-amelding",
+        "ske-avstemmingsinformasjon-amelding",
+        "ske-skattekort-til-arbeidsgiver",
+        "ske-innrapportering-betalinger-selvstendig-naeringsdrivende",
+    ]
+
+
+def test_each_right_names_exactly_one_resource() -> None:
+    """Altinn answers 400 to a ``rights`` entry with more than one resource."""
+    body = registration_payload(_settings())
+    assert all(len(entry["resource"]) == 1 for entry in body["rights"])
+
+
+def test_mva_is_declared_as_its_access_package_and_nothing_else_is() -> None:
+    """Production refuses the MVA app as a resource: it is not delegable.
+
+    So MVA goes in as the ``merverdiavgift`` package, and it is the only
+    package. Frister and Krav og betalinger stay resources, the narrower grant,
+    though ``krav-og-utlegg`` would reach them too. See the module docstring.
+    """
+    body = registration_payload(_settings())
+    assert body["accessPackages"] == [{"urn": "urn:altinn:accesspackage:merverdiavgift"}]
+    declared = [entry["resource"][0]["value"] for entry in body["rights"]]
+    assert MVA_RESOURCE not in declared
 
 
 def test_the_maskinporten_client_is_named_in_the_registration() -> None:

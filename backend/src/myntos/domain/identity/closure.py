@@ -44,6 +44,8 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from myntos.aarsregnskap.models import AarsregnskapFiling, AarsregnskapFilingDocument
+from myntos.aksjonaer.models import AksjonaerFiling, AksjonaerFilingDocument
 from myntos.core.clock import utc_now
 from myntos.domain.bank.models import BankStatementFile
 from myntos.domain.bilag.models import Attachment
@@ -70,9 +72,12 @@ from myntos.domain.identity.models import (
 
 # Models only, never services, for the reason erasure gives: deleting books
 # means naming every table that holds them.
+from myntos.domain.ki.models import KiSubscription, KiSubscriptionStatus
 from myntos.domain.ledger.errors import CompanyNotFoundError
 from myntos.domain.ledger.models import Company, Journal, Party, Transaction, TransactionLine
+from myntos.domain.mottak.models import CompanyInboxAddress, IncomingMailDocument
 from myntos.domain.mva.models import MvaFiling, MvaFilingDocument
+from myntos.domain.peppol.models import PeppolRegistration
 from myntos.saft.models import ImportedDocument, ImportStatus, SaftImport, SaftImportFile
 from myntos.skattemelding.models import SkattemeldingFiling, SkattemeldingFilingDocument
 from myntos.storage.base import DocumentStorage
@@ -254,6 +259,44 @@ async def close_company(
                 company_id=company.id, level=DataSharingLevel.NONE.value, chosen_by_user_id=user_id
             )
         )
+    # Closed books must not hold the company's Peppol receiving inbox in Myntos,
+    # so incoming invoices cannot land in locked books or block another active
+    # set of books from taking over receiving for the same orgnr.
+    await db.execute(
+        update(PeppolRegistration)
+        .where(
+            PeppolRegistration.company_id == company.id,
+            PeppolRegistration.receiving_enabled.is_(True),
+        )
+        .values(receiving_enabled=False, receiving_enabled_at=None)
+        .execution_options(synchronize_session="fetch")
+    )
+    # Closed books must not accept new emailed invoices either.
+    await db.execute(
+        update(CompanyInboxAddress)
+        .where(
+            CompanyInboxAddress.company_id == company.id,
+            CompanyInboxAddress.enabled.is_(True),
+        )
+        .values(enabled=False)
+        .execution_options(synchronize_session="fetch")
+    )
+    # Closed books must never renew or receive another monthly KI invoice.
+    await db.execute(
+        update(KiSubscription)
+        .where(
+            KiSubscription.company_id == company.id,
+            KiSubscription.status.in_(
+                (KiSubscriptionStatus.ACTIVE.value, KiSubscriptionStatus.CANCELING.value)
+            ),
+        )
+        .values(
+            status=KiSubscriptionStatus.CANCELED.value,
+            cancel_at_period_end=True,
+            canceled_at=utc_now(),
+        )
+        .execution_options(synchronize_session="fetch")
+    )
     await db.execute(
         update(AgentKey)
         .where(AgentKey.company_id == company.id, AgentKey.revoked_at.is_(None))
@@ -412,10 +455,27 @@ async def _stored_keys(db: AsyncSession, company_id: int) -> list[str]:
         .join(SkattemeldingFiling, SkattemeldingFiling.id == SkattemeldingFilingDocument.filing_id)
         .where(SkattemeldingFiling.company_id == company_id)
     )
+    keys += await db.scalars(
+        select(AksjonaerFilingDocument.storage_key)
+        .join(AksjonaerFiling, AksjonaerFiling.id == AksjonaerFilingDocument.filing_id)
+        .where(AksjonaerFiling.company_id == company_id)
+    )
+    keys += await db.scalars(
+        select(AarsregnskapFilingDocument.storage_key)
+        .join(AarsregnskapFiling, AarsregnskapFiling.id == AarsregnskapFilingDocument.filing_id)
+        .where(AarsregnskapFiling.company_id == company_id)
+    )
     # The documents kept from the old program's export: the books'
     # documentation from before Myntos, purged with the rest of it.
     keys += await db.scalars(
         select(ImportedDocument.storage_key).where(ImportedDocument.company_id == company_id)
+    )
+    # Emailed invoice attachments waiting or archived in Mottatt go with the
+    # rest of the company's primary documentation at retention expiry.
+    keys += await db.scalars(
+        select(IncomingMailDocument.storage_key).where(
+            IncomingMailDocument.company_id == company_id
+        )
     )
     # A thumbnail may or may not have been made; deleting one that was not is
     # nothing (DocumentStorage.delete).

@@ -1,0 +1,1447 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout
+  title="Årsregnskap | Myntos"
+  description="Sett opp resultatregnskap, balanse, lovpålagte noter og protokoller for aksjeselskapet, og send årsregnskapet (RR-0002) direkte til Regnskapsregisteret via Altinn 3."
+  width="wide"
+>
+  <header class="page-head">
+    <div>
+      <p class="eyebrow">Årsregnskap til Regnskapsregisteret (RR-0002)</p>
+      <h1 data-session-company></h1>
+      <p class="muted orgnr" id="orgnr"></p>
+    </div>
+    <div class="head-actions year-nav" role="group" aria-label="Regnskapsår">
+      <button type="button" class="btn btn-ghost btn-small" id="year-prev" aria-label="Året før"
+        >‹</button
+      >
+      <span class="year" id="year"></span>
+      <button type="button" class="btn btn-ghost btn-small" id="year-next" aria-label="Året etter"
+        >›</button
+      >
+    </div>
+  </header>
+
+  <p class="lead">
+    Alle aksjeselskaper skal utarbeide årsregnskap med noter og sende det til Regnskapsregisteret i
+    Brønnøysund innen en måned etter fastsettelse i generalforsamlingen og senest 31. juli. Du kan
+    klargjøre innsendingen med Altinn-systembruker eller ID-porten, og signere og sende inn med
+    ID-porten.
+  </p>
+
+  <p class="status" id="page-status" role="status" hidden></p>
+  <div class="empty" id="loading">Henter årsregnskapet …</div>
+
+  <div id="content" hidden>
+    {/* Feil som stopper innsendingen vises øverst, med merknader rett under. */}
+    <ul class="findings errors" id="errors" hidden></ul>
+    <ul class="findings notes" id="notes" hidden></ul>
+
+    {/* --- Nøkkeltall og nedlastinger --------------------------------------- */}
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title" id="period-title">Sammendrag</h2>
+          <p class="card-hint" id="period-hint"></p>
+        </div>
+        <div class="card-actions">
+          <a class="btn btn-ghost btn-small" id="pdf-aarsregnskap" href="#">Årsregnskap (PDF)</a>
+          <a class="btn btn-ghost btn-small" id="pdf-styre" href="#">Styreprotokoll (PDF)</a>
+          <a class="btn btn-ghost btn-small" id="pdf-gf" href="#">Generalforsamling (PDF)</a>
+          <a class="btn btn-ghost btn-small" id="xml-hoved" href="#">Hovedskjema (XML)</a>
+          <a class="btn btn-ghost btn-small" id="xml-under" href="#">Selskapsregnskap (XML)</a>
+        </div>
+      </div>
+
+      <dl class="totals">
+        <dt>Sum driftsinntekter</dt>
+        <dd id="sum-inntekter"></dd>
+        <dt>Driftsresultat</dt>
+        <dd id="sum-driftsres"></dd>
+        <dt>Årsresultat</dt>
+        <dd class="grand" id="sum-aarsres"></dd>
+        <dt>Sum eiendeler</dt>
+        <dd id="sum-eiendeler"></dd>
+        <dt>Sum egenkapital</dt>
+        <dd id="sum-egenkapital"></dd>
+        <dt>Sum gjeld</dt>
+        <dd id="sum-gjeld"></dd>
+      </dl>
+    </section>
+
+    {/* --- Resultatregnskap og balanse -------------------------------------- */}
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">Resultatregnskap og balanse</h2>
+          <p class="card-hint" id="prior-hint">
+            Tall i hele norske kroner (RR-0002-U). Fjorårstall hentes automatisk hvis forrige år er
+            ført i Myntos, eller kan fylles inn manuelt.
+          </p>
+        </div>
+        <div class="card-actions" id="prior-actions" hidden>
+          <button type="button" class="btn btn-ghost btn-small" id="toggle-prior-edit">
+            Rediger sammenligningstall (fjoråret)
+          </button>
+        </div>
+      </div>
+
+      <div class="statement-block">
+        <h3>Resultatregnskap</h3>
+        <div class="table-scroll">
+          <table class="data statement">
+            <thead>
+              <tr>
+                <th>Post</th>
+                <th class="num">Note</th>
+                <th class="num" id="res-col-curr"></th>
+                <th class="num" id="res-col-prior"></th>
+              </tr>
+            </thead>
+            <tbody id="result-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="statement-block" id="disp-block">
+        <h3>Overføringer og disponeringer</h3>
+        <div class="table-scroll">
+          <table class="data statement">
+            <thead>
+              <tr>
+                <th>Post</th>
+                <th class="num">Note</th>
+                <th class="num" id="disp-col-curr"></th>
+                <th class="num" id="disp-col-prior"></th>
+              </tr>
+            </thead>
+            <tbody id="disp-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="statement-block">
+        <h3>Balanse: Eiendeler</h3>
+        <div class="table-scroll">
+          <table class="data statement">
+            <thead>
+              <tr>
+                <th>Post</th>
+                <th class="num">Note</th>
+                <th class="num" id="asset-col-curr"></th>
+                <th class="num" id="asset-col-prior"></th>
+              </tr>
+            </thead>
+            <tbody id="asset-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="statement-block">
+        <h3>Balanse: Egenkapital og gjeld</h3>
+        <div class="table-scroll">
+          <table class="data statement">
+            <thead>
+              <tr>
+                <th>Post</th>
+                <th class="num">Note</th>
+                <th class="num" id="eq-col-curr"></th>
+                <th class="num" id="eq-col-prior"></th>
+              </tr>
+            </thead>
+            <tbody id="eq-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="prior-save-bar" class="form-actions" hidden>
+        <button type="button" class="btn btn-primary btn-small" id="save-prior-btn">
+          Lagre sammenligningstall
+        </button>
+        <button type="button" class="btn btn-ghost btn-small" id="cancel-prior-btn">Avbryt</button>
+        <span class="field-hint">Skriv hele kroner uten desimaler. La stå tomt for å fjerne overstyring.</span>
+      </div>
+      <p class="status" id="prior-status" role="status" hidden></p>
+    </section>
+
+    {/* --- Fastsettelse, noter og protokoller ------------------------------- */}
+    <form id="draft-form" novalidate>
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2 class="card-title">Fastsettelse, revisjon og protokoller</h2>
+            <p class="card-hint">
+              Opplysningene sendes i hovedskjemaet (RR-0002) og brukes til å fylle ut styre- og
+              generalforsamlingsprotokollene.
+            </p>
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <label class="field">
+            <span>Fastsettelsesdato (generalforsamling)</span>
+            <input type="date" id="d-approval-date" name="approval_date" />
+          </label>
+          <label class="field">
+            <span>Bekreftende representant (fullt navn)</span>
+            <input
+              type="text"
+              id="d-rep"
+              name="confirming_representative"
+              maxlength="70"
+              placeholder="F.eks. Kari Nordmann"
+            />
+          </label>
+          <label class="field">
+            <span>E-post for vedtak fra Brønnøysund (valgfritt)</span>
+            <input type="email" id="d-email" name="contact_email" maxlength="70" />
+          </label>
+          <label class="field">
+            <span>Foreslått ordinært utbytte (kr)</span>
+            <input type="text" id="d-dividend" name="dividend_proposed" inputmode="decimal" />
+          </label>
+        </div>
+
+        <div class="check-grid">
+          <label class="check">
+            <input type="checkbox" id="d-small" name="small_company" />
+            <span>Regnskapsreglene for små foretak følges (regnskapsloven § 1-6)</span>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="d-no-audit" name="auditor_elected_out" />
+            <span>Selskapet har besluttet fravalg av revisjon (aksjeloven § 7-6)</span>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="d-ext-prep" name="prepared_by_external_accountant" />
+            <span>Årsregnskapet er utarbeidet av ekstern autorisert regnskapsfører</span>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="d-ext-assist" name="external_accountant_assistance" />
+            <span>Ekstern autorisert regnskapsfører har bistått i løpende bokføring</span>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="d-parent" name="is_parent" />
+            <span>Selskapet er morselskap i et konsern</span>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="d-winding" name="winding_up_accounts" />
+            <span>Dette er et avviklingsregnskap</span>
+          </label>
+        </div>
+
+        <details class="sub-details">
+          <summary>Opplysninger til styre- og generalforsamlingsprotokoll</summary>
+          <div class="form-grid">
+            <label class="field">
+              <span>Dato for styremøte</span>
+              <input type="date" id="d-board-date" />
+            </label>
+            <label class="field">
+              <span>Sted for styremøte</span>
+              <input type="text" id="d-board-place" maxlength="120" />
+            </label>
+            <label class="field">
+              <span>Dato for generalforsamling</span>
+              <input type="date" id="d-gm-date" />
+            </label>
+            <label class="field">
+              <span>Sted for generalforsamling</span>
+              <input type="text" id="d-gm-place" maxlength="120" />
+            </label>
+            <label class="field">
+              <span>Møteleder i generalforsamlingen</span>
+              <input type="text" id="d-gm-chair" maxlength="120" />
+            </label>
+            <label class="field">
+              <span>Medundertegner til protokollen</span>
+              <input type="text" id="d-gm-cosigner" maxlength="120" />
+            </label>
+          </div>
+          <label class="field full">
+            <span>Styremedlemmer (en person per linje: Navn, Rolle)</span>
+            <textarea
+              id="d-board-members"
+              rows="3"
+              placeholder="Kari Nordmann, Styreleder&#10;Ola Hansen, Styremedlem"
+            ></textarea>
+          </label>
+        </details>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2 class="card-title">Noter til årsregnskapet (små foretak)</h2>
+            <p class="card-hint">
+              Lovpålagte noteopplysninger etter regnskapsloven kapittel 7. Tall fra regnskapet,
+              aksjeeierboken og anleggsregisteret fylles ut automatisk.
+            </p>
+          </div>
+        </div>
+
+        <div class="note-group">
+          <h3>Note 1: Regnskapsprinsipper og fortsatt drift</h3>
+          <label class="field full">
+            <span>Regnskapsprinsipper</span>
+            <textarea id="n-prinsipper" rows="6"></textarea>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="n-usikker-drift" />
+            <span>Det foreligger vesentlig usikkerhet om fortsatt drift</span>
+          </label>
+          <label class="field full" id="n-usikker-wrap" hidden>
+            <span>Redegjørelse for usikkerhet om fortsatt drift (påkrevd ved avkryssing)</span>
+            <textarea id="n-usikker-tekst" rows="3"></textarea>
+          </label>
+        </div>
+
+        <div class="note-group">
+          <h3>Note 2: Antall årsverk, lønnskostnader og pensjon (OTP)</h3>
+          <div class="form-grid">
+            <label class="field">
+              <span>Antall årsverk i regnskapsåret (påkrevd av Brønnøysund, bruk 0 hvis ingen)</span>
+              <input type="text" id="n-aarsverk" inputmode="decimal" value="0" />
+            </label>
+            <label class="check align-end">
+              <input type="checkbox" id="n-otp-plikt" />
+              <span>Selskapet er pliktig til å ha obligatorisk tjenestepensjon (OTP)</span>
+            </label>
+          </div>
+          <p class="field-hint" id="n-lonn-summary"></p>
+          <label class="field full">
+            <span>Tekst til lønns- og pensjonsnoten</span>
+            <textarea id="n-lonn-tekst" rows="3"></textarea>
+          </label>
+        </div>
+
+        <div class="note-group">
+          <h3>Note 3: Aksjekapital og aksjonærer</h3>
+          <label class="field full">
+            <span>Aksjekapital og aksjonæroversikt (utfylt fra aksjeeierboken)</span>
+            <textarea id="n-aksje-tekst" rows="4"></textarea>
+          </label>
+        </div>
+
+        <div class="note-group">
+          <h3>Note 4: Varige driftsmidler og immaterielle eiendeler</h3>
+          <p class="field-hint" id="n-anlegg-summary"></p>
+          <label class="field full">
+            <span>Tilleggstekst om anleggsmidler og avskrivninger</span>
+            <textarea id="n-anlegg-tekst" rows="2"></textarea>
+          </label>
+        </div>
+
+        <div class="note-group">
+          <h3>Note 5 og 6: Skatt og egenkapital</h3>
+          <p class="field-hint" id="n-ek-summary"></p>
+          <label class="field full">
+            <span>Skattenote</span>
+            <textarea id="n-skatt-tekst" rows="2"></textarea>
+          </label>
+        </div>
+
+        <div class="note-group">
+          <h3>Note 7: Bundne bankinnskudd, gjeld, pantstillelser og lån til nærstående</h3>
+          <div class="form-grid">
+            <label class="field">
+              <span>Bundne skattetrekksmidler (kr)</span>
+              <input type="number" id="n-bundne" min="0" step="1" />
+            </label>
+            <label class="field">
+              <span>Gjeld som forfaller etter 5 år (kr)</span>
+              <input type="number" id="n-gjeld-5" min="0" step="1" />
+            </label>
+            <label class="field">
+              <span>Gjeld sikret ved pant (kr)</span>
+              <input type="number" id="n-pant-gjeld" min="0" step="1" />
+            </label>
+            <label class="field">
+              <span>Balanseført verdi av pantsatte eiendeler (kr)</span>
+              <input type="number" id="n-pant-verdi" min="0" step="1" />
+            </label>
+            <label class="field">
+              <span>Garantiforpliktelser utenom balansen (kr)</span>
+              <input type="number" id="n-garantier" min="0" step="1" />
+            </label>
+            <label class="field">
+              <span>Lån til styremedlemmer (kr)</span>
+              <input type="number" id="n-laan-styret" min="0" step="1" />
+            </label>
+            <label class="field">
+              <span>Lån til daglig leder / ledende personer (kr)</span>
+              <input type="number" id="n-laan-dl" min="0" step="1" />
+            </label>
+          </div>
+          <label class="field full">
+            <span>Mer om gjeld, pantstillelser og bundne midler</span>
+            <textarea id="n-gjeld-tekst" rows="2"></textarea>
+          </label>
+          <label class="field full">
+            <span>Mer om lån eller sikkerhetsstillelse til nærstående</span>
+            <textarea id="n-laan-tekst" rows="2"></textarea>
+          </label>
+        </div>
+
+        <div class="note-group">
+          <div class="group-head">
+            <h3>Egendefinerte noter og ytterligere opplysninger</h3>
+            <button type="button" class="btn btn-ghost btn-small" id="add-custom-note" hidden>
+              Legg til egen note
+            </button>
+          </div>
+          <div id="custom-notes-list"></div>
+          <label class="field full">
+            <span>Ytterligere opplysninger (f.eks. hendelser etter balansedagen)</span>
+            <textarea id="n-ytterligere" rows="3"></textarea>
+          </label>
+        </div>
+
+        <div class="form-actions" id="draft-actions" hidden>
+          <button type="submit" class="btn btn-primary" id="save-draft-btn">
+            Lagre utkast og noter
+          </button>
+        </div>
+        <p class="status" id="draft-status" role="status" hidden></p>
+      </section>
+    </form>
+
+    {/* --- Innsending til Altinn 3 (Brønnøysundregistrene) ------------------ */}
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">Send til Regnskapsregisteret (Altinn 3)</h2>
+          <p class="card-hint" id="send-readiness"></p>
+        </div>
+        <div class="card-actions">
+          <a class="btn btn-ghost btn-small" id="idporten-login-btn" href="#" hidden>
+            Logg inn med ID-porten
+          </a>
+          <a class="btn btn-ghost btn-small" id="systembruker-link" href="/organisasjon/#altinn" hidden>
+            Koble til Altinn-systembruker
+          </a>
+        </div>
+      </div>
+
+      <p class="field-hint">
+        Viktig om personvern: Årsregnskapet og eventuelle PDF-vedlegg blir offentlige i
+        Regnskapsregisteret. Ikke legg inn fødselsnummer eller andre sensitive personopplysninger i
+        notene.
+      </p>
+
+      <div id="send-controls" hidden>
+        <label class="check">
+          <input type="checkbox" id="send-attach-pdf" checked />
+          <span>Legg ved komplett årsregnskap med noter som PDF-vedlegg i Altinn</span>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="send-confirm" />
+          <span id="send-confirm-label">
+            Jeg bekrefter at resultatregnskap, balanse og noter er kontrollert og i samsvar med
+            generalforsamlingens vedtak.
+          </span>
+        </label>
+
+        <div class="form-actions">
+          <button type="button" class="btn btn-primary" id="btn-prepare-sys" disabled hidden>
+            Klargjør og lås i Altinn (systembruker)
+          </button>
+          <button type="button" class="btn btn-ghost" id="btn-prepare-idp" disabled hidden>
+            Klargjør i Altinn (ID-porten)
+          </button>
+          <button type="button" class="btn btn-primary" id="btn-sign-direct" disabled hidden>
+            Send og signer med ID-porten
+          </button>
+        </div>
+      </div>
+      <p class="status" id="send-status" role="status" hidden></p>
+    </section>
+
+    {/* --- Innsendinger og arkiv -------------------------------------------- */}
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">Innsendinger og arkiv</h2>
+          <p class="card-hint">
+            Alle klargjorte og signerte årsregnskaper arkiveres med XML, vedlegg og kvittering fra
+            Altinn.
+          </p>
+        </div>
+      </div>
+
+      <div id="filings-list" class="filings"></div>
+      <p class="empty" id="filings-empty" hidden>
+        Ingen innsendinger for dette regnskapsåret ennå.
+      </p>
+      <p class="status" id="filings-status" role="status" hidden></p>
+    </section>
+  </div>
+</BaseLayout>
+
+<style>
+  .page-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+  }
+  .orgnr {
+    margin: 0.25rem 0 0;
+    font-size: 0.92rem;
+  }
+  .year-nav {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .year {
+    font-size: 1.15rem;
+    font-weight: 700;
+    min-width: 3.5rem;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .lead {
+    color: var(--ink-muted);
+    max-width: 68ch;
+    margin: 0 0 1.25rem;
+  }
+  .findings {
+    list-style: none;
+    padding: 0.85rem 1rem;
+    margin: 0 0 1rem;
+    border-radius: var(--radius);
+    display: grid;
+    gap: 0.4rem;
+    font-size: 0.92rem;
+  }
+  .findings.errors {
+    background: var(--danger-bg);
+    color: var(--negative);
+    border: 1px solid var(--negative);
+  }
+  .findings.notes {
+    background: var(--accent-soft);
+    color: var(--ink);
+    border: 1px solid var(--border);
+  }
+  .card {
+    margin-bottom: 1.25rem;
+  }
+  .card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.85rem;
+  }
+  .card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+  }
+  .totals {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.5rem 1.25rem;
+    margin: 0;
+  }
+  .totals dt {
+    font-size: 0.82rem;
+    color: var(--ink-muted);
+  }
+  .totals dd {
+    margin: 0 0 0.5rem;
+    font-size: 1.05rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .totals dd.grand {
+    color: var(--accent);
+    font-size: 1.15rem;
+  }
+  .statement-block {
+    margin-top: 1.1rem;
+  }
+  .statement-block h3 {
+    margin: 0 0 0.45rem;
+    font-size: 0.98rem;
+  }
+  .statement :global(tr.sum-row td) {
+    font-weight: 700;
+    border-top: 1px solid var(--border);
+  }
+  .statement :global(input.prior-input) {
+    width: 7.5rem;
+    text-align: right;
+    padding: 0.2rem 0.4rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: 0.85rem;
+    margin-bottom: 0.85rem;
+  }
+  .field.full {
+    display: block;
+    margin-bottom: 0.85rem;
+  }
+  .field textarea {
+    width: 100%;
+    font: inherit;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--ink);
+    resize: vertical;
+  }
+  .check-grid {
+    display: grid;
+    gap: 0.5rem;
+    margin: 0.75rem 0 1rem;
+  }
+  .check {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.55rem;
+    font-size: 0.92rem;
+    margin-bottom: 0.45rem;
+  }
+  .check.align-end {
+    align-self: end;
+    padding-bottom: 0.4rem;
+  }
+  .sub-details {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border);
+  }
+  .sub-details summary {
+    cursor: pointer;
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+  }
+  .note-group {
+    padding: 0.85rem 0;
+    border-top: 1px solid var(--border);
+  }
+  .note-group:first-of-type {
+    border-top: none;
+    padding-top: 0;
+  }
+  .note-group h3 {
+    margin: 0 0 0.65rem;
+    font-size: 0.98rem;
+  }
+  .group-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.65rem;
+  }
+  .group-head h3 {
+    margin: 0;
+  }
+  #custom-notes-list :global(.custom-note-item) {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.75rem;
+    margin-bottom: 0.75rem;
+    background: var(--bg-soft);
+  }
+  #custom-notes-list :global(.custom-note-top) {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-bottom: 0.5rem;
+  }
+  #custom-notes-list :global(.custom-note-top input) {
+    flex: 1;
+  }
+  .form-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.65rem;
+    margin-top: 0.85rem;
+  }
+  .filings {
+    display: grid;
+    gap: 0.85rem;
+  }
+  .filings :global(.filing-card) {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.9rem 1rem;
+    background: var(--bg-soft);
+  }
+  .filings :global(.filing-head) {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.65rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.45rem;
+  }
+  .filings :global(.badge) {
+    display: inline-block;
+    padding: 0.18rem 0.6rem;
+    border-radius: var(--radius-pill);
+    font-size: 0.78rem;
+    font-weight: 700;
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .filings :global(.badge[data-tone='ok']) {
+    background: var(--positive-bg, var(--accent-soft));
+    color: var(--positive, var(--accent));
+  }
+  .filings :global(.badge[data-tone='warn']) {
+    background: var(--accent-soft);
+    color: var(--ink);
+  }
+  .filings :global(.badge[data-tone='err']) {
+    background: var(--danger-bg);
+    color: var(--negative);
+  }
+  .filings :global(.filing-meta) {
+    font-size: 0.86rem;
+    color: var(--ink-muted);
+    margin: 0.25rem 0 0.6rem;
+  }
+  .filings :global(.filing-actions) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+  .filings :global(.filing-error) {
+    color: var(--negative);
+    font-size: 0.86rem;
+    margin: 0.4rem 0;
+  }
+  @media (max-width: 48rem) {
+    .totals {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    aarsregnskapDocumentUrl,
+    aarsregnskapPdfUrl,
+    aarsregnskapXmlUrl,
+    getAarsregnskap,
+    governmentLoginStartUrl,
+    prepareAarsregnskapSystembruker,
+    refreshAarsregnskapStatus,
+    saveAarsregnskapDraft,
+    sendAarsregnskapIdPorten,
+    signAarsregnskapFiling,
+    type AarsregnskapCustomNote,
+    type AarsregnskapLine,
+    type AarsregnskapOverview,
+    type Company,
+  } from '../lib/api';
+  import {
+    awaitingSignature,
+    documentTypeLabel,
+    filingStatusLabel,
+    filingStatusTone,
+    formatBoardMembersText,
+    formatWholeKr,
+    parseBoardMembersText,
+    parseWholeKrInput,
+    submissionReadinessText,
+    yearFromHash,
+  } from '../lib/aarsregnskap';
+  import { currentCompany, loadCompanies } from '../lib/company';
+  import { el, setStatus, show } from '../lib/dom';
+  import { isoDate, orgnummer } from '../lib/format';
+  import { canInCompany, loadSession, redirectToLogin } from '../lib/session';
+
+  const pageStatus = el<HTMLParagraphElement>('#page-status');
+  const priorStatus = el<HTMLParagraphElement>('#prior-status');
+  const draftStatus = el<HTMLParagraphElement>('#draft-status');
+  const sendStatus = el<HTMLParagraphElement>('#send-status');
+  const filingsStatus = el<HTMLParagraphElement>('#filings-status');
+
+  const sendConfirm = el<HTMLInputElement>('#send-confirm');
+  const sendAttachPdf = el<HTMLInputElement>('#send-attach-pdf');
+  const btnPrepareSys = el<HTMLButtonElement>('#btn-prepare-sys');
+  const btnPrepareIdp = el<HTMLButtonElement>('#btn-prepare-idp');
+  const btnSignDirect = el<HTMLButtonElement>('#btn-sign-direct');
+
+  let company: Company;
+  let year: number;
+  let view: AarsregnskapOverview | null = null;
+  let editingPrior = false;
+
+  const mayWrite = (): boolean => canInCompany(company, 'ledger:write');
+
+  function makeCell(text: string, className?: string): HTMLTableCellElement {
+    const td = document.createElement('td');
+    if (className) td.className = className;
+    td.textContent = text;
+    return td;
+  }
+
+  function renderStatementTable(tbody: HTMLElement, lines: AarsregnskapLine[]): void {
+    tbody.replaceChildren();
+    for (const line of lines) {
+      const tr = document.createElement('tr');
+      if (line.kind === 'sum') tr.className = 'sum-row';
+      tr.append(makeCell(line.label));
+      tr.append(makeCell(line.note_ref ?? '', 'num'));
+      tr.append(makeCell(formatWholeKr(line.current), 'num'));
+
+      const priorTd = document.createElement('td');
+      priorTd.className = 'num';
+      if (editingPrior && line.editable_prior && mayWrite()) {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.inputMode = 'numeric';
+        input.className = 'prior-input';
+        input.dataset.priorKey = line.key;
+        const overrideVal = view?.draft.prior_year_overrides[line.key];
+        if (overrideVal !== undefined) {
+          input.value = String(overrideVal);
+        } else if (line.prior !== null) {
+          input.placeholder = String(line.prior);
+        } else {
+          input.placeholder = '0';
+        }
+        priorTd.append(input);
+      } else {
+        priorTd.textContent = formatWholeKr(line.prior);
+      }
+      tr.append(priorTd);
+      tbody.append(tr);
+    }
+  }
+
+  function appendCustomNoteRow(item: AarsregnskapCustomNote): void {
+    const list = el('#custom-notes-list');
+    const wrap = document.createElement('div');
+    wrap.className = 'custom-note-item';
+
+    const top = document.createElement('div');
+    top.className = 'custom-note-top';
+    const titleInput = document.createElement('input');
+    titleInput.type = 'text';
+    titleInput.placeholder = 'Notetittel';
+    titleInput.maxLength = 120;
+    titleInput.value = item.tittel;
+    titleInput.disabled = !mayWrite();
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'btn btn-ghost btn-small';
+    removeBtn.textContent = 'Fjern';
+    removeBtn.hidden = !mayWrite();
+    removeBtn.addEventListener('click', () => wrap.remove());
+
+    top.append(titleInput, removeBtn);
+
+    const textarea = document.createElement('textarea');
+    textarea.rows = 3;
+    textarea.placeholder = 'Notetekst';
+    textarea.value = item.tekst;
+    textarea.disabled = !mayWrite();
+
+    wrap.append(top, textarea);
+    list.append(wrap);
+  }
+
+  function collectCustomNotes(): AarsregnskapCustomNote[] {
+    const items = el('#custom-notes-list').querySelectorAll<HTMLElement>('.custom-note-item');
+    const out: AarsregnskapCustomNote[] = [];
+    for (const item of items) {
+      const title = item.querySelector<HTMLInputElement>('input')?.value.trim() ?? '';
+      const text = item.querySelector<HTMLTextAreaElement>('textarea')?.value.trim() ?? '';
+      if (title || text) out.push({ tittel: title, tekst: text });
+    }
+    return out;
+  }
+
+  function updateSendButtons(): void {
+    if (view === null) return;
+    const ready = mayWrite() && view.submission_available && !view.blocked && sendConfirm.checked;
+    btnPrepareSys.disabled = !ready || !view.systembruker_approved;
+    btnPrepareIdp.disabled = !ready || !view.id_porten_logged_in;
+    btnSignDirect.disabled = !ready || !view.id_porten_logged_in;
+  }
+
+  function renderFindings(data: AarsregnskapOverview): void {
+    const errList = el('#errors');
+    const noteList = el('#notes');
+    errList.replaceChildren();
+    noteList.replaceChildren();
+    let errs = 0;
+    let notes = 0;
+    for (const f of data.findings) {
+      const li = document.createElement('li');
+      li.textContent = f.message;
+      if (f.severity === 'feil') {
+        errList.append(li);
+        errs += 1;
+      } else {
+        noteList.append(li);
+        notes += 1;
+      }
+    }
+    show(errList, errs > 0);
+    show(noteList, notes > 0);
+  }
+
+  function renderFilings(data: AarsregnskapOverview): void {
+    const container = el('#filings-list');
+    container.replaceChildren();
+    show(el('#filings-empty'), data.filings.length === 0);
+
+    for (const filing of data.filings) {
+      const card = document.createElement('article');
+      card.className = 'filing-card';
+
+      const head = document.createElement('div');
+      head.className = 'filing-head';
+      const title = document.createElement('strong');
+      title.textContent = `Årsregnskap ${filing.year} (#${filing.id})`;
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.dataset.tone = filingStatusTone(filing.status);
+      badge.textContent = filingStatusLabel(filing.status);
+      head.append(title, badge);
+      card.append(head);
+
+      const meta = document.createElement('p');
+      meta.className = 'filing-meta';
+      const parts = [
+        `Opprettet ${isoDate(filing.created_at)}`,
+        `Metode: ${filing.auth_method === 'systembruker' ? 'Altinn-systembruker' : 'ID-porten'}`,
+        `Årsresultat: ${formatWholeKr(Number(filing.aarsresultat))} kr`,
+      ];
+      if (filing.altinn_instance_id) parts.push(`Altinn-instans: ${filing.altinn_instance_id}`);
+      if (filing.signed_by_name) parts.push(`Signert av ${filing.signed_by_name}`);
+      if (filing.stale && awaitingSignature(filing)) {
+        parts.push('Regnskapet er endret siden klargjøring');
+      }
+      meta.textContent = parts.join(' | ');
+      card.append(meta);
+
+      if (filing.error) {
+        const errP = document.createElement('p');
+        errP.className = 'filing-error';
+        errP.textContent = filing.error;
+        card.append(errP);
+      }
+
+      if (filing.validation_issues.length > 0) {
+        const ul = document.createElement('ul');
+        ul.className = 'filing-meta';
+        for (const issue of filing.validation_issues) {
+          const li = document.createElement('li');
+          li.textContent = String(issue.description ?? issue.code ?? JSON.stringify(issue));
+          ul.append(li);
+        }
+        card.append(ul);
+      }
+
+      const actions = document.createElement('div');
+      actions.className = 'filing-actions';
+
+      if (awaitingSignature(filing) && mayWrite() && data.submission_available) {
+        const signBtn = document.createElement('button');
+        signBtn.type = 'button';
+        signBtn.className = 'btn btn-primary btn-small';
+        signBtn.textContent = 'Signer og send inn med ID-porten';
+        signBtn.disabled = !data.id_porten_logged_in;
+        signBtn.addEventListener('click', () => {
+          signBtn.disabled = true;
+          setStatus(filingsStatus, 'Signerer og sender årsregnskapet til Regnskapsregisteret …');
+          void signAarsregnskapFiling(company.id, filing.id, {
+            bekreftet: true,
+            sjekk_endringer: !filing.stale,
+          })
+            .then(async () => {
+              setStatus(
+                filingsStatus,
+                'Årsregnskapet er signert og sendt inn til Regnskapsregisteret.',
+                'ok',
+              );
+              await refresh();
+            })
+            .catch(async (error: unknown) => {
+              setStatus(
+                filingsStatus,
+                error instanceof ApiError ? error.message : 'Signeringen i Altinn feilet.',
+              );
+              await refresh().catch(() => undefined);
+            });
+        });
+        actions.append(signBtn);
+      }
+
+      if (filing.altinn_portal_url) {
+        const portalLink = document.createElement('a');
+        portalLink.className = 'btn btn-ghost btn-small';
+        portalLink.href = filing.altinn_portal_url;
+        portalLink.target = '_blank';
+        portalLink.rel = 'noopener noreferrer';
+        portalLink.textContent = 'Åpne i Altinn ↗';
+        actions.append(portalLink);
+      }
+
+      if (
+        filing.altinn_instance_id &&
+        mayWrite() &&
+        data.submission_available &&
+        data.id_porten_logged_in &&
+        filing.status !== 'mottatt'
+      ) {
+        const pollBtn = document.createElement('button');
+        pollBtn.type = 'button';
+        pollBtn.className = 'btn btn-ghost btn-small';
+        pollBtn.textContent = 'Hent status og kvittering';
+        pollBtn.addEventListener('click', () => {
+          pollBtn.disabled = true;
+          setStatus(filingsStatus, 'Henter status fra Altinn …');
+          void refreshAarsregnskapStatus(company.id, filing.id)
+            .then(async () => {
+              setStatus(filingsStatus, 'Status oppdatert fra Altinn.', 'ok');
+              await refresh();
+            })
+            .catch((error: unknown) => {
+              setStatus(
+                filingsStatus,
+                error instanceof ApiError ? error.message : 'Klarte ikke å hente status.',
+              );
+              pollBtn.disabled = false;
+            });
+        });
+        actions.append(pollBtn);
+      }
+
+      for (const doc of filing.documents) {
+        const docLink = document.createElement('a');
+        docLink.className = 'btn btn-ghost btn-small';
+        docLink.href = aarsregnskapDocumentUrl(company.id, filing.id, doc.document_type);
+        docLink.textContent = documentTypeLabel(doc.document_type);
+        actions.append(docLink);
+      }
+
+      card.append(actions);
+      container.append(card);
+    }
+  }
+
+  function render(data: AarsregnskapOverview): void {
+    view = data;
+    year = data.year;
+    el('#year').textContent = String(data.year);
+    el('#period-title').textContent = `Regnskapsåret ${data.year}`;
+    el('#period-hint').textContent =
+      `Periode ${isoDate(data.start_date)} til ${isoDate(data.end_date)} (${
+        data.year_closed ? 'avsluttet regnskapsår' : 'åpent regnskapsår'
+      }).`;
+
+    el<HTMLAnchorElement>('#pdf-aarsregnskap').href = aarsregnskapPdfUrl(
+      company.id,
+      data.year,
+      'aarsregnskap',
+    );
+    el<HTMLAnchorElement>('#pdf-styre').href = aarsregnskapPdfUrl(
+      company.id,
+      data.year,
+      'styreprotokoll',
+    );
+    el<HTMLAnchorElement>('#pdf-gf').href = aarsregnskapPdfUrl(
+      company.id,
+      data.year,
+      'generalforsamling',
+    );
+    el<HTMLAnchorElement>('#xml-hoved').href = aarsregnskapXmlUrl(
+      company.id,
+      data.year,
+      'hovedskjema',
+    );
+    el<HTMLAnchorElement>('#xml-under').href = aarsregnskapXmlUrl(
+      company.id,
+      data.year,
+      'underskjema',
+    );
+
+    el('#sum-inntekter').textContent = `${formatWholeKr(data.driftsinntekter)} kr`;
+    el('#sum-driftsres').textContent = `${formatWholeKr(data.driftsresultat)} kr`;
+    el('#sum-aarsres').textContent = `${formatWholeKr(data.aarsresultat)} kr`;
+    el('#sum-eiendeler').textContent = `${formatWholeKr(data.sum_eiendeler)} kr`;
+    el('#sum-egenkapital').textContent = `${formatWholeKr(data.sum_egenkapital)} kr`;
+    el('#sum-gjeld').textContent = `${formatWholeKr(data.sum_gjeld)} kr`;
+
+    renderFindings(data);
+
+    const currCol = String(data.year);
+    const priorCol = String(data.year - 1);
+    el('#res-col-curr').textContent = currCol;
+    el('#res-col-prior').textContent = priorCol;
+    el('#disp-col-curr').textContent = currCol;
+    el('#disp-col-prior').textContent = priorCol;
+    el('#asset-col-curr').textContent = currCol;
+    el('#asset-col-prior').textContent = priorCol;
+    el('#eq-col-curr').textContent = currCol;
+    el('#eq-col-prior').textContent = priorCol;
+
+    renderStatementTable(el('#result-body'), data.result_lines);
+    renderStatementTable(el('#disp-body'), data.disposition_lines);
+    renderStatementTable(el('#asset-body'), data.balance_asset_lines);
+    renderStatementTable(el('#eq-body'), data.balance_equity_liability_lines);
+
+    show(el('#prior-actions'), mayWrite());
+    show(el('#prior-save-bar'), editingPrior && mayWrite());
+    el<HTMLButtonElement>('#toggle-prior-edit').textContent = editingPrior
+      ? 'Avslutt redigering av fjorårstall'
+      : 'Rediger sammenligningstall (fjoråret)';
+
+    // Draft form fields
+    const d = data.draft;
+    el<HTMLInputElement>('#d-approval-date').value = d.approval_date ?? '';
+    el<HTMLInputElement>('#d-rep').value = d.confirming_representative ?? '';
+    el<HTMLInputElement>('#d-email').value = d.contact_email ?? '';
+    el<HTMLInputElement>('#d-dividend').value = d.dividend_proposed ?? '0.00';
+    el<HTMLInputElement>('#d-small').checked = d.small_company;
+    el<HTMLInputElement>('#d-no-audit').checked = d.auditor_elected_out;
+    el<HTMLInputElement>('#d-ext-prep').checked = d.prepared_by_external_accountant;
+    el<HTMLInputElement>('#d-ext-assist').checked = d.external_accountant_assistance;
+    el<HTMLInputElement>('#d-parent').checked = d.is_parent;
+    el<HTMLInputElement>('#d-winding').checked = d.winding_up_accounts;
+
+    el<HTMLInputElement>('#d-board-date').value = d.board_meeting_date ?? '';
+    el<HTMLInputElement>('#d-board-place').value = d.board_place ?? '';
+    el<HTMLInputElement>('#d-gm-date').value = d.general_meeting_date ?? '';
+    el<HTMLInputElement>('#d-gm-place').value = d.general_meeting_place ?? '';
+    el<HTMLInputElement>('#d-gm-chair').value = d.general_meeting_chair ?? '';
+    el<HTMLInputElement>('#d-gm-cosigner').value = d.general_meeting_cosigner ?? '';
+    el<HTMLTextAreaElement>('#d-board-members').value = formatBoardMembersText(d.board_members);
+
+    // Notes fields
+    const n = data.notes;
+    el<HTMLTextAreaElement>('#n-prinsipper').value = n.regnskapsprinsipper;
+    el<HTMLInputElement>('#n-usikker-drift').checked = n.usikkerhet_fortsatt_drift;
+    el<HTMLTextAreaElement>('#n-usikker-tekst').value = n.usikkerhet_fortsatt_drift_tekst;
+    show(el('#n-usikker-wrap'), n.usikkerhet_fortsatt_drift);
+
+    el<HTMLInputElement>('#n-aarsverk').value = n.antall_aarsverk;
+    el<HTMLInputElement>('#n-otp-plikt').checked = n.har_otp_plikt;
+    el('#n-lonn-summary').textContent =
+      `Fra regnskapet: Lønn ${formatWholeKr(n.lonn_aarets)} kr, arbeidsgiveravgift ` +
+      `${formatWholeKr(n.arbeidsgiveravgift_aarets)} kr, pensjon ` +
+      `${formatWholeKr(n.pensjon_aarets)} kr, andre ytelser ` +
+      `${formatWholeKr(n.andre_ytelser_aarets)} kr (sum ${formatWholeKr(n.sum_lonnskostnad_aarets)} kr).`;
+    el<HTMLTextAreaElement>('#n-lonn-tekst').value = n.lonnskostnad_fritekst;
+    el<HTMLTextAreaElement>('#n-aksje-tekst').value = n.aksjekapital_tekst;
+
+    const fa = n.anleggsmidler;
+    el('#n-anlegg-summary').textContent =
+      `Varige driftsmidler balanseført 31.12: ${formatWholeKr(fa.tangible_carrying_value)} kr ` +
+      `(årets avskrivning ${formatWholeKr(fa.tangible_year_depreciation)} kr). ` +
+      `Immaterielle eiendeler 31.12: ${formatWholeKr(fa.intangible_carrying_value)} kr.`;
+    el<HTMLTextAreaElement>('#n-anlegg-tekst').value = n.anleggsmidler_fritekst;
+
+    el('#n-ek-summary').textContent =
+      `Egenkapital: IB ${formatWholeKr(n.egenkapital_ib)} kr, årsresultat ` +
+      `${formatWholeKr(n.egenkapital_aarsresultat)} kr, utbytte ${formatWholeKr(n.egenkapital_utbytte)} kr, ` +
+      `UB ${formatWholeKr(n.egenkapital_ub)} kr.`;
+    el<HTMLTextAreaElement>('#n-skatt-tekst').value = n.skatt_tekst;
+
+    el<HTMLInputElement>('#n-bundne').value = String(n.bundne_bankinnskudd);
+    el<HTMLInputElement>('#n-gjeld-5').value = String(n.gjeld_over_fem_aar);
+    el<HTMLInputElement>('#n-pant-gjeld').value = String(n.pantstillelser_gjeld);
+    el<HTMLInputElement>('#n-pant-verdi').value = String(n.pantsatte_eiendeler_verdi);
+    el<HTMLInputElement>('#n-garantier').value = String(n.garantiforpliktelser);
+    el<HTMLInputElement>('#n-laan-styret').value = String(n.laan_til_styret);
+    el<HTMLInputElement>('#n-laan-dl').value = String(n.laan_til_daglig_leder);
+    el<HTMLTextAreaElement>('#n-gjeld-tekst').value = n.gjeld_fritekst;
+    el<HTMLTextAreaElement>('#n-laan-tekst').value = n.laan_fritekst;
+    el<HTMLTextAreaElement>('#n-ytterligere').value = n.ytterligere_opplysninger;
+
+    el('#custom-notes-list').replaceChildren();
+    for (const custom of n.egendefinerte_noter) {
+      appendCustomNoteRow(custom);
+    }
+
+    // Lock inputs when user has read-only access
+    const writable = mayWrite();
+    for (const control of el('#draft-form').querySelectorAll<
+      HTMLInputElement | HTMLTextAreaElement
+    >('input, textarea')) {
+      control.disabled = !writable;
+    }
+    show(el('#draft-actions'), writable);
+    show(el('#add-custom-note'), writable);
+
+    // Submission section
+    el('#send-readiness').textContent = submissionReadinessText(data);
+    const idpBtn = el<HTMLAnchorElement>('#idporten-login-btn');
+    idpBtn.href = governmentLoginStartUrl(`/aarsregnskap/#${data.year}`);
+    show(idpBtn, data.id_porten_available && !data.id_porten_logged_in);
+    show(el('#systembruker-link'), data.systembruker_available && !data.systembruker_approved);
+
+    show(el('#send-controls'), writable && data.submission_available);
+    show(btnPrepareSys, data.systembruker_approved);
+    show(btnPrepareIdp, data.id_porten_logged_in);
+    show(btnSignDirect, data.id_porten_logged_in);
+    sendConfirm.checked = false;
+    updateSendButtons();
+
+    renderFilings(data);
+  }
+
+  async function refresh(): Promise<void> {
+    const data = await getAarsregnskap(company.id, year);
+    render(data);
+  }
+
+  el('#n-usikker-drift').addEventListener('change', () => {
+    show(el('#n-usikker-wrap'), el<HTMLInputElement>('#n-usikker-drift').checked);
+  });
+
+  el('#add-custom-note').addEventListener('click', () => {
+    appendCustomNoteRow({ tittel: '', tekst: '' });
+  });
+
+  el('#toggle-prior-edit').addEventListener('click', () => {
+    editingPrior = !editingPrior;
+    setStatus(priorStatus, '');
+    if (view) render(view);
+  });
+
+  el('#cancel-prior-btn').addEventListener('click', () => {
+    editingPrior = false;
+    setStatus(priorStatus, '');
+    if (view) render(view);
+  });
+
+  el('#save-prior-btn').addEventListener('click', () => {
+    if (!view) return;
+    const inputs = document.querySelectorAll<HTMLInputElement>('input[data-prior-key]');
+    const overrides: Record<string, number | null> = { ...view.draft.prior_year_overrides };
+    for (const input of inputs) {
+      const key = input.dataset.priorKey;
+      if (!key) continue;
+      const raw = input.value.trim();
+      if (!raw) {
+        delete overrides[key];
+      } else {
+        const parsed = parseWholeKrInput(raw);
+        if (parsed === null) {
+          setStatus(priorStatus, `Ugyldig heltall for linjen «${key}»: ${raw}`);
+          return;
+        }
+        overrides[key] = parsed;
+      }
+    }
+    setStatus(priorStatus, 'Lagrer sammenligningstall …');
+    void saveAarsregnskapDraft(company.id, { aar: year, prior_year_overrides: overrides })
+      .then((updated) => {
+        editingPrior = false;
+        render(updated);
+        setStatus(priorStatus, 'Sammenligningstall lagret.', 'ok');
+      })
+      .catch((error: unknown) => {
+        setStatus(
+          priorStatus,
+          error instanceof ApiError ? error.message : 'Klarte ikke å lagre sammenligningstall.',
+        );
+      });
+  });
+
+  el('#draft-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (!mayWrite()) return;
+    const saveBtn = el<HTMLButtonElement>('#save-draft-btn');
+    saveBtn.disabled = true;
+    setStatus(draftStatus, 'Lagrer utkast og noter …');
+
+    const dividendRaw = el<HTMLInputElement>('#d-dividend').value.trim().replace(',', '.') || '0';
+    void saveAarsregnskapDraft(company.id, {
+      aar: year,
+      small_company: el<HTMLInputElement>('#d-small').checked,
+      is_parent: el<HTMLInputElement>('#d-parent').checked,
+      winding_up_accounts: el<HTMLInputElement>('#d-winding').checked,
+      auditor_elected_out: el<HTMLInputElement>('#d-no-audit').checked,
+      prepared_by_external_accountant: el<HTMLInputElement>('#d-ext-prep').checked,
+      external_accountant_assistance: el<HTMLInputElement>('#d-ext-assist').checked,
+      approval_date: el<HTMLInputElement>('#d-approval-date').value || null,
+      confirming_representative: el<HTMLInputElement>('#d-rep').value.trim() || null,
+      contact_email: el<HTMLInputElement>('#d-email').value.trim() || null,
+      dividend_proposed: dividendRaw,
+      board_meeting_date: el<HTMLInputElement>('#d-board-date').value || null,
+      board_place: el<HTMLInputElement>('#d-board-place').value.trim() || null,
+      board_members: parseBoardMembersText(el<HTMLTextAreaElement>('#d-board-members').value),
+      general_meeting_date: el<HTMLInputElement>('#d-gm-date').value || null,
+      general_meeting_place: el<HTMLInputElement>('#d-gm-place').value.trim() || null,
+      general_meeting_chair: el<HTMLInputElement>('#d-gm-chair').value.trim() || null,
+      general_meeting_cosigner: el<HTMLInputElement>('#d-gm-cosigner').value.trim() || null,
+      notes: {
+        regnskapsprinsipper: el<HTMLTextAreaElement>('#n-prinsipper').value,
+        usikkerhet_fortsatt_drift: el<HTMLInputElement>('#n-usikker-drift').checked,
+        usikkerhet_fortsatt_drift_tekst: el<HTMLTextAreaElement>('#n-usikker-tekst').value,
+        antall_aarsverk: el<HTMLInputElement>('#n-aarsverk').value.trim().replace(',', '.') || '0',
+        har_otp_plikt: el<HTMLInputElement>('#n-otp-plikt').checked,
+        lonnskostnad_fritekst: el<HTMLTextAreaElement>('#n-lonn-tekst').value,
+        aksjekapital_tekst: el<HTMLTextAreaElement>('#n-aksje-tekst').value,
+        anleggsmidler_fritekst: el<HTMLTextAreaElement>('#n-anlegg-tekst').value,
+        skatt_tekst: el<HTMLTextAreaElement>('#n-skatt-tekst').value,
+        bundne_bankinnskudd: Number(el<HTMLInputElement>('#n-bundne').value || 0),
+        gjeld_over_fem_aar: Number(el<HTMLInputElement>('#n-gjeld-5').value || 0),
+        pantstillelser_gjeld: Number(el<HTMLInputElement>('#n-pant-gjeld').value || 0),
+        pantsatte_eiendeler_verdi: Number(el<HTMLInputElement>('#n-pant-verdi').value || 0),
+        garantiforpliktelser: Number(el<HTMLInputElement>('#n-garantier').value || 0),
+        laan_til_styret: Number(el<HTMLInputElement>('#n-laan-styret').value || 0),
+        laan_til_daglig_leder: Number(el<HTMLInputElement>('#n-laan-dl').value || 0),
+        gjeld_fritekst: el<HTMLTextAreaElement>('#n-gjeld-tekst').value,
+        laan_fritekst: el<HTMLTextAreaElement>('#n-laan-tekst').value,
+        ytterligere_opplysninger: el<HTMLTextAreaElement>('#n-ytterligere').value,
+        egendefinerte_noter: collectCustomNotes(),
+      },
+    })
+      .then((updated) => {
+        render(updated);
+        setStatus(draftStatus, 'Utkast og noter er lagret.', 'ok');
+      })
+      .catch((error: unknown) => {
+        setStatus(
+          draftStatus,
+          error instanceof ApiError ? error.message : 'Klarte ikke å lagre utkastet.',
+        );
+      })
+      .finally(() => {
+        saveBtn.disabled = false;
+      });
+  });
+
+  sendConfirm.addEventListener('change', updateSendButtons);
+
+  btnPrepareSys.addEventListener('click', () => {
+    if (!view) return;
+    btnPrepareSys.disabled = true;
+    setStatus(sendStatus, 'Klargjør og låser årsregnskapet i Altinn med systembruker …');
+    void prepareAarsregnskapSystembruker(company.id, {
+      aar: view.year,
+      aarsresultat: view.aarsresultat,
+      sum_eiendeler: view.sum_eiendeler,
+      bekreftet: true,
+      laas: true,
+      legg_ved_pdf: sendAttachPdf.checked,
+    })
+      .then(async (filing) => {
+        setStatus(
+          sendStatus,
+          `Årsregnskapet er klargjort i Altinn (${filing.altinn_instance_id ?? ''}). Signer med ID-porten under Innsendinger for å sende inn.`,
+          'ok',
+        );
+        await refresh();
+      })
+      .catch(async (error: unknown) => {
+        setStatus(
+          sendStatus,
+          error instanceof ApiError ? error.message : 'Klargjøring i Altinn feilet.',
+        );
+        await refresh().catch(() => undefined);
+      });
+  });
+
+  function sendWithIdPorten(signDirect: boolean): void {
+    if (!view) return;
+    btnPrepareIdp.disabled = true;
+    btnSignDirect.disabled = true;
+    setStatus(
+      sendStatus,
+      signDirect
+        ? 'Sender og signerer årsregnskapet til Regnskapsregisteret med ID-porten …'
+        : 'Klargjør årsregnskapet i Altinn med ID-porten …',
+    );
+    void sendAarsregnskapIdPorten(company.id, {
+      aar: view.year,
+      aarsresultat: view.aarsresultat,
+      sum_eiendeler: view.sum_eiendeler,
+      bekreftet: true,
+      laas: true,
+      signer_direkte: signDirect,
+      legg_ved_pdf: sendAttachPdf.checked,
+    })
+      .then(async () => {
+        setStatus(
+          sendStatus,
+          signDirect
+            ? 'Årsregnskapet er signert og sendt inn til Regnskapsregisteret.'
+            : 'Årsregnskapet er klargjort og låst i Altinn, klart for signering.',
+          'ok',
+        );
+        await refresh();
+      })
+      .catch(async (error: unknown) => {
+        setStatus(
+          sendStatus,
+          error instanceof ApiError ? error.message : 'Innsending til Altinn feilet.',
+        );
+        await refresh().catch(() => undefined);
+      });
+  }
+
+  btnPrepareIdp.addEventListener('click', () => sendWithIdPorten(false));
+  btnSignDirect.addEventListener('click', () => sendWithIdPorten(true));
+
+  function changeYear(delta: number): void {
+    year += delta;
+    editingPrior = false;
+    history.replaceState(null, '', `/aarsregnskap/#${year}`);
+    setStatus(draftStatus, '');
+    setStatus(sendStatus, '');
+    setStatus(priorStatus, '');
+    void refresh().catch((error: unknown) => {
+      setStatus(pageStatus, error instanceof ApiError ? error.message : 'Klarte ikke å hente året.');
+    });
+  }
+
+  el('#year-prev').addEventListener('click', () => changeYear(-1));
+  el('#year-next').addEventListener('click', () => changeYear(1));
+
+  void loadSession().then(async (session) => {
+    if (session === null) {
+      redirectToLogin();
+      return;
+    }
+    try {
+      const companies = await loadCompanies();
+      if (companies.length === 0) {
+        window.location.href = '/';
+        return;
+      }
+      const current = currentCompany(companies);
+      if (current === undefined) return;
+      company = current;
+      el('#orgnr').textContent = `Org.nr. ${orgnummer(company.orgnr)}`;
+      const fallbackYear = new Date().getFullYear() - 1;
+      year = yearFromHash(window.location.hash, fallbackYear);
+      await refresh();
+      el('#loading').hidden = true;
+      el('#content').hidden = false;
+    } catch (error: unknown) {
+      el('#loading').hidden = true;
+      setStatus(
+        pageStatus,
+        error instanceof ApiError ? error.message : 'Klarte ikke å hente årsregnskapet.',
+      );
+    }
+  });
+</script>

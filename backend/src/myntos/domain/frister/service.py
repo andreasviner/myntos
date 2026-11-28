@@ -22,6 +22,8 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from myntos.aarsregnskap.models import AarsregnskapFiling, AarsregnskapFilingStatus
+from myntos.aksjonaer.models import AksjonaerFiling, AksjonaerFilingStatus
 from myntos.domain.frister import rules
 from myntos.domain.frister.rules import Kind, Recipient, YearlyDeadline
 from myntos.domain.ledger import service as ledger_service
@@ -36,6 +38,8 @@ from myntos.skattemelding.models import SkattemeldingFiling, SkattemeldingStatus
 WINDOW = timedelta(days=365)
 
 _FILED_SKATTEMELDING = [s.value for s in SkattemeldingStatus if s.is_filed]
+_FILED_AKSJONAER = [s.value for s in AksjonaerFilingStatus if s.is_filed]
+_FILED_AARSREGNSKAP = [s.value for s in AarsregnskapFilingStatus if s.is_filed]
 
 
 class DoneBy:
@@ -201,6 +205,22 @@ async def _yearly(
             )
         )
     )
+    filed_aksjonaer = set(
+        await db.scalars(
+            select(AksjonaerFiling.year).where(
+                AksjonaerFiling.company_id == company.id,
+                AksjonaerFiling.status.in_(_FILED_AKSJONAER),
+            )
+        )
+    )
+    filed_aarsregnskap = set(
+        await db.scalars(
+            select(AarsregnskapFiling.year).where(
+                AarsregnskapFiling.company_id == company.id,
+                AarsregnskapFiling.status.in_(_FILED_AARSREGNSKAP),
+            )
+        )
+    )
     last_accounts = _register_year(unit.get("last_submitted_annual_accounts"))
     asked_on = snapshot.fetched_at.date() if snapshot is not None else None
 
@@ -215,7 +235,14 @@ async def _yearly(
         if company.wound_up_on is not None and year >= company.wound_up_on.year:
             continue
         for duty in rules.yearly(company.organisation_form, year):
-            done, done_by = _yearly_done(duty, filed_skattemelding, last_accounts, asked_on)
+            done, done_by = _yearly_done(
+                duty,
+                filed_skattemelding,
+                filed_aksjonaer,
+                filed_aarsregnskap,
+                last_accounts,
+                asked_on,
+            )
             frist = Frist(
                 kind=duty.kind,
                 deadline=duty.deadline,
@@ -235,6 +262,8 @@ async def _yearly(
 def _yearly_done(
     duty: YearlyDeadline,
     filed_skattemelding: set[int],
+    filed_aksjonaer: set[int],
+    filed_aarsregnskap: set[int],
     last_accounts: int | None,
     asked_on: date | None,
 ) -> tuple[bool | None, str | None]:
@@ -242,11 +271,16 @@ def _yearly_done(
         # Filed from Myntos is known. Not filed from Myntos is not «not filed»:
         # the first year in Myntos usually went from the old program.
         return (True, DoneBy.MYNTOS) if duty.year in filed_skattemelding else (None, None)
-    if duty.kind is Kind.ARSREGNSKAP and last_accounts is not None:
-        if last_accounts >= duty.year:
-            return True, DoneBy.REGNSKAPSREGISTERET
-        # Missing only when the register was asked after the deadline. Asked
-        # before it, «not yet received» is what every company's answer says.
-        if asked_on is not None and asked_on > duty.deadline:
-            return False, None
+    if duty.kind is Kind.AKSJONAERREGISTEROPPGAVE and duty.files_from_myntos:
+        return (True, DoneBy.MYNTOS) if duty.year in filed_aksjonaer else (None, None)
+    if duty.kind is Kind.ARSREGNSKAP:
+        if duty.files_from_myntos and duty.year in filed_aarsregnskap:
+            return True, DoneBy.MYNTOS
+        if last_accounts is not None:
+            if last_accounts >= duty.year:
+                return True, DoneBy.REGNSKAPSREGISTERET
+            # Missing only when the register was asked after the deadline. Asked
+            # before it, «not yet received» is what every company's answer says.
+            if asked_on is not None and asked_on > duty.deadline:
+                return False, None
     return None, None

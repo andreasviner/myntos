@@ -23,6 +23,8 @@ flowchart LR
     IDURA[Idura, EU<br/>BankID sign-in]
     ALT[Altinn 3<br/>instance APIs]
     SKE[Skatteetaten APIs]
+    LOYND[Løynd<br/>KI, inside the EEA]
+    MOLLIE[Mollie, EEA<br/>KI plan payments]
 
     FE -->|/api/*| CADDY
     CADDY --> BE
@@ -35,6 +37,10 @@ flowchart LR
     BE -->|code exchange, private_key_jwt| IDURA
     BE -->|token exchange| ALT
     BE --> SKE
+    BE -->|only with KI on| LOYND
+    BE -->|create, re-fetch| MOLLIE
+    MOLLIE -.->|webhook: a payment id| CADDY
+    FE -->|checkout redirect| MOLLIE
 ```
 
 ## Accounts, organizations and login
@@ -1014,8 +1020,14 @@ sentence explaining that lives in the banner on `/organisasjon/`, rather than
 being read again on every page. `lib/company.ts` holds the one `/companies`
 request the header and the page below it share.
 
-The signed-in nav is deliberately four links — Oversikt, Betaling
-(`/kontantstrom/`), Faktura, KI — plus the cog. «Betaling» rather than
+The signed-in nav is deliberately short: Oversikt, Betaling
+(`/kontantstrom/`), Faktura, Mottatt (`/innkommende/`), Analyse and KI
+(`/ki/`, saved KI chat over the company's books), plus Godkjenning while the
+company has keys switched on, and the cog. `/ki/about/` carries the public
+overview of Løynd, the levels, weekly quotas and monthly KI plans (reached from
+where KI is used, the company menu «Om KI og KI-plan» and the footer), while
+the company's KI on/off switch (`Company.ki_enabled`) lives in company settings
+(`/organisasjon/#ki`). «Betaling» rather than
 «Kontantstrøm», because it is the word on the button people already press on
 the overview and it names what they are about to do rather than the report it
 ends in. It is not a table of contents: `/parter/` is reached from the invoice
@@ -1040,11 +1052,13 @@ everywhere is no easier to find than one present where you are.
 | `/tidligere-program/` | «Hent regnskapet fra et annet program»: the old program's SAF-T files, one per year, uploaded once and read and posted on the server (see [§ Work done after the answer](#work-done-after-the-answer)); the review in tiles and folded lists; «Programmet du kommer fra», which adds what one program has (`lib/programs.ts`); with Tripletex chosen, «Vedlegg fra Tripletex», Tripletex's printout of the vouchers with attachments, each voucher's pages put on the voucher with its number ([integrations/saf-t.md](integrations/saf-t.md)); the parallel run's comparison. Reached from the overview (a card while the books are empty, and the note), `/inngaende-balanse/` and the move guides (with `?fra=` naming the guide's program) |
 | `/bilag/` | The bilagsjournal: every posted voucher of a year from every journal, newest first, with its lines and its documents in the bilag archive; narrowed to an account, its movements and balance (1920: the bank's ins and outs), or to the vouchers with a document («Bare bilag med dokument»). Reached from «Se alle bilag →» on the overview and from a finished import |
 | `/regnskap/` | Resultatregnskap and balanse for every year side by side, newest first, grouped by NS 4102 class, each line opening to its accounts and each amount to `/bilag/` (`domain/ledger/report.py`). Reached from «Regnskapet år for år» on the overview, which also says where the books stop once a VAT deadline has passed with nothing posted since (`positions_as_of` on the summary) |
+| `/analyse/` | Inntekter, kostnader and resultat før skatt for this year, the last twelve months or an earlier year, against the same dates a year earlier: three figures, two or three template sentences, columns per month and donuts per account, every number from the books and none from a model (`domain/analyse/`, `GET …/analyse`). The period and the comparison are remembered per company in the browser. In the top menu. See [analyse.md](analyse.md) |
 | `/arsavslutning/` | One financial year's result, tax (AS) and disposition, shown line by line before a confirmed close; reopening with a reason and the log of both. Reached from the overview's note |
 | `/skattemelding/` | An aksjeselskap's skattemelding and næringsspesifikasjon for a closed year: what stops it (each with a link to where it is fixed), the taxable result and the formue as Skatteetaten will compute them, every post with its accounts; the one question only the person can answer, Skatteetaten's check, a confirmation step before filing, the answer afterwards. Reached from the overview's note and from a closed year on `/arsavslutning/`. See [integrations/skatteetaten.md](integrations/skatteetaten.md#filing-from-myntos-built-2026-10-22) |
 | `/parter/` | Customers and suppliers (SAF-T `Party`) for the active company: the register a counterparty is picked from. Reached from `/faktura/` and the register's entry form, not from the menu |
 | `/datadeling/` | What each level of sharing with Myntos shares and keeps, public, drawn from `lib/datasharing.ts` like the choice on `/organisasjon/`. See [data-sharing.md](data-sharing.md) |
-| `/ki/` | Where KI is used in Myntos and who runs the model, public; signed in, also the switch (`Company.ki_enabled`) that turns it off for one set of books, naming the company it applies to. See [§ KI](#ki-anywhere-in-the-product-one-provider-only) |
+| `/ki/` | Signed-in KI chat over the company's books («Jeg har lest hele regnskapet ditt. Spør meg om hva som helst.»), with saved threads per company, full books snapshot + targeted voucher lookup, streaming replies, and the KI level picker. See [§ KI](#ki-anywhere-in-the-product-one-provider-only) |
+| `/ki/about/` | Public overview of where KI runs in Myntos (Løynd), the three levels, weekly percentage quotas, monthly invoiced KI plans, and downloadable KI invoices. The KI on/off switch (`Company.ki_enabled`) lives under `/organisasjon/#ki`. See [§ KI](#ki-anywhere-in-the-product-one-provider-only) |
 | `/godkjenning/` | What keys for agents and programs asked to do and that waits for the key's person: approve (runs the stored request as the key), decline with a reason the agent reads, or go to the MVA or Skattemelding page for a request to file. A request that sends something out of Myntos (`key_send`: a check or a filing with Skatteetaten) always lands here, and the card asks for the person's ID-porten login before «Godkjenn» when it goes with it. Decided ones below. In the top menu only while the company has keys switched on, with a count of what waits. See [agents-and-api.md](agents-and-api.md) rule 13 |
 | `/nytt-selskap/` | Setting up books for another company: orgnr (or Altinn's list of companies the person may act for), then the books, then inviting colleagues. Reached from «Legg til selskap» in the company menu, and only for an account holder with `organization:manage` |
 | `/logg-inn/`, `/registrer/` | Password sign-in, and one button per provider the deployment has configured (Google, Microsoft, BankID); a provider without credentials has no button. `/registrer/` starts a BankID flow with `intent=signup` |
@@ -1056,7 +1070,7 @@ everywhere is no easier to find than one present where you are.
 | `/organisasjon/` | Everything about **one company**: its own details (the only place its bank accounts, VAT registration, Foretaksregisteret and the address are edited), its subscription, who may open it and who has been invited to it, the Altinn confirmation of who it belongs to, its registration for sending e-invoices over Peppol (owners and admins, only once confirmed: [integrations/peppol.md](integrations/peppol.md)), what it lets Myntos use to improve Myntos (`Company.data_sharing`, owners and admins, the top level in red: [data-sharing.md](data-sharing.md)), and everything Enhetsregisteret holds about it including the board and the revisor. The board list marks who can open the books and offers to invite whoever cannot: [register-access.md](register-access.md). No account is shown here: see [company-isolation.md](company-isolation.md#the-account-is-not-a-company) |
 | `/tilbakemelding/` | Bug reports, improvements and wishes from anybody, signed in or not, kept without a name: the form, the reference shown once, one item read back or withdrawn by its `#ref=`, and the list the operator chose to publish in its own words. Linked from the footer and from `/funksjoner/`. See [feedback.md](feedback.md) |
 | `/drift/` | The operator's page, opened by the deployment's operator key and by no session or company key: every feedback item with the sender's text and its status, and the server's recorded failures, kept without anybody's data, with the `journalctl` command for the details. Not linked from anywhere, noindex. See [operator.md](operator.md) |
-| `/priser/`, `/bankpriser/`, `/funksjoner/`, `/about/`, `/kom-i-gang/` (and one guide per program under it), `/ansvar/`, `/personvern/`, `/vilkar/` | Marketing and legal pages, readable signed out: prices, a comparison of business banks, features, moving from another program, the disclaimer, the privacy policy and the terms. `/personvern/` and `/ki/` carry the public promise about KI ([§ KI](#ki-anywhere-in-the-product-one-provider-only)) |
+| `/priser/`, `/bankpriser/`, `/funksjoner/`, `/about/`, `/kom-i-gang/` (and one guide per program under it), `/ansvar/`, `/personvern/`, `/vilkar/` | Marketing and legal pages, readable signed out: prices, a comparison of business banks, features, moving from another program, the disclaimer, the privacy policy and the terms. `/personvern/` and `/ki/about/` carry the public promise about KI ([§ KI](#ki-anywhere-in-the-product-one-provider-only)) |
 
 `/faktura/` is three cards and one of them at a time — the form, the review,
 and what came out. Issuing is irreversible, so the step between the form and a
@@ -1113,7 +1127,7 @@ Consequences for the code:
 | `core` | Settings (pydantic-settings, env-driven), security middleware, clock | — |
 | `auth` | Myntos login (passwords, tokens, sessions, Google/Microsoft/BankID OIDC), keys for agents and integrations (`agent_keys`), the operator key (`operator`), **and** Maskinporten + ID-porten token acquisition | core, domain.identity; `agent_keys` also reads two ledger models, because a key belongs to a company and its stamp goes on a voucher |
 | `domain` | Ledger (incl. the cash-flow register), bilag, faktura, bank (camt.053 import and matching), mva, årsoppgjør (opening balance, year-end closing), identity (accounts/organizations), feedback (anonymous bug reports and wishes, and the operator's triage command), server_errors (the server's failures, kept without their data, [operator.md](operator.md)), peppol (who may register a company with the access point and send an EHF, and what it answered; the endpoint makes the calls, [integrations/peppol.md](integrations/peppol.md)) — business logic | core, db; the `storage` protocol and keys, and one data type from `integrations.brreg` (below) |
-| `integrations` | Skatteetaten/Altinn/Brreg/Løynd/Norges Bank/Recommand clients (translate domain ⇄ external APIs) | auth, core |
+| `integrations` | Skatteetaten/Altinn/Brreg/Løynd/Norges Bank/Ademico/Peppol SMP clients (translate domain ⇄ external APIs) | auth, core |
 | `saft` | SAF-T Financial export: snapshot, writer, cross-reference check, vendored code lists | domain |
 | `skattemelding` | The skattemelding and næringsspesifikasjon: the year's XSD read for order and what Skatteetaten derives, the writer, the builder from plain figures, the envelope, vendored XSDs and code lists; and the one module that reads the books for it (`service`, through `saft.service`) and the filings (`models`) | domain, saft |
 | `db` | SQLAlchemy base/session; Alembic in `backend/migrations/` | core |
@@ -1149,10 +1163,14 @@ else. If a task cannot be done through Løynd, it is not done with AI.
 
 That is a single decision doing several jobs at once:
 
-- **Data residency stays answerable.** Løynd's inference servers are in Norway
-  and it retains nothing, so anything Myntos sends a model is covered by one
-  sentence in the personvernerklæring instead of a transfer basis, an SCC annex
-  and a DPIA per provider.
+- **Data residency stays answerable.** Løynd runs its models inside the EEA
+  (its own machines in Norway, and for the paid levels extra KI capacity in the
+  EU when its own are busy) and retains nothing, so anything Myntos sends a
+  model is covered by one paragraph in the personvernerklæring instead of a
+  transfer basis, an SCC annex and a DPIA per provider. Until 2026-11 every
+  page said "in Norway"; the paid levels below ended that, so the promise
+  everywhere is now the EEA, and only «Gratis» and pictures are still
+  Norway-only.
 - **One place to audit.** Every prompt this product will ever send leaves
   through one module. Adding a second provider would mean the honest answer to
   "where does my bookkeeping go?" is a list that grows.
@@ -1178,6 +1196,65 @@ Two constraints come with the permission, and they are not negotiable per
 feature: a model's answer is **never** posted to the ledger without a person
 confirming it, and a model is never asked for something the software can
 determine itself. What the second one means in practice is below.
+
+### KI levels, and the plans that pay for two of them
+
+Every KI box offers three levels (`loynd.Level`), and every proposal route
+takes one: `free` («Gratis»), `medium` («Medium») and `thinking`
+(«Smart»). A level is not a model. The model behind each is configuration
+(`LOYND_MODEL`, `LOYND_MODEL_MEDIUM`, `LOYND_MODEL_THINKING`), and by default
+the paid two are Løynd's own live tiers, so a better model in their class
+arrives without a release here.
+
+| Level | Where it runs | Paid by |
+| --- | --- | --- |
+| `free` | Løynd's own model on its own machines in Norway | Nobody: it costs Myntos nothing per call, so it is counted against nothing and every company has it, for good |
+| `medium`, `thinking` | Løynd's own machines when they are free, otherwise extra KI capacity in the EU that Løynd uses | The company's KI plan, deducted at Løynd's live NOK prices against a weekly NOK value budget (shown as % remaining); Myntos pays Løynd from prepaid credit |
+
+**Pictures never leave the free model.** `/ki/les` and a bilag's images go to
+`settings.loynd_model` whatever the level, and count against no plan: the
+larger models do not look at pictures, and a picture is the most personal thing
+a box is given. Only the text read from it goes on at the chosen level. That is
+what keeps "pictures are read in Norway" true on the help pages.
+
+**Paid plans have weekly value-based quotas (% for users, NOK in the backend)
+and monthly section 5-1 invoicing** (`domain/ki/plans.py`,
+`domain/ki/service.py`, `domain/ki/invoicing.py`). Because «Medium» and «Smart»
+use different models with very different per-token costs, weekly limits are not
+bound to raw token counts. Start, Pluss and Pro cost 49, 149 and 399 kr/month
+excluding 25 % VAT and grant internal weekly value budgets of 9.00, 28.00 and
+75.00 kr (ex. VAT, ~75 % of weekly price; printed publicly as «Standard
+ukekvote», «3× ukekvote» and «8× ukekvote»), resetting every Monday at 00:00
+`Europe/Oslo`. Each paid completion deducts its live NOK cost fetched from
+Løynd's `GET /v1/models?currency=NOK` into `ki_weekly_usage.value_used_nok`
+(micro-krone precision, `Numeric(38, 6)`), and the API and UI expose only
+`remaining_percent` / `used_percent` (0 to 100 %, clamped to >= 1 % while any
+value remains so 0 % iff exhausted). «Gratis» stays unlimited. Owners activate,
+switch, or cancel plans (`ki_subscription`, `billing:manage`, never open to
+agent keys) without needing a card; Myntos issues a real Norwegian section 5-1
+`SalesDocument` each billing month from the configured seller company
+(`KI_BILLING_COMPANY_ID`), delivers it as EHF over Peppol when the buyer can
+receive EHF and as PDF by email, and lists downloadable PDFs on
+`/ki/about/#planer`. Legacy one-off Mollie periods (`ki_period`) track NOK
+value budgets the same way alongside subscriptions; see
+[integrations/mollie.md](integrations/mollie.md).
+
+**A request is never refused for want of quota.** `ki_service.resolve` turns a
+paid level the company cannot use into `free` with a notice (`NO_PLAN`,
+`WEEKLY_SPENT`, `SPENT`), and the notice is shown with the answer. Paid NOK
+spend is added atomically (`KiRequest.finish` / `ki_service.record_usage`) to
+`ki_weekly_usage` (and any running `ki_period`).
+
+**A paid model that refuses is replaced, not reported.** At a paid level,
+402 (Myntos's credit at Løynd is spent), 403 (a key Løynd keeps in Norway),
+404 (a model name in `.env` Løynd does not have), 429 (busy) and any 5xx (the
+EU capacity down) are asked again at `free` (`LoyndPaidLevelRefusedError`),
+and the rest of that request stays free, so a refusing model is not asked
+twice. The answer carries `REFUSED` and `ki_level: "free"`, and any cost the
+paid model had already incurred in that request is still counted. A 400 is
+not retried, because the free model would get the same malformed request; nor
+is a timeout, because asking again after waiting out a paid model's long
+timeout would double a wait the person is already in.
 
 ### Where a model is allowed to answer
 
@@ -1832,11 +1909,13 @@ buyer, not the company, not the ledger. The question does not need them.
   program's SAF-T files and printouts) go in a second bucket, also
   `jurisdiction=eu`, standard storage class: Infrequent Access bills 30 days
   for anything deleted sooner and charges for every read.
-- **Peppol access point:** Recommand (BRBX BV, Belgium), which hosts in the
-  EEA, with one key for the deployment. Its own mail goes through Postmark in
-  the USA, so Myntos never asks it to e-mail anything and registers companies
-  without contact details; and the companies are registered to send only,
-  because receiving would take over their Peppol inbox. See
+- **Peppol access point:** Ademico Software (Belgium), which hosts in the
+  EU, with one Basic Auth + access-token credential for the deployment.
+  Companies are registered without email or phone details and send-only by
+  default; receiving in ELMA/SMP is an explicit per-company opt-in. Ademico
+  pushes incoming EHF documents and delivery updates for all companies to one
+  webhook, which believes nothing it is told until Ademico confirms it, and a
+  sweep every 15 minutes catches what no push brought. See
   [integrations/peppol.md](integrations/peppol.md).
 
 ### Why EEA hosting is legal (and what the product must do about it)

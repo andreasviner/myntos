@@ -31,9 +31,27 @@ silently share one id.
 
 **``rights`` is a ceiling, not a grant.** It lists the resources the system may
 *ever* request; a customer's approval is what actually grants them, per
-customer. Listing a resource we do not use costs nothing at approval time but
-asks the customer to agree to more than we need, so the list is exactly the two
-apps this program submits to.
+customer, and each request names only what that customer uses
+(:mod:`.systemuser`). So the ceiling may run ahead of what is built: it is
+every resource Skatteetaten has granted us for (decided 2026-11-03,
+docs/integrations/skatteetaten.md «The second application»). Widening it later
+is a ``PUT``, but a customer who already approved has to approve again for
+anything new, so the first production registration (2026-11-25) declared the
+year's list at once rather than the two apps filed through at the time.
+
+**A resource where Altinn allows one, an access package only where it does
+not.** A resource is the narrower grant. A package is a bundle: whatever else it
+covers comes along with it.
+- Frister and Krav og betalinger are delegable resources, so they go in
+  ``rights``. The ``krav-og-utlegg`` package would reach them too (read off
+  ``…/resource/{id}/policy/subjects``, 2026-11-25).
+- **The MVA app is not delegable in production** (``delegable: false`` in the
+  resource registry, 2026-11-25). The first production registration named it
+  in ``rights``, as TT02 had accepted in August, and Altinn answered 400
+  ``AUTH.VLD-00021``. MVA moved to access packages on 2026-04-15, so it goes in
+  as ``merverdiavgift``, the narrowest of the packages its policy accepts.
+  The others are the regnskapsfører and revisor packages, which cover far
+  more.
 
 **``isVisible`` controls being found, not being usable.** A visible system
 appears in Altinn's own catalogue, so a customer can pick it there; an invisible
@@ -63,6 +81,48 @@ _PATH = "/authentication/api/v1/systemregister/vendor"
 # declaring rights, and the two are easy to confuse.
 SKATTEMELDING_RESOURCE = "app_skd_formueinntekt-skattemelding-v2"
 MVA_RESOURCE = "app_skd_mva-melding-innsending-v1"
+# Brønnøysundregistrene's Altinn 3 app for årsregnskap (RR-0002). Verified
+# ``delegable: true`` in both production and TT02 resource registries (2026-11-28),
+# requiring only the already-granted ``altinn:instances.read`` and ``.write`` scopes.
+AARSREGNSKAP_RESOURCE = "app_brg_aarsregnskap-vanlig-202406"
+# Skatteetaten's API resources, one per scope granted by 2026-11-25, each
+# checked to exist and be delegable in production's resource registry that day.
+# The scope gets Myntos a token; the resource is what a customer's systembruker
+# must hold for that token to be allowed to act for them.
+AKSJONAERREGISTER_RESOURCE = "ske-innrapportering-aksjonaerregisteroppgave"
+AMELDING_RESOURCE = "ske-innrapportering-amelding"
+# The A07 avstemmingsrapport is a resource of its own, behind the same scope.
+AMELDING_AVSTEMMING_RESOURCE = "ske-avstemmingsinformasjon-amelding"
+SKATTEKORT_RESOURCE = "ske-skattekort-til-arbeidsgiver"
+RF1321_RESOURCE = "ske-innrapportering-betalinger-selvstendig-naeringsdrivende"
+KRAV_OG_BETALINGER_RESOURCE = "ske-krav-og-betalinger"
+FRISTER_RESOURCE = "ske-frister"
+
+# The ceiling, in the order the features are expected to arrive. A PUT rebuilt
+# from the default must never shrink it, or a customer's system user could hold
+# a right the system no longer declares.
+SYSTEM_RESOURCES = (
+    SKATTEMELDING_RESOURCE,
+    AARSREGNSKAP_RESOURCE,
+    AKSJONAERREGISTER_RESOURCE,
+    FRISTER_RESOURCE,
+    KRAV_OG_BETALINGER_RESOURCE,
+    AMELDING_RESOURCE,
+    AMELDING_AVSTEMMING_RESOURCE,
+    SKATTEKORT_RESOURCE,
+    RF1321_RESOURCE,
+)
+
+# MVA, through the one way production allows (module docstring). The full URN,
+# because that is how both the register and a system-user request spell it.
+MVA_ACCESS_PACKAGE = "urn:altinn:accesspackage:merverdiavgift"
+SYSTEM_ACCESS_PACKAGES = (MVA_ACCESS_PACKAGE,)
+
+
+def access_packages_field(packages: tuple[str, ...]) -> list[dict[str, str]]:
+    """``accessPackages`` as Altinn spells it, in the register and in a request."""
+    return [{"urn": package} for package in packages]
+
 
 # ISO 6523 issuing agency for Norwegian organisation numbers. Altinn requires
 # the prefix, and rejects a bare orgnr.
@@ -107,7 +167,8 @@ def system_id(settings: Settings | None = None) -> str:
 def registration_payload(
     settings: Settings | None = None,
     *,
-    resources: tuple[str, ...] = (SKATTEMELDING_RESOURCE, MVA_RESOURCE),
+    resources: tuple[str, ...] = SYSTEM_RESOURCES,
+    access_packages: tuple[str, ...] = SYSTEM_ACCESS_PACKAGES,
     visible: bool = True,
 ) -> dict[str, Any]:
     """The body that registers this system.
@@ -153,6 +214,7 @@ def registration_payload(
             {"resource": [{"id": "urn:altinn:resource", "value": resource}]}
             for resource in resources
         ],
+        "accessPackages": access_packages_field(access_packages),
         "clientId": [client_id],
         "allowedredirecturls": [redirect],
         "isVisible": visible,

@@ -8,8 +8,12 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from myntos.aarsregnskap import models as _aarsregnskap_models  # noqa: F401
+from myntos.aksjonaer import models as _aksjonaer_models  # noqa: F401
 from myntos.core.config import get_settings
 from myntos.db.base import Base
+from myntos.domain.altinn import models as _altinn_models  # noqa: F401
+from myntos.domain.analyse import models as _analyse_models  # noqa: F401
 from myntos.domain.anlegg import models as _anlegg_models  # noqa: F401
 from myntos.domain.arsoppgjor import landbruk_models as _landbruk_models  # noqa: F401
 from myntos.domain.arsoppgjor import models as _arsoppgjor_models  # noqa: F401
@@ -22,7 +26,9 @@ from myntos.domain.data_sharing import models as _data_sharing_models  # noqa: F
 from myntos.domain.faktura import models as _faktura_models  # noqa: F401
 from myntos.domain.feedback import models as _feedback_models  # noqa: F401
 from myntos.domain.identity import models as _identity_models  # noqa: F401
+from myntos.domain.ki import models as _ki_models  # noqa: F401
 from myntos.domain.ledger import models as _ledger_models  # noqa: F401
+from myntos.domain.mottak import models as _mottak_models  # noqa: F401
 from myntos.domain.mva import models as _mva_models  # noqa: F401
 from myntos.domain.peppol import models as _peppol_models  # noqa: F401
 from myntos.domain.server_errors import models as _server_error_models  # noqa: F401

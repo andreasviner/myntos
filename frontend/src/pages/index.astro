@@ -82,7 +82,7 @@ const reasons = [
   {
     href: '/priser/',
     title: 'Gratis, for alltid',
-    text: 'Ingen betalte nivåer, ingen prøveperiode og ingen grense for antall bilag. Innsending til Skatteetaten koster det samme som resten: ingenting.',
+    text: 'Regnskapsprogrammet har ingen betalte nivåer, ingen prøveperiode og ingen grense for antall bilag. Innsending til Skatteetaten koster det samme som resten: ingenting.',
   },
   {
     href: '/funksjoner/#apen-kildekode',
@@ -92,7 +92,7 @@ const reasons = [
   {
     href: '/personvern/',
     title: 'Dataene dine er dine',
-    text: 'Database og bilagsarkiv ligger i EØS, og KI-en som leser bilagene, kjører i Norge. Vi selger ikke dataene, viser ingen annonser og laster ingen sporing.',
+    text: 'Database og bilagsarkiv ligger i EØS, og det gjør KI-en som leser bilagene også. Vi selger ikke dataene, viser ingen annonser og laster ingen sporing.',
   },
   {
     href: '/funksjoner/#saft',
@@ -119,13 +119,13 @@ const reasons = [
 const questions = [
   {
     q: 'Er Myntos virkelig gratis?',
-    a: 'Ja, og det skal det alltid være. Myntos koster 0 kr, uten betalte nivåer, uten prøveperiode og uten grense for antall bilag. Å levere mva-meldingen og skattemeldingen koster heller ikke noe, og vi tar ikke imot betalingsopplysninger.',
+    a: 'Ja, og det skal det alltid være. Regnskapsprogrammet koster 0 kr, uten betalte nivåer, uten prøveperiode og uten grense for antall bilag, og KI-en som leser bilagene er med. Å levere mva-meldingen og skattemeldingen koster heller ikke noe. Det eneste du kan betale for, er større KI-modeller, og det er et valg.',
     href: '/priser/',
     link: 'Les mer om prisen',
   },
   {
     q: 'Passer Myntos for et aksjeselskap?',
-    a: 'Ja, det er først og fremst laget for små aksjeselskaper. Du fører bilag, sender faktura med EHF, avslutter året og leverer både mva-melding og skattemelding for AS gratis, rett fra regnskapet. Årsregnskapet til Regnskapsregisteret og aksjonærregisteroppgaven sendes ikke herfra ennå, og Myntos kjører ikke lønn. Et enkeltpersonforetak kan også føre regnskapet her, men næringsspesifikasjonen for enkeltpersonforetak lages ikke i Myntos ennå.',
+    a: 'Ja, det er først og fremst laget for små aksjeselskaper. Du fører bilag, sender faktura med EHF, avslutter året, fører aksjeeierbok og leverer mva-melding, aksjonærregisteroppgave, skattemelding og årsregnskap til Regnskapsregisteret for AS gratis, rett fra regnskapet. Myntos kjører ikke lønn ennå. Et enkeltpersonforetak kan også føre regnskapet her, men næringsspesifikasjonen for enkeltpersonforetak lages ikke i Myntos ennå.',
     href: '/funksjoner/',
     link: 'Se alle funksjonene',
   },
@@ -137,7 +137,7 @@ const questions = [
   },
   {
     q: 'Kan jeg levere skattemelding for AS gratis i Myntos?',
-    a: 'Ja. Myntos bygger skattemeldingen og næringsspesifikasjonen for aksjeselskapet fra et avsluttet regnskapsår, Skatteetaten kontrollerer dem, og du sender dem gjennom Altinn etter å ha logget inn med ID-porten. Innsendingen koster ingenting, som resten av programmet. Årsregnskapet til Regnskapsregisteret og aksjonærregisteroppgaven sendes ikke fra Myntos ennå.',
+    a: 'Ja. Myntos bygger skattemeldingen og næringsspesifikasjonen for aksjeselskapet fra et avsluttet regnskapsår, Skatteetaten kontrollerer dem, og du sender dem gjennom Altinn etter å ha logget inn med ID-porten. Innsendingen koster ingenting, som resten av programmet. Aksjonærregisteroppgaven (RF-1086) og årsregnskapet til Regnskapsregisteret (RR-0002) sendes også rett fra Myntos.',
     href: '/funksjoner/#skattemelding',
     link: 'Mer om skattemeldingen',
   },
@@ -161,8 +161,8 @@ const questions = [
   },
   {
     q: 'Bruker Myntos KI på regnskapet mitt?',
-    a: 'Bare når du laster opp et bilag eller ber om forslag til fakturalinjer. Da leses det av Løynd, en norsk KI-tjeneste med servere i Norge, som ikke lagrer noe og ikke trener modeller på det. Beløpene leser Myntos selv, ingenting føres før du har bekreftet det, og KI kan slås av for hele selskapet.',
-    href: '/ki/',
+    a: 'Bare når du laster opp et bilag eller ber om forslag til fakturalinjer. Da leses det av Løynd, en norsk KI-tjeneste som kjører i EØS, ikke lagrer noe og ikke trener modeller på det. Beløpene leser Myntos selv, ingenting føres før du har bekreftet det, og KI kan slås av for hele selskapet.',
+    href: '/ki/about/',
     link: 'Slik brukes KI i Myntos',
   },
 ];
@@ -602,9 +602,26 @@ const questions = [
             hjemme her ved årets tall, ikke i menyen. */}
         Skattemeldingen for et avsluttet år kontrollerer og sender du under
         <a href="/skattemelding/">Skattemelding</a>.
+        Aksjeeierboken og aksjonærregisteroppgaven (RF-1086) fører og sender du under
+        <a href="/aksjonaer/">Aksjonærregisteroppgave</a>.
+        Årsregnskapet med noter, protokoller og innsending til Regnskapsregisteret (RR-0002)
+        finner du under <a href="/aarsregnskap/">Årsregnskap</a>.
         {/* Kortet over viser de tre neste; hele året står på en egen side. */}
         Alle fristene hos Skatteetaten og Brønnøysund det neste året ser du under
         <a href="/frister/">Frister</a>.
+        Leverandørfakturaer mottatt som EHF over Peppol eller på selskapets @myntos.no-adresse finner du under
+        <a href="/innkommende/">Mottatt</a>.
+        {/* Analysen står også i toppen, men lenkes her fordi den svarer på det
+            tallene over ikke gjør: hvordan året går måned for måned, og mot
+            året før. Og den regner etter regnskapet, ikke banken, så den som
+            sammenligner med «Inn i år» bør vite hvor forskjellen kommer fra. */}
+        Inntekter og kostnader måned for måned, etter regnskapet og mot året før, ser du under
+        <a href="/analyse/">Analyse</a>.
+        {/* KI leser bilagene bak flere av tallene over, så hvor den kjører,
+            nivåene og selskapets KI-plan hører hjemme ved dem, også for den
+            som aldri åpner firmamenyen. */}
+        Hvor KI-en kjører, KI-nivåene og selskapets KI-plan ser du under
+        <a href="/ki/about/">Om KI i Myntos</a>.
       </p>
     </div>
   </template>
@@ -888,29 +905,8 @@ const questions = [
     gap: 0.9rem;
     justify-items: start;
   }
-  .stats {
-    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
-  }
-  .stat-label {
-    margin: 0;
-    font-size: 0.8rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--muted);
-    font-weight: 700;
-  }
-  .stat-value {
-    margin: 0.35rem 0 0;
-    font-size: 1.5rem;
-    font-weight: 700;
-    font-variant-numeric: tabular-nums;
-    letter-spacing: -0.02em;
-  }
-  .stat-note {
-    margin: 0.2rem 0 0;
-    font-size: 0.85rem;
-    color: var(--muted);
-  }
+  /* .stats og .stat-* står i BaseLayout, fordi /analyse/ viser tallene sine
+     på samme måte. */
   .deadlines {
     list-style: none;
     margin: 0;

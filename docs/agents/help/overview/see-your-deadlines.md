@@ -47,8 +47,9 @@ it is registered for VAT, both on the company page.
    - «Status»: «Over fristen», «Ikke sendt ennå», «Sendt fra Myntos», «Sendt
      fra et annet program» or «Mottatt i Regnskapsregisteret». Empty means
      Myntos cannot know, not that it is missed.
-   - A link where the work is done in Myntos: «Til mva-meldingen →» or «Til
-     skattemeldingen →». Rows already met have none.
+   - A link where the work is done in Myntos: «Til mva-meldingen →», «Til
+     aksjonærregisteroppgaven →» or «Til skattemeldingen →». Rows already met
+     have none.
 4. Met deadlines from the past are left out; a missed one stays at the top
    for a year.
 
@@ -75,8 +76,10 @@ it is registered for VAT, both on the company page.
   page says so at the bottom.
 - The year in a row is the year the duty is about: «Skattemeldingen for
   2026» is due 31 May 2027.
-- An ENK's skattemelding and forskuddsskatt are the owner's own. Myntos shows
-  the dates; the owner sends and pays them as a person.
+- An ENK's skattemelding and forskuddsskatt belong to the owner personally.
+  Myntos files the ENK's skattemelding and næringsspesifikasjon on the owner's
+  ID-porten login (with hand-off to finish personal items on skatteetaten.no);
+  forskuddsskatt is paid by the owner from their bank with Skatteetaten's KID.
 
 ## Related
 

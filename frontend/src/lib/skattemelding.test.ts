@@ -13,7 +13,10 @@ import {
   checkableFrom,
   fixLink,
   isFiled,
+  needsPersonalHandoff,
   nextStep,
+  parseKommunenummer,
+  parseOwnerShare,
   payoutKroner,
   payoutSuggestion,
   postGroups,
@@ -201,5 +204,55 @@ describe('checkableFrom', () => {
     expect(checkableFrom('2026-07-21')).toBe('2026-07-22');
     expect(checkableFrom('2026-12-31')).toBe('2027-01-01');
     expect(checkableFrom('2028-02-28')).toBe('2028-02-29');
+  });
+});
+
+describe('ENK helpers', () => {
+  it('validates 4-digit kommunenummer or blank', () => {
+    expect(parseKommunenummer('')).toBe('');
+    expect(parseKommunenummer(' 0301 ')).toBe('0301');
+    expect(parseKommunenummer('301')).toBeNull();
+    expect(parseKommunenummer('Oslo')).toBeNull();
+  });
+
+  it('parses owner share percentage without floats', () => {
+    expect(parseOwnerShare('100')).toBe('100');
+    expect(parseOwnerShare('100,00 %')).toBe('100.00');
+    expect(parseOwnerShare('50,5')).toBe('50.5');
+    expect(parseOwnerShare('0')).toBe('0');
+    expect(parseOwnerShare('100.01')).toBeNull();
+    expect(parseOwnerShare('-10')).toBeNull();
+    expect(parseOwnerShare('abc')).toBeNull();
+  });
+
+  it('detects when a filed ENK return awaits personal completion on skatteetaten.no', () => {
+    expect(
+      needsPersonalHandoff({
+        status: 'mottatt',
+        innsendingstype: 'ikkeKomplett',
+        skatteetaten_portal_url: 'https://skatt.skatteetaten.no/web/skattemeldingen/2025',
+      }),
+    ).toBe(true);
+    expect(
+      needsPersonalHandoff({
+        status: 'sendt',
+        innsendingstype: 'ikkeKomplett',
+        skatteetaten_portal_url: 'https://skatt.skatteetaten.no/web/skattemeldingen/2025',
+      }),
+    ).toBe(true);
+    expect(
+      needsPersonalHandoff({
+        status: 'validert',
+        innsendingstype: 'ikkeKomplett',
+        skatteetaten_portal_url: 'https://skatt.skatteetaten.no/web/skattemeldingen/2025',
+      }),
+    ).toBe(false);
+    expect(
+      needsPersonalHandoff({
+        status: 'mottatt',
+        innsendingstype: 'komplett',
+        skatteetaten_portal_url: 'https://skatt.skatteetaten.no/web/skattemeldingen/2025',
+      }),
+    ).toBe(false);
   });
 });

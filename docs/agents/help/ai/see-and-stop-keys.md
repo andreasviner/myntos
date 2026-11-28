@@ -33,6 +33,9 @@ skill: myntos-connect
 - A stopped key cannot be started again. Make a new one with «Inviter en KI».
 - If a line above the list says something like «2 forespørsler venter på
   godkjenning», it links to «Godkjenning».
+- The line under the list, «Les mer om KI i Myntos», is about Myntos's own KI,
+  the one that reads the bilag, not about keys
+  (https://myntos.no/llms/help/ai/what-myntos-ki-does.md).
 - Myntos stops a key by itself if a refresh token is used twice (a sign it
   was copied) or if it keeps trying things it may not do, and e-mails the
   person.

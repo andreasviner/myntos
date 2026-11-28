@@ -247,7 +247,11 @@ def status_of(approval: AgentApproval, *, now: datetime) -> str:
     """
     if approval.status is AgentApprovalStatus.PENDING:
         key = approval.key
-        if key.revoked_at is not None or as_utc(key.expires_at) <= now:
+        # Only an agent key asks (an integration key never waits, rule 15), so
+        # the key here always has its year.
+        if key.revoked_at is not None or (
+            key.expires_at is not None and as_utc(key.expires_at) <= now
+        ):
             return "key_stopped"
         if as_utc(approval.expires_at) <= now:
             return "expired"

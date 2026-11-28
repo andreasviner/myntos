@@ -196,23 +196,38 @@ class MachineTokenSource:
 
     def __init__(self, token_provider: TokenProvider | None = None) -> None:
         self._token_provider = token_provider or get_token_provider()
-        self._cached: dict[str | None, AltinnToken] = {}
+        self._cached: dict[tuple[str | None, str | None, str | None], AltinnToken] = {}
         self._lock = asyncio.Lock()
 
-    async def get_token(self, *, consumer_org: str | None = None) -> str:
-        """A usable Altinn token, exchanging a fresh Maskinporten one if needed."""
-        cached = self._cached.get(consumer_org)
+    async def get_token(
+        self,
+        *,
+        consumer_org: str | None = None,
+        systemuser_org: str | None = None,
+        external_ref: str | None = None,
+    ) -> str:
+        """A usable Altinn token, exchanging a fresh Maskinporten one if needed.
+
+        Pass ``systemuser_org`` and ``external_ref`` to obtain a company's
+        approved Altinn 3 systembruker token for apps that allow machine
+        preparation (such as Brønnøysundregistrene's RR-0002).
+        """
+        key = (consumer_org, systemuser_org, external_ref)
+        cached = self._cached.get(key)
         if cached is not None and cached.is_usable():
             return cached.value
         async with self._lock:
-            cached = self._cached.get(consumer_org)
+            cached = self._cached.get(key)
             if cached is not None and cached.is_usable():
                 return cached.value
             machine_token = await self._token_provider.get_access_token(
-                INSTANCE_SCOPES, consumer_org=consumer_org
+                INSTANCE_SCOPES,
+                consumer_org=consumer_org,
+                systemuser_org=systemuser_org,
+                external_ref=external_ref,
             )
             token = await exchange_token(machine_token, plane="maskinporten")
-            self._cached[consumer_org] = token
+            self._cached[key] = token
             return token.value
 
 

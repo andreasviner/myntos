@@ -29,11 +29,13 @@ called back.
 ## Before they start
 
 - An issued invoice: [Issue an invoice](https://myntos.no/llms/help/invoices/issue-an-invoice.md).
-- For EHF: the company registered for e-invoicing, once, by an
-  «Administrator» or «Eier»:
+- For EHF: the company set up for e-invoicing, once, by an
+  «Administrator» or «Eier». Before the first business invoice, the «Faktura»
+  page prompts them to set up e-faktura right on the page («Aktiver e-faktura
+  (EHF)» once confirmed with ID-porten, or «Bekreft selskapet med ID-porten»
+  first), and it can also be managed under «Innstillinger for selskapet» →
+  «E-faktura»:
   [Register for e-invoicing](https://myntos.no/llms/help/company-and-access/register-for-e-invoicing.md).
-  Until then a yellow notice at the top of the page says so, with the link
-  «Sett opp e-faktura under Selskap» for whoever can do it.
 - For EHF: the customer's organisation number on the invoice. A customer
   without one gets the PDF.
 - The role «Medlem», «Administrator» or «Eier». A «Leser» sees how each
@@ -83,7 +85,7 @@ by itself when «Krediter» is confirmed:
 
 | What they see | Why | What to do |
 | --- | --- | --- |
-| The review says «Utsted fakturaen», not «Utsted og send som EHF», with «… Selskapet er ikke registrert for e-faktura ennå, så denne må du sende selv.» | The company is not registered for e-invoicing, or the identity check is not finished | An «Administrator» or «Eier» does it: [Register for e-invoicing](https://myntos.no/llms/help/company-and-access/register-for-e-invoicing.md). Until then, send the PDF |
+| «Sett opp e-faktura (EHF) før første faktura» on «Faktura», or the review stops with «selskapet må være satt opp for e-faktura (EHF) før du kan utstede faktura til en bedrift …» | E-invoicing is the default in Myntos and required before issuing business invoices | Confirm the company with ID-porten if prompted, then press «Aktiver e-faktura (EHF)» (or ask an «Administrator» / «Eier»): [Register for e-invoicing](https://myntos.no/llms/help/company-and-access/register-for-e-invoicing.md). For a private customer, click «Skriv faktura uten e-faktura» |
 | The review says «Utsted fakturaen», with «… kan ikke ta imot EHF over Peppol, så fakturaen sendes ikke herfra.» | The customer is not on Peppol for this kind of document | Issue it and send the PDF |
 | Neither «Utsted og send som EHF» nor «Send som EHF» anywhere, and «Om e-faktura» at the bottom says «Denne installasjonen av Myntos har ikke et tilgangspunkt for Peppol» | This Myntos cannot send EHF | Send the PDF |
 | No «Send som EHF» on one invoice | It is a draft, the customer has no organisation number, or it has already been sent | Issue it first; send the PDF to a customer without an organisation number; a sent one is not sent again |
@@ -108,8 +110,10 @@ by itself when «Krediter» is confirmed:
 - Issuing and sending are two steps under one button. If the send fails, the
   invoice is still issued and in the books, and the card says what went
   wrong.
-- Myntos sends EHF but does not receive it yet: supplier invoices keep
-  arriving wherever they arrive today.
+- Setting up e-invoicing for sending does not change where supplier invoices
+  arrive. Receiving incoming supplier EHF invoices in Myntos is a separate
+  opt-in under «Innstillinger for selskapet» → «E-faktura»:
+  [Receive and book an e-invoice](https://myntos.no/llms/help/invoices/receive-and-book-an-e-invoice.md).
 
 ## Related
 

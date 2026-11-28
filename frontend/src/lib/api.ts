@@ -1269,6 +1269,56 @@ export const stopAgentKey = (companyId: number, keyId: number): Promise<void> =>
 export const setAgentAccess = (companyId: number, enabled: boolean): Promise<Company> =>
   json<Company>(`/api/v1/companies/${companyId}/agent-access`, 'PUT', { enabled });
 
+/**
+ * A server's own key, made by an owner (docs/agents-and-api.md rule 15): it
+ * works only from `allowed_ips`, calls only the invoicing routes, and sends
+ * invoices without asking anybody. Not an agent key, and not governed by the
+ * Tilgang switch.
+ */
+export interface IntegrationKey {
+  id: number;
+  company_id: number;
+  name: string;
+  /** Make, issue and send invoices. The only purpose there is. */
+  purpose: 'faktura';
+  /** One address, or a range in CIDR form ("203.0.113.0/24"). */
+  allowed_ips: string[];
+  /** No expiry: active until somebody or something stops it. */
+  state: 'active' | 'stopped';
+  /** The owner who made it, whose role it works with. */
+  person_name: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  revoked_reason: string | null;
+}
+
+export interface IssuedIntegrationKey {
+  company_id: number;
+  key: IntegrationKey;
+  /** Shown once. Only its digest is stored, so it can never be shown again. */
+  secret: string;
+}
+
+export const listIntegrationKeys = (companyId: number): Promise<IntegrationKey[]> =>
+  request<IntegrationKey[]>(`/api/v1/companies/${companyId}/integrasjonsnokler`);
+
+export const createIntegrationKey = (
+  companyId: number,
+  name: string,
+  allowedIps: string[],
+): Promise<IssuedIntegrationKey> =>
+  json<IssuedIntegrationKey>(`/api/v1/companies/${companyId}/integrasjonsnokler`, 'POST', {
+    name,
+    allowed_ips: allowedIps,
+    purpose: 'faktura',
+  });
+
+export const stopIntegrationKey = (companyId: number, keyId: number): Promise<void> =>
+  request<void>(`/api/v1/companies/${companyId}/integrasjonsnokler/${keyId}`, {
+    method: 'DELETE',
+  });
+
 /** Choose what these books let Myntos use. Owners and admins, never a key. */
 export const setDataSharing = (companyId: number, level: DataSharingLevel): Promise<Company> =>
   json<Company>(`/api/v1/companies/${companyId}/datadeling`, 'PUT', { level });
@@ -1796,6 +1846,12 @@ export interface InvoiceSuggestion {
   /** Whether a model was actually consulted. False when KI is off, unconfigured, or down. */
   ki_used: boolean;
   /**
+   * The KI level that answered: lower than the one asked for when the company
+   * had no plan or no tokens left (a warning then says why), null when no
+   * model was asked.
+   */
+  ki_level?: KiLevel | null;
+  /**
    * What the register still needs to know. Answered with `answerSuggestion`,
    * which comes back with a better proposal.
    */
@@ -1892,6 +1948,7 @@ export const interpretDocument = (
   files: File[],
   forklaring?: string,
   retning?: Direction,
+  niva: KiLevel = 'free',
 ): Promise<InvoiceSuggestion> => {
   const form = new FormData();
   for (const file of files) form.append('files', file);
@@ -1899,6 +1956,7 @@ export const interpretDocument = (
     form.append('forklaring', forklaring.trim());
   }
   if (retning !== undefined) form.append('retning', retning);
+  form.append('niva', niva);
   return request<InvoiceSuggestion>(`/api/v1/companies/${companyId}/cashflow/forslag`, {
     method: 'POST',
     body: form,
@@ -1923,6 +1981,7 @@ export const answerSuggestion = (
   readingId: string,
   answers: SuggestionAnswer[],
   forklaring?: string,
+  niva?: KiLevel,
 ): Promise<InvoiceSuggestion> =>
   json<InvoiceSuggestion>(
     `/api/v1/companies/${companyId}/cashflow/forslag/${encodeURIComponent(readingId)}/svar`,
@@ -1930,6 +1989,8 @@ export const answerSuggestion = (
     {
       answers,
       forklaring: forklaring !== undefined && forklaring.trim() !== '' ? forklaring.trim() : null,
+      // Left out, the server answers at the level the bilag was first read at.
+      niva: niva ?? null,
     },
   );
 
@@ -1950,6 +2011,8 @@ export interface InterpretHandlers {
    * direction and narrows the categories, and the model is told it.
    */
   retning?: Direction;
+  /** The KI level chosen beside the description. `free` when left out. */
+  niva?: KiLevel;
 }
 
 /**
@@ -1992,6 +2055,7 @@ export const interpretDocumentStreaming = async (
     form.append('forklaring', forklaring.trim());
   }
   if (handlers.retning !== undefined) form.append('retning', handlers.retning);
+  form.append('niva', handlers.niva ?? 'free');
 
   let response: Response;
   try {
@@ -2446,6 +2510,8 @@ export interface LineDraft {
    */
   lines: DraftedLine[];
   warnings: string[];
+  /** The KI level that answered, or null when no model was asked. */
+  ki_level?: KiLevel | null;
 }
 
 /**
@@ -2485,12 +2551,14 @@ export interface FakturaDraft {
   buyer_reference: string | null;
   lines: DraftedLine[];
   warnings: string[];
+  /** The KI level that answered, or null when no model was asked. */
+  ki_level?: KiLevel | null;
 }
 
 /** The number and KID the next issued invoice would get. Reserves nothing. */
 export interface NextNumber {
   document_number: string;
-  /** The invoice number and a check digit, the same whoever it is to. */
+  /** The issue date (YYYYMMDD), invoice number and a check digit, the same whoever it is to. */
   payment_reference: string;
 }
 
@@ -2512,12 +2580,20 @@ export const getFakturaCatalogue = (): Promise<FakturaCatalogue> =>
  * The proposal goes into the form, where the user edits it and saves it like
  * any line they typed. See /ki for what the model is and is not asked.
  */
-export const draftFakturaLines = (companyId: number, text: string): Promise<LineDraft> =>
-  json<LineDraft>(`/api/v1/companies/${companyId}/faktura/linjeforslag`, 'POST', { text });
+export const draftFakturaLines = (
+  companyId: number,
+  text: string,
+  level: KiLevel = 'free',
+): Promise<LineDraft> =>
+  json<LineDraft>(`/api/v1/companies/${companyId}/faktura/linjeforslag`, 'POST', { text, level });
 
 /** A proposed buyer, terms and lines for a pasted text. Stores nothing. */
-export const draftFaktura = (companyId: number, text: string): Promise<FakturaDraft> =>
-  json<FakturaDraft>(`/api/v1/companies/${companyId}/faktura/forslag`, 'POST', { text });
+export const draftFaktura = (
+  companyId: number,
+  text: string,
+  level: KiLevel = 'free',
+): Promise<FakturaDraft> =>
+  json<FakturaDraft>(`/api/v1/companies/${companyId}/faktura/forslag`, 'POST', { text, level });
 
 export const listFaktura = (companyId: number, limit = 100): Promise<Faktura[]> =>
   request<Faktura[]>(`/api/v1/companies/${companyId}/faktura?limit=${limit}`);
@@ -2636,20 +2712,22 @@ export const getForsendelse = (companyId: number, documentId: number): Promise<E
 
 // --- E-faktura over Peppol -----------------------------------------------------------
 
-/** Each step on the way to sending EHF, in the order they have to happen. */
+/** Each step on the way to sending and receiving EHF over Peppol. */
 export interface PeppolStanding {
   /** This Myntos has an access point at all. */
   available: boolean;
   /** Confirmed through Altinn, which registering needs. */
   company_confirmed: boolean;
   registered: boolean;
-  /** The access point's identity check is done. */
+  /** Ready to send (true as soon as registered under Ademico). */
   verified: boolean;
   can_send: boolean;
+  /** Published in Peppol/ELMA to receive incoming supplier EHFs in Myntos. */
+  can_receive: boolean;
 }
 
 export interface PeppolRegistration extends PeppolStanding {
-  /** The access point's page for the identity check. Null once it is done; never stored. */
+  /** Kept for API compatibility; null with Ademico. */
   verification_url: string | null;
 }
 
@@ -2658,6 +2736,13 @@ export const getPeppol = (companyId: number): Promise<PeppolStanding> =>
 
 export const registerPeppol = (companyId: number): Promise<PeppolRegistration> =>
   request<PeppolRegistration>(`/api/v1/companies/${companyId}/peppol`, { method: 'POST' });
+
+/** Publish or unpublish the company in Peppol/ELMA to receive incoming EHF invoices. */
+export const setPeppolReceiving = (
+  companyId: number,
+  enabled: boolean,
+): Promise<PeppolStanding> =>
+  json<PeppolStanding>(`/api/v1/companies/${companyId}/peppol/mottak`, 'PUT', { enabled });
 
 export interface PeppolRecipient {
   orgnr: string;
@@ -2677,6 +2762,262 @@ export const getPeppolRecipient = (
       kreditnota: String(creditNote),
     })}`,
   );
+
+export type IncomingEhfStatus = 'ny' | 'bokfort' | 'avvist';
+
+export interface IncomingEhfLine {
+  line_id: string;
+  description: string;
+  quantity: string;
+  unit_code: string;
+  unit_price: string | null;
+  net_amount: string;
+  vat_category: string | null;
+  vat_percent: string | null;
+}
+
+export interface IncomingEhfTaxSubtotal {
+  taxable_amount: string;
+  tax_amount: string;
+  category: string | null;
+  percent: string | null;
+}
+
+export interface IncomingEhfSummary {
+  id: number;
+  document_type: 'faktura' | 'kreditnota';
+  invoice_number: string;
+  issue_date: string | null;
+  due_date: string | null;
+  currency: string;
+  net_amount: string;
+  vat_amount: string;
+  gross_amount: string;
+  seller_name: string;
+  seller_orgnr: string | null;
+  seller_peppol_id: string;
+  payment_reference: string | null;
+  seller_bank_account: string | null;
+  status: IncomingEhfStatus;
+  voucher_id: number | null;
+  has_embedded_pdf: boolean;
+  received_at: string;
+  booked_at: string | null;
+  dismissed_at: string | null;
+  suggested_tax_code: string;
+  suggested_party_id: number | null;
+}
+
+export interface IncomingEhfDetail extends IncomingEhfSummary {
+  buyer_reference: string | null;
+  order_reference: string | null;
+  note: string | null;
+  ehf_sha256: string;
+  lines: IncomingEhfLine[];
+  tax_subtotals: IncomingEhfTaxSubtotal[];
+}
+
+export interface BookIncomingEhfPayload {
+  type_code: string;
+  occurred_on?: string | null;
+  gross_amount?: string | null;
+  description?: string | null;
+  tax_code?: string | null;
+  payment_method?: 'bank' | 'kontant';
+  party_id?: number | null;
+  create_supplier?: boolean;
+  account_number?: string | null;
+  dimension_value_ids?: number[];
+}
+
+export const listIncomingEhf = (
+  companyId: number,
+  status?: IncomingEhfStatus,
+): Promise<IncomingEhfSummary[]> => {
+  const query = status ? `?${new URLSearchParams({ status })}` : '';
+  return request<IncomingEhfSummary[]>(`/api/v1/companies/${companyId}/peppol/innkommende${query}`);
+};
+
+export const getIncomingEhf = (
+  companyId: number,
+  incomingId: number,
+): Promise<IncomingEhfDetail> =>
+  request<IncomingEhfDetail>(`/api/v1/companies/${companyId}/peppol/innkommende/${incomingId}`);
+
+export const incomingEhfXmlUrl = (companyId: number, incomingId: number): string =>
+  `${API_BASE_URL}/api/v1/companies/${companyId}/peppol/innkommende/${incomingId}/ehf`;
+
+export const incomingEhfPdfUrl = (companyId: number, incomingId: number): string =>
+  `${API_BASE_URL}/api/v1/companies/${companyId}/peppol/innkommende/${incomingId}/pdf`;
+
+export const bookIncomingEhf = (
+  companyId: number,
+  incomingId: number,
+  payload: BookIncomingEhfPayload,
+): Promise<IncomingEhfDetail> =>
+  json<IncomingEhfDetail>(
+    `/api/v1/companies/${companyId}/peppol/innkommende/${incomingId}/bokfor`,
+    'POST',
+    payload,
+  );
+
+export const dismissIncomingEhf = (
+  companyId: number,
+  incomingId: number,
+): Promise<IncomingEhfDetail> =>
+  request<IncomingEhfDetail>(
+    `/api/v1/companies/${companyId}/peppol/innkommende/${incomingId}/avvis`,
+    { method: 'POST' },
+  );
+
+export const reopenIncomingEhf = (
+  companyId: number,
+  incomingId: number,
+): Promise<IncomingEhfDetail> =>
+  request<IncomingEhfDetail>(
+    `/api/v1/companies/${companyId}/peppol/innkommende/${incomingId}/gjenapne`,
+    { method: 'POST' },
+  );
+
+// --- Mottatt: incoming email invoices (@myntos.no) ---------------------------------
+
+export type SenderPolicy = 'alle_med_varsel' | 'kun_godkjente';
+export type MailDocumentStatus = 'ny' | 'bokfort' | 'avvist';
+export type SenderTrust = 'egen_bruker' | 'godkjent' | 'ukjent' | 'advarsel';
+
+export interface InboundEmailSettings {
+  available: boolean;
+  address: string;
+  local_part: string;
+  domain: string;
+  enabled: boolean;
+  sender_policy: SenderPolicy;
+  allowed_senders: string[];
+  member_emails: string[];
+}
+
+export interface IncomingMailSummary {
+  id: number;
+  sender_email: string;
+  sender_name: string | null;
+  envelope_from: string;
+  reply_to: string | null;
+  recipient_address: string;
+  subject: string;
+  spf_result: string | null;
+  dkim_result: string | null;
+  dmarc_result: string | null;
+  sender_trust: SenderTrust;
+  security_warnings: string[];
+  filename: string;
+  content_type: string;
+  byte_size: number;
+  status: MailDocumentStatus;
+  voucher_id: number | null;
+  received_at: string;
+  booked_at: string | null;
+  dismissed_at: string | null;
+}
+
+export interface IncomingMailDetail extends IncomingMailSummary {
+  message_id: string;
+  attachment_index: number;
+  body_excerpt: string | null;
+  sha256: string;
+}
+
+export interface BookIncomingMailPayload {
+  type_code: string;
+  occurred_on: string;
+  gross_amount: string;
+  description?: string | null;
+  tax_code?: string | null;
+  payment_method?: 'bank' | 'kontant';
+  party_id?: number | null;
+  account_number?: string | null;
+  dimension_value_ids?: number[];
+}
+
+export const getInboundEmailSettings = (companyId: number): Promise<InboundEmailSettings> =>
+  request<InboundEmailSettings>(`/api/v1/companies/${companyId}/mottak/epost-innstillinger`);
+
+export const updateInboundEmailSettings = (
+  companyId: number,
+  payload: {
+    enabled?: boolean;
+    sender_policy?: SenderPolicy;
+    allowed_senders?: string[];
+  },
+): Promise<InboundEmailSettings> =>
+  json<InboundEmailSettings>(
+    `/api/v1/companies/${companyId}/mottak/epost-innstillinger`,
+    'PUT',
+    payload,
+  );
+
+export const listIncomingMail = (
+  companyId: number,
+  status?: MailDocumentStatus,
+): Promise<IncomingMailSummary[]> => {
+  const query = status ? `?${new URLSearchParams({ status })}` : '';
+  return request<IncomingMailSummary[]>(`/api/v1/companies/${companyId}/mottak/epost${query}`);
+};
+
+export const getIncomingMail = (
+  companyId: number,
+  mailId: number,
+): Promise<IncomingMailDetail> =>
+  request<IncomingMailDetail>(`/api/v1/companies/${companyId}/mottak/epost/${mailId}`);
+
+export const incomingMailFileUrl = (companyId: number, mailId: number): string =>
+  `${API_BASE_URL}/api/v1/companies/${companyId}/mottak/epost/${mailId}/fil`;
+
+export const fetchIncomingMailBlob = async (
+  companyId: number,
+  mailId: number,
+): Promise<Blob | null> => {
+  const path = `/api/v1/companies/${companyId}/mottak/epost/${mailId}/fil`;
+  const active = activeCompanyId();
+  if (active !== null && companyId !== active) {
+    throw new WrongCompanyError(
+      'Vi stoppet en forespørsel som gjaldt et annet selskap enn det du ser på. Last siden på nytt.',
+      active,
+      companyId,
+    );
+  }
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, { credentials: 'include' });
+    if (!response.ok) return null;
+    const type = (response.headers.get('Content-Type') ?? '').split(';')[0].trim().toLowerCase();
+    const shown = VIEWABLE_FILE_TYPES.has(type) ? type : 'application/octet-stream';
+    return new Blob([await response.blob()], { type: shown });
+  } catch {
+    return null;
+  }
+};
+
+export const bookIncomingMail = (
+  companyId: number,
+  mailId: number,
+  payload: BookIncomingMailPayload,
+): Promise<IncomingMailDetail> =>
+  json<IncomingMailDetail>(`/api/v1/companies/${companyId}/mottak/epost/${mailId}/bokfor`, 'POST', payload);
+
+export const dismissIncomingMail = (
+  companyId: number,
+  mailId: number,
+): Promise<IncomingMailDetail> =>
+  request<IncomingMailDetail>(`/api/v1/companies/${companyId}/mottak/epost/${mailId}/avvis`, {
+    method: 'POST',
+  });
+
+export const reopenIncomingMail = (
+  companyId: number,
+  mailId: number,
+): Promise<IncomingMailDetail> =>
+  request<IncomingMailDetail>(`/api/v1/companies/${companyId}/mottak/epost/${mailId}/gjenapne`, {
+    method: 'POST',
+  });
 
 // --- MVA-melding -------------------------------------------------------------------
 
@@ -3064,9 +3405,9 @@ export const mvaDocumentUrl = (companyId: number, filingId: number, dataType: st
 
 // --- Skattemelding ---------------------------------------------------------------
 //
-// An aksjeselskap's skattemelding and næringsspesifikasjon for one income year,
-// built from a closed year's books. Checked with Skatteetaten on the person's
-// ID-porten login, then sent, as the MVA-melding is. See
+// An aksjeselskap's or enkeltpersonforetak's skattemelding and næringsspesifikasjon
+// for one income year, built from a closed year's books. Checked with Skatteetaten
+// on the person's ID-porten login, then sent, as the MVA-melding is. See
 // backend/src/myntos/api/v1/skattemelding.py.
 
 /** `feil` stops the check; `merknad` is for reading. */
@@ -3075,6 +3416,37 @@ export interface SkattemeldingFinding {
   code: string;
   message: string;
 }
+
+export interface SkattemeldingCodeOption {
+  code: string;
+  name: string;
+}
+
+export interface SkattemeldingSkjermingsgrunnlag {
+  type: string;
+  name: string;
+  opening: string;
+  closing: string;
+  average: string;
+  is_debt: boolean;
+}
+
+export interface SkattemeldingPersoninntekt {
+  skjermingsgrunnlag: SkattemeldingSkjermingsgrunnlag[];
+  sum_foer_gjeld: string;
+  sum_etter_gjeld: string;
+  skjermingsrente: string;
+  skjermingsfradrag: string;
+  kapitalinntekt: string;
+  kapitalkostnad: string;
+  rentekostnad_foretaksgjeld: string;
+  antall_maaneder: number;
+  andel_innehaver: string;
+  beregnet_personinntekt: string;
+  tilordnet_innehaver: string;
+}
+
+export type SkattemeldingInnsendingstype = 'ikkeKomplett' | 'komplett';
 
 export interface SkattemeldingPost {
   category: string;
@@ -3152,6 +3524,15 @@ export interface SkattemeldingFiling {
   forhaandsfastsetting?: boolean;
   /** What the person stated the shareholders were paid, in whole kroner. */
   likvidasjonsvederlag?: number | null;
+  /** `komplett` or (ENK hand-off default) `ikkeKomplett`. */
+  innsendingstype?: SkattemeldingInnsendingstype;
+  /** Link to skatteetaten.no where an ENK owner finishes personal items. */
+  skatteetaten_portal_url?: string | null;
+  naeringstype?: string | null;
+  kommunenummer?: string | null;
+  naeringsbeskrivelse?: string | null;
+  antall_maaneder?: number | null;
+  andel_innehaver?: string | null;
   findings: SkattemeldingFinding[];
   avvik: SkattemeldingAvvik[];
   veiledninger: SkattemeldingVeiledning[];
@@ -3209,6 +3590,14 @@ export interface SkattemeldingYear {
   blocked: boolean;
   /** Newest first. */
   filings: SkattemeldingFiling[];
+  /** True for an enkeltpersonforetak (ENK). */
+  er_enk?: boolean;
+  naeringstype_forslag?: string | null;
+  naeringstyper?: SkattemeldingCodeOption[];
+  kommunenummer_forslag?: string | null;
+  naeringsbeskrivelse_forslag?: string | null;
+  antall_maaneder_forslag?: number | null;
+  personinntekt?: SkattemeldingPersoninntekt | null;
 }
 
 /** The year as the books have it now, or last year when `year` is left out. */
@@ -3225,8 +3614,19 @@ export interface FinalYearAnswers {
   revisor?: boolean;
 }
 
+/** What the ENK owner confirms before checking with Skatteetaten. */
+export interface EnkCheckAnswers {
+  naeringstype: string;
+  kommunenummer?: string;
+  naeringsbeskrivelse?: string;
+  innsendingstype: SkattemeldingInnsendingstype;
+  antall_maaneder: number;
+  andel_innehaver: string;
+  revisor?: boolean;
+}
+
 /**
- * Have Skatteetaten check the year. Files nothing.
+ * Have Skatteetaten check the year for an aksjeselskap. Files nothing.
  *
  * Needs the ID-porten login; rejects with 409 when there is none, and with
  * `skattemelding_not_ready` while the year's review has a feil. For a
@@ -3243,6 +3643,22 @@ export const checkSkattemelding = (
     aar: year,
     ytelser_til_aksjonaerer: ytelserTilAksjonaerer,
     ...(finalYear ?? {}),
+  });
+
+/**
+ * Have Skatteetaten check the year for an enkeltpersonforetak (ENK). Files nothing.
+ *
+ * Uses the logged-in owner's fødselsnummer from ID-porten and preserves all
+ * personal items in their fetched skattemelding.
+ */
+export const checkEnkSkattemelding = (
+  companyId: number,
+  year: number,
+  answers: EnkCheckAnswers,
+): Promise<SkattemeldingFiling> =>
+  json<SkattemeldingFiling>(`/api/v1/companies/${companyId}/skattemelding/kontroll`, 'POST', {
+    aar: year,
+    ...answers,
   });
 
 /**
@@ -5245,3 +5661,1341 @@ export const setServerErrorStatus = (
   status: ServerErrorStatus,
 ): Promise<ServerErrorEntry> =>
   operatorJson<ServerErrorEntry>(key, `${DRIFT}/feil/${number}/status`, 'PUT', { status });
+
+// --- KI: levels, plans, subscriptions, invoices, file reading, and chat -----------
+
+/**
+ * The three levels beside every KI text box, cheapest first. `free` is unlimited
+ * for every company with KI on; `medium` and `thinking` require an active KI plan
+ * with weekly quota left. A paid level asked for without one is answered at
+ * `free` with a warning, never refused.
+ */
+export type KiLevel = 'free' | 'medium' | 'thinking';
+
+/** A KI plan available for monthly subscription (or one-off Mollie checkout). */
+export interface KiPlan {
+  code: string;
+  name: string;
+  /** Kroner, decimal strings like every amount. */
+  price_excl_vat: string;
+  vat: string;
+  price_incl_vat: string;
+  quota_label: string;
+  summary: string;
+}
+
+export interface KiPlans {
+  plans: KiPlan[];
+  currency: string;
+  levels: KiLevel[];
+}
+
+/** A one-off Mollie month bought, or a checkout started. */
+export interface KiPeriod {
+  reference: string;
+  plan: string;
+  plan_name: string;
+  status: 'open' | 'paid' | 'failed' | 'canceled' | 'expired';
+  remaining_percent: number;
+  used_percent: number;
+  amount: string;
+  starts_at: string | null;
+  ends_at: string | null;
+  /** Paid in Mollie's test mode: no money moved. */
+  test: boolean;
+}
+
+export interface KiSubscription {
+  plan: string;
+  plan_name: string;
+  status: 'active' | 'canceling' | 'canceled';
+  quota_label: string;
+  price_excl_vat: string;
+  vat_amount: string;
+  price_incl_vat: string;
+  currency: string;
+  billing_email: string | null;
+  started_at: string;
+  current_period_start: string;
+  current_period_end: string;
+  cancel_at_period_end: boolean;
+  canceled_at: string | null;
+}
+
+export interface KiWeeklyUsage {
+  week_start: string;
+  resets_at: string;
+  remaining_percent: number;
+  used_percent: number;
+}
+
+export interface KiBillingInvoice {
+  id: number;
+  plan: string;
+  plan_name: string;
+  period_start: string;
+  period_end: string;
+  invoice_number: string | null;
+  amount_excl_vat: string;
+  vat_amount: string;
+  amount_incl_vat: string;
+  currency: string;
+  issued_on: string;
+  due_date: string;
+  delivery_method: 'ehf' | 'email' | 'portal' | string;
+  delivery_status: 'pending' | 'sent' | 'delivered' | 'failed' | string;
+  delivered_at: string | null;
+  has_pdf: boolean;
+}
+
+export interface KiSubscriptionActivation {
+  subscription: KiSubscription;
+  invoice: KiBillingInvoice | null;
+  weekly: KiWeeklyUsage;
+}
+
+export interface KiLevelState {
+  level: KiLevel;
+  name: string;
+  /** Whether a request asking for this level gets it now. */
+  available: boolean;
+}
+
+export interface KiStatus {
+  ki_enabled: boolean;
+  model_available: boolean;
+  /** False where this installation offers no plans: then `free` is all there is. */
+  plans_on_sale: boolean;
+  /** Whether the signed-in person may activate or buy a plan for this company. */
+  can_buy: boolean;
+  /** Whether monthly invoiced KI subscriptions are configured on this deployment. */
+  subscription_available: boolean;
+  /** Whether the signed-in person may manage the company's monthly KI subscription. */
+  can_manage_subscription: boolean;
+  levels: KiLevelState[];
+  subscription: KiSubscription | null;
+  weekly: KiWeeklyUsage | null;
+  current: KiPeriod | null;
+  upcoming: KiPeriod[];
+}
+
+export const getKiPlans = (): Promise<KiPlans> => request<KiPlans>('/api/v1/ki/planer');
+
+export const getKiStatus = (companyId: number): Promise<KiStatus> =>
+  request<KiStatus>(`/api/v1/companies/${companyId}/ki`);
+
+/** Activate or switch the company's monthly invoiced KI subscription (owner only). */
+export const setKiSubscription = (
+  companyId: number,
+  plan: string,
+  billingEmail?: string | null,
+): Promise<KiSubscriptionActivation> =>
+  json<KiSubscriptionActivation>(`/api/v1/companies/${companyId}/ki/abonnement`, 'PUT', {
+    plan,
+    ...(billingEmail !== undefined && billingEmail !== null && billingEmail.trim() !== ''
+      ? { billing_email: billingEmail.trim() }
+      : {}),
+  });
+
+/** Cancel the company's monthly KI subscription at the end of the current period (owner only). */
+export const cancelKiSubscription = (companyId: number): Promise<KiSubscription> =>
+  request<KiSubscription>(`/api/v1/companies/${companyId}/ki/abonnement`, { method: 'DELETE' });
+
+/** List monthly KI subscription invoices for this company, newest first. */
+export const listKiInvoices = (companyId: number): Promise<KiBillingInvoice[]> =>
+  request<KiBillingInvoice[]>(`/api/v1/companies/${companyId}/ki/fakturaer`);
+
+/** Direct URL for downloading a monthly KI invoice PDF (session cookie authenticated). */
+export const kiInvoicePdfUrl = (companyId: number, invoiceId: number): string =>
+  `${API_BASE_URL}/api/v1/companies/${companyId}/ki/fakturaer/${invoiceId}/pdf`;
+
+/**
+ * Start paying for one month of a plan via Mollie. The answer's `checkout_url` is
+ * Mollie's page; the browser comes back to `/ki/about/?betaling=<reference>`.
+ */
+export const startKiPurchase = (
+  companyId: number,
+  plan: string,
+): Promise<{ reference: string; checkout_url: string }> =>
+  json(`/api/v1/companies/${companyId}/ki/betaling`, 'POST', { plan });
+
+/** Where a Mollie purchase stands. Asks Mollie first while it is still open. */
+export const getKiPurchase = (companyId: number, reference: string): Promise<KiPeriod> =>
+  request<KiPeriod>(
+    `/api/v1/companies/${companyId}/ki/betaling/${encodeURIComponent(reference)}`,
+  );
+
+/**
+ * Read a picture or a PDF into text for a KI text box. Always Løynd's own
+ * model, whatever the level, and stores nothing.
+ */
+export const readKiFile = (
+  companyId: number,
+  file: File,
+): Promise<{ text: string; empty: boolean }> => {
+  const form = new FormData();
+  form.append('file', file);
+  return request(`/api/v1/companies/${companyId}/ki/les`, { method: 'POST', body: form });
+};
+
+// --- KI Chat -----------------------------------------------------------------------
+
+export interface KiChatThreadSummary {
+  id: number;
+  title: string;
+  message_count: number;
+  preview: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KiChatMessage {
+  id: number;
+  role: 'user' | 'assistant' | string;
+  content: string;
+  level: KiLevel | null;
+  requested_level: KiLevel | null;
+  notices: string[];
+  created_at: string;
+}
+
+export interface KiChatThreadDetail {
+  id: number;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  messages: KiChatMessage[];
+}
+
+export interface KiChatTurn {
+  thread: KiChatThreadSummary;
+  user_message: KiChatMessage;
+  assistant_message: KiChatMessage;
+  ki_level: KiLevel;
+  notices: string[];
+}
+
+export interface KiChatStreamStart {
+  thread_id: number;
+  thread_title: string;
+  user_message: KiChatMessage;
+  ki_level: KiLevel;
+}
+
+export interface KiChatStreamHandlers {
+  onStart?: (info: KiChatStreamStart) => void;
+  onDelta?: (text: string) => void;
+}
+
+export const listKiChatThreads = (companyId: number): Promise<KiChatThreadSummary[]> =>
+  request<KiChatThreadSummary[]>(`/api/v1/companies/${companyId}/ki/samtaler`);
+
+export const createKiChatThread = (
+  companyId: number,
+  title?: string,
+): Promise<KiChatThreadDetail> =>
+  json<KiChatThreadDetail>(
+    `/api/v1/companies/${companyId}/ki/samtaler`,
+    'POST',
+    title !== undefined ? { title } : {},
+  );
+
+export const getKiChatThread = (
+  companyId: number,
+  threadId: number,
+): Promise<KiChatThreadDetail> =>
+  request<KiChatThreadDetail>(`/api/v1/companies/${companyId}/ki/samtaler/${threadId}`);
+
+export const deleteKiChatThread = (companyId: number, threadId: number): Promise<void> =>
+  request<void>(`/api/v1/companies/${companyId}/ki/samtaler/${threadId}`, { method: 'DELETE' });
+
+export const sendKiChatMessage = (
+  companyId: number,
+  threadId: number,
+  content: string,
+  level: KiLevel = 'free',
+): Promise<KiChatTurn> =>
+  json<KiChatTurn>(`/api/v1/companies/${companyId}/ki/samtaler/${threadId}/meldinger`, 'POST', {
+    content,
+    level,
+  });
+
+/**
+ * Send a chat question and stream the assistant's reply over Server-Sent Events.
+ * Refusals (404, 409, 502) arrive as `ApiError` before the stream opens.
+ */
+export const streamKiChatMessage = async (
+  companyId: number,
+  threadId: number,
+  content: string,
+  level: KiLevel,
+  handlers: KiChatStreamHandlers = {},
+  signal?: AbortSignal,
+): Promise<KiChatTurn> => {
+  const path = `/api/v1/companies/${companyId}/ki/samtaler/${threadId}/meldinger/strom`;
+  const scope = companyInPath(path);
+  const active = activeCompanyId();
+  if (scope !== null && active !== null && scope !== active) {
+    throw new WrongCompanyError(
+      'Vi stoppet en forespørsel som gjaldt et annet selskap enn det du ser på. Last siden på nytt.',
+      active,
+      scope,
+    );
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content, level }),
+      signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    throw new ApiError(0, 'Fikk ikke kontakt med serveren.', 'network');
+  }
+
+  if (!response.ok) {
+    const text = await response.text();
+    let body: unknown = null;
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      body = null;
+    }
+    const code =
+      typeof body === 'object' && body !== null && typeof (body as { code?: unknown }).code === 'string'
+        ? (body as { code: string }).code
+        : null;
+    throw new ApiError(response.status, messageFrom(response.status, body), code);
+  }
+  if (response.body === null) {
+    throw new ApiError(0, 'Fikk ikke lest svaret fra serveren.', 'network');
+  }
+
+  let doneTurn: KiChatTurn | null = null;
+  let failure: string | null = null;
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  const handle = (frame: string): void => {
+    let name = '';
+    const data: string[] = [];
+    for (const line of frame.split('\n')) {
+      if (line.startsWith('event: ')) name = line.slice('event: '.length);
+      else if (line.startsWith('data: ')) data.push(line.slice('data: '.length));
+    }
+    if (data.length === 0) return;
+    let payload: unknown;
+    try {
+      payload = JSON.parse(data.join('\n'));
+    } catch {
+      return;
+    }
+    if (name === 'start') handlers.onStart?.(payload as KiChatStreamStart);
+    else if (name === 'delta') handlers.onDelta?.((payload as { tekst: string }).tekst);
+    else if (name === 'ferdig') doneTurn = payload as KiChatTurn;
+    else if (name === 'feil') failure = (payload as { melding: string }).melding;
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    buffer = buffer.replace(/\r\n/g, '\n');
+    let sep = buffer.indexOf('\n\n');
+    while (sep !== -1) {
+      handle(buffer.slice(0, sep));
+      buffer = buffer.slice(sep + 2);
+      sep = buffer.indexOf('\n\n');
+    }
+    if (done) break;
+  }
+  if (buffer.trim() !== '') handle(buffer);
+
+  if (failure !== null) {
+    throw new ApiError(502, failure, 'ki_stream_failed');
+  }
+  if (doneTurn === null) {
+    throw new ApiError(502, 'Svaret ble avbrutt før det ble ferdig. Prøv igjen.', 'ki_stream_incomplete');
+  }
+  return doneTurn;
+};
+
+// --- Analyse: the chart spec (docs/analyse.md, «The chart pipeline») ----------------
+
+/**
+ * How a chart is drawn. A dataset names the views it may be drawn as, and the
+ * backend refuses any other combination before it sends one.
+ */
+export type ChartView = 'kolonner' | 'linje' | 'smultring' | 'stolper' | 'tabell' | 'tall';
+
+export type ChartUnit = 'kr' | 'prosent' | 'antall';
+
+/**
+ * `hoved` is the period being looked at, `sammenligning` the same dates a
+ * year earlier, drawn quieter behind it; `serie` is one of several equal
+ * series (income, costs and result side by side).
+ */
+export type ChartSeriesRole = 'hoved' | 'sammenligning' | 'serie';
+
+export interface ChartAxis {
+  kind: 'maned' | 'kategori';
+  /** `YYYY-MM` when `kind` is `maned`. */
+  labels: string[];
+}
+
+export interface ChartSeries {
+  key: string;
+  /** «2026», «Samme tid i fjor», «Inntekter». */
+  label: string;
+  role: ChartSeriesRole;
+  /**
+   * One per x label. `null` is a month with no books, which is not the same as
+   * a month that came to zero: a company that started in May has no January,
+   * and a zero column would read as a bad January.
+   */
+  values: Array<string | null>;
+}
+
+export interface ChartSlice {
+  key: string;
+  label: string;
+  value: string;
+  /** A fraction of the whole (`"0.38"`). The backend lets «Andre» absorb the rounding, so they sum to 1. */
+  share: string;
+}
+
+/**
+ * One chart, whoever asked for it: the default page picks datasets in code, a
+ * model picks a dataset, a view and a period, and the backend fills the
+ * numbers either way. It carries no colour, font or markup (rule 11 in
+ * docs/analyse.md); `lib/charts.ts` draws it with the site's tokens.
+ *
+ * Amounts are decimal strings, as everywhere in the API. With `unit: 'prosent'`
+ * a value is a fraction like `share` (`"0.125"` is 12,5 %).
+ */
+export interface Chart {
+  /** Unique in its response; used for aria ids and anchors. */
+  id: string;
+  view: ChartView;
+  /** Bokmål, at most 60 characters. */
+  title: string;
+  /** One sentence under the chart, at most 200 characters. */
+  caption: string | null;
+  unit: ChartUnit;
+  /** `kolonner` and `linje` have one; the views over slices do not. */
+  x: ChartAxis | null;
+  /** At most four, on `kolonner` and `linje`; `tabell` may use them instead of slices. */
+  series: ChartSeries[];
+  /** `smultring` (at most six), `stolper` (at most ten), or `tabell`. */
+  slices: ChartSlice[] | null;
+  /** The whole the slices are parts of, or the one value a `tall` shows. */
+  total: string | null;
+  /** Whether `kolonner` series stack vertically per month rather than standing side by side (WP6). */
+  stacked?: boolean;
+  /** Where the numbers came from. */
+  dataset: { name: string; params: Record<string, string> };
+}
+
+// --- Analyse: the figures (docs/analyse.md, «The API», «Figures response») ----------
+
+export interface AnalysisPeriod {
+  /** ISO dates, both included. */
+  fra: string;
+  til: string;
+}
+
+export interface AnalysisTotals {
+  inntekter: string;
+  kostnader: string;
+  /** Before tax: accounts 83-89 are out. */
+  resultat: string;
+}
+
+export interface AnalysisKeyFigures extends AnalysisTotals {
+  /** The same dates a year earlier, or null when there is nothing to compare with. */
+  forrige: AnalysisTotals | null;
+}
+
+/** A KI reading going on now, started by this request or an earlier one (WP5b). */
+export interface AnalysisReading {
+  id: number;
+  status: 'queued' | 'running';
+  /** «Venter på tur» or «Leser bilagene», in bokmål; null before the first step. */
+  step: string | null;
+  /** Vouchers read so far, of `total`. */
+  done: number;
+  total: number;
+}
+
+/**
+ * Per side, the share of the period's amount on lines KI has given a `hva`,
+ * as a decimal string rounded down to two places ("0.89" is not yet 90 %),
+ * or null for a side that comes to nothing.
+ */
+export interface AnalysisCoverage {
+  inntekter: string | null;
+  kostnader: string | null;
+}
+
+export interface AnalysisKi {
+  /** Null when nothing is being read, or when the period is read already. */
+  lesing: AnalysisReading | null;
+  dekning: AnalysisCoverage;
+}
+
+/**
+ * The default Analyse page in one answer. Every number is the books', and
+ * no model wrote any of it: `tekst` is fixed templates over the figures.
+ * With KI on, KI's tags may choose which slice a line goes in (WP5b).
+ */
+export interface AnalysisFigures {
+  periode: AnalysisPeriod;
+  /**
+   * Null when not asked for, or when the books do not cover every month of
+   * the same dates a year earlier: a comparison with a year the company was
+   * only partly in Myntos for would mislead.
+   */
+  sammenligning: AnalysisPeriod | null;
+  /** Income and costs as the income statement counts them, not the bank. */
+  grunnlag: 'regnskap';
+  /** The last voucher's date, or null for books with nothing in them yet. */
+  bokfort_til: string | null;
+  nokkeltall: AnalysisKeyFigures;
+  /** Two to four bokmål sentences, to be shown as text. */
+  tekst: string[];
+  /**
+   * Income per month, costs per month, income split, costs split, in that
+   * order. A side KI has read to 90 % is split by `hva` (`*_per_hva`).
+   */
+  diagrammer: Chart[];
+  /** Null when the company's KI is off: nothing read, splits by account. */
+  ki: AnalysisKi | null;
+}
+
+export interface AnalysisQuery {
+  /** Both or neither; without them the backend reads this year so far, in Norway. */
+  fra?: string;
+  til?: string;
+  sammenlign: boolean;
+}
+
+/** Income, costs and result before tax for a period, with sentences and four charts. */
+export const getAnalysis = (companyId: number, query: AnalysisQuery): Promise<AnalysisFigures> => {
+  const params = new URLSearchParams({ sammenlign: String(query.sammenlign) });
+  if (query.fra !== undefined) params.set('fra', query.fra);
+  if (query.til !== undefined) params.set('til', query.til);
+  return request<AnalysisFigures>(`/api/v1/companies/${companyId}/analyse?${params.toString()}`);
+};
+
+/** One piece of KI's background work for a company, as `GET …/analyse/kjoringer/{id}` answers it. */
+export interface AnalysisRun {
+  id: number;
+  type: 'merking' | 'dyp' | 'revisor' | 'rydding';
+  status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+  step: string | null;
+  done: number;
+  total: number;
+  /** The level asked for: always `free` for the reading «Analyse» starts. */
+  niva: string;
+  periode: AnalysisPeriod | null;
+  notices: string[];
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  /** Why a `failed` run stopped, for the code to read; never shown as it is. */
+  error_code: string | null;
+  /** Finished report id once a `dyp` or `revisor` run has ended `done`, else null (WP6). */
+  report_id?: number | null;
+}
+
+/** How far a run has come; 404 for one that is not this company's. */
+export const getAnalysisRun = (companyId: number, runId: number): Promise<AnalysisRun> =>
+  request<AnalysisRun>(`/api/v1/companies/${companyId}/analyse/kjoringer/${runId}`);
+
+// --- Analyse: «Dyp KI-analyse» runs and reports (WP6) -------------------------------
+
+export interface AnalysisStale {
+  nye_bilag: number;
+}
+
+export interface AnalysisReportSummary {
+  id: number;
+  run_id: number;
+  type: 'dyp' | 'revisor';
+  periode: AnalysisPeriod;
+  /** The level that answered (`free`, `medium`, `thinking`). */
+  niva: string;
+  requested_level: string;
+  overskrift: string;
+  created_at: string;
+  utdatert: AnalysisStale | null;
+}
+
+export interface AnalysisReportSection {
+  tittel: string;
+  tekst: string;
+  diagram: Chart | null;
+}
+
+export interface AnalysisReportSuggestion {
+  tittel: string;
+  tekst: string;
+}
+
+export interface AnalysisReport extends AnalysisReportSummary {
+  sammendrag: string;
+  avsnitt: AnalysisReportSection[];
+  forslag: AnalysisReportSuggestion[];
+}
+
+export interface StartAnalysisRequest {
+  type: 'dyp';
+  fra?: string;
+  til?: string;
+  niva?: KiLevel;
+}
+
+export interface StartAnalysisResult {
+  /** Queued or running job (HTTP 202), else null. */
+  kjoring: AnalysisRun | null;
+  /** Cached report when the exact packet already had one at this level or higher (HTTP 200). */
+  rapport: AnalysisReport | null;
+}
+
+/** Start a deep KI analysis run or return a cached report with 0 tokens. */
+export const startAnalysis = (
+  companyId: number,
+  body: StartAnalysisRequest,
+): Promise<StartAnalysisResult> =>
+  json<StartAnalysisResult>(`/api/v1/companies/${companyId}/analyse/kjoringer`, 'POST', body);
+
+/** Stop an active analysis run before its next step or batch. */
+export const cancelAnalysisRun = (companyId: number, runId: number): Promise<AnalysisRun> =>
+  request<AnalysisRun>(`/api/v1/companies/${companyId}/analyse/kjoringer/${runId}/avbryt`, {
+    method: 'POST',
+  });
+
+export interface AnalysisReportsList {
+  rapporter: AnalysisReportSummary[];
+  /** Active deep analysis run, so a reopened page resumes showing progress. */
+  aktiv_kjoring?: AnalysisRun | null;
+}
+
+/** List finished analysis reports for this company, newest first. */
+export const listAnalysisReports = (
+  companyId: number,
+  type?: 'dyp' | 'revisor',
+): Promise<AnalysisReportsList> => {
+  const query = type !== undefined ? `?type=${encodeURIComponent(type)}` : '';
+  return request<AnalysisReportsList>(
+    `/api/v1/companies/${companyId}/analyse/rapporter${query}`,
+  );
+};
+
+/** Read one finished report, with live charts hydrated from the books. */
+export const getAnalysisReport = (companyId: number, reportId: number): Promise<AnalysisReport> =>
+  request<AnalysisReport>(`/api/v1/companies/${companyId}/analyse/rapporter/${reportId}`);
+
+// --- Altinn 3 systembruker -------------------------------------------------------
+
+export interface SystemUserItem {
+  id: number;
+  system_id: string;
+  status: string;
+  approved: boolean;
+  resources: string[];
+  access_packages: string[];
+  confirm_url: string | null;
+  requested_at: string;
+  checked_at: string | null;
+  approved_at: string | null;
+}
+
+export interface SystemUserStatus {
+  company_id: number;
+  available: boolean;
+  approved: boolean;
+  system_id: string | null;
+  system_user: SystemUserItem | null;
+  resource_labels: Record<string, string>;
+}
+
+export const getSystemUserStatus = (companyId: number): Promise<SystemUserStatus> =>
+  request<SystemUserStatus>(`/api/v1/companies/${companyId}/altinn/systembruker`);
+
+export const createSystemUserRequest = (
+  companyId: number,
+  resources?: string[],
+): Promise<SystemUserStatus> =>
+  json<SystemUserStatus>(
+    `/api/v1/companies/${companyId}/altinn/systembruker`,
+    'POST',
+    resources ? { resources } : {},
+  );
+
+export const refreshSystemUserStatus = (companyId: number): Promise<SystemUserStatus> =>
+  request<SystemUserStatus>(`/api/v1/companies/${companyId}/altinn/systembruker/oppdater`, {
+    method: 'POST',
+  });
+
+// --- Aksjeeierbok og aksjonærregisteroppgaven (RF-1086) --------------------------
+
+export interface AksjonaerFinding {
+  severity: 'feil' | 'merknad';
+  code: string;
+  message: string;
+}
+
+export interface ShareClassSnapshot {
+  shares: number;
+  par_value: string;
+  share_capital: string;
+  paid_in_capital: string;
+  paid_in_premium: string;
+}
+
+export interface ShareEventLine {
+  id: number;
+  shareholder_id: number;
+  shareholder_name: string;
+  role: 'mottaker' | 'avgiver';
+  shares: number;
+  amount: string | null;
+  paid_in_premium: string | null;
+  withholding_tax: string | null;
+  withholding_tax_rate: number | null;
+  withholding_tax_country: string | null;
+  counterparty_national_id_masked: string | null;
+  counterparty_orgnr: string | null;
+}
+
+export interface ShareEvent {
+  id: number;
+  company_id: number;
+  share_class_id: number;
+  share_class_code: string;
+  event_type: string;
+  subtype: string | null;
+  event_date: string;
+  description: string | null;
+  total_shares: number | null;
+  par_value_after: string | null;
+  total_amount: string | null;
+  premium_amount: string | null;
+  amount_per_share: string | null;
+  lines: ShareEventLine[];
+}
+
+export interface ShareholderHolding {
+  shareholder_id: number;
+  kind: 'person' | 'selskap' | 'utenlandsk';
+  name: string;
+  national_id_masked: string | null;
+  has_national_id: boolean;
+  orgnr: string | null;
+  foreign_id: string | null;
+  country_code: string;
+  is_own_shares: boolean;
+  opening_shares: number;
+  closing_shares: number;
+  ownership_percent: string;
+  dividends_total: string;
+}
+
+export interface ShareClassYear {
+  id: number;
+  company_id: number;
+  code: string;
+  name: string;
+  isin: string | null;
+  opening_year: number | null;
+  opening_shares: number;
+  opening_par_value: string;
+  opening_share_capital: string;
+  opening_paid_in_capital: string;
+  opening_paid_in_premium: string;
+  opening: ShareClassSnapshot;
+  closing: ShareClassSnapshot;
+  liquidated: boolean;
+  blocked: boolean;
+  findings: AksjonaerFinding[];
+  shareholders: ShareholderHolding[];
+}
+
+export interface ShareClass {
+  id: number;
+  company_id: number;
+  code: string;
+  name: string;
+  isin: string | null;
+  opening_year: number | null;
+  opening_shares: number;
+  opening_par_value: string;
+  opening_share_capital: string;
+  opening_paid_in_capital: string;
+  opening_paid_in_premium: string;
+}
+
+export interface Shareholder {
+  id: number;
+  company_id: number;
+  kind: 'person' | 'selskap' | 'utenlandsk';
+  name: string;
+  national_id_masked: string | null;
+  has_national_id: boolean;
+  orgnr: string | null;
+  foreign_id: string | null;
+  address: string | null;
+  postal_code: string | null;
+  city: string | null;
+  country_code: string;
+  email: string | null;
+  is_own_shares: boolean;
+  opening_holdings: Record<string, number>;
+}
+
+export interface AksjonaerFilingDocument {
+  document_type: string;
+  filename: string;
+  content_type: string;
+  byte_size: number;
+  fetched_at: string;
+}
+
+export interface AksjonaerFiling {
+  id: number;
+  company_id: number;
+  share_class_id: number | null;
+  share_class_code: string;
+  year: number;
+  status: 'sendt' | 'bekreftet' | 'feilet';
+  underskjema_count: number;
+  hovedskjema_id: string | null;
+  leveranse_referanse: string | null;
+  dialog_id: string | null;
+  forsendelse_id: string | null;
+  contact_email: string | null;
+  contact_name: string | null;
+  findings: AksjonaerFinding[];
+  submitted_at: string;
+  error: string | null;
+  documents: AksjonaerFilingDocument[];
+}
+
+export interface AksjonaerCodes {
+  share_classes: Record<string, string>;
+  utbytte_subtypes: Record<string, string>;
+  emisjon_subtypes: Record<string, string>;
+  overdragelse_subtypes: Record<string, string>;
+  fondsemisjon_subtypes: Record<string, string>;
+  kapitalnedsettelse_subtypes: Record<string, string>;
+}
+
+export interface AksjonaerYear {
+  company_id: number;
+  company_name: string;
+  orgnr: string;
+  organisation_form: string | null;
+  year: number;
+  submission_available: boolean;
+  systembruker_approved: boolean;
+  contact_email_default: string | null;
+  contact_name_default: string | null;
+  company_opening_capital: string;
+  company_closing_capital: string;
+  ledger_share_capital: string | null;
+  classes: ShareClassYear[];
+  shareholders: Shareholder[];
+  events: ShareEvent[];
+  findings: AksjonaerFinding[];
+  blocked: boolean;
+  filings: AksjonaerFiling[];
+  codes: AksjonaerCodes;
+}
+
+export interface AksjonaerPrefillResult {
+  company_id: number;
+  year: number;
+  oppgave_status: string | null;
+  share_classes_imported: number;
+  shareholders_imported: number;
+}
+
+export interface ShareClassPayload {
+  code?: string;
+  name?: string;
+  isin?: string | null;
+  clear_isin?: boolean;
+  opening_year?: number | null;
+  clear_opening_year?: boolean;
+  opening_shares?: number;
+  opening_par_value?: string;
+  opening_share_capital?: string;
+  opening_paid_in_capital?: string;
+  opening_paid_in_premium?: string;
+}
+
+export interface ShareholderPayload {
+  kind?: 'person' | 'selskap' | 'utenlandsk';
+  name?: string;
+  national_id?: string | null;
+  orgnr?: string | null;
+  foreign_id?: string | null;
+  address?: string | null;
+  postal_code?: string | null;
+  city?: string | null;
+  country_code?: string;
+  email?: string | null;
+  is_own_shares?: boolean;
+  opening_holdings?: Record<number, number>;
+}
+
+export interface ShareEventLinePayload {
+  shareholder_id: number;
+  role?: 'mottaker' | 'avgiver';
+  shares?: number;
+  amount?: string | null;
+  paid_in_premium?: string | null;
+  withholding_tax?: string | null;
+  withholding_tax_rate?: number | null;
+  withholding_tax_country?: string | null;
+  counterparty_national_id?: string | null;
+  counterparty_orgnr?: string | null;
+}
+
+export interface ShareEventPayload {
+  share_class_id: number;
+  event_type: string;
+  subtype?: string | null;
+  event_date: string;
+  description?: string | null;
+  total_shares?: number | null;
+  par_value_after?: string | null;
+  total_amount?: string | null;
+  premium_amount?: string | null;
+  amount_per_share?: string | null;
+  lines: ShareEventLinePayload[];
+}
+
+export const getAksjonaer = (companyId: number, year?: number): Promise<AksjonaerYear> => {
+  const query = year !== undefined ? `?aar=${year}` : '';
+  return request<AksjonaerYear>(`/api/v1/companies/${companyId}/aksjonaer${query}`);
+};
+
+export const createShareClass = (
+  companyId: number,
+  payload: ShareClassPayload,
+): Promise<ShareClass> =>
+  json<ShareClass>(`/api/v1/companies/${companyId}/aksjonaer/aksjeklasser`, 'POST', payload);
+
+export const updateShareClass = (
+  companyId: number,
+  shareClassId: number,
+  payload: ShareClassPayload,
+): Promise<ShareClass> =>
+  json<ShareClass>(
+    `/api/v1/companies/${companyId}/aksjonaer/aksjeklasser/${shareClassId}`,
+    'PATCH',
+    payload,
+  );
+
+export const deleteShareClass = (companyId: number, shareClassId: number): Promise<void> =>
+  request<void>(`/api/v1/companies/${companyId}/aksjonaer/aksjeklasser/${shareClassId}`, {
+    method: 'DELETE',
+  });
+
+export const createShareholder = (
+  companyId: number,
+  payload: ShareholderPayload,
+): Promise<Shareholder> =>
+  json<Shareholder>(`/api/v1/companies/${companyId}/aksjonaer/aksjonaerer`, 'POST', payload);
+
+export const updateShareholder = (
+  companyId: number,
+  shareholderId: number,
+  payload: ShareholderPayload,
+): Promise<Shareholder> =>
+  json<Shareholder>(
+    `/api/v1/companies/${companyId}/aksjonaer/aksjonaerer/${shareholderId}`,
+    'PATCH',
+    payload,
+  );
+
+export const deleteShareholder = (companyId: number, shareholderId: number): Promise<void> =>
+  request<void>(`/api/v1/companies/${companyId}/aksjonaer/aksjonaerer/${shareholderId}`, {
+    method: 'DELETE',
+  });
+
+export const createShareEvent = (
+  companyId: number,
+  payload: ShareEventPayload,
+): Promise<ShareEvent> =>
+  json<ShareEvent>(`/api/v1/companies/${companyId}/aksjonaer/hendelser`, 'POST', payload);
+
+export const deleteShareEvent = (companyId: number, eventId: number): Promise<void> =>
+  request<void>(`/api/v1/companies/${companyId}/aksjonaer/hendelser/${eventId}`, {
+    method: 'DELETE',
+  });
+
+export const importAksjonaerPrefill = (
+  companyId: number,
+  year: number,
+): Promise<AksjonaerPrefillResult> =>
+  json<AksjonaerPrefillResult>(`/api/v1/companies/${companyId}/aksjonaer/prefill`, 'POST', {
+    aar: year,
+  });
+
+export const sendAksjonaer = (
+  companyId: number,
+  payload: {
+    aar: number;
+    share_class_id?: number | null;
+    contact_email?: string | null;
+    contact_name?: string | null;
+    contact_role?: string | null;
+    contact_phone?: string | null;
+    bekreftet: boolean;
+  },
+): Promise<AksjonaerFiling> =>
+  json<AksjonaerFiling>(`/api/v1/companies/${companyId}/aksjonaer/send`, 'POST', payload);
+
+export const aksjonaerXmlUrl = (
+  companyId: number,
+  year: number,
+  klasse: string,
+  skjema: 'hovedskjema' | 'underskjema',
+  aksjonaerId?: number,
+): string => {
+  const params = new URLSearchParams({ aar: String(year), klasse, skjema });
+  if (aksjonaerId !== undefined) params.set('aksjonaer_id', String(aksjonaerId));
+  return `${API_BASE_URL}/api/v1/companies/${companyId}/aksjonaer/xml?${params.toString()}`;
+};
+
+export const aksjonaerDocumentUrl = (
+  companyId: number,
+  filingId: number,
+  documentType: string,
+): string =>
+  `${API_BASE_URL}/api/v1/companies/${companyId}/aksjonaer/innsendinger/${filingId}/dokument?type=${encodeURIComponent(documentType)}`;
+
+// --- Årsregnskap til Regnskapsregisteret (RR-0002) --------------------------------
+
+export interface AarsregnskapFinding {
+  severity: 'feil' | 'merknad';
+  code: string;
+  message: string;
+}
+
+export interface AarsregnskapLine {
+  key: string;
+  label: string;
+  kind: 'post' | 'sum';
+  section: string;
+  orid_current: number | null;
+  orid_prior: number | null;
+  current: number;
+  prior: number | null;
+  note_ref: string | null;
+  editable_prior: boolean;
+}
+
+export interface AarsregnskapShareholderSummary {
+  name: string;
+  shares: number;
+  ownership_percent: string;
+  share_class: string;
+}
+
+export interface AarsregnskapFixedAssetNote {
+  tangible_opening_cost: number;
+  tangible_additions: number;
+  tangible_disposals: number;
+  tangible_closing_cost: number;
+  tangible_year_depreciation: number;
+  tangible_accumulated_depreciation: number;
+  tangible_carrying_value: number;
+  intangible_opening_cost: number;
+  intangible_additions: number;
+  intangible_disposals: number;
+  intangible_closing_cost: number;
+  intangible_year_depreciation: number;
+  intangible_accumulated_depreciation: number;
+  intangible_carrying_value: number;
+}
+
+export interface AarsregnskapCustomNote {
+  tittel: string;
+  tekst: string;
+}
+
+export interface AarsregnskapNotes {
+  regnskapsprinsipper: string;
+  usikkerhet_fortsatt_drift: boolean;
+  usikkerhet_fortsatt_drift_tekst: string;
+  antall_aarsverk: string;
+  har_otp_plikt: boolean;
+  otp_tekst: string;
+  lonn_aarets: number;
+  lonn_fjoraarets: number | null;
+  arbeidsgiveravgift_aarets: number;
+  arbeidsgiveravgift_fjoraarets: number | null;
+  pensjon_aarets: number;
+  pensjon_fjoraarets: number | null;
+  andre_ytelser_aarets: number;
+  andre_ytelser_fjoraarets: number | null;
+  sum_lonnskostnad_aarets: number;
+  sum_lonnskostnad_fjoraarets: number | null;
+  lonnskostnad_fritekst: string;
+  aksjekapital_tekst: string;
+  antall_aksjer: number | null;
+  paalydende: string | null;
+  aksjonaerer: AarsregnskapShareholderSummary[];
+  egne_aksjer_antall: number;
+  anleggsmidler: AarsregnskapFixedAssetNote;
+  anleggsmidler_fritekst: string;
+  bundne_bankinnskudd: number;
+  gjeld_over_fem_aar: number;
+  pantstillelser_gjeld: number;
+  pantsatte_eiendeler_verdi: number;
+  garantiforpliktelser: number;
+  gjeld_fritekst: string;
+  laan_til_styret: number;
+  laan_til_daglig_leder: number;
+  sikkerhet_styret: number;
+  sikkerhet_daglig_leder: number;
+  laan_rentesats_styret: string | null;
+  laan_rentesats_daglig_leder: string | null;
+  laan_vilkaar_styret: string;
+  laan_vilkaar_daglig_leder: string;
+  laan_fritekst: string;
+  egenkapital_ib: number;
+  egenkapital_aarsresultat: number;
+  egenkapital_utbytte: number;
+  egenkapital_andre_endringer: number;
+  egenkapital_ub: number;
+  skatt_tekst: string;
+  ytterligere_opplysninger: string;
+  egendefinerte_noter: AarsregnskapCustomNote[];
+}
+
+export interface AarsregnskapBoardMember {
+  name: string;
+  role: string;
+}
+
+export interface AarsregnskapDraftSettings {
+  small_company: boolean;
+  is_parent: boolean;
+  consolidated: boolean;
+  winding_up_accounts: boolean;
+  auditor_elected_out: boolean;
+  prepared_by_external_accountant: boolean;
+  external_accountant_assistance: boolean;
+  approval_date: string | null;
+  confirming_representative: string | null;
+  contact_email: string | null;
+  board_meeting_date: string | null;
+  board_place: string | null;
+  board_members: AarsregnskapBoardMember[];
+  general_meeting_date: string | null;
+  general_meeting_place: string | null;
+  general_meeting_chair: string | null;
+  general_meeting_cosigner: string | null;
+  dividend_proposed: string;
+  prior_year_overrides: Record<string, number>;
+}
+
+export interface AarsregnskapFilingDocument {
+  id: number;
+  document_type: string;
+  filename: string;
+  content_type: string;
+  byte_size: number;
+  sha256: string;
+  fetched_at: string;
+}
+
+export type AarsregnskapFilingStatus = 'klargjort' | 'laast' | 'signert' | 'mottatt' | 'feilet';
+
+export interface AarsregnskapFiling {
+  id: number;
+  year: number;
+  status: AarsregnskapFilingStatus;
+  auth_method: 'systembruker' | 'id_porten';
+  altinn_instance_id: string | null;
+  hovedskjema_data_id: string | null;
+  underskjema_data_id: string | null;
+  altinn_portal_url: string | null;
+  content_hash: string;
+  stale: boolean;
+  aarsresultat: string;
+  sum_eiendeler: string;
+  sum_egenkapital: string;
+  fastsettelsedato: string | null;
+  bekreftende_representant: string | null;
+  validation_issues: Record<string, unknown>[];
+  findings: AarsregnskapFinding[];
+  signed_by_name: string | null;
+  created_at: string;
+  locked_at: string | null;
+  signed_at: string | null;
+  receipt_received_at: string | null;
+  error: string | null;
+  documents: AarsregnskapFilingDocument[];
+}
+
+export interface AarsregnskapOverview {
+  company_id: number;
+  orgnr: string;
+  company_name: string;
+  organisation_form: string | null;
+  year: number;
+  start_date: string;
+  end_date: string;
+  year_closed: boolean;
+  has_prior_year_in_books: boolean;
+  uses_prior_year_overrides: boolean;
+  driftsinntekter: number;
+  driftsresultat: number;
+  resultat_for_skatt: number;
+  skattekostnad: number;
+  aarsresultat: number;
+  sum_anleggsmidler: number;
+  sum_omlopsmidler: number;
+  sum_eiendeler: number;
+  sum_innskutt_egenkapital: number;
+  sum_opptjent_egenkapital: number;
+  sum_egenkapital: number;
+  sum_langsiktig_gjeld: number;
+  sum_kortsiktig_gjeld: number;
+  sum_gjeld: number;
+  sum_egenkapital_og_gjeld: number;
+  balance_diff: number;
+  rounding_adjustment: number;
+  content_hash: string;
+  result_lines: AarsregnskapLine[];
+  disposition_lines: AarsregnskapLine[];
+  balance_asset_lines: AarsregnskapLine[];
+  balance_equity_liability_lines: AarsregnskapLine[];
+  off_balance_lines: AarsregnskapLine[];
+  draft: AarsregnskapDraftSettings;
+  notes: AarsregnskapNotes;
+  findings: AarsregnskapFinding[];
+  blocked: boolean;
+  submission_available: boolean;
+  systembruker_available: boolean;
+  systembruker_approved: boolean;
+  id_porten_available: boolean;
+  id_porten_logged_in: boolean;
+  filings: AarsregnskapFiling[];
+}
+
+export interface SaveAarsregnskapDraftPayload {
+  aar: number;
+  small_company?: boolean;
+  is_parent?: boolean;
+  consolidated?: boolean;
+  winding_up_accounts?: boolean;
+  auditor_elected_out?: boolean;
+  prepared_by_external_accountant?: boolean;
+  external_accountant_assistance?: boolean;
+  approval_date?: string | null;
+  confirming_representative?: string | null;
+  contact_email?: string | null;
+  board_meeting_date?: string | null;
+  board_place?: string | null;
+  board_members?: AarsregnskapBoardMember[];
+  general_meeting_date?: string | null;
+  general_meeting_place?: string | null;
+  general_meeting_chair?: string | null;
+  general_meeting_cosigner?: string | null;
+  dividend_proposed?: string;
+  prior_year_overrides?: Record<string, number | null>;
+  notes?: Record<string, unknown>;
+}
+
+export const getAarsregnskap = (
+  companyId: number,
+  year?: number,
+): Promise<AarsregnskapOverview> => {
+  const query = year !== undefined ? `?aar=${year}` : '';
+  return request<AarsregnskapOverview>(`/api/v1/companies/${companyId}/aarsregnskap${query}`);
+};
+
+export const saveAarsregnskapDraft = (
+  companyId: number,
+  payload: SaveAarsregnskapDraftPayload,
+): Promise<AarsregnskapOverview> =>
+  json<AarsregnskapOverview>(`/api/v1/companies/${companyId}/aarsregnskap`, 'PUT', payload);
+
+export const prepareAarsregnskapSystembruker = (
+  companyId: number,
+  payload: {
+    aar: number;
+    aarsresultat: number;
+    sum_eiendeler: number;
+    bekreftet: boolean;
+    laas?: boolean;
+    legg_ved_pdf?: boolean;
+  },
+): Promise<AarsregnskapFiling> =>
+  json<AarsregnskapFiling>(`/api/v1/companies/${companyId}/aarsregnskap/klargjor`, 'POST', payload);
+
+export const sendAarsregnskapIdPorten = (
+  companyId: number,
+  payload: {
+    aar: number;
+    aarsresultat: number;
+    sum_eiendeler: number;
+    bekreftet: boolean;
+    laas?: boolean;
+    signer_direkte?: boolean;
+    legg_ved_pdf?: boolean;
+  },
+): Promise<AarsregnskapFiling> =>
+  json<AarsregnskapFiling>(`/api/v1/companies/${companyId}/aarsregnskap/send`, 'POST', payload);
+
+export const signAarsregnskapFiling = (
+  companyId: number,
+  filingId: number,
+  payload: { bekreftet: boolean; sjekk_endringer?: boolean },
+): Promise<AarsregnskapFiling> =>
+  json<AarsregnskapFiling>(
+    `/api/v1/companies/${companyId}/aarsregnskap/innsendinger/${filingId}/signer`,
+    'POST',
+    payload,
+  );
+
+export const refreshAarsregnskapStatus = (
+  companyId: number,
+  filingId: number,
+): Promise<AarsregnskapFiling> =>
+  request<AarsregnskapFiling>(
+    `/api/v1/companies/${companyId}/aarsregnskap/innsendinger/${filingId}/status`,
+    { method: 'POST' },
+  );
+
+export const aarsregnskapXmlUrl = (
+  companyId: number,
+  year: number,
+  part: 'hovedskjema' | 'underskjema',
+): string =>
+  `${API_BASE_URL}/api/v1/companies/${companyId}/aarsregnskap/xml?aar=${year}&del=${part}`;
+
+export const aarsregnskapPdfUrl = (
+  companyId: number,
+  year: number,
+  doc: 'aarsregnskap' | 'styreprotokoll' | 'generalforsamling',
+): string =>
+  `${API_BASE_URL}/api/v1/companies/${companyId}/aarsregnskap/pdf?aar=${year}&dokument=${doc}`;
+
+export const aarsregnskapDocumentUrl = (
+  companyId: number,
+  filingId: number,
+  documentType: string,
+): string =>
+  `${API_BASE_URL}/api/v1/companies/${companyId}/aarsregnskap/innsendinger/${filingId}/dokument?type=${encodeURIComponent(documentType)}`;

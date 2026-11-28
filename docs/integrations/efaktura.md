@@ -137,30 +137,37 @@ an incoming payment reconcilable, and it does that by carrying the number of the
 invoice it pays:
 
 ```
-  1 3 7   0
-  └─┬─┘   ┬
-  fakturanr  kontrollsiffer
-              (mod10)
+  2 0 2 6 1 1 2 5   1 3 7   4
+  └──────┬──────┘   └─┬─┘   ┬
+  utstedelsesdato  fakturanr  kontrollsiffer
+    (YYYYMMDD)                  (mod10)
 ```
 
-The **invoice number** identifies the document, and through it the customer:
-the series is one per company and never reused, so a KID names exactly one
-invoice in the books. The **check digit** is what gets a mistyped KID rejected
-at the keyboard instead of reconciled against somebody else's invoice.
+The **issue date** (`YYYYMMDD`) keeps every KID at least ten digits long without
+leading zeros to miscount, and makes the date readable in the reference. The
+**invoice number** identifies the document, and through it the customer: the
+series is one per company and never reused, so a KID names exactly one invoice
+in the books even when a company issues thousands of invoices on the same day.
+The **check digit** is what gets a mistyped KID rejected at the keyboard instead
+of reconciled against somebody else's invoice.
 
-**No customer number and no zero-padding, since 2026-10-23.** The KID used to be
-a five-digit customer number and a six-digit invoice number, both zero-padded,
-so a typed-in buyer's first invoice read `000000000018`. People copy a KID off a
-paper invoice into their bank, and nobody counts nine zeros right. The customer
-number had been justified as what lands a mismatched payment (a partial payment,
-two invoices in one transfer, a number off an old reminder) on the right
-customer, but every one of those still carries some invoice's KID, and that
-invoice names its buyer. The fixed width had been justified by the KID-avtale,
-the bank's OCR agreement that fixes the length; Myntos does not model that
-agreement, and a seller who has one types their own KID (manual, below). Reading
-a KID back is a lookup of `payment_reference` on the issued documents, not a
-parse by position, so nothing needed the widths. Invoices issued before the
-change keep the KID they were issued with.
+**Issue date + invoice number, no customer number and no leading zeros (since
+2026-11-25).** Before 2026-10-23 the KID was a five-digit customer number and a
+six-digit invoice number, both zero-padded (`000000000018`), which forced people
+copying off a paper invoice to count long runs of zeros. From 2026-10-23 to
+2026-11-25 it was unpadded (`18`), which was shorter than expected on invoices.
+Prefixing the eight-digit issue date (`YYYYMMDD`) before the unpadded invoice
+number gives a ten-digit minimum KID with no leading zeros (`2026112512` for
+invoice 1 on 2026-11-25, `2026112510428` for invoice 1042), and leaves sixteen
+digits for the invoice number inside Nets' 25-digit limit so high-volume senders
+never collide or run out of space. The customer number still buys nothing the
+invoice number does not already give: a partial payment, two invoices in one
+transfer and a number off an old reminder all still carry some invoice's KID,
+and that invoice names its buyer. Myntos still does not model a bank's
+KID-avtale, and a seller who has one with a different format types their own KID
+(manual, below). Reading a KID back is a lookup of `payment_reference` on the
+issued documents, not a parse by position, so invoices issued before any change
+keep the KID they were issued with.
 
 The invoice number puts all of this downstream of § 5-1-3: a draft has no number,
 so a draft has no KID either. `myntos.domain.faktura.kid` builds it and
@@ -323,10 +330,10 @@ that can quietly differ from what was sent.
 
 ### Transmission
 
-Myntos **produces** the EHF file here and **sends** it elsewhere: the frozen
-`ehf_xml` goes, unchanged, to an access point (Recommand), which carries it
-over Peppol to the buyer's orgnr. Who may register and send, why it is send
-only and never e-mail, and what is still owed before a customer relies on it
+Myntos **produces** the EHF file here and **sends** (and receives) it elsewhere:
+the frozen `ehf_xml` goes, unchanged, to Ademico, which carries it over Peppol
+to the buyer's orgnr. Who may register, opt into receiving and send, why it is
+never e-mail, and what is still owed before a customer relies on it
 are in [peppol.md](peppol.md). A deployment without an access point offers the
 file to download, to be handed to whatever channel the business already uses.
 

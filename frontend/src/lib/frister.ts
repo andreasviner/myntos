@@ -59,6 +59,12 @@ export function placeFor(frist: Frist): { href: string; text: string } | null {
   if (frist.kind === 'skattemelding' && frist.files_from_myntos) {
     return { href: '/skattemelding/', text: 'Til skattemeldingen' };
   }
+  if (frist.kind === 'aksjonaerregisteroppgave' && frist.files_from_myntos) {
+    return { href: '/aksjonaer/', text: 'Til aksjonærregisteroppgaven' };
+  }
+  if (frist.kind === 'arsregnskap' && frist.files_from_myntos) {
+    return { href: '/aarsregnskap/', text: 'Til årsregnskapet' };
+  }
   return null;
 }
 

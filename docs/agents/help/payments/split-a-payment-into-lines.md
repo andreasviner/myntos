@@ -68,7 +68,7 @@ account, VAT code and amount, + for money in and − for money out.
 | «Linjene går i null. Et bilag må flytte penger inn eller ut.» | The lines cancel each other out, so no money moved | Check the amounts against the bilag and the bank |
 | «Velg hva linje 2 gjaldt.» | A line has no type | Choose one, or click «Fjern» on that line |
 | «Skriv beløpet på linje 2, større enn null.» | A line has no amount, or a negative one | Enter the amount without a minus; the type decides whether it adds or subtracts |
-| «Et oppdelt bilag trenger minst to linjer.» | Only one line is left | Add a line, or click «Tilbake til én linje» |
+| «Et oppdelt bilag trenger minst to linjer.» | Only one line is left | Add a line, or click «Tilbake til en linje» |
 | «typen hører til landbrukstillegget, og det er ikke slått på for dette selskapet …» | A farm type was chosen in a company without the farming add-on | Choose another type, or [turn on farming](https://myntos.no/llms/help/farming/turn-on-farming.md) |
 
 ## Good to know

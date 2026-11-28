@@ -52,6 +52,14 @@ SKATTEMELDING_UPERSONLIG: dict[int, str] = {
     2026: "skattemeldingUpersonlig_v6_ekstern.xsd",
 }
 
+# Income year -> the personlig skattemelding (an ENK owner's). Read to strip
+# derived fields on a re-filing while keeping all personal items untouched
+# (myntos.skattemelding.personlig).
+SKATTEMELDING_PERSONLIG: dict[int, str] = {
+    2025: "skattemelding_v13_ekstern.xsd",
+    2026: "skattemelding_v14_ekstern.xsd",
+}
+
 # The envelope, one version for every year.
 REQUEST = "skattemeldingognaeringsspesifikasjonrequest_v2.xsd"
 RESPONSE = "skattemeldingognaeringsspesifikasjonresponse_v2.xsd"
@@ -201,6 +209,16 @@ def skattemelding_upersonlig(year: int) -> Schema:
     filename = SKATTEMELDING_UPERSONLIG.get(year)
     if filename is None:
         raise SchemaError(f"Myntos har ikke Skatteetatens skjema for skattemeldingen for {year}")
+    return load(filename)
+
+
+def skattemelding_personlig(year: int) -> Schema:
+    """The personlig skattemelding schema for an income year, or :class:`SchemaError`."""
+    filename = SKATTEMELDING_PERSONLIG.get(year)
+    if filename is None:
+        raise SchemaError(
+            f"Myntos har ikke Skatteetatens skjema for personlig skattemelding for {year}"
+        )
     return load(filename)
 
 

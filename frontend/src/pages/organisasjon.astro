@@ -3,6 +3,7 @@ import ClaimedDialog from '../components/ClaimedDialog.astro';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { DEFAULT_MODE, MODES, RIGHTS } from '../lib/agentkeys';
 import { LEVELS } from '../lib/datasharing';
+import { MAX_ADDRESSES, PURPOSE_LABEL, SECRET_WARNING } from '../lib/integrationkeys';
 ---
 
 {/* Selskapet: hvem det er, og hvem som har tilgang til regnskapet.
@@ -290,7 +291,9 @@ import { LEVELS } from '../lib/datasharing';
             handler om hva Myntos selv sender til Løynd, og dette er det
             motsatte, at selskapets eget verktøy henter regnskapet. Det samme
             for en KI-assistent og for et skript noen har skrevet mot API-et:
-            en nøkkel er en nøkkel.
+            en nøkkel er en nøkkel. Unntaket er en eiers integrasjonsnøkkel for
+            en server, som sender fakturaer uten å spørre og derfor har sin
+            egen seksjon, Integrasjoner, under (regel 15).
 
             Kortet står bare når nøkler er slått på. Før det er det ingenting å
             liste, og det man må lese før man slår dem på, står i vinduet
@@ -322,6 +325,15 @@ import { LEVELS } from '../lib/datasharing';
               <tbody id="agent-nokler"></tbody>
             </table>
           </div>
+
+          {/* Nøklene og KI-siden svarer på to forskjellige spørsmål (se over),
+              men begge heter KI, og den som leter etter KI-planen eller
+              bryteren for Myntos sin egen KI, ender ofte her. Lenken sier
+              forskjellen og viser veien. */}
+          <p class="card-hint">
+            Nøklene er for selskapets egne verktøy. Myntos sin egen KI, den som leser bilagene, er
+            noe annet: <a href="/ki/about/">Les mer om KI i Myntos</a>.
+          </p>
 
           {/* Å slå av er trygt, men det stopper hver nøkkel for godt, og
               agentene til alle i selskapet slutter å virke. Derfor et trinn
@@ -399,6 +411,13 @@ import { LEVELS } from '../lib/datasharing';
                 bestemme hvem som har tilgang, uansett hva den får lov til.
               </li>
             </ul>
+            {/* Punktet om hvor modellen sender opplysningene gjelder agentens
+                modell. Uten denne linjen er det lett å lese det som et svar
+                om Myntos sin egen KI, som er en annen og har sin egen side. */}
+            <p class="card-hint">
+              Myntos sin egen KI, den som leser bilagene, er noe annet:
+              <a href="/ki/about/">Les mer om KI i Myntos</a>.
+            </p>
             <label class="org-agent-check">
               <input type="checkbox" id="agent-forstaar" />
               <span id="agent-forstaar-tekst">Jeg har lest dette og vil slå på nøkler.</span>
@@ -491,7 +510,7 @@ import { LEVELS } from '../lib/datasharing';
           <div id="agent-ny" hidden>
             <p class="card-hint">
               <strong>Kopier teksten og lim den inn i samtalen med agenten, eller gi den til
-              programmet.</strong> Nøkkelen vises bare nå. Den virker én gang: agenten bytter den
+              programmet.</strong> Nøkkelen vises bare nå. Den virker en gang: agenten bytter den
               ut med en gang, og etter det kan ingen bruke kopien. Den må brukes innen et døgn.
             </p>
             <div class="org-kopirad">
@@ -507,30 +526,202 @@ import { LEVELS } from '../lib/datasharing';
         <ClaimedDialog />
       </section>
 
+      {/* --- Integrasjoner ---------------------------------------------------
+
+          En nøkkel for en server, ikke for en KI: en eier lager den, den
+          virker bare fra IP-adressene eieren skriver inn, den kan bare lage,
+          utstede og sende fakturaer, og den sender dem uten å spørre noen.
+          Eierens beslutning av 2026-11-26, regel 15 i docs/agents-and-api.md.
+
+          En egen seksjon ved siden av Tilgang, og ikke en rad i nøkkellisten
+          der, fordi den er unntaket fra det den listen lover: der venter alt
+          som skal ut av Myntos på personen, her gjør det ikke det. Bryteren for
+          nøkler styrer den heller ikke. Bare eiere ser den
+          (`integration:manage`), og hemmeligheten vises bare en gang, med
+          advarselen om aldri å lime den inn i en KI-assistent rett under. */}
+      <section id="integrasjoner" hidden>
+        <h2>Integrasjoner</h2>
+
+        <div class="card">
+          <div class="org-kort-head">
+            <h3>Integrasjonsnøkler</h3>
+            <div class="org-knapperad">
+              <button type="button" class="btn btn-ghost btn-small" id="integrasjon-vis">
+                Lag integrasjonsnøkkel
+              </button>
+            </div>
+          </div>
+          <p class="card-hint">
+            En integrasjonsnøkkel lar en server selskapet bruker, for eksempel en nettbutikk eller et
+            abonnementssystem, lage, utstede og sende fakturaer i Myntos på egen hånd. Den sender
+            fakturaene som EHF uten å spørre deg, og virker bare fra IP-adressene du skriver inn. Den
+            kan ikke lage kreditnotaer, føre andre bilag, flytte penger eller bestemme hvem som har
+            tilgang. Bare eiere kan lage og se integrasjonsnøkler.
+          </p>
+          {/* Serveren trenger selskapets nummer i hver adresse den kaller
+              (/api/v1/companies/{id}/…), og den kan ikke spørre Myntos om det:
+              en integrasjonsnøkkel når bare fakturarutene. Derfor står det
+              her, der eieren som setter opp serveren ser det. */}
+          <p class="card-hint">
+            Selskapets ID i Myntos, som serveren også trenger:
+            <strong id="integrasjon-selskap-id"></strong>
+          </p>
+          <p class="status" id="integrasjon-status" hidden></p>
+          <p class="card-hint" id="integrasjon-tom" hidden>
+            Ingen integrasjonsnøkler ennå. Trykk «Lag integrasjonsnøkkel» for å lage en.
+          </p>
+          <div class="table-scroll" id="integrasjon-tabell" hidden>
+            <table class="data org-integrasjoner">
+              <thead>
+                <tr>
+                  <th>Navn</th>
+                  <th>IP-adresser</th>
+                  <th>Laget</th>
+                  <th>Sist brukt</th>
+                  <th>Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="integrasjon-nokler"></tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* To tilstander, en synlig om gangen: skjemaet, og hemmeligheten som
+            vises bare denne ene gangen. Formålet er fast tekst og ikke et valg,
+            fordi fakturering er det eneste formålet som finnes. Teksten kommer
+            fra lib/integrationkeys.ts, så ordene på skjermen og ordene som
+            testes er de samme. */}
+        <dialog
+          class="org-dialog"
+          id="integrasjon-dialog"
+          aria-labelledby="integrasjon-dialog-tittel"
+        >
+          <div class="org-dialog-head">
+            <h3 id="integrasjon-dialog-tittel">Lag integrasjonsnøkkel</h3>
+            <button type="button" class="org-dialog-lukk" id="integrasjon-lukk" aria-label="Lukk">
+              ×
+            </button>
+          </div>
+          <p class="status" id="integrasjon-dialog-status" hidden></p>
+
+          <form id="integrasjon-form" class="org-agent-skjema" novalidate>
+            <label class="field">
+              <span>Navn</span>
+              <input type="text" name="name" maxlength="64" autocomplete="off" />
+              <span class="field-hint">
+                Det du kjenner serveren igjen på, for eksempel «Nettbutikken». Navnet står ved hvert
+                bilag den fører.
+              </span>
+            </label>
+            <label class="field">
+              <span>IP-adresser</span>
+              <textarea name="allowed_ips" rows="3" autocomplete="off" spellcheck="false"></textarea>
+              <span class="field-hint">
+                Adressene serveren kaller Myntos fra, en per linje, høyst {MAX_ADDRESSES}. Et
+                område skrives som 203.0.113.0/24. Nøkkelen virker ikke fra noen annen adresse.
+              </span>
+            </label>
+            <div class="field">
+              <span>Formål</span>
+              <span class="org-agent-fast">{PURPOSE_LABEL}</span>
+            </div>
+            <p class="card-hint">
+              Fakturaene den lager, sendes som EHF uten at noen godkjenner dem først. Det er
+              forskjellen fra en nøkkel for en KI, der alt som skal ut av Myntos venter på deg.
+            </p>
+            <div class="org-knapperad org-form-knapper">
+              <button class="btn btn-primary" type="submit" id="integrasjon-lag">
+                Lag nøkkelen
+              </button>
+              <button class="btn btn-ghost" type="button" data-integrasjon-lukk>Avbryt</button>
+            </div>
+          </form>
+
+          <div id="integrasjon-ny" hidden>
+            <p class="card-hint">
+              <strong>{SECRET_WARNING}</strong> Nøkkelen vises bare nå. Vi lagrer den ikke, så den
+              kan ikke vises igjen.
+            </p>
+            <p class="card-hint">
+              Gi serveren også selskapets ID i Myntos:
+              <strong id="integrasjon-ny-selskap-id"></strong>
+            </p>
+            <div class="org-kopirad">
+              <textarea id="integrasjon-hemmelighet" rows="2" readonly></textarea>
+              <button class="btn btn-ghost" type="button" id="integrasjon-kopier">Kopier</button>
+            </div>
+            <button class="btn btn-primary" type="button" data-integrasjon-lukk>Ferdig</button>
+          </div>
+        </dialog>
+      </section>
+
+      {/* --- Altinn-tilkobling (systembruker) ------------------------------
+
+          Maskin-til-maskin-tilkobling til Skatteetaten for oppgaver som ikke
+          lenger kan sendes via skjema på altinn.no, som aksjonærregisteroppgaven
+          (RF-1086). Bedriften oppretter forespørselen her og godkjenner den en
+          gang i Altinn. */}
+      <section id="altinn" hidden>
+        <div class="org-section-head">
+          <h2>Altinn-tilkobling (systembruker)</h2>
+          <span class="org-merke" id="altinn-merke" hidden></span>
+        </div>
+        <div class="card">
+          <p class="card-hint" id="altinn-na"></p>
+          <p class="card-hint" id="altinn-les" hidden>
+            Bare eiere og administratorer kan opprette eller oppdatere systembruker i Altinn.
+          </p>
+          <div class="org-knapperad" id="altinn-knapper" hidden>
+            <button type="button" class="btn btn-primary" id="altinn-opprett" hidden>
+              Opprett systembruker i Altinn
+            </button>
+            <a
+              class="btn btn-primary"
+              id="altinn-godkjenn"
+              href="#"
+              target="_blank"
+              rel="noopener noreferrer"
+              hidden
+            >
+              Godkjenn i Altinn ↗
+            </a>
+            <button type="button" class="btn btn-ghost" id="altinn-oppdater" hidden>
+              Sjekk status i Altinn
+            </button>
+            <a class="btn btn-ghost" id="altinn-aksjonaer" href="/aksjonaer/" hidden>
+              Til aksjonærregisteroppgaven →
+            </a>
+            <a class="btn btn-ghost" id="altinn-aarsregnskap" href="/aarsregnskap/" hidden>
+              Til årsregnskapet →
+            </a>
+          </div>
+          <p class="status" id="altinn-status" role="status" hidden></p>
+        </div>
+      </section>
+
       {/* --- E-faktura ------------------------------------------------------
 
           Fra 2027 skal salg til andre bedrifter faktureres som EHF over
-          Peppol, og her registreres selskapet for å sende. Bare når denne
-          installasjonen har et tilgangspunkt: uten det er det ingen steg å ta,
-          og et kort som sier det, er støy.
+          Peppol, og her registreres selskapet for å sende og eventuelt motta.
+          Bare når denne installasjonen har et tilgangspunkt: uten det er det
+          ingen steg å ta, og et kort som sier det, er støy.
 
-          Ett steg om gangen, det første som mangler (lib/peppol.ts). Bekreftet
-          eierskap kommer først, fordi tilgangspunktet sender i navnet til det
-          selskapet Myntos oppgir: uten bekreftelsen kunne hvem som helst som
-          skrev inn ni siffer, sende fakturaer i et annet selskaps navn.
+          Bekreftet eierskap kommer først, fordi tilgangspunktet sender og
+          mottar i navnet til det selskapet Myntos oppgir: uten bekreftelsen
+          kunne hvem som helst som skrev inn ni siffer, sende eller hente
+          fakturaer i et annet selskaps navn.
 
-          Identitetskontrollen er tilgangspunktets egen, på deres side, og den
-          må gjøres av noen som signerer for selskapet. Det er ikke alltid den
-          som trykker, så lenken står der den kan kopieres og sendes videre.
-          Registreringen er bare for å sende: å registrere et norsk orgnr for å
-          motta tar over den innboksen selskapet får leverandørfakturaer i i dag. */}
+          Selve registreringen er bare for sending (peppolRegistration=false).
+          Mottak er et eget valg under, fordi å registrere et norsk orgnr for
+          mottak i Peppol (ELMA) tar over innboksen for leverandørfakturaer. */}
       <section id="efaktura" hidden>
         <h2>E-faktura</h2>
         <div class="card">
           <p class="card-hint" id="efaktura-na"></p>
           <p class="card-hint" id="efaktura-les" hidden>
-            Bare eiere og administratorer kan registrere selskapet og hente lenken til
-            identitetskontrollen.
+            Bare eiere og administratorer kan registrere selskapet for e-faktura eller endre
+            mottak.
           </p>
           <div class="org-knapperad" id="efaktura-knapper" hidden>
             <a class="btn btn-ghost btn-small" id="efaktura-bekreft" href="#eierskap" hidden>
@@ -539,21 +730,33 @@ import { LEVELS } from '../lib/datasharing';
             <button type="button" class="btn btn-primary" id="efaktura-registrer" hidden>
               Registrer for e-faktura
             </button>
-            <button type="button" class="btn btn-primary" id="efaktura-lenke" hidden>
-              Fullfør identitetskontrollen
-            </button>
           </div>
-          <div class="org-lenke" id="efaktura-lenke-boks" hidden>
-            <p class="card-hint">
-              Åpne lenken selv hvis du signerer for selskapet, eller send den til den som gjør det.
-              Når kontrollen er fullført, kan selskapet sende fakturaer som EHF.
+          <div id="efaktura-mottak" hidden style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+            <h3>Mottak av e-faktura</h3>
+            <p class="card-hint" id="efaktura-mottak-na"></p>
+            <p id="efaktura-innboks-rad" hidden>
+              <a href="/innkommende/">Åpne Mottatt →</a>
             </p>
-            <div class="org-kopirad">
-              <input type="text" id="efaktura-url" readonly />
-              <a class="btn btn-primary" id="efaktura-apne" href="#" target="_blank" rel="noopener"
-                >Åpne</a
+            <label class="checkbox" id="efaktura-mottak-check-rad" hidden style="display: flex; gap: 0.5rem; align-items: flex-start; margin: 0.75rem 0;">
+              <input type="checkbox" id="efaktura-mottak-bekreft" />
+              <span>
+                Jeg vet at dette publiserer organisasjonsnummeret i Peppol-nettverket (ELMA) gjennom
+                Myntos, og at mottak i et annet regnskapsprogram må være slått av først.
+              </span>
+            </label>
+            <div class="org-knapperad" id="efaktura-mottak-knapper" hidden>
+              <button
+                type="button"
+                class="btn btn-primary"
+                id="efaktura-mottak-paa"
+                disabled
+                hidden
               >
-              <button class="btn btn-ghost" type="button" id="efaktura-kopier">Kopier</button>
+                Slå på mottak av e-faktura
+              </button>
+              <button type="button" class="btn btn-ghost" id="efaktura-mottak-av" hidden>
+                Slå av mottak av e-faktura
+              </button>
             </div>
           </div>
           <p class="status" id="efaktura-status" role="status" hidden></p>
@@ -590,7 +793,7 @@ import { LEVELS } from '../lib/datasharing';
             <h3>Roller</h3>
             <p class="card-hint">
               Slik de står registrert i dag. Én rad per person: den som både er daglig leder og
-              sitter i styret står én gang, med begge rollene. Underenheter har ingen egne roller,
+              sitter i styret står en gang, med begge rollene. Underenheter har ingen egne roller,
               så da er det hovedenhetens som vises.
             </p>
             {/* Hvorfor merket til høyre er formulert som det er.
@@ -626,6 +829,38 @@ import { LEVELS } from '../lib/datasharing';
             <summary>Alt registeret har om selskapet</summary>
             <dl class="org-felt" id="register-felt"></dl>
           </details>
+        </div>
+      </section>
+
+      {/* --- KI i Myntos -------------------------------------------------
+
+          Flyttet hit fra /ki/ da /ki/ ble KI-chat og /ki/about/ ble
+          informasjonssiden. Bryteren er den samme: `ki_enabled` står på
+          selskapet, avkrysset betyr av (så en manglende verdi aldri vises som
+          av mens KI er på), og bare eiere og administratorer kan endre den. */}
+      <section id="ki" hidden>
+        <div class="org-section-head">
+          <h2>KI i Myntos</h2>
+          <div class="org-section-tools">
+            <a class="btn btn-ghost btn-small" href="/ki/about/">Om KI og KI-planer</a>
+          </div>
+        </div>
+
+        <div class="card">
+          <p class="card-hint" id="ki-om">
+            KI er på. Slår du det av, gjelder det hele programmet for dette selskapet: ingen
+            dokumenter eller bilagsopplysninger sendes til Løynd, KI-chat, lesing av bilag og
+            «Dyp KI-analyse» stopper (og det som er lest tidligere brukes ikke), og skjemaene fylles
+            ut av programmets egen lesing av PDF-en.
+          </p>
+          <label class="org-agent-check">
+            <input type="checkbox" id="ki-toggle" />
+            <span id="ki-toggle-tekst">Slå av KI for dette selskapet</span>
+          </label>
+          <p class="card-hint" id="ki-les" hidden>
+            Bare eiere og administratorer kan slå KI av eller på for selskapet.
+          </p>
+          <p class="status" id="ki-status" role="status" hidden></p>
         </div>
       </section>
 
@@ -1643,20 +1878,27 @@ import { LEVELS } from '../lib/datasharing';
     ORGNR_LOCKED,
     addBankAccount,
     changeMemberRole,
+    createSystemUserRequest,
     deleteBankAccount,
     getGovernmentLoginStatus,
+    getSystemUserStatus,
     governmentLoginStartUrl,
     inviteMember,
     listInvitations,
     getCompanyRegister,
     getPeppol,
     createAgentKey,
+    createIntegrationKey,
     listAgentKeys,
+    listIntegrationKeys,
     listApprovals,
     listMembers,
+    refreshSystemUserStatus,
     setAgentAccess,
     setDataSharing,
+    setPeppolReceiving,
     stopAgentKey,
+    stopIntegrationKey,
     refreshCompany,
     registerPeppol,
     removeMember,
@@ -1669,6 +1911,7 @@ import { LEVELS } from '../lib/datasharing';
     type Company,
     type DataSharingLevel,
     type GovernmentLoginStatus,
+    type IntegrationKey,
     type Invitation,
     type Member,
     type Membership,
@@ -1676,7 +1919,9 @@ import { LEVELS } from '../lib/datasharing';
     type RegisterAccess,
     type RegisterAnswer,
     type RegisteredRoleWithAccess,
+    type SystemUserStatus,
   } from '../lib/api';
+  import { systemUserSentence } from '../lib/aksjonaer';
   import {
     DEFAULT_MODE,
     MODES,
@@ -1690,11 +1935,16 @@ import { LEVELS } from '../lib/datasharing';
   } from '../lib/agentkeys';
   import { isWaiting } from '../lib/approvals';
   import { currentText as sharingText, levelOf } from '../lib/datasharing';
+  import {
+    addressesLabel,
+    integrationStateLabel,
+    parseAddresses,
+  } from '../lib/integrationkeys';
   import { currentCompany, loadCompanies, mountChromeCompanyMenu } from '../lib/company';
   import { clearStatus, el, setStatus, show } from '../lib/dom';
   import { isoDate, kontonummer, kroner, orgnummer } from '../lib/format';
   import { confirmOwnership } from '../lib/ownership';
-  import { standingSentence } from '../lib/peppol';
+  import { receivingSentence, standingSentence } from '../lib/peppol';
   import { canInCompany, loadSession, redirectToLogin, setActiveCompany } from '../lib/session';
 
   /**
@@ -2565,6 +2815,7 @@ import { LEVELS } from '../lib/datasharing';
     // button needs the permission editing needs.
     show(el('#register'), selskap !== null);
     show(el('#register-hent'), mayAdmin());
+    show(el('#ki'), selskap !== null);
     show(el('#datadeling'), selskap !== null);
     // No books at all is the one case this page cannot answer, so it points at
     // the page that can. Only for someone whose *account* could set one up: an
@@ -2584,9 +2835,11 @@ import { LEVELS } from '../lib/datasharing';
     mountChromeCompanyMenu(companies, selskap);
 
     showSelskapDetaljer(selskap);
+    showKi(selskap);
     showDatadeling(selskap);
     showEierskap();
     showRegisterAge();
+    altinnTegnet = showAltinn(selskap);
     efakturaTegnet = showEfaktura(selskap);
   }
 
@@ -3899,6 +4152,278 @@ import { LEVELS } from '../lib/datasharing';
     });
   }
 
+  // --- Integrasjoner -----------------------------------------------------------------
+  //
+  // Eierens ende av regel 15 i docs/agents-and-api.md: lag en nøkkel for en
+  // server, se når den sist ble brukt, stopp den. Hemmeligheten står på siden
+  // bare til vinduet lukkes.
+
+  const integrasjonStatus = el<HTMLParagraphElement>('#integrasjon-status');
+  const integrasjonBody = el<HTMLTableSectionElement>('#integrasjon-nokler');
+  const integrasjonDialog = el<HTMLDialogElement>('#integrasjon-dialog');
+  const integrasjonDialogStatus = el<HTMLParagraphElement>('#integrasjon-dialog-status');
+  const integrasjonForm = el<HTMLFormElement>('#integrasjon-form');
+  const hemmelighet = el<HTMLTextAreaElement>('#integrasjon-hemmelighet');
+
+  // Spurt hver gang, av samme grunn som mayManage().
+  const mayIntegrate = (): boolean => canInCompany(selskap, 'integration:manage');
+
+  /** Siste tegning av listen, som ankeret #integrasjoner venter på. */
+  let integrasjonerTegnet: Promise<void> = Promise.resolve();
+
+  function renderIntegrationKeys(keys: IntegrationKey[]): void {
+    integrasjonBody.replaceChildren();
+    for (const key of keys) {
+      const row = document.createElement('tr');
+      const handling = document.createElement('td');
+      if (key.state === 'active') {
+        const stopp = document.createElement('button');
+        stopp.type = 'button';
+        stopp.className = 'btn-link';
+        stopp.textContent = 'Stopp';
+        stopp.addEventListener('click', () => {
+          stopp.disabled = true;
+          void stopIntegrationKey(bokene().id, key.id)
+            .then(async () => {
+              setStatus(
+                integrasjonStatus,
+                `Integrasjonsnøkkelen «${key.name}» er stoppet. Serveren som brukte den, får ` +
+                  'ikke sendt flere fakturaer med den.',
+                'ok',
+              );
+              await refreshIntegrations();
+            })
+            .catch((error: unknown) => {
+              stopp.disabled = false;
+              setStatus(
+                integrasjonStatus,
+                error instanceof ApiError ? error.message : 'Nøkkelen ble ikke stoppet.',
+              );
+            });
+        });
+        handling.append(stopp);
+      }
+      const laget = `${isoDate(key.created_at.slice(0, 10))}, ${key.person_name}`;
+      const brukt = key.last_used_at === null ? 'Aldri' : isoDate(key.last_used_at.slice(0, 10));
+      row.append(
+        cell(key.name),
+        cell(addressesLabel(key)),
+        cell(laget),
+        cell(brukt),
+        cell(integrationStateLabel(key)),
+        handling,
+      );
+      integrasjonBody.append(row);
+    }
+    show(el('#integrasjon-tabell'), keys.length > 0);
+    show(el('#integrasjon-tom'), keys.length === 0);
+  }
+
+  /** Seksjonen står bare for eiere; for alle andre spørres det ikke engang. */
+  async function refreshIntegrations(): Promise<void> {
+    const mine = selskap !== null && mayIntegrate();
+    show(el('#integrasjoner'), mine);
+    if (!mine || selskap === null) return;
+    el('#integrasjon-selskap-id').textContent = String(selskap.id);
+    renderIntegrationKeys(await listIntegrationKeys(selskap.id));
+  }
+
+  function showIntegrationPane(pane: 'skjema' | 'ny'): void {
+    show(integrasjonForm, pane === 'skjema');
+    show(el('#integrasjon-ny'), pane === 'ny');
+  }
+
+  function wireIntegrations(): void {
+    el<HTMLButtonElement>('#integrasjon-vis').addEventListener('click', () => {
+      clearStatus(integrasjonDialogStatus);
+      integrasjonForm.reset();
+      showIntegrationPane('skjema');
+      integrasjonDialog.showModal();
+    });
+    el<HTMLButtonElement>('#integrasjon-lukk').addEventListener('click', () =>
+      integrasjonDialog.close(),
+    );
+    for (const button of integrasjonDialog.querySelectorAll<HTMLButtonElement>(
+      '[data-integrasjon-lukk]',
+    )) {
+      button.addEventListener('click', () => integrasjonDialog.close());
+    }
+    // Tømt, ikke bare skjult, også når vinduet lukkes med Escape: en
+    // hemmelighet som sender fakturaer skal ikke bli liggende i en fane.
+    integrasjonDialog.addEventListener('close', () => {
+      hemmelighet.value = '';
+      integrasjonForm.reset();
+      clearStatus(integrasjonDialogStatus);
+    });
+
+    const submit = el<HTMLButtonElement>('#integrasjon-lag');
+    integrasjonForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const data = new FormData(integrasjonForm);
+      const name = String(data.get('name') ?? '').trim();
+      const addresses = parseAddresses(String(data.get('allowed_ips') ?? ''));
+      if (name === '') {
+        setStatus(integrasjonDialogStatus, 'Gi nøkkelen et navn, så du kjenner den igjen i listen.');
+        return;
+      }
+      if (addresses.length === 0) {
+        setStatus(
+          integrasjonDialogStatus,
+          'Skriv minst en IP-adresse serveren kaller Myntos fra. Uten den virker nøkkelen ikke.',
+        );
+        return;
+      }
+      submit.disabled = true;
+      clearStatus(integrasjonDialogStatus);
+      void createIntegrationKey(bokene().id, name, addresses)
+        .then(async (issued) => {
+          hemmelighet.value = issued.secret;
+          el('#integrasjon-ny-selskap-id').textContent = String(issued.company_id);
+          showIntegrationPane('ny');
+          await refreshIntegrations();
+        })
+        .catch((error: unknown) =>
+          setStatus(
+            integrasjonDialogStatus,
+            error instanceof ApiError ? error.message : 'Nøkkelen ble ikke laget.',
+          ),
+        )
+        .finally(() => {
+          submit.disabled = false;
+        });
+    });
+
+    el<HTMLButtonElement>('#integrasjon-kopier').addEventListener('click', () => {
+      void navigator.clipboard.writeText(hemmelighet.value).then(
+        () =>
+          setStatus(
+            integrasjonDialogStatus,
+            'Kopiert. Lim den inn i innstillingene til serveren, og ingen andre steder.',
+            'ok',
+          ),
+        // Utklippstavlen kan være sperret; å markere teksten virker likevel.
+        () => hemmelighet.select(),
+      );
+    });
+  }
+
+  // --- Altinn-tilkobling (systembruker) -------------------------------------------
+
+  const altinnStatus = el<HTMLParagraphElement>('#altinn-status');
+  let altinnTegnet: Promise<void> = Promise.resolve();
+
+  async function showAltinn(company: Company): Promise<void> {
+    let answer: SystemUserStatus;
+    try {
+      answer = await getSystemUserStatus(company.id);
+    } catch {
+      show(el('#altinn'), false);
+      return;
+    }
+    if (selskap?.id !== company.id) return;
+    drawAltinn(answer);
+  }
+
+  function drawAltinn(answer: SystemUserStatus): void {
+    show(el('#altinn'), true);
+    el('#altinn-na').textContent = systemUserSentence(answer);
+    const merke = el('#altinn-merke');
+    if (answer.approved) {
+      merke.textContent = 'Godkjent';
+      merke.removeAttribute('data-tone');
+      show(merke, true);
+    } else if (answer.system_user && answer.system_user.status === 'new') {
+      merke.textContent = 'Venter på godkjenning';
+      merke.setAttribute('data-tone', 'vent');
+      show(merke, true);
+    } else {
+      show(merke, false);
+    }
+
+    const may = mayAdmin();
+    show(el('#altinn-les'), !may && answer.available);
+
+    const hasPending =
+      answer.available &&
+      !answer.approved &&
+      answer.system_user !== null &&
+      answer.system_user.status === 'new';
+    const canCreate = may && answer.available && !answer.approved && !hasPending;
+    const confirmLink = el<HTMLAnchorElement>('#altinn-godkjenn');
+    if (hasPending && answer.system_user?.confirm_url) {
+      confirmLink.href = answer.system_user.confirm_url;
+      show(confirmLink, true);
+    } else {
+      confirmLink.href = '#';
+      show(confirmLink, false);
+    }
+    const canRefresh = may && answer.available && answer.system_user !== null && !answer.approved;
+    show(el('#altinn-opprett'), canCreate);
+    show(el('#altinn-oppdater'), canRefresh);
+    show(el('#altinn-aksjonaer'), answer.approved);
+    show(el('#altinn-aarsregnskap'), answer.approved);
+    show(
+      el('#altinn-knapper'),
+      canCreate || !confirmLink.hidden || canRefresh || answer.approved,
+    );
+  }
+
+  function wireAltinn(): void {
+    const createBtn = el<HTMLButtonElement>('#altinn-opprett');
+    createBtn.addEventListener('click', () => {
+      createBtn.disabled = true;
+      clearStatus(altinnStatus);
+      void createSystemUserRequest(bokene().id)
+        .then((answer) => {
+          drawAltinn(answer);
+          setStatus(
+            altinnStatus,
+            'Forespørsel opprettet i Altinn. Åpne «Godkjenn i Altinn» for å fullføre, og trykk deretter «Sjekk status i Altinn».',
+            'ok',
+          );
+        })
+        .catch((error: unknown) => {
+          setStatus(
+            altinnStatus,
+            error instanceof ApiError
+              ? error.message
+              : 'Klarte ikke å opprette systembruker i Altinn. Prøv igjen.',
+          );
+        })
+        .finally(() => {
+          createBtn.disabled = false;
+        });
+    });
+
+    const refreshBtn = el<HTMLButtonElement>('#altinn-oppdater');
+    refreshBtn.addEventListener('click', () => {
+      refreshBtn.disabled = true;
+      clearStatus(altinnStatus);
+      void refreshSystemUserStatus(bokene().id)
+        .then((answer) => {
+          drawAltinn(answer);
+          setStatus(
+            altinnStatus,
+            answer.approved
+              ? 'Systembrukeren er godkjent i Altinn. Selskapet kan nå sende aksjonærregisteroppgaven fra Myntos.'
+              : 'Status er oppdatert, men forespørselen er ikke godkjent i Altinn ennå.',
+            answer.approved ? 'ok' : undefined,
+          );
+        })
+        .catch((error: unknown) => {
+          setStatus(
+            altinnStatus,
+            error instanceof ApiError
+              ? error.message
+              : 'Klarte ikke å hente status fra Altinn. Prøv igjen.',
+          );
+        })
+        .finally(() => {
+          refreshBtn.disabled = false;
+        });
+    });
+  }
+
   // --- E-faktura ------------------------------------------------------------------
   //
   // Spurt hver gang selskapet tegnes, aldri husket: bekreftelsen over kan
@@ -3906,8 +4431,6 @@ import { LEVELS } from '../lib/datasharing';
   // så det eneste som vet om den er fullført, er backend, som spør dem.
 
   const efakturaStatus = el<HTMLParagraphElement>('#efaktura-status');
-  /** The last answer, so a returning tab knows whether there is anything to ask about. */
-  let efaktura: PeppolStanding | null = null;
   /** The card's latest drawing, for the #efaktura anchor to wait for. */
   let efakturaTegnet: Promise<void> = Promise.resolve();
 
@@ -3922,7 +4445,6 @@ import { LEVELS } from '../lib/datasharing';
     }
     // Byttet selskap mens svaret var underveis: dette svaret hører til et annet.
     if (selskap?.id !== company.id) return;
-    efaktura = answer;
     drawEfaktura(answer);
   }
 
@@ -3932,68 +4454,165 @@ import { LEVELS } from '../lib/datasharing';
     if (sentence === null) return;
     el('#efaktura-na').textContent = sentence;
     const may = mayAdmin();
-    const missing = !answer.verified;
-    show(el('#efaktura-les'), missing && !may && answer.company_confirmed);
+    show(el('#efaktura-les'), !may && answer.company_confirmed);
     const bekreft = !answer.company_confirmed;
-    const registrer = may && answer.company_confirmed && !answer.registered;
-    const lenke = may && answer.registered && !answer.verified;
+    const registrer = may && answer.company_confirmed && !answer.can_send;
     show(el('#efaktura-bekreft'), bekreft);
     show(el('#efaktura-registrer'), registrer);
-    show(el('#efaktura-lenke'), lenke);
-    show(el('#efaktura-knapper'), bekreft || registrer || lenke);
-    if (answer.verified) show(el('#efaktura-lenke-boks'), false);
+    show(el('#efaktura-knapper'), bekreft || registrer);
+
+    const mottakText = receivingSentence(answer);
+    show(el('#efaktura-mottak'), mottakText !== null);
+    if (mottakText !== null) {
+      el('#efaktura-mottak-na').textContent = mottakText;
+      show(el('#efaktura-innboks-rad'), answer.can_receive);
+      const canTurnOn = may && !answer.can_receive;
+      const canTurnOff = may && answer.can_receive;
+      const checkbox = el<HTMLInputElement>('#efaktura-mottak-bekreft');
+      if (!canTurnOn) checkbox.checked = false;
+      show(el('#efaktura-mottak-check-rad'), canTurnOn);
+      const onBtn = el<HTMLButtonElement>('#efaktura-mottak-paa');
+      const offBtn = el<HTMLButtonElement>('#efaktura-mottak-av');
+      show(onBtn, canTurnOn);
+      show(offBtn, canTurnOff);
+      onBtn.disabled = !checkbox.checked;
+      show(el('#efaktura-mottak-knapper'), canTurnOn || canTurnOff);
+    }
   }
 
-  /**
-   * Register, or ask for a fresh link to the identity check: one call does both.
-   *
-   * The link is shown rather than opened. The person pressing the button is an
-   * admin, and the one who has to prove who they are signs for the company;
-   * often the same person, but not always, and a link that opened in their own
-   * browser would be no use to the daglig leder it was meant for.
-   */
   function wireEfaktura(): void {
-    const url = el<HTMLInputElement>('#efaktura-url');
-    const run = (button: HTMLButtonElement): void => {
-      button.disabled = true;
+    const registrer = el<HTMLButtonElement>('#efaktura-registrer');
+    registrer.addEventListener('click', () => {
+      registrer.disabled = true;
       clearStatus(efakturaStatus);
       void registerPeppol(bokene().id)
         .then((answer) => {
-          efaktura = answer;
           drawEfaktura(answer);
-          if (answer.verification_url !== null) {
-            url.value = answer.verification_url;
-            el<HTMLAnchorElement>('#efaktura-apne').href = answer.verification_url;
-            show(el('#efaktura-lenke-boks'), true);
-          }
+          setStatus(efakturaStatus, 'Selskapet er registrert for sending av e-faktura.', 'ok');
         })
         .catch((error: unknown) => {
           setStatus(
             efakturaStatus,
-            error instanceof ApiError ? error.message : 'Fikk ikke registrert selskapet. Prøv igjen.',
+            error instanceof ApiError
+              ? error.message
+              : 'Fikk ikke registrert selskapet. Prøv igjen.',
           );
         })
         .finally(() => {
-          button.disabled = false;
+          registrer.disabled = false;
+        });
+    });
+
+    const checkbox = el<HTMLInputElement>('#efaktura-mottak-bekreft');
+    const onBtn = el<HTMLButtonElement>('#efaktura-mottak-paa');
+    const offBtn = el<HTMLButtonElement>('#efaktura-mottak-av');
+    checkbox.addEventListener('change', () => {
+      onBtn.disabled = !checkbox.checked;
+    });
+
+    const toggleReceiving = (button: HTMLButtonElement, enabled: boolean): void => {
+      button.disabled = true;
+      clearStatus(efakturaStatus);
+      void setPeppolReceiving(bokene().id, enabled)
+        .then((answer) => {
+          drawEfaktura(answer);
+          setStatus(
+            efakturaStatus,
+            enabled
+              ? 'Mottak av e-faktura er slått på.'
+              : 'Mottak av e-faktura er slått av. Organisasjonsnummeret er nå frigitt fra Peppol (ELMA).',
+            'ok',
+          );
+        })
+        .catch((error: unknown) => {
+          setStatus(
+            efakturaStatus,
+            error instanceof ApiError
+              ? error.message
+              : 'Fikk ikke oppdatert mottak av e-faktura. Prøv igjen.',
+          );
+        })
+        .finally(() => {
+          if (enabled) {
+            onBtn.disabled = !checkbox.checked;
+          } else {
+            offBtn.disabled = false;
+          }
         });
     };
-    const registrer = el<HTMLButtonElement>('#efaktura-registrer');
-    const lenke = el<HTMLButtonElement>('#efaktura-lenke');
-    registrer.addEventListener('click', () => run(registrer));
-    lenke.addEventListener('click', () => run(lenke));
-    el<HTMLButtonElement>('#efaktura-kopier').addEventListener('click', () => {
-      void navigator.clipboard.writeText(url.value).then(
-        () => setStatus(efakturaStatus, 'Lenken er kopiert.', 'ok'),
-        // Clipboard access can be refused; selecting the text still works.
-        () => url.select(),
-      );
+
+    onBtn.addEventListener('click', () => toggleReceiving(onBtn, true));
+    offBtn.addEventListener('click', () => {
+      if (
+        !confirm(
+          'Slå av mottak av e-faktura? Nye leverandørfakturaer sendt over Peppol vil ikke lenger komme inn i Myntos.',
+        )
+      ) {
+        return;
+      }
+      toggleReceiving(offBtn, false);
     });
-    // Kontrollen fullføres i en annen fane. Når denne fanen får fokus igjen og
-    // selskapet ventet på den, spør vi på nytt, så siden ikke står og sier at
-    // noe gjenstår som nettopp ble gjort.
-    window.addEventListener('focus', () => {
-      if (selskap === null || efaktura === null) return;
-      if (efaktura.registered && !efaktura.verified) void showEfaktura(selskap);
+  }
+
+  // --- KI i Myntos -----------------------------------------------------------------
+  //
+  // Avkrysset betyr av, ikke på, så standardtilstanden (på) alltid er en
+  // umerket boks og et tomt felt aldri kan fremstå som «KI er av». Selskapets
+  // navn hentes direkte fra selskapet lagringen går til.
+
+  const kiToggle = el<HTMLInputElement>('#ki-toggle');
+  const kiStatus = el<HTMLParagraphElement>('#ki-status');
+
+  const isKiOn = (company: Company): boolean => company.ki_enabled !== false;
+
+  function showKi(company: Company): void {
+    const on = isKiOn(company);
+    const may = mayAdmin();
+    kiToggle.checked = !on;
+    kiToggle.disabled = !may;
+    el('#ki-toggle-tekst').textContent = `Slå av KI for ${company.name}`;
+    el('#ki-om').textContent = on
+      ? `KI er på for ${company.name}. Slår du det av, gjelder det hele programmet for dette ` +
+        'selskapet: ingen dokumenter eller bilagsopplysninger sendes til Løynd, KI-chat, ' +
+        'lesing av bilag og «Dyp KI-analyse» stopper (og det som er lest tidligere brukes ikke), ' +
+        'og skjemaene fylles ut av programmets egen lesing av PDF-en. Innstillingen gjelder bare ' +
+        'dette selskapet. Bytt selskap i toppen av siden for å endre et annet.'
+      : `KI er av for ${company.name}. KI-chat, lesing av bilag og «Dyp KI-analyse» er stoppet, ` +
+        'og det som eventuelt ble lest tidligere brukes ikke. Innstillingen gjelder bare dette ' +
+        'selskapet. Bytt selskap i toppen av siden for å endre et annet.';
+    show(el('#ki-les'), !may);
+    setStatus(
+      kiStatus,
+      on
+        ? ''
+        : 'KI er av. Bilag sendes ikke til Løynd, KI-chat og bilagslesing er slått av, og skjemaene fylles ut av vår egen lesing.',
+      'ok',
+    );
+  }
+
+  function wireKi(): void {
+    kiToggle.addEventListener('change', () => {
+      if (selskap === null) return;
+      const wanted = !kiToggle.checked;
+      kiToggle.disabled = true;
+      clearStatus(kiStatus);
+      void updateCompany(bokene().id, { ki_enabled: wanted })
+        .then((saved) => {
+          nyttSelskap(saved);
+          showKi(saved);
+        })
+        .catch((error: unknown) => {
+          kiToggle.checked = wanted;
+          setStatus(
+            kiStatus,
+            error instanceof ApiError && error.status === 403
+              ? 'Bare eiere og administratorer kan slå KI av eller på.'
+              : 'Fikk ikke lagret. Prøv igjen.',
+          );
+        })
+        .finally(() => {
+          kiToggle.disabled = !mayAdmin();
+        });
     });
   }
 
@@ -4174,7 +4793,10 @@ import { LEVELS } from '../lib/datasharing';
     wireVarsel();
     wireRegister();
     wireAgents();
+    wireIntegrations();
+    wireAltinn();
     wireEfaktura();
+    wireKi();
     wireDatadeling();
 
     applyPermissions();
@@ -4193,6 +4815,12 @@ import { LEVELS } from '../lib/datasharing';
     void refreshAgents().catch((error: unknown) =>
       reportAgents(error, 'Vi fikk ikke hentet nøklene.'),
     );
+    integrasjonerTegnet = refreshIntegrations().catch((error: unknown) =>
+      setStatus(
+        integrasjonStatus,
+        error instanceof ApiError ? error.message : 'Vi fikk ikke hentet integrasjonsnøklene.',
+      ),
+    );
 
     try {
       await refresh();
@@ -4210,12 +4838,28 @@ import { LEVELS } from '../lib/datasharing';
       if (window.location.hash === '#tilgang') {
         el('#tilgang').scrollIntoView({ block: 'start' });
       }
+      // E-postene om en integrasjonsnøkkel og feilmeldingen serveren får,
+      // sender eieren hit. Seksjonen vises når listen er hentet.
+      if (window.location.hash === '#integrasjoner') {
+        void integrasjonerTegnet.then(() => {
+          if (!el('#integrasjoner').hidden) el('#integrasjoner').scrollIntoView({ block: 'start' });
+        });
+      }
+      if (window.location.hash === '#altinn') {
+        void altinnTegnet.then(() => {
+          if (!el('#altinn').hidden) el('#altinn').scrollIntoView({ block: 'start' });
+        });
+      }
       // /faktura/ og hjelpeartikkelen sender folk hit for å registrere selskapet.
       // Kortet tegnes når svaret om e-faktura kommer, som kan være etter dette.
       if (window.location.hash === '#efaktura') {
         void efakturaTegnet.then(() => {
           if (!el('#efaktura').hidden) el('#efaktura').scrollIntoView({ block: 'start' });
         });
+      }
+      // /ki/, /ki/about/ og /analyse/ sender folk hit for å slå KI av eller på.
+      if (window.location.hash === '#ki' && !el('#ki').hidden) {
+        el('#ki').scrollIntoView({ block: 'start' });
       }
       // /datadeling/ og hjelpeartikkelen sender folk hit for å velge.
       if (window.location.hash === '#datadeling' && !el('#datadeling').hidden) {

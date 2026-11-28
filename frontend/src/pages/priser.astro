@@ -1,24 +1,39 @@
 ---
+import { KI_PLANS, KI_PLANS_FROM, planPrice } from '../data/kiplaner';
 import BaseLayout from '../layouts/BaseLayout.astro';
 
 /**
- * There is one number on this page, and it is 0. Myntos finnes fordi regnskap
- * for et lite norsk selskap ikke burde ha en prisliste, så siden har ingen
- * prisliste, ingen nivåer å sammenligne og ingenting som blir dyrere senere.
- * Backenden gir hver organisasjon `plan = "free"`, og ingenting leser feltet.
+ * Regnskapsprogrammet koster 0 kr, og det er fortsatt det store tallet på
+ * siden. Myntos finnes fordi regnskap for et lite norsk selskap ikke burde ha
+ * en prisliste.
+ *
+ * Til 2026-11-25 sa siden at det ikke fantes noe å betale for i det hele tatt.
+ * Da kom KI-planene: større modeller hos Løynd, som Løynd tar betalt for per
+ * bruk, og som Myntos derfor ikke kan gi bort. Løftet er skrevet om, ikke
+ * strøket i stillhet: regnskapet er gratis for alltid, KI-en på «Gratis» er med
+ * for alle, og det eneste som koster, er noe som ikke fantes før. En side som
+ * fortsatt sa «det finnes ingen betalt Myntos» ved siden av en kjøpeknapp,
+ * ville vært den prislisten Myntos er laget som et svar på.
+ *
+ * Prisene på planene er en kopi av backendens (data/kiplaner.ts), som en test
+ * holder lik.
  */
 const questions = [
   {
     q: 'Hva koster Myntos?',
-    a: '0 kr, for alltid. Ikke som kampanje, ikke som prøveperiode og ikke opp til et visst antall bilag. Det finnes ingen betalingsløsning i Myntos, og vi tar ikke imot kortopplysninger.',
+    a: `Regnskapsprogrammet koster 0 kr, for alltid. Ikke som kampanje, ikke som prøveperiode og ikke opp til et visst antall bilag. Det eneste du kan betale for, er større KI-modeller, med en KI-plan fra ${KI_PLANS_FROM} i måneden eks. mva. Den er et valg: KI-en på nivået «Gratis» er med for alle.`,
   },
   {
-    q: 'Kommer det en pris senere?',
-    a: 'Nei. Myntos er gratis, og det skal det alltid være. Et regnskapsprogram som blir dyrt når du først har flyttet inn, er nettopp det Myntos er laget som et svar på. Du kan dessuten alltid ta med deg hele regnskapet ut samme dag: SAF-T-eksport og PDF-arkiv er lovkrav, ikke en funksjon vi kan låse.',
+    q: 'Kommer det en pris på regnskapet senere?',
+    a: 'Nei. Føring, faktura, mva-melding, skattemelding og resten av regnskapsprogrammet er gratis, og det skal det alltid være. Et regnskapsprogram som blir dyrt når du først har flyttet inn, er nettopp det Myntos er laget som et svar på. Du kan dessuten alltid ta med deg hele regnskapet ut samme dag: SAF-T-eksport og PDF-arkiv er lovkrav, ikke en funksjon vi kan låse.',
   },
   {
     q: 'Blir noe av det jeg bruker plutselig en betalt funksjon?',
-    a: 'Nei. Det finnes ingen betalt Myntos: alt som finnes, er med for alle, og det gjelder også det som kommer senere.',
+    a: 'Nei. Det som er gratis i dag, forblir gratis, også KI-en på nivået «Gratis», og det gjelder det som kommer senere i regnskapsprogrammet også. KI-planene gir noe som ikke fantes før: større modeller som Løynd tar betalt for hver gang de brukes.',
+  },
+  {
+    q: 'Hva er en KI-plan?',
+    a: 'Et valgfritt månedlig abonnement for KI-nivåene «Medium» og «Smart», som bruker større modeller enn «Gratis» til vanskelige bilag, analyser og KI-chat. Hver plan gir en fast ukentlig kvote (vist i prosent) som nullstilles hver mandag, uten bindingstid. Er ukekvoten brukt opp, svarer «Gratis» resten av uken.',
   },
   {
     q: 'Hva med innlevering til Altinn og Skatteetaten?',
@@ -30,7 +45,7 @@ const questions = [
   },
   {
     q: 'Hvis det er gratis, er det jeg som er produktet?',
-    a: 'Nei. Vi selger ikke dataene dine, vi deler dem ikke med noen, og vi bruker dem ikke til annonser, videresalg, «bransjeinnsikt» eller modelltrening. Regnskapet ditt er ditt. De eneste andre som ser noe, er leverandørene som lagrer dataene på våre vegne i EØS, og de har ingen rett til å bruke dem til noe eget.',
+    a: 'Nei. Vi selger ikke dataene dine, vi deler dem ikke med noen, og vi bruker dem ikke til annonser, videresalg, «bransjeinnsikt» eller modelltrening. Regnskapet ditt er ditt. De eneste andre som ser noe, er leverandørene som lagrer og behandler dataene på våre vegne i EØS, og de har ingen rett til å bruke dem til noe eget.',
   },
   {
     q: 'Hva er haken?',
@@ -58,7 +73,7 @@ const faq = {
 
 <BaseLayout
   title="Priser: gratis regnskapsprogram, 0 kr for alltid | Myntos"
-  description="Myntos koster 0 kr, og det skal det alltid gjøre. Ingen betalte nivåer, ingen prøveperiode, ingen betalingsopplysninger, og vi selger eller deler aldri dataene dine."
+  description={`Regnskapsprogrammet Myntos koster 0 kr, og det skal det alltid gjøre. Større KI-modeller er et valg, fra ${KI_PLANS_FROM} i måneden. Vi selger eller deler aldri dataene dine.`}
   width="wide"
   schema={[faq]}
 >
@@ -66,9 +81,9 @@ const faq = {
     <p class="pill">Priser</p>
     <h1>0 kr. Alltid.</h1>
     <p class="lead">
-      Dette er ikke en prøveperiode eller et startnivå du vokser ut av. Myntos finnes fordi
-      regnskapet til et lite norsk selskap ikke burde ha en prisliste, så siden du leser nå er
-      hele prislisten.
+      Regnskapsprogrammet er ikke en prøveperiode eller et startnivå du vokser ut av. Myntos
+      finnes fordi regnskapet til et lite norsk selskap ikke burde ha en prisliste. Det eneste du
+      kan betale for, er større KI-modeller, og de er et valg, ikke en forutsetning.
     </p>
   </div>
 
@@ -89,15 +104,16 @@ const faq = {
         <h2 class="tier-name">Myntos hos oss</h2>
         <span class="pill">0 kr</span>
       </div>
-      <p class="card-hint">Alt som finnes, for alle. Ingen funksjon er reservert noen andre.</p>
+      <p class="card-hint">Hele regnskapsprogrammet, for alle, også KI-en.</p>
       <ul class="ticks">
         <li>Ubegrenset føring av inn- og utbetalinger</li>
+        <li>KI som leser bilag og fyller ut faktura, på nivået «Gratis»</li>
         <li>Bilagsarkiv med PDF-er og bilder</li>
         <li>Faktura med EHF-fil og KID</li>
         <li>Merverdiavgift og mva-melding</li>
         <li>Bankavstemming og årsavslutning</li>
         <li>Flere brukere med roller</li>
-        <li>Så mange selskaper du vil på én konto</li>
+        <li>Så mange selskaper du vil på samme konto</li>
         <li>SAF-T inn og ut</li>
       </ul>
       <p class="tier-note">Database og dokumentlager i EØS.</p>
@@ -142,6 +158,46 @@ const faq = {
     </article>
   </div>
 
+  {/*
+    KI-planene, under det som er gratis og ikke over: de er et tillegg til et
+    program som virker uten dem, og rekkefølgen sier det før teksten gjør det.
+    Prisen står uten mva først, fordi kjøperen er et selskap som trekker den
+    fra, og med mva under, fordi det er det kortet belastes.
+  */}
+  <section class="ki-plans" id="ki-planer">
+    <div class="ki-plans-head">
+      <h2>Valgfritt: større KI-modeller</h2>
+      <p class="card-hint">
+        KI-en i Myntos svarer på spørsmål om regnskapet, leser bilag og fyller ut fakturaer. På
+        nivået «Gratis» gjør Løynds egen modell det, på Løynds egne maskiner i Norge, for alle og
+        uten grense. En KI-plan gir i tillegg «Medium» og «Smart» med fast ukentlig kvote (vist i
+        prosent), fakturert månedlig. Du kan bytte eller avslutte når du vil.
+      </p>
+    </div>
+    <div class="tiers">
+      {
+        KI_PLANS.map((plan) => (
+          <article class="card tier">
+            <div class="tier-head">
+              <h3 class="tier-name">{plan.name}</h3>
+              <span class="pill">{planPrice(plan.priceExclVat)} / md</span>
+            </div>
+            <p class="card-hint">
+              {planPrice(plan.priceExclVat)} eks. mva, {planPrice(plan.priceInclVat)} med mva, i
+              måneden.
+            </p>
+            <ul class="ticks">
+              <li>{plan.quotaLabel} på «Medium» og «Smart»</li>
+              <li>{plan.summary}</li>
+              <li>Kvoten nullstilles hver mandag, og «Gratis» svarer ellers</li>
+            </ul>
+            <a class="btn btn-ghost btn-block" href="/ki/about/#planer">Se KI-planene</a>
+          </article>
+        ))
+      }
+    </div>
+  </section>
+
   <section class="card promise">
     <div class="promise-head">
       <h2 class="promise-title">0 kr, og du er ikke varen</h2>
@@ -170,8 +226,10 @@ const faq = {
         å drive kontoen din, ikke til å bli en liste noen andre får.
       </li>
       <li>
-        Det eneste vi bruker andre til, er å drifte tjenesten: database og dokumentlager i EØS.
-        De lagrer dataene på våre vegne og har ingen rett til å bruke dem til noe eget.
+        Det eneste vi bruker andre til, er å drifte tjenesten: database og dokumentlager i EØS, og
+        KI hos Løynd. De behandler dataene på våre vegne og har ingen rett til å bruke dem til noe
+        eget. Kjøper du en KI-plan, tar Mollie imot kortet, og fra oss får de bare beløpet og
+        hvilken plan det gjelder.
       </li>
       <li>
         Kjører du Myntos selv, forlater tallene aldri din egen maskin, og da har vi dem ikke i det
@@ -198,7 +256,7 @@ const faq = {
     <h2 class="card-title">Det banken tar</h2>
     <p class="card-hint">
       Regnskapet koster 0 kr, men bedriftskontoen gjør det sjelden. Hva bankene tar for nettbank,
-      og for å koble kontoen til et regnskapsprogram, har vi samlet på én side, med kilde og dato
+      og for å koble kontoen til et regnskapsprogram, har vi samlet på en egen side, med kilde og dato
       på hvert tall.
     </p>
     <a class="btn btn-ghost" href="/bankpriser/">Se bankpriser for bedrift</a>
@@ -317,6 +375,16 @@ const faq = {
     font-size: 0.82rem;
     color: var(--faint);
     text-align: center;
+  }
+  .ki-plans {
+    margin: 2.5rem 0 0;
+  }
+  .ki-plans-head {
+    max-width: 44rem;
+    margin-bottom: 1.25rem;
+  }
+  .ki-plans-head h2 {
+    margin: 0 0 0.5rem;
   }
   .promise {
     margin: 2.5rem 0 0;

@@ -50,7 +50,8 @@ to, or added themselves, is not in the list.
 - The choice is remembered in the browser, so Myntos opens on the same
   company next time.
 - The same menu has «Legg til selskap» (to set up books for another company,
-  shown to those allowed to), «Innstillinger for selskapet» and «Din konto».
+  shown to those allowed to), «Innstillinger for selskapet», «KI og KI-plan»
+  (the company's KI page: levels, KI plan and the switch) and «Din konto».
 - A role belongs to one company: the person may be «Eier» in their own books
   and «Leser» in a client's, and each page follows the role in the company
   showing.

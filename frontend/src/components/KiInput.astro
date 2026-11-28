@@ -1,0 +1,214 @@
+---
+/**
+ * Tekstboksen for KI, lik på hver side.
+ *
+ * Hver boks der noen skriver noe til Myntos sin KI, har de samme tre tingene
+ * under teksten: en knapp som legger et bilde i den, valget av nivå («Gratis»,
+ * «Medium», «Smart») fra `KiLevelPicker.astro`, og sidens egen knapp. Siden
+ * legger sin egen textarea inn i boksen (standardsporet) og sin egen knapp i
+ * sporet «actions», så id-er og skript på sidene står som før. Reglene for
+ * nivåene og lesingen av bildet er i `lib/kiinput.ts`.
+ *
+ * To slags bildeknapp. Uten `attachFor` har boksen sin egen filvelger, og
+ * bildet leses til tekst i boksen (POST …/ki/les), der personen ser det før
+ * noe sendes. Med `attachFor` er knappen en etikett for en filvelger siden
+ * allerede har: bilagene på /kontantstrom/, som leses som bilag og lagres i
+ * bilagsarkivet, og ikke skal bli til tekst i beskrivelsen. Å lime inn et bilde
+ * i boksen (Ctrl+V / Cmd+V) gjør det samme som knappen for begge typene.
+ *
+ * Nivåvalget er skjult til siden vet at KI er på og modellen er tilgjengelig,
+ * og viser da alle tre nivåene, med «Medium» og «Smart» deaktivert uten aktiv
+ * KI-plan eller når månedens tokens er brukt opp.
+ */
+import KiLevelPicker from './KiLevelPicker.astro';
+
+interface Props {
+  /** Unik på siden. Nivåvalget får navn og id-er av den, og skriptet finner boksen med den. */
+  id: string;
+  /** Id-en til en filvelger siden allerede har. Uten den får boksen sin egen. */
+  attachFor?: string;
+  /** Teksten på bildeknappen. */
+  attachLabel?: string;
+}
+
+const { id, attachFor, attachLabel = 'Legg ved bilde' } = Astro.props;
+const fileId = `${id}-bilde`;
+---
+
+<div class="ki-input" data-ki-input={id}>
+  <div class="ki-input-box">
+    <slot />
+    <div class="ki-input-bar">
+      {
+        attachFor !== undefined ? (
+          <label
+            class="ki-input-attach"
+            for={attachFor}
+            data-ki-attach-for={attachFor}
+            title="Velg fil, eller lim inn bilde i feltet"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path
+                d="M20.5 11.5l-8.2 8.2a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.4 8.4a1.7 1.7 0 0 1-2.4-2.4l7.7-7.7"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <span>{attachLabel}</span>
+          </label>
+        ) : (
+          <>
+            <input
+              class="visually-hidden"
+              type="file"
+              id={fileId}
+              data-ki-file
+              accept="application/pdf,.pdf,image/png,image/jpeg,image/webp,image/gif,image/heic,image/heif,.png,.jpg,.jpeg,.webp,.gif,.heic,.heif"
+            />
+            <label
+              class="ki-input-attach"
+              for={fileId}
+              data-ki-attach
+              title="Velg bilde, eller lim inn bilde i feltet"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path
+                  d="M4 6.5A1.5 1.5 0 0 1 5.5 5h13A1.5 1.5 0 0 1 20 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5zM4 15l4.5-4.5 4 4 2.5-2.5L20 17M15 9.5h.01"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.7"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <span>{attachLabel}</span>
+            </label>
+          </>
+        )
+      }
+
+      {/* Radioknapper fra KiLevelPicker, så alle KI-bokser og flater deler ett
+          nivåvalg og samme liste med nivånavn. */}
+      <KiLevelPicker id={id} inline />
+
+      <span class="ki-input-actions"><slot name="actions" /></span>
+    </div>
+  </div>
+  <p class="ki-input-hint" data-ki-hint hidden></p>
+  <p class="status ki-input-status" data-ki-status role="status" hidden></p>
+</div>
+
+<style>
+  .ki-input {
+    margin: 0;
+  }
+
+  /* En ramme rundt tekst og knapper, så det leses som en ting: det man
+     skriver, og hva som skjer med det. Fokusringen går rundt hele rammen. */
+  .ki-input-box {
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-small);
+    background: var(--surface-2);
+    transition: border-color 120ms ease;
+  }
+
+  .ki-input-box:hover {
+    border-color: var(--faint);
+  }
+
+  .ki-input-box:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+
+  /* Tekstfeltet er sidens eget element, og sidens stil når ikke hit, og
+     komponentens stil når ikke dit uten :global(). Rammen er boksens, så
+     feltet mister sin egen. */
+  .ki-input-box :global(textarea) {
+    display: block;
+    width: 100%;
+    border: 0;
+    border-radius: var(--radius-small) var(--radius-small) 0 0;
+    background: transparent;
+    resize: vertical;
+    font: inherit;
+    min-height: 4.5rem;
+  }
+
+  .ki-input-box :global(textarea:focus-visible) {
+    outline: none;
+  }
+
+  .ki-input-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.75rem;
+    padding: 0.4rem 0.5rem 0.5rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .ki-input-attach {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.55rem;
+    border-radius: var(--radius-pill);
+    font-size: 0.85rem;
+    color: var(--muted);
+    cursor: pointer;
+  }
+
+  .ki-input-attach:hover {
+    background: var(--surface-3);
+    color: var(--fg);
+  }
+
+  .ki-input-attach[aria-disabled='true'] {
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
+  /* Filvelgeren er skjult, så fokuset vises på knappen den hører til. */
+  .ki-input-bar input[type="file"]:focus-visible + .ki-input-attach {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .ki-input-attach svg {
+    width: 1.1rem;
+    height: 1.1rem;
+    flex: none;
+  }
+
+  .ki-input-actions {
+    margin-left: auto;
+    display: inline-flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .ki-input-actions:empty {
+    display: none;
+  }
+
+  .ki-input-hint {
+    margin: 0.35rem 0 0;
+    font-size: 0.82rem;
+    color: var(--muted);
+  }
+
+  .ki-input-status {
+    margin: 0.5rem 0 0;
+  }
+
+  @media (max-width: 30rem) {
+    .ki-input-actions {
+      margin-left: 0;
+      width: 100%;
+    }
+  }
+</style>

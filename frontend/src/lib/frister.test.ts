@@ -72,7 +72,14 @@ describe('placeFor', () => {
     expect(placeFor(frist())?.href).toBe('/mva/');
     expect(placeFor(frist({ kind: 'skattemelding' }))?.href).toBe('/skattemelding/');
     expect(placeFor(frist({ kind: 'skattemelding', files_from_myntos: false }))).toBeNull();
+    expect(placeFor(frist({ kind: 'aksjonaerregisteroppgave', files_from_myntos: true }))?.href).toBe(
+      '/aksjonaer/',
+    );
     expect(placeFor(frist({ kind: 'aksjonaerregisteroppgave', files_from_myntos: false }))).toBeNull();
+    expect(placeFor(frist({ kind: 'arsregnskap', files_from_myntos: true }))?.href).toBe(
+      '/aarsregnskap/',
+    );
+    expect(placeFor(frist({ kind: 'arsregnskap', files_from_myntos: false }))).toBeNull();
   });
 });
 

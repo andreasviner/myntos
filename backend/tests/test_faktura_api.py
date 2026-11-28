@@ -674,7 +674,8 @@ def test_issuing_assigns_the_kid_from_the_invoice_number(client: TestClient) -> 
     issued = issue(client, company["id"], draft["id"]).json()
 
     assert issued["document_number"] == "1"
-    assert issued["payment_reference"] == kid.for_document_number("1")
+    expected = kid.for_document_number("1", issue_date=date.fromisoformat(issued["issue_date"]))
+    assert issued["payment_reference"] == expected
     assert kid.is_valid(issued["payment_reference"])
 
 
@@ -695,7 +696,10 @@ def test_the_preview_says_what_the_next_invoice_would_get(client: TestClient) ->
     company = signed_in_company(client)
 
     upcoming = client.get(f"/api/v1/companies/{company['id']}/faktura/neste-nummer").json()
-    assert upcoming == {"document_number": "1", "payment_reference": "18"}
+    assert upcoming == {
+        "document_number": "1",
+        "payment_reference": kid.preview_for_next(1, issue_date=utc_now().date()),
+    }
 
     # And it is a preview, not a reservation: nothing was consumed.
     issued = issue(client, company["id"], create_draft(client, company["id"])["id"]).json()
@@ -723,23 +727,30 @@ def make_customer(client: TestClient, company_id: int, **overrides: Any) -> dict
     return body
 
 
-def test_a_registered_customer_gets_the_same_short_kid(client: TestClient) -> None:
-    """Invoice 1 is «18» whoever it is to: the invoice number already names the buyer."""
+def test_a_registered_customer_gets_the_same_kid(client: TestClient) -> None:
+    """Date and invoice number, whoever it is to: the invoice number already names the buyer."""
     company = signed_in_company(client)
     customer = make_customer(client, company["id"])
 
     draft = create_draft(client, company["id"], party_id=customer["id"], buyer_name=None)
     issued = issue(client, company["id"], draft["id"]).json()
 
-    assert issued["payment_reference"] == "18"
+    expected = kid.for_document_number("1", issue_date=date.fromisoformat(issued["issue_date"]))
+    assert issued["payment_reference"] == expected
+    assert not issued["payment_reference"].startswith("0")
 
 
-def test_a_buyer_typed_onto_the_document_gets_no_zeros(client: TestClient) -> None:
-    """It used to be 000000000018, which nobody copies off a paper invoice correctly."""
+def test_a_buyer_typed_onto_the_document_gets_the_same_kid_without_leading_zeros(
+    client: TestClient,
+) -> None:
+    """At least ten digits, starting with the issue date rather than a string of zeros."""
     company = signed_in_company(client)
     issued = issue(client, company["id"], create_draft(client, company["id"])["id"]).json()
 
-    assert issued["payment_reference"] == "18"
+    expected = kid.for_document_number("1", issue_date=date.fromisoformat(issued["issue_date"]))
+    assert issued["payment_reference"] == expected
+    assert len(issued["payment_reference"]) >= kid.MIN_LENGTH
+    assert not issued["payment_reference"].startswith("0")
 
 
 def test_the_preview_ignores_a_customer_it_is_asked_about(client: TestClient) -> None:
@@ -1078,7 +1089,9 @@ def test_a_customers_email_and_a_described_sale_become_an_issued_invoice(
     assert invoice["net_total"] == "15900.00"
     assert invoice["vat_total"] == "3975.00"
     assert invoice["gross_total"] == "19875.00"
-    assert invoice["payment_reference"] == "18"
+    assert invoice["payment_reference"] == kid.for_document_number(
+        "1", issue_date=date.fromisoformat(invoice["issue_date"])
+    )
     assert invoice["voucher_id"] is not None
 
     # The e-invoice carries what the customer asked it to be marked with, and is
@@ -1132,7 +1145,9 @@ def test_a_described_sale_to_a_registered_customer_issues_as_proposed(
     assert invoice["due_date"] == proposal["due_date"]
     assert [line["net_amount"] for line in invoice["lines"]] == ["15000.00"]
     assert invoice["gross_total"] == "18750.00"
-    assert invoice["payment_reference"] == "18"
+    assert invoice["payment_reference"] == kid.for_document_number(
+        "1", issue_date=date.fromisoformat(invoice["issue_date"])
+    )
 
     summary = client.get(
         f"/api/v1/companies/{company['id']}/cashflow/summary?financial_year={THIS_YEAR}"

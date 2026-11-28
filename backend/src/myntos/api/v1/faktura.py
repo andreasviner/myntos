@@ -32,6 +32,7 @@ readable copy, which is also filed in the bilag archive so it survives
 independently of this endpoint.
 """
 
+import logging
 from datetime import date
 from decimal import Decimal
 from typing import Annotated
@@ -41,6 +42,7 @@ from fastapi import APIRouter, Query, Response, status
 from pydantic import BaseModel, Field
 
 from myntos.api.deps import (
+    FAKTURA_INTEGRATION,
     KEY_PREVIEW,
     KEY_READ,
     CurrentCompany,
@@ -50,6 +52,7 @@ from myntos.api.deps import (
     key_post,
     key_write,
 )
+from myntos.api.v1.ki import ki_request
 from myntos.api.v1.peppol import TransmissionResponse, transmission_response
 from myntos.core.clock import utc_now
 from myntos.domain.faktura import compliance, drafting, kid
@@ -75,7 +78,10 @@ from myntos.domain.ledger.models import Company, PartyType
 from myntos.domain.ledger.service import PaymentMethod
 from myntos.domain.peppol import service as peppol_service
 from myntos.domain.peppol.models import PeppolTransmission
-from myntos.integrations import brreg, loynd
+from myntos.domain.server_errors.recorder import ROUTE_ATTRIBUTE
+from myntos.integrations import ademico, brreg, loynd
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["faktura"])
 
@@ -358,6 +364,15 @@ class DraftRequest(BaseModel):
     e-mail with their invoice details, or both."""
 
     text: str = Field(min_length=1, max_length=drafting.MAX_REQUEST_CHARS)
+    level: loynd.Level = Field(
+        default=loynd.Level.FREE,
+        description=(
+            "How much model to ask: `free` (always there), `medium` or `thinking` (while the "
+            "company has a KI plan with tokens left; see `GET …/ki`). A paid level without one "
+            "is answered at `free`, with a warning, never refused. `ki_level` in the answer "
+            "says which level answered."
+        ),
+    )
 
 
 class DraftedLineResponse(BaseModel):
@@ -380,6 +395,8 @@ class LineDraftResponse(BaseModel):
 
     lines: list[DraftedLineResponse]
     warnings: list[str]
+    # The level that answered, or null when no model was asked.
+    ki_level: loynd.Level | None = None
 
 
 class FakturaDraftResponse(BaseModel):
@@ -427,6 +444,8 @@ class FakturaDraftResponse(BaseModel):
     buyer_reference: str | None
     lines: list[DraftedLineResponse]
     warnings: list[str]
+    # The level that answered, or null when no model was asked.
+    ki_level: loynd.Level | None = None
 
     @classmethod
     def nothing(cls, warning: str) -> "FakturaDraftResponse":
@@ -468,6 +487,18 @@ def _line_response(line: SalesDocumentLine) -> LineResponse:
     )
 
 
+async def _peppol_setup_required(db: DbSession, company: Company) -> bool:
+    """Whether this company still needs to activate EHF before issuing a business invoice.
+
+    False when this deployment has no Peppol access point configured, so tests
+    and deployments without Ademico are unaffected.
+    """
+    if not ademico.is_configured():
+        return False
+    registration = await peppol_service.get_registration(db, company=company)
+    return registration is None or not registration.is_verified
+
+
 def _faktura_response(
     document: SalesDocument,
     *,
@@ -475,6 +506,7 @@ def _faktura_response(
     sending: PeppolTransmission | None = None,
     settlement: faktura_payments.Settlement | None = None,
     today: date | None = None,
+    peppol_setup_required: bool = False,
 ) -> FakturaResponse:
     computed = totals(document)
     owing = settlement is not None and settlement.state in {
@@ -482,7 +514,13 @@ def _faktura_response(
         faktura_payments.PaymentState.DELVIS_BETALT,
     }
     violations = (
-        [] if document.is_issued else compliance.check(document, today=today or utc_now().date())
+        []
+        if document.is_issued
+        else compliance.check(
+            document,
+            today=today or utc_now().date(),
+            peppol_setup_required=peppol_setup_required,
+        )
     )
     return FakturaResponse(
         id=document.id,
@@ -561,7 +599,7 @@ def _faktura_response(
 # --- Endpoints -----------------------------------------------------------------------
 
 
-@router.get("/faktura/katalog", openapi_extra=KEY_READ)
+@router.get("/faktura/katalog", openapi_extra=KEY_READ | FAKTURA_INTEGRATION)
 async def catalogue(user: CurrentUser) -> FakturaCatalogueResponse:
     """The VAT treatments and units an invoice line may use.
 
@@ -593,7 +631,7 @@ async def catalogue(user: CurrentUser) -> FakturaCatalogueResponse:
     )
 
 
-@router.get("/companies/{company_id}/faktura", openapi_extra=KEY_READ)
+@router.get("/companies/{company_id}/faktura", openapi_extra=KEY_READ | FAKTURA_INTEGRATION)
 async def list_faktura(
     context: CurrentCompany,
     db: DbSession,
@@ -636,12 +674,14 @@ async def list_faktura(
     settled = await faktura_payments.settlements(
         db, company=context.company, documents=documents, credited=credited
     )
+    setup_required = await _peppol_setup_required(db, context.company)
     return [
         _faktura_response(
             document,
             credited_by=credited.get(document.id),
             sending=sent.get(document.id),
             settlement=settled.get(document.id),
+            peppol_setup_required=setup_required,
         )
         for document in documents
     ]
@@ -650,7 +690,7 @@ async def list_faktura(
 @router.post(
     "/companies/{company_id}/faktura",
     status_code=status.HTTP_201_CREATED,
-    openapi_extra=key_write("lage et utkast til faktura"),
+    openapi_extra=key_write("lage et utkast til faktura") | FAKTURA_INTEGRATION,
 )
 async def create_faktura(
     payload: CreateFakturaRequest, context: CurrentCompany, db: DbSession
@@ -679,7 +719,8 @@ async def create_faktura(
         reverse_charge=payload.reverse_charge,
         lines=[line.to_input() for line in payload.lines],
     )
-    return _faktura_response(document)
+    setup_required = await _peppol_setup_required(db, context.company)
+    return _faktura_response(document, peppol_setup_required=setup_required)
 
 
 @router.get("/companies/{company_id}/faktura/neste-nummer", openapi_extra=KEY_READ)
@@ -691,22 +732,24 @@ async def next_number(context: CurrentCompany, db: DbSession) -> NextNumberRespo
     then validated as an ``int``, so a route declared after it would answer 422
     for this URL instead of running.
 
-    The KID is the invoice number and a check digit, so it is the same whoever
-    the invoice goes to. This route used to take ``party_id``, when the KID
-    carried a customer number too; a ``party_id`` sent now is ignored.
+    The KID is the issue date (``YYYYMMDD``), the invoice number and a check
+    digit, so it is the same whoever the invoice goes to. This route used to
+    take ``party_id``, when the KID carried a customer number too; a
+    ``party_id`` sent now is ignored.
 
     It reserves nothing. Nothing is taken from the number series and nothing is
-    written, so an invoice issued between this call and the next issue moves the
-    number on — which is why the form labels what it shows as a preview rather
-    than printing it as settled. Reserving instead would mean a draft that was
-    never issued had taken a number out of the series, and a gap in the series is
-    what an auditor reads as a deleted invoice.
+    written, so an invoice issued between this call and the next issue — or
+    issuing on a later day — moves the preview on, which is why the form labels
+    what it shows as a preview rather than printing it as settled. Reserving
+    instead would mean a draft that was never issued had taken a number out of
+    the series, and a gap in the series is what an auditor reads as a deleted
+    invoice.
     """
     require_permission(context.membership.role, Permission.LEDGER_READ)
     upcoming = await faktura_service.peek_next_number(db, company=context.company)
     return NextNumberResponse(
         document_number=str(upcoming),
-        payment_reference=kid.preview_for_next(upcoming),
+        payment_reference=kid.preview_for_next(upcoming, issue_date=utc_now().date()),
     )
 
 
@@ -723,7 +766,7 @@ def _oslo_today() -> date:
     return utc_now().astimezone(_OSLO).date()
 
 
-async def _proposal(text: str, company: Company) -> drafting.InvoiceProposal:
+async def _proposal(text: str, company: Company, *, model: loynd.Model) -> drafting.InvoiceProposal:
     """Ask the model about ``text`` for this company, or raise loynd.LoyndError."""
     # A company outside Merverdiavgiftsregisteret may not charge output VAT
     # (merverdiavgiftsloven § 15-14), so the taxable options are not on the menu
@@ -731,7 +774,7 @@ async def _proposal(text: str, company: Company) -> drafting.InvoiceProposal:
     allowed = None if company.vat_registered else ("0",)
     return await drafting.draft_invoice(
         text,
-        ask=loynd.complete,
+        ask=model.complete,
         today=_oslo_today(),
         allowed_tax_codes=allowed,
         seller_orgnr=company.orgnr,
@@ -811,15 +854,27 @@ async def draft_faktura(
         return FakturaDraftResponse.nothing(_KI_OFF)
     if not loynd.is_configured():
         return FakturaDraftResponse.nothing(_NO_MODEL)
+    ki = await ki_request(db, context.company.id, payload.level)
     try:
-        proposal = await _proposal(payload.text, context.company)
-    except loynd.LoyndError:
+        proposal = await _proposal(payload.text, context.company, model=ki.model)
+    except loynd.LoyndError as error:
         # Not an error for the user: the form is untouched and still theirs to
-        # fill in. See myntos.integrations.loynd — every call is optional.
+        # fill in. Logged at ERROR so Løynd outages still reach /drift/.
+        if not error.logged and not isinstance(error, loynd.LoyndNotConfiguredError):
+            logger.error(
+                "Løynd did not answer invoice draft request (%s)",
+                type(error).__name__,
+                exc_info=error,
+                extra={ROUTE_ATTRIBUTE: "POST /api/v1/companies/{company_id}/faktura/forslag"},
+            )
+        await ki.finish(db)
         return FakturaDraftResponse.nothing(_NO_ANSWER)
 
     header = proposal.header
-    warnings = list(proposal.header_warnings)
+    # First, because «this came from the free model» changes how much the rest
+    # is worth.
+    warnings = await ki.finish(db)
+    warnings.extend(proposal.header_warnings)
     # Scoped to the company by list_parties: a customer of another set of books
     # is not a candidate, however well its name fits.
     customers = await party_service.list_parties(
@@ -887,11 +942,14 @@ async def draft_faktura(
         buyer_reference=header.buyer_reference,
         lines=_lines(proposal),
         warnings=warnings,
+        ki_level=ki.level,
     )
 
 
 @router.post("/companies/{company_id}/faktura/linjeforslag", openapi_extra=KEY_PREVIEW)
-async def draft_faktura_lines(payload: DraftRequest, context: CurrentCompany) -> LineDraftResponse:
+async def draft_faktura_lines(
+    payload: DraftRequest, context: CurrentCompany, db: DbSession
+) -> LineDraftResponse:
     """Turn a description of a sale into proposed invoice lines, and nothing else.
 
     The lines of ``POST …/faktura/forslag`` without the buyer and the terms, for
@@ -924,17 +982,32 @@ async def draft_faktura_lines(payload: DraftRequest, context: CurrentCompany) ->
                 "Denne installasjonen har ikke satt opp Løynd, så linjene må skrives for hånd."
             ],
         )
+    ki = await ki_request(db, context.company.id, payload.level)
     try:
-        proposal = await _proposal(payload.text, context.company)
-    except loynd.LoyndError:
+        proposal = await _proposal(payload.text, context.company, model=ki.model)
+    except loynd.LoyndError as error:
+        if not error.logged and not isinstance(error, loynd.LoyndNotConfiguredError):
+            logger.error(
+                "Løynd did not answer invoice lines request (%s)",
+                type(error).__name__,
+                exc_info=error,
+                extra={ROUTE_ATTRIBUTE: "POST /api/v1/companies/{company_id}/faktura/linjeforslag"},
+            )
+        await ki.finish(db)
         return LineDraftResponse(
             lines=[],
             warnings=["Vi fikk ikke svar fra Løynd nå. Skriv linjene selv, eller prøv igjen."],
         )
-    return LineDraftResponse(lines=_lines(proposal), warnings=proposal.warnings)
+    warnings = await ki.finish(db)
+    return LineDraftResponse(
+        lines=_lines(proposal), warnings=[*warnings, *proposal.warnings], ki_level=ki.level
+    )
 
 
-@router.get("/companies/{company_id}/faktura/{document_id}", openapi_extra=KEY_READ)
+@router.get(
+    "/companies/{company_id}/faktura/{document_id}",
+    openapi_extra=KEY_READ | FAKTURA_INTEGRATION,
+)
 async def get_faktura(document_id: int, context: CurrentCompany, db: DbSession) -> FakturaResponse:
     """One invoice or credit note, with its lines, VAT subtotals and totals.
 
@@ -976,11 +1049,13 @@ async def get_faktura(document_id: int, context: CurrentCompany, db: DbSession) 
     settled = await faktura_payments.settlements(
         db, company=context.company, documents=[document], credited=credited
     )
+    setup_required = await _peppol_setup_required(db, context.company)
     return _faktura_response(
         document,
         credited_by=credited.get(document.id),
         sending=sent.get(document.id),
         settlement=settled.get(document.id),
+        peppol_setup_required=setup_required,
     )
 
 
@@ -1019,13 +1094,14 @@ async def update_faktura(
         reverse_charge=payload.reverse_charge,
         lines=None if payload.lines is None else [line.to_input() for line in payload.lines],
     )
-    return _faktura_response(document)
+    setup_required = await _peppol_setup_required(db, context.company)
+    return _faktura_response(document, peppol_setup_required=setup_required)
 
 
 @router.delete(
     "/companies/{company_id}/faktura/{document_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    openapi_extra=key_write("slette et fakturautkast"),
+    openapi_extra=key_write("slette et fakturautkast") | FAKTURA_INTEGRATION,
 )
 async def delete_faktura(document_id: int, context: CurrentCompany, db: DbSession) -> None:
     """Discard a draft.
@@ -1050,16 +1126,17 @@ async def check_faktura(
     document = await faktura_service.get_document(
         db, company=context.company, document_pk=document_id
     )
+    setup_required = await _peppol_setup_required(db, context.company)
     return [
         ViolationResponse(rule=v.rule, field=v.field, message=v.message, severity=v.severity)
-        for v in faktura_service.check_now(document)
+        for v in faktura_service.check_now(document, peppol_setup_required=setup_required)
     ]
 
 
 @router.post(
     "/companies/{company_id}/faktura/{document_id}/utsted",
     status_code=status.HTTP_201_CREATED,
-    openapi_extra=key_post("utstede en faktura"),
+    openapi_extra=key_post("utstede en faktura") | FAKTURA_INTEGRATION,
 )
 async def issue_faktura(
     document_id: int,
@@ -1071,11 +1148,20 @@ async def issue_faktura(
     """Issue the draft: number it, post it, freeze its EHF, file its PDF.
 
     Irreversible. After this the document is history and is corrected only by a
-    kreditnota — see :func:`credit_faktura`.
+    kreditnota — see :func:`credit_faktura`. When this Myntos has a Peppol
+    access point configured, issuing a business invoice (``buyer_is_business:
+    true``) requires the company to be registered for e-invoicing first
+    (422 ``invoice_not_compliant``, ``field: "peppol_registration"``).
     """
     require_permission(context.membership.role, Permission.LEDGER_WRITE)
+    setup_required = await _peppol_setup_required(db, context.company)
     document = await faktura_service.issue(
-        db, storage, company=context.company, document_pk=document_id, user_id=user.id
+        db,
+        storage,
+        company=context.company,
+        document_pk=document_id,
+        user_id=user.id,
+        peppol_setup_required=setup_required,
     )
     # Unpaid, and said so, rather than null like a draft.
     settlement = await faktura_payments.settlement_of(
@@ -1174,7 +1260,10 @@ async def register_payment(
     return _faktura_response(document, settlement=settlement)
 
 
-@router.get("/companies/{company_id}/faktura/{document_id}/ehf", openapi_extra=KEY_READ)
+@router.get(
+    "/companies/{company_id}/faktura/{document_id}/ehf",
+    openapi_extra=KEY_READ | FAKTURA_INTEGRATION,
+)
 async def download_ehf(document_id: int, context: CurrentCompany, db: DbSession) -> Response:
     """The e-invoice, exactly as it was frozen at issue.
 
@@ -1200,7 +1289,10 @@ async def download_ehf(document_id: int, context: CurrentCompany, db: DbSession)
     )
 
 
-@router.get("/companies/{company_id}/faktura/{document_id}/pdf", openapi_extra=KEY_READ)
+@router.get(
+    "/companies/{company_id}/faktura/{document_id}/pdf",
+    openapi_extra=KEY_READ | FAKTURA_INTEGRATION,
+)
 async def download_pdf(document_id: int, context: CurrentCompany, db: DbSession) -> Response:
     """The readable copy.
 

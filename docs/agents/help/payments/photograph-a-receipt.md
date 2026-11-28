@@ -50,7 +50,7 @@ archive when the payment is registered.
 | «ikke lest» after the picture | Nothing could be read from it, or it was not read at all just then (see the next two rows) | Go by the warning above the form |
 | «Vi fikk ikke lest bildene denne gangen. Prøv igjen om litt, eller fyll inn feltene selv.» | The pictures were never read: Myntos's AI did not answer just then. Nothing is known to be wrong with the pictures | Do not retake the photo. Wait a minute, then write something in «Beskrivelse» or pick the picture again with «Legg til flere filer»; either reads the bilag again. Or fill in the fields |
 | «Vi fikk ikke lest tekst ut av bildene. Prøv et skarpere bilde, eller fyll inn feltene selv.» | The pictures were read and no text came out of them | Retake in better light, or fill in the fields |
-| «KI er ikke brukt på dette bilaget, …» | The company's AI is off, so pictures cannot be read | Fill in the fields by hand; the picture is still attached when they register. An administrator can switch AI on under «KI» |
+| «KI er ikke brukt på dette bilaget, …» | The company's AI is off, so pictures cannot be read | Fill in the fields by hand; the picture is still attached when they register. An administrator can switch AI on on the KI page: «KI og KI-plan» in the company menu at the top right |
 | No «Ta bilde av kvitteringen» link | They are on a computer | Upload the saved picture with «Last opp faktura, kvittering eller skjermbilder» |
 
 ## Good to know
@@ -60,8 +60,9 @@ archive when the payment is registered.
 - An iPhone photo in HEIC is read through a JPEG copy with its location data
   removed. The archive always keeps the original picture exactly as it was
   uploaded.
-- The AI runs on Myntos's own servers in Norway; the picture is not sent to an
-  outside AI provider.
+- The picture is read by Løynd, the KI service Myntos uses, on Løynd's own
+  machines in Norway, whatever «KI-nivå» says. It is not stored there and is
+  not sent to any other AI provider.
 - A picture cannot be removed once the payment is registered, so check that it
   is the right receipt before pressing «Registrer betaling». Before that,
   «Fjern» next to the file takes it out.

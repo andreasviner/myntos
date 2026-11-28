@@ -19,12 +19,15 @@ carry on by hand — which is why this module distinguishes "no such unit" from
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
 from myntos.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 # Short on purpose. The answer is a convenience the caller can do without, so a
 # slow register should cost the user a moment and a typed-in name, not a request
@@ -421,6 +424,9 @@ async def _fetch(http: httpx.AsyncClient, url: str) -> dict[str, Any] | None:
     try:
         response = await http.get(url, headers={"Accept": "application/json"})
     except httpx.HTTPError as error:
+        logger.error(
+            "Enhetsregisteret could not be reached: %s", type(error).__name__, exc_info=error
+        )
         raise RegisterUnavailableError("vi fikk ikke kontakt med Enhetsregisteret") from error
 
     if response.status_code == httpx.codes.NOT_FOUND:
@@ -432,11 +438,13 @@ async def _fetch(http: httpx.AsyncClient, url: str) -> dict[str, Any] | None:
         # there. Its newer answer is a 200, read in _unit_from.
         raise UnitDeletedError("enheten er slettet fra Enhetsregisteret")
     if response.is_error:
+        logger.error("Enhetsregisteret answered with HTTP %d", response.status_code)
         raise RegisterUnavailableError("Enhetsregisteret svarte ikke som forventet")
 
     try:
         payload = response.json()
     except ValueError as error:
+        logger.error("Enhetsregisteret returned unreadable JSON", exc_info=error)
         raise RegisterUnavailableError("Enhetsregisteret svarte ikke som forventet") from error
     return payload if isinstance(payload, dict) else None
 
@@ -527,6 +535,7 @@ def _roles_from(payload: dict[str, Any]) -> list[Role]:
     """
     groups = payload.get("rollegrupper")
     if not isinstance(groups, list):
+        logger.error("Enhetsregisteret returned an unexpected roles payload")
         raise RegisterUnavailableError("Enhetsregisteret svarte ikke som forventet")
 
     roles: list[Role] = []

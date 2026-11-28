@@ -37,8 +37,12 @@ For «Forberede» and «Bokføre» the choices are:
   The AI can do all the work, and the person presses «Godkjenn» for each thing.
 - **Trust it with drafts, check the postings:** «Forberede»: «Selv»,
   «Bokføre»: «Spør meg først».
-- **Let it do everything:** «Selv» for both. Whatever it sends to
-  Skatteetaten still waits for the person, every time.
+- **Let it do everything:** «Selv» for both. Whatever it sends out of Myntos
+  (to Skatteetaten, or an invoice as EHF) still waits for the person, every
+  time. Only a server's integration key, which an owner makes under
+  «Integrasjoner» and which only invoices, sends without asking:
+  https://myntos.no/llms/help/ai/make-an-integration-key.md. Never give an AI
+  one of those.
 - **Only answer questions:** «Nei» for both.
 
 «Bokføre» can never be freer than «Forberede»: choosing «Spør meg først» for

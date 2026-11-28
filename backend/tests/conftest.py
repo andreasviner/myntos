@@ -33,6 +33,8 @@ import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from myntos.aarsregnskap import models as aarsregnskap_models  # noqa: F401  (registers tables)
+from myntos.aksjonaer import models as aksjonaer_models  # noqa: F401  (registers tables)
 from myntos.api.deps import (
     KEY_SCOPE_EXTENSION,
     KEY_SEND_EXTENSION,
@@ -46,6 +48,8 @@ from myntos.core.config import Settings, get_settings
 from myntos.core.mail import Delivery, Mail
 from myntos.db.base import Base
 from myntos.db.session import get_session
+from myntos.domain.altinn import models as altinn_models  # noqa: F401  (registers tables)
+from myntos.domain.analyse import models as analyse_models  # noqa: F401  (registers tables)
 from myntos.domain.arsoppgjor import models as arsoppgjor_models  # noqa: F401  (registers tables)
 from myntos.domain.bank import models as bank_models  # noqa: F401  (registers tables)
 from myntos.domain.bilag import models as bilag_models  # noqa: F401  (registers tables)
@@ -56,14 +60,16 @@ from myntos.domain.data_sharing import (
 from myntos.domain.faktura import models as faktura_models  # noqa: F401  (registers tables)
 from myntos.domain.feedback import models as feedback_models  # noqa: F401  (registers tables)
 from myntos.domain.identity import models as identity_models  # noqa: F401  (registers tables)
+from myntos.domain.ki import models as ki_models  # noqa: F401  (registers tables)
 from myntos.domain.ledger import models as ledger_models  # noqa: F401  (registers tables)
+from myntos.domain.mottak import models as mottak_models  # noqa: F401  (registers tables)
 from myntos.domain.mva import models as mva_models  # noqa: F401  (registers tables)
 from myntos.domain.peppol import models as peppol_models  # noqa: F401  (registers tables)
 from myntos.domain.server_errors import (
     models as server_error_models,  # noqa: F401  (registers tables)
 )
 from myntos.domain.server_errors.recorder import RECORDER
-from myntos.integrations import brreg, norgesbank
+from myntos.integrations import brreg, loynd, norgesbank, peppol_smp
 from myntos.main import create_app
 from myntos.saft import models as saft_models  # noqa: F401  (registers tables)
 from myntos.skattemelding import models as skattemelding_models  # noqa: F401  (registers tables)
@@ -129,8 +135,29 @@ def test_settings() -> Iterator[None]:
         "IDPORTEN_REDIRECT_URI",
         "IDPORTEN_SCOPES",
         "GOVERNMENT_TOKEN_KEY",
+        "MASKINPORTEN_CLIENT_ID",
+        "MASKINPORTEN_JWK_PATH",
+        "MASKINPORTEN_JWK",
+        "ALTINN_VENDOR_ORGNR",
+        "SKATTEETATEN_API_BASE_URL",
+        "ADEMICO_USER",
+        "ADEMICO_PASSWORD",
+        "ADEMICO_TOKEN",
+        "ADEMICO_WEBHOOK_SECRET",
+        "INBOUND_EMAIL_WEBHOOK_SECRET",
+        "SERVER_ERROR_NOTIFY_TO",
+        "DEVELOPER_MAIL",
     ):
         patcher.setenv(name, "")
+    # Never start the background Ademico or KI billing sweeps inside unrelated tests.
+    patcher.setenv("PEPPOL_SWEEP_INTERVAL_SECONDS", "0")
+    patcher.setenv("KI_BILLING_COMPANY_ID", "")
+    patcher.setenv("KI_BILLING_INTERVAL_SECONDS", "0")
+    # And no payment provider: KI plans are not on sale unless a test says so,
+    # whatever keys the person running the suite has exported.
+    patcher.setenv("MOLLIE_TEST_KEY", "")
+    patcher.setenv("MOLLIE_LIVE_KEY", "")
+    patcher.setenv("MOLLIE_MODE", "test")
     get_settings.cache_clear()
     yield
     patcher.undo()
@@ -158,6 +185,14 @@ def a_cold_reading_cache() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def a_cold_loynd_pricing_cache() -> Iterator[None]:
+    """Every test starts with no cached Løynd model pricing."""
+    loynd.reset_pricing_cache()
+    yield
+    loynd.reset_pricing_cache()
+
+
+@pytest.fixture(autouse=True)
 def an_empty_error_recorder() -> Iterator[None]:
     """Every test starts with nothing counted for the error log.
 
@@ -169,9 +204,11 @@ def an_empty_error_recorder() -> Iterator[None]:
     """
     RECORDER.take()
     RECORDER.notified_at = None
+    get_settings.cache_clear()
     yield
     RECORDER.take()
     RECORDER.notified_at = None
+    get_settings.cache_clear()
 
 
 @pytest.fixture(autouse=True)
@@ -232,6 +269,19 @@ def no_register_lookups(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         return httpx.AsyncClient(transport=httpx.MockTransport(unreachable))
 
     patcher.setattr(brreg, "_client", refuse)
+    yield
+    patcher.undo()
+
+
+@pytest.fixture(autouse=True)
+def no_peppol_smp_lookups() -> Iterator[None]:
+    """No real DNS NAPTR or SMP HTTP lookups during the test suite."""
+    patcher = pytest.MonkeyPatch()
+
+    async def no_dns(_hostname: str) -> str | None:
+        raise peppol_smp.SmpLookupError("no DNS in tests")
+
+    patcher.setattr(peppol_smp, "_resolve_smp_url", no_dns)
     yield
     patcher.undo()
 
@@ -679,4 +729,529 @@ def insert_imported_document(
 
     portal = client.portal
     assert portal is not None, "insert_imported_document needs the client inside its with-block"
+    return portal.call(insert)
+
+
+_SAMPLE_INCOMING_EHF = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"'
+    ' xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"'
+    ' xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">'
+    "<cbc:ID>LEV-2026-001</cbc:ID>"
+    "<cbc:IssueDate>2026-03-14</cbc:IssueDate>"
+    "<cbc:DueDate>2026-03-28</cbc:DueDate>"
+    "<cbc:DocumentCurrencyCode>NOK</cbc:DocumentCurrencyCode>"
+    "<cac:AccountingSupplierParty><cac:Party>"
+    '<cbc:EndpointID schemeID="0192">915933149</cbc:EndpointID>'
+    "<cac:PostalAddress><cbc:StreetName>Leverandørveien 1</cbc:StreetName>"
+    "<cbc:CityName>Oslo</cbc:CityName><cbc:PostalZone>0155</cbc:PostalZone>"
+    "<cac:Country><cbc:IdentificationCode>NO</cbc:IdentificationCode></cac:Country>"
+    "</cac:PostalAddress>"
+    "<cac:PartyLegalEntity><cbc:RegistrationName>Hemmelig Leverandør AS</cbc:RegistrationName>"
+    '<cbc:CompanyID schemeID="0192">915933149</cbc:CompanyID></cac:PartyLegalEntity>'
+    "</cac:Party></cac:AccountingSupplierParty>"
+    "<cac:PaymentMeans><cbc:PaymentMeansCode>30</cbc:PaymentMeansCode>"
+    "<cbc:PaymentID>000123456</cbc:PaymentID>"
+    "<cac:PayeeFinancialAccount><cbc:ID>15062033158</cbc:ID></cac:PayeeFinancialAccount>"
+    "</cac:PaymentMeans>"
+    '<cac:TaxTotal><cbc:TaxAmount currencyID="NOK">250.00</cbc:TaxAmount>'
+    '<cac:TaxSubtotal><cbc:TaxableAmount currencyID="NOK">1000.00</cbc:TaxableAmount>'
+    '<cbc:TaxAmount currencyID="NOK">250.00</cbc:TaxAmount>'
+    "<cac:TaxCategory><cbc:ID>S</cbc:ID><cbc:Percent>25</cbc:Percent>"
+    "<cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:TaxCategory>"
+    "</cac:TaxSubtotal></cac:TaxTotal>"
+    "<cac:LegalMonetaryTotal>"
+    '<cbc:LineExtensionAmount currencyID="NOK">1000.00</cbc:LineExtensionAmount>'
+    '<cbc:TaxExclusiveAmount currencyID="NOK">1000.00</cbc:TaxExclusiveAmount>'
+    '<cbc:TaxInclusiveAmount currencyID="NOK">1250.00</cbc:TaxInclusiveAmount>'
+    '<cbc:PayableAmount currencyID="NOK">1250.00</cbc:PayableAmount>'
+    "</cac:LegalMonetaryTotal>"
+    "<cac:InvoiceLine><cbc:ID>1</cbc:ID>"
+    '<cbc:InvoicedQuantity unitCode="EA">1</cbc:InvoicedQuantity>'
+    '<cbc:LineExtensionAmount currencyID="NOK">1000.00</cbc:LineExtensionAmount>'
+    "<cac:Item><cbc:Name>Kontorrekvisita</cbc:Name>"
+    "<cac:ClassifiedTaxCategory><cbc:ID>S</cbc:ID><cbc:Percent>25</cbc:Percent>"
+    "<cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme></cac:ClassifiedTaxCategory></cac:Item>"
+    '<cac:Price><cbc:PriceAmount currencyID="NOK">1000.00</cbc:PriceAmount></cac:Price>'
+    "</cac:InvoiceLine></Invoice>"
+).encode()
+
+
+def insert_incoming_ehf(
+    client: TestClient,
+    company_id: int,
+    *,
+    raw_xml: bytes = _SAMPLE_INCOMING_EHF,
+    transmission_id: str | None = None,
+) -> int:
+    """An incoming Peppol EHF invoice stored straight into the app's database, and its id."""
+    from myntos.core.clock import utc_now
+    from myntos.domain.ledger.models import Company
+    from myntos.domain.peppol import service as peppol_service
+
+    override = client.app.dependency_overrides[get_session]  # type: ignore[attr-defined]
+    tx_id = transmission_id or f"tx-{uuid.uuid4()}"
+
+    async def insert() -> int:
+        sessions = override()
+        session = await sessions.__anext__()
+        company = await session.get(Company, company_id)
+        assert company is not None
+        document, _ = await peppol_service.store_incoming(
+            session,
+            company=company,
+            transmission_id=tx_id,
+            sbdh_transmission_id=None,
+            raw_xml=raw_xml,
+            received_at=utc_now(),
+            fallback_sender="0192:915933149",
+        )
+        doc_id = int(document.id)
+        with contextlib.suppress(StopAsyncIteration):
+            await sessions.__anext__()
+        return doc_id
+
+    portal = client.portal
+    assert portal is not None, "insert_incoming_ehf needs the client inside its with-block"
+    return portal.call(insert)
+
+
+def insert_ki_period(
+    client: TestClient,
+    company_id: int,
+    *,
+    plan: str = "start",
+    status: str = "paid",
+    value_allowance_nok: Decimal = Decimal("36.00"),
+    value_used_nok: Decimal = Decimal("0.000000"),
+    tokens_used: int = 0,
+    days_left: int = 20,
+    payment_id: str | None = None,
+    mode: str = "test",
+) -> str:
+    """A month of KI written straight into the app's database, and its reference.
+
+    Straight in, because buying one goes through Mollie's checkout page, which
+    is a browser on someone else's site. A ``paid`` month runs from ten days ago
+    until ``days_left`` from now; any other status has no dates, as a checkout
+    that never finished has none.
+    """
+    import secrets
+    from datetime import timedelta
+
+    from myntos.core.clock import utc_now
+    from myntos.domain.ki.models import KiPeriod
+
+    override = client.app.dependency_overrides[get_session]  # type: ignore[attr-defined]
+    reference = secrets.token_urlsafe(18)
+
+    async def insert() -> str:
+        sessions = override()
+        session = await sessions.__anext__()
+        now = utc_now()
+        paid = status == "paid"
+        session.add(
+            KiPeriod(
+                company_id=company_id,
+                plan=plan,
+                status=status,
+                reference=reference,
+                mollie_payment_id=payment_id,
+                mollie_mode=mode,
+                amount=Decimal("61.25"),
+                vat_amount=Decimal("12.25"),
+                currency="NOK",
+                value_allowance_nok=value_allowance_nok,
+                value_used_nok=value_used_nok,
+                tokens_used=tokens_used,
+                starts_at=now - timedelta(days=10) if paid else None,
+                ends_at=now + timedelta(days=days_left) if paid else None,
+                paid_at=now - timedelta(days=10) if paid else None,
+            )
+        )
+        await session.flush()
+        with contextlib.suppress(StopAsyncIteration):
+            await sessions.__anext__()
+        return reference
+
+    portal = client.portal
+    assert portal is not None, "insert_ki_period needs the client inside its with-block"
+    return portal.call(insert)
+
+
+def insert_incoming_mail(
+    client: TestClient,
+    company_id: int,
+    *,
+    sender_email: str = "faktura@leverandor.no",
+    subject: str = "Faktura 4201",
+    filename: str = "faktura.pdf",
+    content: bytes = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n",
+) -> int:
+    """An incoming e-mail invoice attachment stored straight into the app's database, and its id."""
+    import hashlib
+
+    from myntos.core.clock import utc_now
+    from myntos.domain.mottak.models import IncomingMailDocument, MailDocumentStatus
+
+    override = client.app.dependency_overrides[get_session]  # type: ignore[attr-defined]
+    storage = client.app.dependency_overrides[get_document_storage]()  # type: ignore[attr-defined]
+
+    async def insert() -> int:
+        key = await storage.save(
+            content=content,
+            filename=filename,
+            content_type="application/pdf",
+        )
+        sessions = override()
+        session = await sessions.__anext__()
+        doc = IncomingMailDocument(
+            company_id=company_id,
+            message_id=f"<{uuid.uuid4()}@leverandor.no>",
+            attachment_index=0,
+            sender_email=sender_email,
+            sender_name="Leverandør Faktura",
+            envelope_from=sender_email,
+            reply_to=None,
+            recipient_address="klient@myntos.no",
+            subject=subject,
+            body_excerpt="Vedlagt følger faktura.",
+            spf_result="pass",
+            dkim_result="pass",
+            dmarc_result="pass",
+            filename=filename,
+            content_type="application/pdf",
+            byte_size=len(content),
+            sha256=hashlib.sha256(content).hexdigest(),
+            storage_key=key,
+            status=MailDocumentStatus.NY,
+            received_at=utc_now(),
+        )
+        session.add(doc)
+        await session.flush()
+        doc_id = int(doc.id)
+        with contextlib.suppress(StopAsyncIteration):
+            await sessions.__anext__()
+        return doc_id
+
+    portal = client.portal
+    assert portal is not None, "insert_incoming_mail needs the client inside its with-block"
+    return portal.call(insert)
+
+
+def insert_ki_run(
+    client: TestClient,
+    company_id: int,
+    *,
+    kind: str = "merking",
+    status: str = "queued",
+    requested_level: str = "free",
+    step: str | None = "Venter på tur",
+    done: int = 0,
+    total: int = 3,
+) -> int:
+    """A KI analysis run written straight into the app's database, and its id.
+
+    Straight in, so the company-wall tests do not need a configured Løynd to
+    create a run belonging to the sibling company.
+    """
+    from myntos.domain.analyse.models import KiRun
+
+    override = client.app.dependency_overrides[get_session]  # type: ignore[attr-defined]
+
+    async def insert() -> int:
+        sessions = override()
+        session = await sessions.__anext__()
+        run = KiRun(
+            company_id=company_id,
+            kind=kind,
+            status=status,
+            requested_level=requested_level,
+            step=step,
+            done=done,
+            total=total,
+            notices=[],
+        )
+        session.add(run)
+        await session.flush()
+        run_id = int(run.id)
+        with contextlib.suppress(StopAsyncIteration):
+            await sessions.__anext__()
+        return run_id
+
+    portal = client.portal
+    assert portal is not None, "insert_ki_run needs the client inside its with-block"
+    return portal.call(insert)
+
+
+def insert_ki_report(
+    client: TestClient,
+    company_id: int,
+    *,
+    kind: str = "dyp",
+    level: str = "free",
+    overskrift: str = "Hemmelig dyp analyse",
+) -> int:
+    """A finished KI report (with its parent run) written straight into the app's database."""
+    from datetime import date
+
+    from myntos.domain.analyse.models import KiReport, KiRun
+
+    override = client.app.dependency_overrides[get_session]  # type: ignore[attr-defined]
+
+    async def insert() -> int:
+        sessions = override()
+        session = await sessions.__anext__()
+        run = KiRun(
+            company_id=company_id,
+            kind=kind,
+            status="done",
+            requested_level=level,
+            period_from=date(2026, 1, 1),
+            period_to=date(2026, 11, 27),
+            done=1,
+            total=1,
+            notices=[],
+        )
+        session.add(run)
+        await session.flush()
+        report_row = KiReport(
+            company_id=company_id,
+            run_id=run.id,
+            kind=kind,
+            period_from=date(2026, 1, 1),
+            period_to=date(2026, 11, 27),
+            input_hash="0" * 64,
+            prompt_version=1,
+            schema_version=1,
+            requested_level=level,
+            level=level,
+            model="loynd-lite",
+            location="eu",
+            body={
+                "overskrift": overskrift,
+                "sammendrag": "Kort sammendrag.",
+                "avsnitt": [],
+                "forslag": [],
+                "dropped_paragraphs": 0,
+            },
+        )
+        session.add(report_row)
+        await session.flush()
+        report_id = int(report_row.id)
+        with contextlib.suppress(StopAsyncIteration):
+            await sessions.__anext__()
+        return report_id
+
+    portal = client.portal
+    assert portal is not None, "insert_ki_report needs the client inside its with-block"
+    return portal.call(insert)
+
+
+def insert_ki_invoice(
+    client: TestClient,
+    company_id: int,
+    *,
+    plan: str = "pluss",
+) -> int:
+    """A monthly KI billing invoice (with a backing SalesDocument) for boundary tests."""
+    from datetime import UTC, date, datetime
+
+    from myntos.domain.faktura.models import (
+        DocumentType,
+        InvoiceStatus,
+        SalesDocument,
+        SalesDocumentLine,
+    )
+    from myntos.domain.ki.models import KiBillingInvoice
+
+    override = client.app.dependency_overrides[get_session]  # type: ignore[attr-defined]
+
+    async def insert() -> int:
+        sessions = override()
+        session = await sessions.__anext__()
+        doc = SalesDocument(
+            company_id=company_id,
+            document_type=DocumentType.FAKTURA,
+            status=InvoiceStatus.UTSTEDT,
+            document_number=f"2026-KI-{company_id}",
+            issue_date=date(2026, 11, 1),
+            delivery_date=date(2026, 11, 1),
+            due_date=date(2026, 11, 15),
+            issued_at=datetime(2026, 11, 1, 9, 0, tzinfo=UTC),
+            seller_name="Lindeman Technologies AS",
+            seller_orgnr="915933149",
+            seller_address_line="Storgata 1",
+            seller_postal_code="0155",
+            seller_city="Oslo",
+            seller_country="NO",
+            seller_bank_account="15062033158",
+            buyer_name="Kunde AS",
+            buyer_orgnr="910000012",
+            buyer_address_line="Kirkegata 2",
+            buyer_postal_code="0153",
+            buyer_city="Oslo",
+            buyer_country="NO",
+        )
+        doc.lines = [
+            SalesDocumentLine(
+                line_no=1,
+                description="Myntos KI Pluss",
+                quantity=Decimal("1"),
+                unit_code="MON",
+                unit_price=Decimal("149.00"),
+                discount_rate=Decimal("0.00"),
+                tax_code="3",
+                tax_rate=Decimal("0.25"),
+                income_account_number="3000",
+                net_amount=Decimal("149.00"),
+                vat_amount=Decimal("37.25"),
+            )
+        ]
+        session.add(doc)
+        await session.flush()
+
+        inv = KiBillingInvoice(
+            company_id=company_id,
+            plan=plan,
+            period_start=date(2026, 11, 1),
+            period_end=date(2026, 12, 1),
+            seller_company_id=company_id,
+            seller_document_id=doc.id,
+            invoice_number=doc.document_number,
+            amount_excl_vat=Decimal("149.00"),
+            vat_amount=Decimal("37.25"),
+            amount_incl_vat=Decimal("186.25"),
+            currency="NOK",
+            issued_on=date(2026, 11, 1),
+            due_date=date(2026, 11, 15),
+            delivery_method="portal",
+            delivery_status="pending",
+        )
+        session.add(inv)
+        await session.flush()
+        inv_id = int(inv.id)
+        with contextlib.suppress(StopAsyncIteration):
+            await sessions.__anext__()
+        return inv_id
+
+    portal = client.portal
+    assert portal is not None, "insert_ki_invoice needs the client inside its with-block"
+    return portal.call(insert)
+
+
+def insert_aksjonaer_filing(
+    client: TestClient,
+    company_id: int,
+    *,
+    year: int = 2026,
+    status: str = "bekreftet",
+    share_class_code: str = "01",
+) -> int:
+    """An RF-1086 filing written straight into the app's database, and its id."""
+    from myntos.aksjonaer.models import AksjonaerFiling
+
+    override = client.app.dependency_overrides[get_session]  # type: ignore[attr-defined]
+
+    async def insert() -> int:
+        sessions = override()
+        session = await sessions.__anext__()
+        filing = AksjonaerFiling(
+            company_id=company_id,
+            share_class_id=None,
+            share_class_code=share_class_code,
+            year=year,
+            status=status,
+            hovedskjema_xml="<Skjema/>",
+            underskjema_count=1,
+            content_hash="0" * 64,
+            idempotency_key=str(uuid.uuid4()),
+            hovedskjema_id=str(uuid.uuid4()),
+            leveranse_referanse="ref-test-1086" if status == "bekreftet" else None,
+            dialog_id=str(uuid.uuid4()) if status == "bekreftet" else None,
+            forsendelse_id=str(uuid.uuid4()) if status == "bekreftet" else None,
+            contact_email="post@example.no",
+            contact_name="Test Person",
+            findings=[],
+        )
+        session.add(filing)
+        await session.flush()
+        filing_id = int(filing.id)
+        with contextlib.suppress(StopAsyncIteration):
+            await sessions.__anext__()
+        return filing_id
+
+    portal = client.portal
+    assert portal is not None, "insert_aksjonaer_filing needs the client inside its with-block"
+    return portal.call(insert)
+
+
+def insert_aarsregnskap_filing(
+    client: TestClient,
+    company_id: int,
+    *,
+    year: int = 2026,
+    status: str = "laast",
+    with_document: bool = True,
+) -> int:
+    """An årsregnskap (RR-0002) filing written straight into the app's DB, and its id."""
+    import hashlib
+
+    from myntos.aarsregnskap.models import AarsregnskapFiling, AarsregnskapFilingDocument
+
+    storage = client.app.dependency_overrides[get_document_storage]()  # type: ignore[attr-defined]
+    override = client.app.dependency_overrides[get_session]  # type: ignore[attr-defined]
+
+    async def insert() -> int:
+        sessions = override()
+        session = await sessions.__anext__()
+        filing = AarsregnskapFiling(
+            company_id=company_id,
+            year=year,
+            status=status,
+            auth_method="systembruker",
+            altinn_instance_id=f"50012345/{uuid.uuid4()}",
+            hovedskjema_data_id=str(uuid.uuid4()),
+            underskjema_data_id=str(uuid.uuid4()),
+            altinn_portal_url=f"https://brg.apps.tt02.altinn.no/brg/aarsregnskap-vanlig-202406/#/instance/50012345/{uuid.uuid4()}",
+            content_hash="0" * 64,
+            aarsresultat=Decimal("100000.00"),
+            sum_eiendeler=Decimal("250000.00"),
+            sum_egenkapital=Decimal("130000.00"),
+            fastsettelsedato=date(year + 1, 5, 15),
+            bekreftende_representant="Kari Nordmann",
+            hovedskjema_xml="<melding/>",
+            underskjema_xml="<melding/>",
+            validation_issues=[],
+            findings=[],
+        )
+        session.add(filing)
+        await session.flush()
+        if with_document:
+            xml_bytes = b"<melding/>"
+            key = await storage.save(
+                content=xml_bytes,
+                filename=f"aarsregnskap-{year}-hovedskjema.xml",
+                content_type="application/xml",
+            )
+            session.add(
+                AarsregnskapFilingDocument(
+                    filing_id=filing.id,
+                    document_type="hovedskjema",
+                    external_document_id=filing.hovedskjema_data_id,
+                    filename=f"aarsregnskap-{year}-hovedskjema.xml",
+                    content_type="application/xml",
+                    byte_size=len(xml_bytes),
+                    sha256=hashlib.sha256(xml_bytes).hexdigest(),
+                    storage_key=key,
+                )
+            )
+            await session.flush()
+        filing_id = int(filing.id)
+        with contextlib.suppress(StopAsyncIteration):
+            await sessions.__anext__()
+        return filing_id
+
+    portal = client.portal
+    assert portal is not None, "insert_aarsregnskap_filing needs the client inside its with-block"
     return portal.call(insert)

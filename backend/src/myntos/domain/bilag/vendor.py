@@ -127,7 +127,10 @@ async def named_by(
         )
         for reply in replies:
             if isinstance(reply, BaseException):
-                logger.info("Løynd did not name a vendor: %s", type(reply).__name__)
+                if not getattr(reply, "logged", False):
+                    logger.error(
+                        "Løynd did not name a vendor: %s", type(reply).__name__, exc_info=reply
+                    )
                 continue
             name = clean(reply)
             if name is not None:

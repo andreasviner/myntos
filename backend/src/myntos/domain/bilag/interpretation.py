@@ -2107,11 +2107,14 @@ def read(
 _TITLE_TAIL = re.compile(r"\s*[|\-–—·]\s*")  # noqa: RUF001
 _TITLE_EXTENSION = re.compile(r"(?i)\.(pdf|docx?|html?|txt|png|jpe?g|webp|gif|heic)$")
 
-#: What a camera roll calls a photograph, and what a phone calls a screenshot.
-#: Never a company, however name-shaped the rest of the title is.
+#: What a camera roll calls a photograph, what a phone calls a screenshot, and
+#: what a browser names a pasted clipboard image («image.png», «skjermbilde.png»).
+#: Never a company, however name-shaped the rest of the title is; real names that
+#: merely start with the word («Foto Knudsen», «Image Solutions AS») still pass
+#: because a letter follows rather than a digit or the end of the name.
 _CAMERA_ROLL = re.compile(
     r"(?i)^(?:img|pxl|dsc|dcim|photo|foto|bilde|image|screenshot|skjermbilde|skjermdump)"
-    r"[\s_.-]*\d"
+    r"(?:[\s_.-]*\d|$)"
 )
 
 

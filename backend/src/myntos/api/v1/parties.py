@@ -14,7 +14,13 @@ has never been used is harmless.
 from fastapi import APIRouter, status
 from pydantic import BaseModel, Field
 
-from myntos.api.deps import KEY_READ, CurrentCompany, DbSession, key_write
+from myntos.api.deps import (
+    FAKTURA_INTEGRATION,
+    KEY_READ,
+    CurrentCompany,
+    DbSession,
+    key_write,
+)
 from myntos.domain.identity.access import Permission, require_permission
 from myntos.domain.ledger import parties
 from myntos.domain.ledger.models import Party, PartyType
@@ -68,7 +74,7 @@ def _party_response(party: Party) -> PartyResponse:
     )
 
 
-@router.get("/companies/{company_id}/parties", openapi_extra=KEY_READ)
+@router.get("/companies/{company_id}/parties", openapi_extra=KEY_READ | FAKTURA_INTEGRATION)
 async def list_parties(
     context: CurrentCompany, db: DbSession, party_type: PartyType | None = None
 ) -> list[PartyResponse]:
@@ -96,7 +102,7 @@ async def list_parties(
 @router.post(
     "/companies/{company_id}/parties",
     status_code=status.HTTP_201_CREATED,
-    openapi_extra=key_write("legge til en kunde eller leverandør"),
+    openapi_extra=key_write("legge til en kunde eller leverandør") | FAKTURA_INTEGRATION,
 )
 async def create_party(
     payload: CreatePartyRequest, context: CurrentCompany, db: DbSession

@@ -527,7 +527,7 @@ async def idporten_callback(
         # The exception carries the token endpoint's own complaint, which is
         # usually about the client assertion (a wrong kid, an unregistered key)
         # and is the only place that says so.
-        logger.warning("ID-porten refused the code exchange: %s", failure)
+        logger.error("ID-porten refused the code exchange: %s", failure, exc_info=failure)
         return _failed("innlogging_feilet", redirect_to=attempt.redirect_to)
 
     # The assurance level actually reached, not the one requested. Skatteetaten

@@ -1,0 +1,873 @@
+---
+import { KI_PLANS, planPrice } from '../../data/kiplaner';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+
+/**
+ * Hvem som kjører KI-en i Myntos, nivåene, ukentlige kvoter (vist i prosent) og
+ * månedlig fakturerte KI-planer.
+ *
+ * Flyttet fra /ki/ da /ki/ ble KI-chat, mens av/på-bryteren for KI for
+ * selskapet flyttet til Innstillinger for selskapet (/organisasjon/#ki).
+ *
+ * Prisene og planbeskrivelsene er en kopi av backendens (data/kiplaner.ts),
+ * skrevet inn i HTML-en så de kan leses uten å logge inn. Underleverandører som
+ * OVHcloud nevnes ikke her, bare i personvernerklæringen.
+ */
+---
+
+<BaseLayout
+  title="Om KI i Myntos: Løynd, nivåene og KI-planene"
+  description="KI-en i Myntos kjøres av Løynd i Norge og EU. «Gratis» er ubegrenset, og KI-planer gir ukentlige kvoter (vist i prosent) og månedlig faktura. Ingenting trener en modell."
+>
+  <p class="pill">Kunstig intelligens</p>
+
+  <section class="card headline">
+    <span class="loynd-mark" role="img" aria-label="Løynd"></span>
+    <h1>All KI i Myntos kjøres av Løynd</h1>
+    <p class="lead">
+      Myntos bruker Løynd, en norsk KI-tjeneste. Bilagene og regnskapstallene dine forlater aldri
+      EØS, Løynd lagrer dem ikke, og de trener ingen modell. Det er hele grunnen til at et bilag i
+      det hele tatt får forlate programmet.
+    </p>
+    <ul class="ticks">
+      <li>Beløp leser vi alltid selv, rett fra teksten. Modellen skriver aldri et tall i regnskapet.</li>
+      <li>Ingenting bokføres automatisk. Du ser og bekrefter hvert forslag.</li>
+      <li>
+        KI brukes i <a href="/ki/">KI-chat</a>, når du laster opp et bilag, ber om et
+        fakturaforslag eller starter en «Dyp KI-analyse», og i bakgrunnen når noen åpner «Analyse»
+        for å fordele inntekter og kostnader (<a href="#analyse">hva som følger med</a>).
+      </li>
+      <li>
+        Bilder leses alltid på Løynds egne maskiner i Norge, uansett nivå. Et fotografert
+        kvitteringsbilde blir til tekst der, og de større modellene ser bare teksten.
+      </li>
+      <li>
+        Er noe uklart, spør vi heller enn å gjette. Svarer du, får modellen svaret ditt, og
+        forslaget fylles ut på nytt uten at bilaget leses en gang til.
+      </li>
+    </ul>
+    <p class="actions">
+      <a class="btn btn-primary" href="/ki/" data-auth-only="inn">Åpne KI-chat</a>
+      <a class="btn btn-primary" href="https://loynd.no" rel="noopener" data-auth-only="ut">Mer om Løynd</a>
+      <a class="btn btn-ghost" href="https://loynd.no" rel="noopener" data-auth-only="inn">Mer om Løynd</a>
+      <a class="btn btn-ghost" href="/personvern/">Personvern</a>
+    </p>
+  </section>
+
+  <section class="card" id="planer">
+    <h2>Tre nivåer, og KI-planene</h2>
+    <p>
+      Under hver KI-boks og i KI-chat står «KI-nivå», med tre valg. Nivået gjelder det du ber om i
+      den boksen, og de samme opplysningene sendes på alle tre.
+    </p>
+    <dl class="levels">
+      <div>
+        <dt>Gratis</dt>
+        <dd>
+          Løynds egen modell, på Løynds egne maskiner i Norge. Med for alle, helt uten grense, og
+          den som svarer når ingenting annet er valgt.
+        </dd>
+      </div>
+      <div>
+        <dt>Medium</dt>
+        <dd>
+          En større modell, som får med seg mer fra et rotete bilag, en lang e-post eller et
+          spørsmål om regnskapet. Kjører på Løynds egne maskiner i Norge når de er ledige, og ellers
+          på ekstra KI-kapasitet i EU som Løynd bruker.
+        </dd>
+      </div>
+      <div>
+        <dt>Smart</dt>
+        <dd>
+          Den største modellen. Den tenker før den svarer, så den er tregere, men best på det som
+          er vanskelig å avgjøre. Kjører samme sted som «Medium».
+        </dd>
+      </div>
+    </dl>
+    <p>
+      «Medium» og «Smart» krever en KI-plan, fordi Løynd tar betalt for hver bruk av de større
+      modellene. Hver plan gir en fast <strong>ukentlig kvote</strong> (vist i prosent) som
+      nullstilles hver mandag kl. 00:00 norsk tid, og faktureres månedlig uten bindingstid. «Medium»
+      bruker mindre av kvoten per svar enn «Smart», som tenker lenger før den svarer. Er ukekvoten
+      brukt opp, svarer «Gratis» resten av uken uten ekstra kostnad.
+    </p>
+
+    <div class="plans">
+      {
+        KI_PLANS.map((plan) => (
+          <article class="plan" data-plan-card={plan.code}>
+            <div class="plan-head">
+              <h3 class="plan-name">{plan.name}</h3>
+              <span class="plan-badge" data-plan-badge={plan.code} hidden>Aktiv</span>
+            </div>
+            <p class="plan-price">
+              <span class="plan-amount">{planPrice(plan.priceExclVat)}</span>
+              <span class="plan-unit">/ md eks. mva</span>
+            </p>
+            <p class="plan-incl">{planPrice(plan.priceInclVat)} med mva</p>
+            <p class="plan-tokens">{plan.quotaLabel}</p>
+            <p class="plan-summary">{plan.summary}</p>
+            <button type="button" class="btn btn-primary btn-block" data-choose={plan.code} hidden>
+              Velg {plan.name}
+            </button>
+          </article>
+        ))
+      }
+    </div>
+
+    <div class="plan-company" id="plan-company" hidden>
+      <p class="plan-month" id="plan-month"></p>
+      <meter id="plan-meter" min="0" max="1" value="0" hidden></meter>
+      <p class="plan-next" id="plan-next" hidden></p>
+      <p class="plan-note" id="plan-note"></p>
+      <div class="plan-manage" id="plan-manage" hidden>
+        <label class="plan-email-field">
+          <span>E-postadresse for kopi av månedsfaktura (PDF)</span>
+          <input
+            type="email"
+            id="plan-billing-email"
+            placeholder="faktura@selskap.no"
+            autocomplete="email"
+          />
+        </label>
+        <div class="plan-manage-actions">
+          <button type="button" class="btn btn-ghost btn-small" id="plan-cancel" hidden>
+            Avslutt abonnement
+          </button>
+        </div>
+      </div>
+    </div>
+    <p class="status" id="plan-status" role="status" hidden></p>
+    <p class="plan-pay" id="plan-pay-note">
+      KI-planer faktureres månedlig fra Lindeman Technologies AS etter bokføringsforskriften § 5-1.
+      Fakturaen sendes som EHF over Peppol når selskapet kan motta EHF, og som PDF på e-post. Alle
+      fakturaer ligger også klare til nedlasting her.
+    </p>
+
+    <div class="plan-invoices" id="plan-invoices" hidden>
+      <h3>Fakturaer for KI-plan</h3>
+      <div class="invoice-table-wrap">
+        <table class="invoice-table">
+          <thead>
+            <tr>
+              <th>Fakturanr.</th>
+              <th>Plan og periode</th>
+              <th>Beløp inkl. mva</th>
+              <th>Forfall</th>
+              <th>Levering</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="plan-invoices-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" id="chat">
+    <h2>Hva som følger med i KI-chat</h2>
+    <p>
+      På <a href="/ki/">KI</a> kan du stille spørsmål rett til regnskapet ditt. Når du sender et
+      spørsmål, setter Myntos sammen et oppdatert sammendrag av selskapets tall og finner automatisk
+      frem de mest relevante bokførte bilagene for spørsmålet ditt:
+    </p>
+    <ul class="ticks">
+      <li>
+        <strong>Dette sendes til Løynd:</strong> resultatregnskap og balanse per år, månedlig
+        utvikling siste 12 måneder, største kunder, leverandører og faste kostnader, ubetalte
+        fakturaer, ubehandlede innkommende bilag, kommende frister og inntil 25 relevante bokførte
+        bilag (dato, bilagsnummer, beskrivelse, kontoer, beløp og motpart). Selve PDF-ene og
+        bildene sendes ikke.
+      </li>
+      <li>
+        <strong>Samtalene lagres per selskap:</strong> tidligere samtaler lagres i databasen vår i
+        EØS slik at du kan finne dem igjen i sidemenyen. Du kan slette en samtale når som helst, og
+        alt slettes sammen med selskapet.
+      </li>
+      <li>
+        <strong>Samme nivåer og kvoter:</strong> «Gratis» er alltid ubegrenset i Norge; «Medium» og
+        «Smart» teller mot selskapets ukentlige kvote (vist i prosent).
+      </li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>Hva som følger med bilaget</h2>
+    <p>
+      Modellen trenger å vite hva slags virksomhet den leser for. Et skjermkort er varekjøp
+      hos en som bygger datamaskiner og et privatuttak hos en frisør, og kvitteringen er den
+      samme i begge tilfeller. Derfor sendes dette sammen med dokumentene:
+    </p>
+    <ul class="ticks">
+      <li>
+        <strong>Vedtektsfestet formål og registrert aktivitet</strong>, slik de står i
+        Enhetsregisteret. Offentlige opplysninger vi allerede har hentet.
+      </li>
+      <li>
+        <strong>Næringskode, og om selskapet er mva-registrert.</strong> Det siste avgjør om
+        fradrag i det hele tatt er mulig.
+      </li>
+      <li>
+        <strong>Beskrivelsen i skjemaet.</strong> Den er for bilagene papiret ikke kan
+        avgjøre: 3 000 kroner inn fra en privatkonto er innskudd fra eier, et
+        tilbakebetalt lån eller et salg, og bare du vet hvilket.
+      </li>
+      <li>
+        <strong>Svarene dine på spørsmålene våre</strong>, sammen med spørsmålet, så
+        modellen vet hva den spurte om. Mens du svarer, holdes teksten fra bilaget i
+        minnet hos oss i høyst ti minutter etter siste svar, så bilaget ikke må leses på
+        nytt. Svarene lagres ikke.
+      </li>
+    </ul>
+    <p>
+      Beskrivelsen er <strong>ett felt, ikke to</strong>. Modellen skriver et forslag i
+      det, og retter du det, får modellen setningen din. Da fyller resten av skjemaet
+      seg ut ut fra det du vet. Det er også teksten som havner på
+      bilaget i hovedboken, så den <strong>lagres og bokføres</strong>, i motsetning til
+      resten av det vi sender modellen.
+    </p>
+    <p>
+      Den kan likevel ikke fylle ut et felt på egen hånd: navn, datoer og valuta godtar
+      vi bare når de står i selve dokumentet, og det du skriver i beskrivelsen er ikke
+      dokumentet.
+    </p>
+  </section>
+
+  <section class="card" id="analyse">
+    <h2>Hva som følger med en analyse</h2>
+    <p>
+      Når KI er på og noen i selskapet åpner «Analyse», leser Myntos bilagene i perioden i
+      bakgrunnen for å finne ut hva hver inntekt og kostnad gjaldt (for eksempel «Drivstoff»
+      eller «Husleie og lokaler»), i stedet for å fordele bare etter konto. Modellen regner ikke
+      ut tallene: alle beløp på «Analyse» kommer rett fra regnskapet.
+    </p>
+    <ul class="ticks">
+      <li>
+        <strong>Dette sendes til Løynd:</strong> dato, beløp, konto, beskrivelse og linjetekst fra
+        bilagene i perioden (og teksten fra «Beskriv bilaget» dersom den er fylt ut), motpartens
+        navn der bilaget har en, og de samme offentlige opplysningene om selskapet fra
+        Enhetsregisteret. Selve PDF-ene og bildene i bilagsarkivet sendes ikke. Merk at
+        motpartsnavn og bilagstekster kan inneholde personopplysninger, for eksempel navnet på et
+        enkeltpersonforetak eller en privatperson.
+      </li>
+      <li>
+        <strong>Kjører alltid på «Gratis» i Norge:</strong> lesingen skjer på Løynds egne maskiner
+        i Norge, uten lagring og uten trening hos Løynd, og bruker ingenting av selskapets KI-plan.
+      </li>
+      <li>
+        <strong>Leses en gang og lagres hos Myntos:</strong> for å slippe å spørre om det samme
+        bilaget på nytt, lagrer Myntos et kort sammendrag og merker per bilag i databasen vår i
+        EØS. Opplysningene brukes bare til selskapets egen analyse, deles ikke, og slettes sammen
+        med selskapet.
+      </li>
+    </ul>
+    <p>
+      <strong>Dyp KI-analyse</strong> starter bare når en person med skrivetilgang trykker «Dyp
+      KI-analyse» på «Analyse». Først leses eventuelle uleste bilag i perioden (og
+      sammenligningsperioden) på nivået «Gratis» i Norge, uten at det teller mot en KI-plan.
+      Selve analysen kjører på KI-nivået du har valgt («Gratis» i Norge, eller «Medium» eller
+      «Smart» med en <a href="#planer">KI-plan</a>, som teller mot ukekvoten). Til selve analysen
+      sendes et sammenstilt sammendrag av periodens tall, fordelinger, største motparter, faste
+      kostnader og sammendrag av de største bilagene, ikke PDF-ene eller bildene. Alle diagrammer i
+      rapporten fylles med tall rett fra regnskapet. Den ferdige rapporten lagres i databasen vår i
+      EØS (brukes bare av selskapet, deles ikke, og slettes sammen med selskapet), slik at et nytt
+      trykk for samme uendrede periode og nivå hentes uten å spørre modellen på nytt.
+    </p>
+    <p>
+      Myntos leser ikke hele regnskapet på forhånd: bare bilag i perioden som åpnes på «Analyse»
+      (og sammenligningsperioden året før), og bare bilag som ikke er lest fra før. Slår du av KI
+      under <a href="/organisasjon/#ki">Innstillinger for selskapet</a>, stopper lesingen og
+      pågående analyser, «Dyp KI-analyse» og KI-chat kan ikke brukes, og det som ble lest tidligere
+      brukes ikke så lenge KI er av.
+    </p>
+  </section>
+
+  <section class="card">
+    <h2>Bruk din egen KI-assistent</h2>
+    <p>
+      Vil du heller at ChatGPT, Claude eller en modell du kjører selv skal hjelpe deg med
+      regnskapet, kan du gi den en nøkkel. Da er det assistenten din som henter regnskapet, ikke
+      Myntos som sender det, og det er modellen du har valgt som bestemmer hvor opplysningene
+      havner. En modell du kjører selv holder dem hos deg.
+    </p>
+    <p>
+      Trykk «Inviter en KI» under
+      <a href="/organisasjon/#tilgang">Innstillinger for selskapet → Tilgang</a>. Det samme gjelder et
+      program eller et skript du eller en utvikler har laget. Du velger for hver nøkkel hva den får
+      gjøre selv, og hva den må spørre deg om først; det den spør om, godkjenner du under
+      <a href="/godkjenning/">Godkjenning</a>. Alt en nøkkel vil sende til Skatteetaten, venter på at
+      du godkjenner det, hver gang. Ingen nøkkel kan flytte penger eller endre kontonummer.
+    </p>
+  </section>
+
+  <section class="card" data-auth-only="inn">
+    <h2>Slå KI av eller på</h2>
+    <p>
+      Bryteren for å slå all KI helt av eller på for selskapet ligger under
+      <a href="/organisasjon/#ki">Innstillinger for selskapet → KI i Myntos</a>. Når KI er av,
+      forlater ingen dokumenter eller regnskapsopplysninger Myntos.
+    </p>
+  </section>
+
+  <section class="card signed-out" data-auth-only="ut">
+    <p>
+      <a href="/logg-inn/">Logg inn</a> for å bruke KI-chat, velge en KI-plan eller slå KI av eller
+      på for et selskap.
+    </p>
+  </section>
+</BaseLayout>
+
+<style>
+  .headline {
+    text-align: center;
+  }
+
+  .loynd-mark {
+    width: 96px;
+    height: 96px;
+    margin: 0 auto 1rem;
+    display: block;
+    background: url('/loynd-logo-on-light.svg') center / contain no-repeat;
+  }
+
+  :global(:root[data-theme='dark']) .loynd-mark {
+    background-image: url('/loynd-logo-on-dark.svg');
+  }
+
+  .headline h1 {
+    margin-top: 0;
+  }
+
+  .headline .lead {
+    max-width: 46ch;
+    margin-inline: auto;
+  }
+
+  .ticks {
+    list-style: none;
+    padding: 0;
+    margin: 1.5rem auto;
+    max-width: 52ch;
+    text-align: left;
+    display: grid;
+    gap: 0.6rem;
+  }
+
+  .ticks li {
+    padding-left: 1.6rem;
+    position: relative;
+  }
+
+  .ticks li::before {
+    content: '✓';
+    position: absolute;
+    left: 0;
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    justify-content: center;
+    margin-bottom: 0;
+  }
+
+  .signed-out {
+    text-align: center;
+  }
+
+  .levels {
+    display: grid;
+    gap: 0.6rem;
+    margin: 1rem 0 1.25rem;
+  }
+
+  .levels > div {
+    display: grid;
+    grid-template-columns: 6.5rem 1fr;
+    gap: 0.75rem;
+  }
+
+  .levels dt {
+    font-weight: 700;
+  }
+
+  .levels dd {
+    margin: 0;
+  }
+
+  @media (max-width: 30rem) {
+    .levels > div {
+      grid-template-columns: 1fr;
+      gap: 0.15rem;
+    }
+  }
+
+  .plans {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+    margin: 1.25rem 0 1rem;
+  }
+
+  .plan {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 1rem 1.1rem 1.1rem;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-small);
+    background: var(--surface-2);
+  }
+
+  .plan[data-active='true'] {
+    border-color: var(--accent);
+  }
+
+  .plan p,
+  .plan h3 {
+    margin: 0;
+  }
+
+  .plan-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .plan-name {
+    font-size: 1.05rem;
+  }
+
+  .plan-badge {
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 0.12rem 0.5rem;
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+    color: var(--accent-fg);
+  }
+
+  .plan-price {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .plan-amount {
+    font-size: 1.6rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--fg-strong);
+  }
+
+  .plan-unit,
+  .plan-incl {
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+
+  .plan-tokens {
+    font-weight: 600;
+  }
+
+  .plan-summary {
+    flex: 1;
+    font-size: 0.92rem;
+    color: var(--muted);
+  }
+
+  .plan .btn {
+    margin-top: 0.5rem;
+  }
+
+  .plan-company {
+    padding: 0.9rem 1rem;
+    border-radius: var(--radius-small);
+    background: var(--surface-2);
+    margin-bottom: 1rem;
+  }
+
+  .plan-company p {
+    margin: 0;
+  }
+
+  .plan-company p + p,
+  .plan-company meter + p {
+    margin-top: 0.4rem;
+  }
+
+  .plan-month {
+    font-weight: 600;
+  }
+
+  .plan-company meter {
+    display: block;
+    width: 100%;
+    height: 0.6rem;
+    margin-top: 0.5rem;
+  }
+
+  .plan-manage {
+    margin-top: 0.85rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .plan-email-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+    min-width: 15rem;
+    flex: 1;
+  }
+
+  .plan-email-field input {
+    max-width: 22rem;
+  }
+
+  .plan-manage-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .plan-note,
+  .plan-pay {
+    font-size: 0.88rem;
+    color: var(--muted);
+  }
+
+  .plan-pay {
+    margin: 0;
+  }
+
+  .plan-invoices {
+    margin-top: 1.4rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .plan-invoices h3 {
+    margin: 0 0 0.65rem;
+    font-size: 1rem;
+  }
+
+  .invoice-table-wrap {
+    overflow-x: auto;
+  }
+
+  .invoice-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+  }
+
+  .invoice-table th,
+  .invoice-table :global(td) {
+    text-align: left;
+    padding: 0.5rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  .invoice-table th {
+    color: var(--muted);
+    font-weight: 600;
+  }
+</style>
+
+<script>
+  import {
+    ApiError,
+    cancelKiSubscription,
+    getKiPurchase,
+    getKiStatus,
+    kiInvoicePdfUrl,
+    listKiInvoices,
+    setKiSubscription,
+    startKiPurchase,
+    type Company,
+    type KiBillingInvoice,
+    type KiStatus,
+  } from '../../lib/api';
+  import { currentCompany, loadCompanies } from '../../lib/company';
+  import { el, setStatus, show } from '../../lib/dom';
+  import { formatDay } from '../../lib/kiinput';
+  import {
+    buyNote,
+    deliveryLabel,
+    mayBuy,
+    mayManageSubscription,
+    monthLine,
+    nextLine,
+    purchaseOutcome,
+    returnedReference,
+    STILL_OPEN,
+  } from '../../lib/kiplan';
+  import { loadSession } from '../../lib/session';
+
+  const planStatus = el<HTMLParagraphElement>('#plan-status');
+  const chooseButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-choose]')];
+  const cancelBtn = el<HTMLButtonElement>('#plan-cancel');
+  const billingEmailInput = el<HTMLInputElement>('#plan-billing-email');
+
+  let activeKiStatus: KiStatus | null = null;
+
+  function formatIsoDate(iso: string): string {
+    const parts = iso.split('-');
+    if (parts.length !== 3) return iso;
+    return `${parts[2]}.${parts[1]}.${parts[0]}`;
+  }
+
+  function formatAmount(value: string): string {
+    const num = Number(value);
+    if (Number.isNaN(num)) return `${value} kr`;
+    return `${new Intl.NumberFormat('nb-NO', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(num)} kr`;
+  }
+
+  function drawInvoices(companyId: number, invoices: KiBillingInvoice[]): void {
+    const box = el('#plan-invoices');
+    const tbody = el('#plan-invoices-body');
+    tbody.replaceChildren();
+    show(box, invoices.length > 0);
+    for (const inv of invoices) {
+      const tr = document.createElement('tr');
+      const cells: Array<string | HTMLElement> = [
+        inv.invoice_number ?? `#${inv.id}`,
+        `${inv.plan_name} (${formatIsoDate(inv.period_start)}–${formatIsoDate(inv.period_end)})`,
+        formatAmount(inv.amount_incl_vat),
+        formatIsoDate(inv.due_date),
+        deliveryLabel(inv),
+      ];
+      for (const value of cells) {
+        const td = document.createElement('td');
+        td.textContent = typeof value === 'string' ? value : '';
+        tr.append(td);
+      }
+      const actionTd = document.createElement('td');
+      if (inv.has_pdf) {
+        const link = document.createElement('a');
+        link.href = kiInvoicePdfUrl(companyId, inv.id);
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.className = 'btn btn-ghost btn-small';
+        link.textContent = 'Last ned PDF';
+        actionTd.append(link);
+      }
+      tr.append(actionTd);
+      tbody.append(tr);
+    }
+  }
+
+  function drawPlans(company: Company, ki: KiStatus): void {
+    activeKiStatus = ki;
+    el('#plan-month').textContent = monthLine(ki);
+    const meter = el<HTMLMeterElement>('#plan-meter');
+    if (ki.weekly !== null) {
+      meter.max = 100;
+      meter.value = Math.max(0, Math.min(100, ki.weekly.remaining_percent));
+      meter.setAttribute('aria-label', 'Kvote igjen denne uken i prosent');
+      show(meter, true);
+    } else if (ki.current !== null) {
+      meter.max = 100;
+      meter.value = Math.max(0, Math.min(100, ki.current.remaining_percent));
+      meter.setAttribute('aria-label', 'Kvote igjen denne måneden i prosent');
+      show(meter, true);
+    } else {
+      show(meter, false);
+    }
+
+    const next = nextLine(ki);
+    el('#plan-next').textContent = next ?? '';
+    show(el('#plan-next'), next !== null);
+    el('#plan-note').textContent = buyNote(ki, company.name);
+    show(el('#plan-company'), true);
+
+    const activeCode = ki.subscription?.plan ?? null;
+    const canSub = mayManageSubscription(ki);
+    const canAny = mayBuy(ki);
+
+    show(el('#plan-manage'), canSub);
+    if (ki.subscription?.billing_email && billingEmailInput.value === '') {
+      billingEmailInput.value = ki.subscription.billing_email;
+    }
+    show(cancelBtn, canSub && ki.subscription !== null && !ki.subscription.cancel_at_period_end);
+
+    for (const card of document.querySelectorAll<HTMLElement>('[data-plan-card]')) {
+      const code = card.dataset.planCard ?? '';
+      const isCurrent = activeCode === code;
+      card.dataset.active = isCurrent ? 'true' : 'false';
+      const badge = card.querySelector<HTMLElement>(`[data-plan-badge="${code}"]`);
+      if (badge !== null) {
+        badge.textContent =
+          isCurrent && ki.subscription?.cancel_at_period_end ? 'Avsluttes' : 'Aktiv';
+        show(badge, isCurrent);
+      }
+    }
+
+    for (const button of chooseButtons) {
+      const code = button.dataset.choose ?? '';
+      const isCurrent = activeCode === code;
+      if (canSub) {
+        if (isCurrent && !ki.subscription?.cancel_at_period_end) {
+          show(button, false);
+        } else if (isCurrent && ki.subscription?.cancel_at_period_end) {
+          button.textContent = 'Fortsett abonnementet';
+          show(button, true);
+        } else if (activeCode !== null) {
+          button.textContent = `Bytt til ${button.closest('.plan')?.querySelector('.plan-name')?.textContent ?? code}`;
+          show(button, true);
+        } else {
+          button.textContent = `Velg ${button.closest('.plan')?.querySelector('.plan-name')?.textContent ?? code}`;
+          show(button, true);
+        }
+      } else if (canAny) {
+        button.textContent = `Kjøp ${button.closest('.plan')?.querySelector('.plan-name')?.textContent ?? code}`;
+        show(button, true);
+      } else {
+        show(button, false);
+      }
+    }
+  }
+
+  async function refreshPlans(company: Company): Promise<void> {
+    try {
+      const [ki, invoices] = await Promise.all([
+        getKiStatus(company.id),
+        listKiInvoices(company.id).catch(() => [] as KiBillingInvoice[]),
+      ]);
+      drawPlans(company, ki);
+      drawInvoices(company.id, invoices);
+    } catch {
+      show(el('#plan-company'), false);
+    }
+  }
+
+  const pause = (ms: number): Promise<void> =>
+    new Promise((resolve) => window.setTimeout(resolve, ms));
+
+  async function settleReturn(company: Company, reference: string): Promise<void> {
+    window.history.replaceState(null, '', `${window.location.pathname}#planer`);
+    el('#planer').scrollIntoView();
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      try {
+        const outcome = purchaseOutcome(await getKiPurchase(company.id, reference));
+        setStatus(planStatus, outcome.text, outcome.tone);
+        if (outcome.settled) return;
+      } catch (error) {
+        setStatus(
+          planStatus,
+          error instanceof ApiError && error.status === 404
+            ? `Fant ingen betaling for ${company.name} med den lenken. Kjøpte du for et annet selskap, bytt til det i toppen av siden.`
+            : 'Fikk ikke sjekket betalingen. Last siden på nytt om litt.',
+        );
+        return;
+      }
+      await pause(2000);
+    }
+    setStatus(planStatus, STILL_OPEN, 'ok');
+  }
+
+  async function mount(): Promise<void> {
+    const session = await loadSession();
+    if (session === null) return;
+    if (billingEmailInput.value === '' && session.user.email) {
+      billingEmailInput.value = session.user.email;
+    }
+
+    const companies = await loadCompanies();
+    const company = currentCompany(companies);
+    if (company === undefined) return;
+
+    for (const button of chooseButtons) {
+      button.addEventListener('click', async () => {
+        const plan = button.dataset.choose;
+        if (plan === undefined || activeKiStatus === null) return;
+        for (const other of chooseButtons) other.disabled = true;
+        cancelBtn.disabled = true;
+
+        try {
+          if (activeKiStatus.subscription_available) {
+            setStatus(planStatus, 'Aktiverer KI-plan …', 'ok');
+            const email = billingEmailInput.value.trim() || null;
+            const result = await setKiSubscription(company.id, plan, email);
+            const invNote =
+              result.invoice !== null
+                ? ` Faktura nr. ${result.invoice.invoice_number ?? result.invoice.id} er opprettet (${deliveryLabel(result.invoice).toLowerCase()}).`
+                : ' Ny ukekvote gjelder med en gang.';
+            setStatus(planStatus, `${result.subscription.plan_name} er aktiv for ${company.name}.${invNote}`, 'ok');
+            await refreshPlans(company);
+          } else {
+            setStatus(planStatus, 'Sender deg til Mollie for å betale …', 'ok');
+            const { checkout_url } = await startKiPurchase(company.id, plan);
+            window.location.assign(checkout_url);
+            return;
+          }
+        } catch (error) {
+          setStatus(
+            planStatus,
+            error instanceof ApiError && error.status === 403
+              ? `Bare eieren av ${company.name} kan endre KI-plan.`
+              : error instanceof ApiError
+                ? `Kunne ikke oppdatere planen: ${error.message}`
+                : 'Kunne ikke oppdatere planen. Prøv igjen.',
+          );
+        } finally {
+          for (const other of chooseButtons) other.disabled = false;
+          cancelBtn.disabled = false;
+        }
+      });
+    }
+
+    cancelBtn.addEventListener('click', async () => {
+      if (
+        !window.confirm(
+          `Avslutte KI-abonnementet for ${company.name}? Planen fortsetter ut inneværende periode, og det sendes ingen ny faktura etter det.`,
+        )
+      ) {
+        return;
+      }
+      cancelBtn.disabled = true;
+      for (const other of chooseButtons) other.disabled = true;
+      try {
+        const sub = await cancelKiSubscription(company.id);
+        setStatus(
+          planStatus,
+          `Abonnementet er sagt opp og avsluttes ${formatDay(sub.current_period_end)}. Ingen ny faktura blir sendt.`,
+          'ok',
+        );
+        await refreshPlans(company);
+      } catch (error) {
+        setStatus(
+          planStatus,
+          error instanceof ApiError
+            ? `Kunne ikke avslutte abonnementet: ${error.message}`
+            : 'Kunne ikke avslutte abonnementet. Prøv igjen.',
+        );
+      } finally {
+        cancelBtn.disabled = false;
+        for (const other of chooseButtons) other.disabled = false;
+      }
+    });
+
+    const reference = returnedReference(window.location.search);
+    if (reference !== null) await settleReturn(company, reference);
+    await refreshPlans(company);
+  }
+
+  void mount();
+</script>

@@ -28,6 +28,11 @@ businesses. Anyone else gets the PDF, which the person downloads and sends.
 
 - The role «Medlem», «Administrator» or «Eier». A «Leser» sees the invoices
   but not the form.
+- For business customers: e-invoicing (EHF) set up once for the company. If it
+  is not active yet, «Faktura» prompts you to set it up before the first
+  business invoice — one click («Aktiver e-faktura (EHF)») once the company is
+  confirmed with ID-porten. Private customers are exempt and can be billed
+  without EHF via «Skriv faktura uten e-faktura».
 - A kontonummer on the company. Without one, the page says so at the top and
   no invoice can be issued:
   [Add a bank account](https://myntos.no/llms/help/company-and-access/add-a-bank-account.md).
@@ -104,7 +109,7 @@ businesses. Anyone else gets the PDF, which the person downloads and sends.
 | «Du har lesetilgang» and no form | Their role is «Leser» | Ask an «Administrator» or «Eier» for a role that may write |
 | «Selskapet har ikke noe kontonummer, så ingen faktura kan utstedes.» | The company has no bank account number | An «Administrator» or «Eier» adds one: [Add a bank account](https://myntos.no/llms/help/company-and-access/add-a-bank-account.md) |
 | «Utsted fakturaen» or «Utsted og send som EHF» is greyed out and «… ting må rettes først» is shown | The review found something that must be fixed | [Fix an invoice that cannot be issued](https://myntos.no/llms/help/invoices/fix-an-invoice-that-cannot-be-issued.md) |
-| A yellow notice at the top: «Fra … skal fakturaer til andre bokføringspliktige sendes som EHF over Peppol. Selskapet er ikke registrert for e-faktura ennå …» | The company cannot send EHF yet, so invoices to businesses have to be sent by hand | An «Administrator» or «Eier» follows «Sett opp e-faktura under Selskap»: [Register for e-invoicing](https://myntos.no/llms/help/company-and-access/register-for-e-invoicing.md) |
+| «Sett opp e-faktura (EHF) før første faktura» instead of the empty form | The company has not activated EHF sending yet, and e-faktura is the default for business invoices | Confirm the company with ID-porten if prompted, then press «Aktiver e-faktura (EHF)» (or ask an «Administrator» / «Eier»): [Register for e-invoicing](https://myntos.no/llms/help/company-and-access/register-for-e-invoicing.md). To bill a private person without EHF, click «Skriv faktura uten e-faktura» |
 | After «Utsted og send som EHF», the card shows a message instead of «EHF-en er sendt over Peppol …» | The invoice was issued, but the send did not go; it is issued and in the books either way | Read the message: [Send an invoice to the customer](https://myntos.no/llms/help/invoices/send-an-invoice-to-the-customer.md) says what each one means |
 | «Vi fikk ikke lagret.» or another message under the form | The draft could not be saved, often a line with a number that is not a number | Check «Antall», «Pris» and «Rabatt %» on every line, and try again |
 

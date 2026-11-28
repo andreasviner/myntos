@@ -72,19 +72,23 @@ to approve.
    prepare it:
    - `mva_melding`: [myntos-mva](https://myntos.no/llms/skills/myntos-mva.md),
      with `aar` = `year` and `termin` = `termin`.
-   - `skattemelding` (an AS):
+   - `skattemelding` (an AS or ENK):
      [myntos-skattemelding](https://myntos.no/llms/skills/myntos-skattemelding.md),
-     with `aar` = `year`. The year must be closed first.
+     with `aar` = `year`. The year must be closed first. For an ENK, the owner
+     files with their own ID-porten login and finishes personal items on
+     skatteetaten.no.
+   - `aksjonaerregisteroppgave` (an AS or ASA):
+     [myntos-aksjonaer](https://myntos.no/llms/skills/myntos-aksjonaer.md),
+     with `aar` = `year`. Uses the company's approved Altinn 3 systembruker.
+   - `arsregnskap` (an AS or ASA):
+     [myntos-aarsregnskap](https://myntos.no/llms/skills/myntos-aarsregnskap.md),
+     with `aar` = `year`.
 
    Checking and filing with Skatteetaten always waits for the person's own
-   approval and ID-porten login, whatever the key may do
-   ([myntos-godkjenning](https://myntos.no/llms/skills/myntos-godkjenning.md)).
+   approval ([myntos-godkjenning](https://myntos.no/llms/skills/myntos-godkjenning.md)).
 
-4. **For the rest**, say where it is done: the aksjonærregisteroppgave from a
-   program that can send it (Myntos cannot yet), the årsregnskap to
-   Regnskapsregisteret after the general meeting has adopted it, forskuddsskatt
-   paid from the bank with the KID Skatteetaten gives, an ENK owner's
-   skattemelding on skatteetaten.no.
+4. **For the rest**, say where it is done: forskuddsskatt is paid from the
+   bank with the KID Skatteetaten gives.
 
 ### What `done` means
 

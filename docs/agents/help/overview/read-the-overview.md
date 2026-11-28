@@ -74,8 +74,12 @@ account with no company yet sees «Ingen regnskap ennå» instead:
 7. The note at the bottom links to the pages that are not in the top menu:
    «Mva-melding», «SAF-T», «Bankavstemming», «Regnskapet år for år», «Hent
    regnskapet fra et annet program», «Inngående balanse», «Årsavslutning»,
-   «Skattemelding» and «Frister», among others:
+   «Skattemelding», «Frister» and «KI i Myntos», among others:
    [Find the pages that are not in the menu](https://myntos.no/llms/help/overview/find-the-pages-not-in-the-menu.md).
+   It also links «Analyse», which is in the top menu too: income and costs
+   month by month, from the books rather than the bank, so its figures differ
+   from «Inn i år» and «Ut i år» here:
+   [See how the business is going, month by month](https://myntos.no/llms/help/analysis/see-income-and-costs.md).
 
 ## If something stops them
 

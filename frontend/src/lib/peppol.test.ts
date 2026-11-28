@@ -1,11 +1,5 @@
 /**
- * Sending as EHF, as the invoice page and the company page say it.
- *
- * What a person relies on: an invoice to a business on Peppol goes as EHF by
- * the press that issues it, and the review says so with the address before
- * that press; an invoice that went is never offered again unless it failed,
- * nothing is offered before the company can send, and the company page names
- * the one step still missing.
+ * Sending and receiving EHF over Peppol, as the invoice, company and inbox pages say it.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -14,6 +8,9 @@ import type { EhfSending, PeppolStanding } from './api';
 import {
   delivery,
   deliverySentence,
+  incomingStatusLabel,
+  needsSetupGate,
+  receivingSentence,
   sendable,
   sendingLabel,
   sendingSentence,
@@ -26,13 +23,14 @@ const READY: PeppolStanding = {
   registered: true,
   verified: true,
   can_send: true,
+  can_receive: false,
 };
 
 function sending(status: EhfSending['status'], message: string | null = null): EhfSending {
   return {
     status,
     recipient: '0192:910000012',
-    sent_at: '2026-11-01T10:00:00Z',
+    sent_at: '2026-11-25T10:00:00Z',
     status_checked_at: null,
     failure_category: status === 'failed' ? 'transport' : null,
     failure_message: message,
@@ -97,8 +95,10 @@ describe('deliverySentence', () => {
     expect(sentence).toContain('kan ikke kalles tilbake');
   });
 
-  it('names the date the law starts from when the company cannot send', () => {
-    expect(deliverySentence('not-registered', BUSINESS, '2027-01-01')).toContain('2027');
+  it('names the date the law starts from and requires setup when the company cannot send', () => {
+    const sentence = deliverySentence('not-registered', BUSINESS, '2027-01-01');
+    expect(sentence).toContain('2027');
+    expect(sentence).toContain('Sett opp e-faktura');
   });
 
   it('says nothing where there is nothing to say', () => {
@@ -106,7 +106,27 @@ describe('deliverySentence', () => {
   });
 });
 
-describe('sendingLabel and sendingSentence', () => {
+describe('needsSetupGate', () => {
+  it('gates invoicing only when Peppol is available and sending is not yet set up', () => {
+    expect(needsSetupGate(null)).toBe(false);
+    expect(needsSetupGate({ ...READY, available: false, can_send: false })).toBe(false);
+    expect(needsSetupGate(READY)).toBe(false);
+    expect(needsSetupGate({ ...READY, registered: false, verified: false, can_send: false })).toBe(
+      true,
+    );
+    expect(
+      needsSetupGate({
+        ...READY,
+        company_confirmed: false,
+        registered: false,
+        verified: false,
+        can_send: false,
+      }),
+    ).toBe(true);
+  });
+});
+
+describe('sendingLabel, sendingSentence and incomingStatusLabel', () => {
   it('says nothing about an invoice that was never sent', () => {
     expect(sendingLabel(null)).toBeNull();
   });
@@ -122,14 +142,21 @@ describe('sendingLabel and sendingSentence', () => {
     expect(sendingLabel(sending('pending'))).toBe('Sendt som EHF');
     expect(sendingSentence(sending('pending'))).toContain('venter på kvittering');
   });
+
+  it('labels each incoming EHF status in Norwegian', () => {
+    expect(incomingStatusLabel('ny')).toBe('Ny');
+    expect(incomingStatusLabel('bokfort')).toBe('Bokført');
+    expect(incomingStatusLabel('avvist')).toBe('Avvist');
+  });
 });
 
-describe('standingSentence', () => {
+describe('standingSentence and receivingSentence', () => {
   it('shows no step when the installation has no access point', () => {
     expect(standingSentence({ ...READY, available: false })).toBeNull();
+    expect(receivingSentence({ ...READY, available: false })).toBeNull();
   });
 
-  it('names only the first missing step', () => {
+  it('names only the first missing step for sending', () => {
     const unconfirmed = {
       ...READY,
       company_confirmed: false,
@@ -138,10 +165,14 @@ describe('standingSentence', () => {
       can_send: false,
     };
     expect(standingSentence(unconfirmed)).toContain('ID-porten');
+    expect(receivingSentence(unconfirmed)).toBeNull();
     const unregistered = { ...unconfirmed, company_confirmed: true };
     expect(standingSentence(unregistered)).toContain('ikke registrert');
-    const unchecked = { ...unregistered, registered: true };
-    expect(standingSentence(unchecked)).toContain('identitetskontrollen');
     expect(standingSentence(READY)).toContain('sendes som EHF når de utstedes');
+  });
+
+  it('explains ELMA takeover before receiving is enabled and links the inbox once on', () => {
+    expect(receivingSentence(READY)).toContain('ELMA');
+    expect(receivingSentence({ ...READY, can_receive: true })).toContain('Innkommende e-faktura');
   });
 });

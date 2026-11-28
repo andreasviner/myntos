@@ -221,9 +221,11 @@ class Company(Base):
     # as though they might have twenty. It also puts the price next to the thing
     # being paid for, which is where somebody looks for it.
     #
-    # A plain string, and nothing enforces it yet: there is no billing. It says
-    # what tier these books are on so that the day there is one, the column it
-    # bills from is already the right shape.
+    # A plain string, and nothing acts on it: the accounting program has no price,
+    # and the one thing sold, a month of the paid KI levels, is a ``ki_period``
+    # row (domain/ki), because it is bought a month at a time and runs out by
+    # itself, which a tier on the company could not say. Kept as "free" so an
+    # old row and a new one look the same.
     plan: Mapped[str] = mapped_column(String(32), default="free")
 
     # Whether this company's documents may be shown to a model at all.
@@ -250,8 +252,8 @@ class Company(Base):
     # works in them (docs/agents-and-api.md rule 3).
     #
     # Off by default, the opposite of ``ki_enabled`` above, and the difference is
-    # who sends what. KI is Myntos sending a bilag to Løynd, which runs in Norway
-    # and keeps nothing. A key is the company letting a tool of its own choosing
+    # who sends what. KI is Myntos sending a bilag to Løynd, which runs inside the
+    # EEA and keeps nothing. A key is the company letting a tool of its own choosing
     # read the books, and that tool's model may be anywhere. Only the people
     # responsible for the books can decide that, so it starts as a no, and an
     # owner or admin turns it on after being told what it means. Turning it off

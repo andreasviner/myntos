@@ -42,12 +42,20 @@ from fastapi.testclient import TestClient
 from myntos.api.v1 import approvals as approvals_api
 from myntos.core.clock import utc_now
 from myntos.core.config import get_settings
-from myntos.integrations import loynd, recommand
+from myntos.integrations import ademico, loynd
 from myntos.main import create_app
 from tests.conftest import (
     agent_header,
     assert_key_refused,
+    insert_aarsregnskap_filing,
+    insert_aksjonaer_filing,
     insert_imported_document,
+    insert_incoming_ehf,
+    insert_incoming_mail,
+    insert_ki_invoice,
+    insert_ki_period,
+    insert_ki_report,
+    insert_ki_run,
     insert_mva_filing,
     insert_skattemelding_filing,
     is_send,
@@ -78,10 +86,11 @@ def access_point(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     def refuse(request: httpx.Request) -> httpx.Response:
         raise AssertionError(f"the access point was asked: {request.method} {request.url.path}")
 
-    monkeypatch.setenv("RECOMMAND_API_KEY", "boundary")
-    monkeypatch.setenv("RECOMMAND_API_SECRET", "boundary")
+    monkeypatch.setenv("ADEMICO_USER", "boundary")
+    monkeypatch.setenv("ADEMICO_PASSWORD", "boundary")
+    monkeypatch.setenv("ADEMICO_TOKEN", "boundary")
     monkeypatch.setattr(
-        recommand,
+        ademico,
         "_client",
         lambda timeout=None: httpx.AsyncClient(transport=httpx.MockTransport(refuse)),
     )
@@ -524,6 +533,31 @@ def _an_agent_key(client: TestClient, company_id: int) -> tuple[int, Callable[[]
     return key_id, readable
 
 
+def _an_integration_key(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """A server's integration key for the other client's books (rule 15).
+
+    ``{key_id}`` too, in the same table as an agent key, but the routes under
+    ``/integrasjonsnokler/`` read only integration keys: an agent key's id
+    would be refused as unknown and prove nothing. Stopping the sibling's
+    through this company's URL would stop the other client's invoicing.
+    """
+    made = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company_id}/integrasjonsnokler",
+        json={"name": "Klient Tos nettbutikk", "allowed_ips": ["127.0.0.1"], "purpose": "faktura"},
+    )
+    assert made.status_code == 201, made.text
+    key_id = int(made.json()["key"]["id"])
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/integrasjonsnokler")
+        assert owner.status_code == 200, owner.text
+        assert key_id in [key["id"] for key in owner.json()]
+
+    return key_id, readable
+
+
 def _an_approval(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
     """A payment the sibling's agent asked to post, waiting for its person.
 
@@ -698,6 +732,209 @@ def _a_reading(client: TestClient, company_id: int) -> tuple[str, Callable[[], N
     return reading_id, readable
 
 
+def _an_incoming_invoice(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """A supplier's EHF invoice received into the sibling's inbox.
+
+    Reading it, downloading its XML or PDF, booking it or dismissing it through
+    this company's URL would expose or post the other client's supplier bill.
+    """
+    incoming_id = insert_incoming_ehf(client, company_id)
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/peppol/innkommende/{incoming_id}")
+        assert owner.status_code == 200, owner.text
+
+    return incoming_id, readable
+
+
+def _an_incoming_mail(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """An emailed supplier PDF received into the sibling's @myntos.no inbox.
+
+    Reading it, downloading its attachment, booking it or dismissing it through
+    this company's URL would expose or post the other client's supplier bill.
+    """
+    mail_id = insert_incoming_mail(client, company_id)
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/mottak/epost/{mail_id}")
+        assert owner.status_code == 200, owner.text
+
+    return mail_id, readable
+
+
+def _a_ki_purchase(client: TestClient, company_id: int) -> tuple[str, Callable[[], None]]:
+    """A month of KI the sibling paid for.
+
+    Reading it through this company's URL would say what the other client
+    bought and how much of it is left; settling it would ask Mollie about the
+    other client's payment.
+    """
+    reference = insert_ki_period(client, company_id)
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/ki/betaling/{reference}")
+        assert owner.status_code == 200, owner.text
+
+    return reference, readable
+
+
+def _an_analysis_run(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """A background KI reading run on the sibling's books.
+
+    Reading it through this company's URL would reveal the other client's
+    voucher count and reading state; the run id is sequential, so only the
+    company filter keeps it behind the wall.
+    """
+    run_id = insert_ki_run(client, company_id)
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/analyse/kjoringer/{run_id}")
+        assert owner.status_code == 200, owner.text
+
+    return run_id, readable
+
+
+def _an_analysis_report(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """A finished deep KI analysis report on the sibling's books.
+
+    Reading it through this company's URL would leak the other client's
+    narrative and figures; the report id is sequential, so only the company
+    filter keeps it behind the wall.
+    """
+    report_id = insert_ki_report(client, company_id)
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/analyse/rapporter/{report_id}")
+        assert owner.status_code == 200, owner.text
+
+    return report_id, readable
+
+
+def _a_ki_invoice(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """A monthly KI subscription invoice belonging to the sibling company."""
+    invoice_id = insert_ki_invoice(client, company_id)
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/ki/fakturaer/{invoice_id}/pdf")
+        assert owner.status_code == 200, owner.text
+
+    return invoice_id, readable
+
+
+def _a_ki_chat_thread(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """A saved KI chat conversation belonging to the sibling company."""
+    created = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company_id}/ki/samtaler",
+        json={"title": "Hemmelig samtale"},
+    )
+    assert created.status_code == 201, created.text
+    thread_id = int(created.json()["id"])
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/ki/samtaler/{thread_id}")
+        assert owner.status_code == 200, owner.text
+
+    return thread_id, readable
+
+
+def _a_share_class(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """A share class belonging to the sibling company."""
+    created = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company_id}/aksjonaer/aksjeklasser",
+        json={"code": "01", "name": "Ordinære aksjer"},
+    )
+    assert created.status_code == 201, created.text
+    sc_id = int(created.json()["id"])
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/aksjonaer")
+        assert owner.status_code == 200, owner.text
+        assert any(c["id"] == sc_id for c in owner.json()["classes"])
+
+    return sc_id, readable
+
+
+def _a_shareholder(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """A shareholder belonging to the sibling company."""
+    created = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company_id}/aksjonaer/aksjonaerer",
+        json={
+            "kind": "person",
+            "name": "Hemmelig Aksjonær",
+            "national_id": "26829398612",
+        },
+    )
+    assert created.status_code == 201, created.text
+    holder_id = int(created.json()["id"])
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/aksjonaer")
+        assert owner.status_code == 200, owner.text
+        assert any(h["id"] == holder_id for h in owner.json()["shareholders"])
+
+    return holder_id, readable
+
+
+def _a_share_event(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """A corporate event in the sibling company's aksjeeierbok."""
+    sc_id, _ = _a_share_class(client, company_id)
+    holder_id, _ = _a_shareholder(client, company_id)
+    created = write(
+        client,
+        "POST",
+        f"/api/v1/companies/{company_id}/aksjonaer/hendelser",
+        json={
+            "share_class_id": sc_id,
+            "event_type": "stiftelse",
+            "subtype": "N",
+            "event_date": f"{THIS_YEAR}-01-15",
+            "total_shares": 1000,
+            "par_value_after": "30",
+            "total_amount": "30000.00",
+            "lines": [{"shareholder_id": holder_id, "shares": 1000, "amount": "30000.00"}],
+        },
+    )
+    assert created.status_code == 201, created.text
+    event_id = int(created.json()["id"])
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/aksjonaer", params={"aar": THIS_YEAR})
+        assert owner.status_code == 200, owner.text
+        assert any(ev["id"] == event_id for ev in owner.json()["events"])
+
+    return event_id, readable
+
+
+def _an_aksjonaer_filing(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    """An RF-1086 filing belonging to the sibling company."""
+    filing_id = insert_aksjonaer_filing(client, company_id, year=THIS_YEAR)
+
+    def readable() -> None:
+        owner = client.get(f"/api/v1/companies/{company_id}/aksjonaer/innsendinger/{filing_id}")
+        assert owner.status_code == 200, owner.text
+
+    return filing_id, readable
+
+
+def _an_aarsregnskap_filing(client: TestClient, company_id: int) -> tuple[int, Callable[[], None]]:
+    filing_id = insert_aarsregnskap_filing(client, company_id, year=THIS_YEAR, status="laast")
+
+    def readable() -> None:
+        owner = client.get(
+            f"/api/v1/companies/{company_id}/aarsregnskap/innsendinger/{filing_id}/dokument",
+            params={"type": "hovedskjema"},
+        )
+        assert owner.status_code == 200, owner.text
+
+    return filing_id, readable
+
+
 FACTORIES: dict[str, Callable[[TestClient, int], tuple[int | str, Callable[[], None]]]] = {
     "document_id": _a_document,
     "voucher_id": _a_voucher,
@@ -737,6 +974,27 @@ FACTORIES: dict[str, Callable[[TestClient, int], tuple[int | str, Callable[[], N
     # the model's conversation about them. The id is random rather than
     # sequential, which is no reason to skip the wall.
     "reading_id": _a_reading,
+    # An incoming supplier EHF invoice sitting in the other client's Peppol inbox.
+    "incoming_id": _an_incoming_invoice,
+    # An incoming emailed PDF invoice sitting in the other client's @myntos.no inbox.
+    "mail_id": _an_incoming_mail,
+    # A month of KI the other client paid for, by Myntos's reference for it.
+    "reference": _a_ki_purchase,
+    # A background KI analysis run on the other client's books.
+    "run_id": _an_analysis_run,
+    # A finished KI analysis report on the other client's books.
+    "report_id": _an_analysis_report,
+    # A monthly KI billing invoice belonging to the other client.
+    "invoice_id": _a_ki_invoice,
+    # A saved KI chat thread about the other client's books.
+    "thread_id": _a_ki_chat_thread,
+    # Aksjeeierbok and RF-1086 records belonging to the other client.
+    "share_class_id": _a_share_class,
+    "shareholder_id": _a_shareholder,
+    "event_id": _a_share_event,
+    "aksjonaer_filing_id": _an_aksjonaer_filing,
+    # Årsregnskap (RR-0002) filings belonging to the other client.
+    "aarsregnskap_filing_id": _an_aarsregnskap_filing,
 }
 
 # Two kinds of filing are both ``{filing_id}``: the MVA-melding's and the
@@ -754,6 +1012,7 @@ FACTORIES_BY_SECTION: dict[
     # A document kept from an export is ``{document_id}`` too, in a table of its
     # own: a bilag document's id would be refused as unknown and prove nothing.
     ("/saft/dokumenter/", "document_id"): _a_kept_document,
+    ("/integrasjonsnokler/", "key_id"): _an_integration_key,
 }
 
 
@@ -832,6 +1091,19 @@ _MANUAL_BODY: dict[str, Any] = {
 _COMPANIES = "/api/v1/companies/{company_id}"
 
 REQUESTS: dict[tuple[str, str], dict[str, Any]] = {
+    ("GET", f"{_COMPANIES}/analyse/kjoringer/{{run_id}}"): {},
+    ("POST", f"{_COMPANIES}/analyse/kjoringer/{{run_id}}/avbryt"): {},
+    ("GET", f"{_COMPANIES}/analyse/rapporter/{{report_id}}"): {},
+    ("GET", f"{_COMPANIES}/ki/betaling/{{reference}}"): {},
+    ("GET", f"{_COMPANIES}/ki/fakturaer/{{invoice_id}}/pdf"): {},
+    ("GET", f"{_COMPANIES}/ki/samtaler/{{thread_id}}"): {},
+    ("DELETE", f"{_COMPANIES}/ki/samtaler/{{thread_id}}"): {},
+    ("POST", f"{_COMPANIES}/ki/samtaler/{{thread_id}}/meldinger"): {
+        "json": {"content": "Hva er resultatet?", "level": "free"}
+    },
+    ("POST", f"{_COMPANIES}/ki/samtaler/{{thread_id}}/meldinger/strom"): {
+        "json": {"content": "Hva er resultatet?", "level": "free"}
+    },
     ("PUT", f"{_COMPANIES}/cashflow/{{voucher_id}}"): {"json": _CASHFLOW_BODY},
     ("PUT", f"{_COMPANIES}/cashflow/sammensatt/{{voucher_id}}"): {"json": _COMPOSITE_BODY},
     ("POST", f"{_COMPANIES}/cashflow/{{voucher_id}}/dokument"): {
@@ -874,6 +1146,7 @@ REQUESTS: dict[tuple[str, str], dict[str, Any]] = {
     ("DELETE", f"{_COMPANIES}/bankkontoer/{{bank_account_id}}"): {},
     ("DELETE", f"{_COMPANIES}/invitations/{{invitation_id}}"): {},
     ("DELETE", f"{_COMPANIES}/agent-keys/{{key_id}}"): {},
+    ("DELETE", f"{_COMPANIES}/integrasjonsnokler/{{key_id}}"): {},
     ("GET", f"{_COMPANIES}/godkjenninger/{{approval_id}}"): {},
     ("DELETE", f"{_COMPANIES}/godkjenninger/{{approval_id}}"): {},
     ("GET", f"{_COMPANIES}/godkjenninger/{{approval_id}}/fil"): {"params": {"id": 1}},
@@ -956,6 +1229,53 @@ REQUESTS: dict[tuple[str, str], dict[str, Any]] = {
     },
     ("DELETE", f"{_COMPANIES}/anlegg/{{asset_id}}/avgang"): {},
     ("POST", f"{_COMPANIES}/cashflow/forslag/{{reading_id}}/svar"): {"json": {"answers": []}},
+    ("GET", f"{_COMPANIES}/peppol/innkommende/{{incoming_id}}"): {},
+    ("GET", f"{_COMPANIES}/peppol/innkommende/{{incoming_id}}/ehf"): {},
+    ("GET", f"{_COMPANIES}/peppol/innkommende/{{incoming_id}}/pdf"): {},
+    ("POST", f"{_COMPANIES}/peppol/innkommende/{{incoming_id}}/bokfor"): {
+        "json": {"type_code": "varekjop"}
+    },
+    ("POST", f"{_COMPANIES}/peppol/innkommende/{{incoming_id}}/avvis"): {},
+    ("POST", f"{_COMPANIES}/peppol/innkommende/{{incoming_id}}/gjenapne"): {},
+    ("GET", f"{_COMPANIES}/mottak/epost/{{mail_id}}"): {},
+    ("GET", f"{_COMPANIES}/mottak/epost/{{mail_id}}/fil"): {},
+    ("POST", f"{_COMPANIES}/mottak/epost/{{mail_id}}/bokfor"): {
+        "json": {
+            "type_code": "varekjop",
+            "occurred_on": f"{THIS_YEAR}-03-14",
+            "gross_amount": "1250.00",
+        }
+    },
+    ("POST", f"{_COMPANIES}/mottak/epost/{{mail_id}}/avvis"): {},
+    ("POST", f"{_COMPANIES}/mottak/epost/{{mail_id}}/gjenapne"): {},
+    ("PATCH", f"{_COMPANIES}/aksjonaer/aksjeklasser/{{share_class_id}}"): {
+        "json": {"name": "Endret klasse"}
+    },
+    ("DELETE", f"{_COMPANIES}/aksjonaer/aksjeklasser/{{share_class_id}}"): {},
+    ("PATCH", f"{_COMPANIES}/aksjonaer/aksjonaerer/{{shareholder_id}}"): {
+        "json": {"name": "Endret navn"}
+    },
+    ("DELETE", f"{_COMPANIES}/aksjonaer/aksjonaerer/{{shareholder_id}}"): {},
+    ("DELETE", f"{_COMPANIES}/aksjonaer/hendelser/{{event_id}}"): {},
+    ("GET", f"{_COMPANIES}/aksjonaer/innsendinger/{{aksjonaer_filing_id}}"): {},
+    ("GET", f"{_COMPANIES}/aksjonaer/innsendinger/{{aksjonaer_filing_id}}/dokument"): {
+        "params": {"type": "hovedskjema"}
+    },
+    ("POST", f"{_COMPANIES}/aarsregnskap/innsendinger/{{aarsregnskap_filing_id}}/signer"): {
+        "json": {"bekreftet": True}
+    },
+    ("POST", f"{_COMPANIES}/aarsregnskap/innsendinger/{{aarsregnskap_filing_id}}/status"): {},
+    ("GET", f"{_COMPANIES}/aarsregnskap/innsendinger/{{aarsregnskap_filing_id}}/dokument"): {
+        "params": {"type": "hovedskjema"}
+    },
+}
+
+# Path parameters that name an entry in a fixed list in the code, the same for
+# every company, rather than a record: there is no sibling's copy to smuggle,
+# so nothing here could cross the wall. Each says where its list is, and the
+# route's own tests check that an unknown name is a 404.
+NAMES_NOT_RECORDS: dict[str, str] = {
+    "navn": "a dataset in myntos.domain.analyse.datasets.REGISTRY (test_analyse_figures.py)",
 }
 
 
@@ -981,7 +1301,11 @@ def _sub_resource_routes() -> list[tuple[str, str, str]]:
     for path, operations in sorted(schema["paths"].items()):
         if "{company_id}" not in path:
             continue
-        extra = [name for name in re.findall(r"\{([^}]+)\}", path) if name != "company_id"]
+        extra = [
+            name
+            for name in re.findall(r"\{([^}]+)\}", path)
+            if name != "company_id" and name not in NAMES_NOT_RECORDS
+        ]
         for parameter in extra:
             for method in sorted(operations):
                 if method in {"get", "post", "patch", "put", "delete"}:
@@ -1174,10 +1498,20 @@ def test_a_sibling_companys_records_stay_out_of_the_listings(client: TestClient)
     document_id, _ = _a_document(client, theirs["id"])
     voucher_id, _ = _a_voucher(client, theirs["id"])
     party_pk, _ = _a_party(client, theirs["id"])
+    incoming_id, _ = _an_incoming_invoice(client, theirs["id"])
+    mail_id, _ = _an_incoming_mail(client, theirs["id"])
 
     faktura = client.get(f"/api/v1/companies/{mine['id']}/faktura").json()
     assert [item["id"] for item in faktura] == []
     assert document_id not in {item["id"] for item in faktura}
+
+    incoming = client.get(f"/api/v1/companies/{mine['id']}/peppol/innkommende").json()
+    assert [item["id"] for item in incoming] == []
+    assert incoming_id not in {item["id"] for item in incoming}
+
+    mails = client.get(f"/api/v1/companies/{mine['id']}/mottak/epost").json()
+    assert [item["id"] for item in mails] == []
+    assert mail_id not in {item["id"] for item in mails}
 
     cashflow = client.get(f"/api/v1/companies/{mine['id']}/cashflow").json()
     assert [item["id"] for item in cashflow] == []

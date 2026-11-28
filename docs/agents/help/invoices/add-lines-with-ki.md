@@ -1,6 +1,6 @@
 ---
 title: Let KI write the lines
-description: How a person describes a sale in their own words on the Faktura page in Myntos and gets the invoice lines proposed by KI, and why the box may be missing. Use when someone asks whether Myntos can fill in invoice lines for them, or where the KI box on the invoice is.
+description: How a person describes a sale in their own words on the Faktura page in Myntos and gets the invoice lines proposed by KI, at the KI level they choose, and why the box may be missing. Use when someone asks whether Myntos can fill in invoice lines for them, or where the KI box on the invoice is.
 pages: /faktura/
 skill: myntos-faktura
 ---
@@ -27,19 +27,25 @@ they typed.
 
 - The role «Medlem», «Administrator» or «Eier».
 - KI switched on for the company. It is on unless someone ticked «Slå av KI
-  for …» on the «KI» page (`https://myntos.no/ki/`).
+  for …» under «Innstillinger» → «KI i Myntos» (`https://myntos.no/organisasjon/#ki`).
 
 ## Steps
 
 1. Open «Faktura» in the top menu (`https://myntos.no/faktura/`).
 2. Under «Linjer», find «Beskriv salget, så setter vi opp linjene» and write
    what was sold, how much and at what price, for example «10 timer rådgivning
-   i mars til 1 500 kroner timen, og to kursmapper à 450».
-3. Press «Foreslå linjer». The page says «Setter opp linjene …».
-4. The lines appear tinted and marked «KI» under the line number («Foreslått
+   i mars til 1 500 kroner timen, og to kursmapper à 450». A screenshot or
+   photo of a note about the sale can be pasted straight into the box
+   (Ctrl+V / Cmd+V), or added with «Legg ved bilde» under the box: its text is
+   added to the box to check first.
+3. Optional: under the box, at «KI-nivå», choose «Medium» or «Smart» if the
+   company has a KI plan and the sale is long or muddled. «Gratis» is chosen
+   otherwise ([Choose the KI level](https://myntos.no/llms/help/ai/choose-a-ki-level.md)).
+4. Press «Foreslå linjer». The page says «Setter opp linjene …».
+5. The lines appear tinted and marked «KI» under the line number («Foreslått
    av KI» on a phone, and when hovered), and a message says how many were
    added. If the form already had lines, the new ones are added below them.
-5. Check every line: «Hva er solgt?», «Antall», the unit, «Pris» and the VAT
+6. Check every line: «Hva er solgt?», «Antall», the unit, «Pris» and the VAT
    rate. Change or «Fjern» what is wrong. Then carry on:
    [Issue an invoice](https://myntos.no/llms/help/invoices/issue-an-invoice.md).
 
@@ -47,17 +53,17 @@ they typed.
 
 | What they see | Why | What to do |
 | --- | --- | --- |
-| No box at all | KI is switched off for the company, Myntos has no model available, or their role is «Leser» | Write the lines by hand, or have KI switched on again on the «KI» page |
+| No box at all | KI is switched off for the company, Myntos has no model available, or their role is «Leser» | Write the lines by hand, or have KI switched on again under «Innstillinger» → «KI i Myntos» (`https://myntos.no/organisasjon/#ki`) |
 | «Vi fikk ikke svar fra Løynd nå. Skriv linjene selv, eller prøv igjen.» | The model did not answer | Try again in a moment, or type the lines |
 | «Vi fikk ikke laget fakturalinjer av beskrivelsen. …» | The description could not be turned into lines | Say what was sold, how much and the price, or type the lines |
 | «Beskrivelsen nevner priser inkludert mva. …» | Lines are priced without VAT | Check every «Pris»: it must be the price before VAT |
-| «Mva-satsen på minst én linje er satt til … fordi forslaget ikke var tydelig.» | The VAT rate was a guess | Choose the right rate on each line |
+| «Mva-satsen på minst en linje er satt til … fordi forslaget ikke var tydelig.» | The VAT rate was a guess | Choose the right rate on each line |
+| «… svaret kommer fra den gratis modellen. …» | «Medium» or «Smart» was chosen, but the company's plan has ended or its weekly quota is spent, or the larger model did not answer. «Gratis» wrote the lines | Check the lines as usual. See [Choose the KI level](https://myntos.no/llms/help/ai/choose-a-ki-level.md) |
 
 ## Good to know
 
-- The description goes to Løynd, the model Myntos uses, which runs in
-  Norway. What it sees is explained on the «KI» page
-  (`https://myntos.no/ki/`).
+- The description goes to Løynd, the KI service Myntos uses, inside the EEA.
+  What it sees is explained on the KI about page (`https://myntos.no/ki/about/`).
 - A sentence that also names the buyer or the delivery date can go in the box
   at the top instead, which fills in those as well:
   [Let KI fill in the invoice from the customer's e-mail](https://myntos.no/llms/help/invoices/fill-in-an-invoice-with-ki.md).

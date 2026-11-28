@@ -47,6 +47,10 @@ the same rights, the same approval page, the same limits.
   login.
 - A request that waits for approval answers HTTP 202 with code
   `approval_pending`; see https://myntos.no/llms/skills/myntos-godkjenning.md.
+- A server that should make, issue and send invoices with nobody approving
+  each one (a webshop, a subscription system) uses an integration key instead,
+  which only an owner makes, under «Integrasjoner», bound to the server's IP
+  addresses: https://myntos.no/llms/help/ai/make-an-integration-key.md.
 
 ## Related
 

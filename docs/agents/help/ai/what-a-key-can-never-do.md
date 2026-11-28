@@ -28,6 +28,14 @@ And no AI and no program can:
 A key also never does more than the person who made it may do, and stops when
 that person loses access to the company.
 
+**One exception, decided by Myntos's owner on 2026-11-26:** an AI's send
+always waits for its person; a server's *integration key*, made by an owner of
+the company, bound to the server's IP addresses and limited to invoicing, may
+send invoices as EHF on its own; nothing else may. It is not a key for an AI,
+and its secret must never be pasted into one:
+https://myntos.no/llms/help/ai/make-an-integration-key.md. It cannot do any of
+the things listed above either.
+
 ## They might ask
 
 - «Er det trygt å gi ChatGPT tilgang til regnskapet?»

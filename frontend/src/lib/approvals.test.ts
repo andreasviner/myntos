@@ -109,6 +109,11 @@ describe('pageFor', () => {
     expect(pageFor('/api/v1/companies/7/anlegg/avskrivning')?.href).toBe('/anlegg/');
     expect(pageFor('/api/v1/companies/7/dimensjoner/3/verdier')?.href).toBe('/avdelinger/');
     expect(pageFor('/api/v1/companies/7/dimensjonsverdier/9')?.href).toBe('/avdelinger/');
+    expect(pageFor('/api/v1/companies/7/aksjonaer/send')?.href).toBe('/aksjonaer/');
+    expect(pageFor('/api/v1/companies/7/aarsregnskap/klargjor')?.href).toBe('/aarsregnskap/');
+    expect(pageFor('/api/v1/companies/7/aarsregnskap/innsendinger/3/signer')?.href).toBe(
+      '/aarsregnskap/',
+    );
   });
 
   it('does not guess at a path it does not know', () => {

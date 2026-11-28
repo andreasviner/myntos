@@ -1,23 +1,26 @@
 """The skattemelding: see the year, check it with Skatteetaten, file it, keep the answer.
 
-An aksjeselskap files two documents together each spring: the
-**næringsspesifikasjon**, which is the books (the result and balance per post,
-the saldo specification, the differences between book and tax values), and the
-company's own **skattemelding**, which Skatteetaten serves as an utkast and
-Myntos sends back with the formue and two facts only the person can state.
-Skatteetaten computes everything else itself, the tax included, and says what
-it computed when the pair is checked. The routes follow the lifecycle, as
-``/mva`` does:
+An aksjeselskap (AS) or enkeltpersonforetak (ENK) files two documents together each
+spring: the **næringsspesifikasjon**, which is the books (the result and balance per
+post, the saldo specification, equity reconciliation, and for ENK beregnet
+personinntekt and omløpsmiddel specifications), and the **skattemelding**, which
+Skatteetaten serves as an utkast (``skattemeldingUpersonlig`` for AS on orgnr,
+``skattemeldingPersonlig`` for ENK on the owner's fødselsnummer). For an ENK, every
+personal item in the fetched skattemelding (salary, bank accounts, loans, deductions)
+is preserved untouched, and submissions default to ``ikkeKomplett`` so the owner
+reviews and completes personal items on skatteetaten.no.
+
+The routes follow the lifecycle, as ``/mva`` does:
 
 ``GET /companies/{id}/skattemelding?aar=``
     The year's næringsspesifikasjon as the books have it now, what stops it,
     and the filings made for the year. What the person reads first.
 
 ``POST /companies/{id}/skattemelding/kontroll``
-    Fetches the company's current skattemelding from Skatteetaten, adds the
-    formue and the person's answer, sends the pair to Skatteetaten's
-    validation, and keeps the exact envelope with the answer. Nothing is
-    filed. Needs the ID-porten login.
+    Fetches the current skattemelding from Skatteetaten (on orgnr for AS, on
+    the logged-in owner's fødselsnummer for ENK), prepares the pair, sends it
+    to Skatteetaten's validation, and keeps the exact envelope with the answer.
+    Nothing is filed. Needs the ID-porten login.
 
 ``POST /companies/{id}/skattemelding/innsendinger/{filing}/send``
     Files the checked envelope through Altinn, byte for byte, and only while
@@ -31,18 +34,12 @@ the middle of a submission is recorded rather than rolled back: the send route
 answers 502 by *returning* a response, so the row that says an instance may
 now exist in Altinn is committed with it.
 
-**A wound-up company's last year** (``company.wound_up_on``, set under
+**A wound-up AS's last year** (``company.wound_up_on``, set under
 Årsavslutning) is checked and filed as soon as its last day is past, as a
 forhåndsfastsetting (skatteforvaltningsloven § 8-2): Myntos asks Skatteetaten
 to prepare the melding when it has none (``klargjoerforhaandsfastsetting``),
 and sends it marked as fully wound up, with what the shareholders were paid.
 Proven end to end in TT02 on 2026-10-22 (docs/integrations/skatteetaten.md).
-
-**Only an aksjeselskap, so far.** An enkeltpersonforetak's næringsspesifikasjon
-goes with the owner's own skattemelding, on the owner's fødselsnummer, and
-Skatteetaten builds several of its posts from specifications Myntos does not
-send yet; the review says so by name (``enk_ikke_ferdig``) rather than sending
-something half right. docs/integrations/skatteetaten.md has the list.
 """
 
 from __future__ import annotations
@@ -51,7 +48,7 @@ import logging
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
@@ -72,15 +69,17 @@ from myntos.core.config import get_settings
 from myntos.domain.arsoppgjor.findings import Finding, Severity
 from myntos.domain.identity import service as identity_service
 from myntos.domain.identity.access import Permission, require_permission
-from myntos.domain.identity.models import User
+from myntos.domain.identity.models import GovernmentLoginAttempt, User
 from myntos.domain.ledger.models import Company
 from myntos.integrations.altinn.instances import AltinnInstanceError, InstanceRef
 from myntos.integrations.altinn.tokens import AltinnError, exchange_id_porten_token
 from myntos.integrations.skatteetaten import client as skattemelding_integration
 from myntos.skattemelding import (
+    codes,
     envelope,
     forhaandsfastsetting,
     naeringsspesifikasjon,
+    personlig,
     service,
     upersonlig,
     xmlwriter,
@@ -110,6 +109,10 @@ _NO_LOGIN = "logg inn med ID-porten for å kontrollere og sende skattemeldingen"
 _VIEWER = {
     "test": "https://skatt-test.sits.no/web/skattemelding-visning/altinn",
     "prod": "https://skatt.skatteetaten.no/web/skattemelding-visning/altinn",
+}
+_PORTAL = {
+    "test": "https://skatt-test.sits.no/web/skattemeldingen",
+    "prod": "https://skatt.skatteetaten.no/web/skattemeldingen",
 }
 _APP_ID = "skd/formueinntekt-skattemelding-v2"
 
@@ -170,6 +173,35 @@ class FormueResponse(BaseModel):
     debt: int
 
 
+class CodeOptionResponse(BaseModel):
+    code: str
+    name: str
+
+
+class SkjermingsgrunnlagResponse(BaseModel):
+    type: str
+    name: str
+    opening: Decimal
+    closing: Decimal
+    average: Decimal
+    is_debt: bool
+
+
+class PersoninntektResponse(BaseModel):
+    skjermingsgrunnlag: list[SkjermingsgrunnlagResponse]
+    sum_foer_gjeld: Decimal
+    sum_etter_gjeld: Decimal
+    skjermingsrente: Decimal
+    skjermingsfradrag: Decimal
+    kapitalinntekt: Decimal
+    kapitalkostnad: Decimal
+    rentekostnad_foretaksgjeld: Decimal
+    antall_maaneder: int
+    andel_innehaver: Decimal
+    beregnet_personinntekt: Decimal
+    tilordnet_innehaver: Decimal
+
+
 class AvvikResponse(BaseModel):
     stage: str
     type: str
@@ -212,6 +244,16 @@ class FilingResponse(BaseModel):
     # person stated the shareholders were paid (whole kroner) when it was.
     forhaandsfastsetting: bool = False
     likvidasjonsvederlag: int | None = None
+    # "komplett" or (ENK hand-off default) "ikkeKomplett".
+    innsendingstype: str = "komplett"
+    # Direct link to skatteetaten.no where an ENK owner finishes personal items.
+    skatteetaten_portal_url: str | None = None
+    # ENK check answers stored alongside the filing (never fødselsnummer).
+    naeringstype: str | None = None
+    kommunenummer: str | None = None
+    naeringsbeskrivelse: str | None = None
+    antall_maaneder: int | None = None
+    andel_innehaver: Decimal | None = None
     # Myntos's merknader at the check, and Skatteetaten's answer.
     findings: list[FindingResponse]
     avvik: list[AvvikResponse]
@@ -267,6 +309,14 @@ class YearResponse(BaseModel):
     findings: list[FindingResponse]
     blocked: bool
     filings: list[FilingResponse]
+    # ENK-specific preview and suggested check inputs (null/empty for AS).
+    er_enk: bool = False
+    naeringstype_forslag: str | None = None
+    naeringstyper: list[CodeOptionResponse] = Field(default_factory=list)
+    kommunenummer_forslag: str | None = None
+    naeringsbeskrivelse_forslag: str | None = None
+    antall_maaneder_forslag: int | None = None
+    personinntekt: PersoninntektResponse | None = None
 
 
 def _finding(finding: Finding) -> FindingResponse:
@@ -283,8 +333,43 @@ def _viewer_url(instance_id: str | None) -> str | None:
     return f"{host}?appId={_APP_ID}&instansId={instance_id}"
 
 
+def _portal_url(year: int) -> str:
+    app_url = get_settings().altinn_skattemelding_app_url or ""
+    host = _PORTAL["test" if "tt02" in app_url else "prod"]
+    return f"{host}/{year}"
+
+
+def _personinntekt_response(pi: personlig.Personinntekt | None) -> PersoninntektResponse | None:
+    if pi is None:
+        return None
+    return PersoninntektResponse(
+        skjermingsgrunnlag=[
+            SkjermingsgrunnlagResponse(
+                type=line.type,
+                name=line.name,
+                opening=line.opening,
+                closing=line.closing,
+                average=line.average,
+                is_debt=line.is_debt,
+            )
+            for line in pi.skjermingsgrunnlag
+        ],
+        sum_foer_gjeld=pi.sum_foer_gjeld,
+        sum_etter_gjeld=pi.sum_etter_gjeld,
+        skjermingsrente=pi.skjermingsrente,
+        skjermingsfradrag=pi.skjermingsfradrag,
+        kapitalinntekt=pi.kapitalinntekt,
+        kapitalkostnad=pi.kapitalkostnad,
+        rentekostnad_foretaksgjeld=pi.rentekostnad_foretaksgjeld,
+        antall_maaneder=pi.antall_maaneder,
+        andel_innehaver=pi.andel_innehaver,
+        beregnet_personinntekt=pi.beregnet_personinntekt,
+        tilordnet_innehaver=pi.tilordnet_innehaver,
+    )
+
+
 def _filing_response(
-    filing: SkattemeldingFiling, *, current_hash: str | None = None
+    filing: SkattemeldingFiling, *, current_hash: str | None = None, is_enk: bool = False
 ) -> FilingResponse:
     try:
         answer = envelope.parse_validation(filing.validation_xml.encode("utf-8"))
@@ -314,6 +399,14 @@ def _filing_response(
     matches = None
     if current_hash is not None and filing.status == SkattemeldingStatus.VALIDERT.value:
         matches = current_hash == filing.content_hash
+    stored = filing.answers or {}
+    enk_filing = is_enk or "naeringstype" in stored
+    enk_answers = service.enk_answers_from(stored) if enk_filing else None
+    innsendingstype = (
+        enk_answers.innsendingstype.value
+        if enk_answers is not None
+        else str(stored.get("innsendingstype") or envelope.Innsendingstype.KOMPLETT.value)
+    )
     return FilingResponse(
         id=filing.id,
         company_id=filing.company_id,
@@ -325,9 +418,16 @@ def _filing_response(
         skattemessig_resultat=filing.skattemessig_resultat,
         beregnet_skatt=filing.beregnet_skatt,
         has_auditor=filing.has_auditor,
-        ytelser_til_aksjonaerer=bool(filing.answers.get("ytelser_til_aksjonaerer")),
-        forhaandsfastsetting=bool(filing.answers.get("forhaandsfastsetting")),
-        likvidasjonsvederlag=service.payout_from(filing.answers),
+        ytelser_til_aksjonaerer=bool(stored.get("ytelser_til_aksjonaerer")),
+        forhaandsfastsetting=bool(stored.get("forhaandsfastsetting")),
+        likvidasjonsvederlag=service.payout_from(stored),
+        innsendingstype=innsendingstype,
+        skatteetaten_portal_url=_portal_url(filing.year) if enk_filing else None,
+        naeringstype=enk_answers.naeringstype if enk_answers is not None else None,
+        kommunenummer=enk_answers.kommunenummer if enk_answers is not None else None,
+        naeringsbeskrivelse=enk_answers.naeringsbeskrivelse if enk_answers is not None else None,
+        antall_maaneder=enk_answers.antall_maaneder if enk_answers is not None else None,
+        andel_innehaver=enk_answers.andel_innehaver if enk_answers is not None else None,
         findings=[FindingResponse(**item) for item in filing.findings],
         avvik=avvik,
         veiledninger=veiledninger,
@@ -388,16 +488,53 @@ def _default_year(company: Company, today: date) -> int:
     return today.year - 1 if today.year - 1 in years else years[-1]
 
 
+def _enk_details_for(
+    prepared: service.Prepared, answers: personlig.EnkAnswers
+) -> naeringsspesifikasjon.EnkDocumentDetails:
+    pi, _ = personlig.compute_personinntekt(
+        prepared.nsp, accounts=prepared.accounts, answers=answers
+    )
+    return personlig.document_details(
+        prepared.nsp, answers=answers, personinntekt=pi, formue_values=prepared.formue
+    )
+
+
+def _current_hash_for(prepared: service.Prepared, filing: SkattemeldingFiling) -> str | None:
+    """The hash the books give now for ``filing``'s partsnummer and ENK options."""
+    try:
+        enk_details = (
+            _enk_details_for(prepared, service.enk_answers_from(filing.answers or {}))
+            if prepared.nsp.is_enk
+            else None
+        )
+        return service.content_hash(
+            service.naeringsspesifikasjon_xml(
+                prepared.nsp, partsnummer=filing.partsnummer, enk_details=enk_details
+            )
+        )
+    except xmlwriter.DocumentError:
+        return None
+
+
 def _current_hash(prepared: service.Prepared, filings: list[SkattemeldingFiling]) -> str | None:
     """The hash the books give now, for the newest checked filing's partsnummer."""
     if not filings:
         return None
-    try:
-        return service.content_hash(
-            service.naeringsspesifikasjon_xml(prepared.nsp, partsnummer=filings[0].partsnummer)
+    return _current_hash_for(prepared, filings[0])
+
+
+def _require_pid(attempt: GovernmentLoginAttempt | None) -> str:
+    """The 11-digit fødselsnummer of the logged-in ID-porten user, for ENK filings."""
+    pid = (attempt.pid or "").strip() if attempt is not None else ""
+    if len(pid) != 11 or not pid.isdigit():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "ID-porten-innloggingen mangler fødselsnummer. Logg inn med ID-porten på nytt "
+                "for å kontrollere og sende skattemeldingen for et enkeltpersonforetak."
+            ),
         )
-    except xmlwriter.DocumentError:
-        return None
+    return pid
 
 
 # --- The year ---------------------------------------------------------------------
@@ -407,34 +544,42 @@ def _current_hash(prepared: service.Prepared, filings: list[SkattemeldingFiling]
 async def year_overview(
     context: CurrentCompany, user: CurrentUser, db: DbSession, aar: _Year = None
 ) -> YearResponse:
-    """An aksjeselskap's næringsspesifikasjon for one income year, as the books have it now.
+    """An aksjeselskap's or enkeltpersonforetak's næringsspesifikasjon for one income year.
 
     The næringsspesifikasjon is the part of the yearly tax return (the
     skattemelding) that comes from the books: the result and the balance summed
     per post of Skatteetaten's list (the post each account is grouped on in
     the chart of accounts), the saldo specification from the fixed-asset
-    register, the permanent differences between book and taxable result (the
-    tax cost added back), and the reconciliation of equity. Read it before the
+    register, the permanent differences between book and taxable result (for
+    AS), the equity reconciliation, and (for ENK) beregnet personinntekt with
+    skjermingsgrunnlag and omløpsmiddel specifications. Read it before the
     person checks it with Skatteetaten.
 
     ``aar`` is the income year, last year when left out. Amounts are decimal
     strings in kroner. ``aarsresultat``, ``tillegg``, ``fradrag`` and
     ``skattemessig_resultat`` are computed the way Skatteetaten computes them,
     and are shown, never sent: Skatteetaten derives them itself.
-    ``formue`` is what the skattemelding will state as the company's assets
-    (``with_discount`` the ones that get the valuation discount) and debt, in
-    whole kroner; real estate and shares are left out and named in
+    ``formue`` is what the skattemelding will state (for AS) or transfer (for
+    ENK) as assets (``with_discount`` the ones that get the valuation discount)
+    and debt, in whole kroner; real estate and shares are left out and named in
     ``findings``.
+
+    For an enkeltpersonforetak (``er_enk`` true), ``personinntekt`` holds the
+    computed skjermingsgrunnlag lines, skjermingsrente, skjermingsfradrag,
+    finance adjustments and beregnet personinntekt (skatteloven § 12-10 ff.),
+    while ``naeringstyper``, ``naeringstype_forslag``, ``kommunenummer_forslag``,
+    ``naeringsbeskrivelse_forslag`` and ``antall_maaneder_forslag`` suggest the
+    check inputs.
 
     ``findings`` say what stops the check (``severity`` ``feil``, with
     ``blocked`` true) and what to read (``merknad``). Each ``code`` is stable;
     the ``message`` says what to do, in Norwegian. The common ones:
     ``aret_er_apent`` (close the year first), ``konto_uten_post`` (an account
     with a balance and no post), ``revisor_ukjent`` (fetch the company from
-    Enhetsregisteret), ``enk_ikke_ferdig`` (an enkeltpersonforetak, which
-    Myntos does not file yet).
+    Enhetsregisteret), ``post_ikke_tillatt`` (a post not allowed for the
+    company's organisation form and regnskapsplikt).
 
-    **A wound-up company's last year** (the company was dissolved, oppløst,
+    **A wound-up AS's last year** (the company was dissolved, oppløst,
     and its books end on ``last_day`` instead of 31 December; set with ``POST
     /companies/{company_id}/arsavslutning/opplosning``) has
     ``forhaandsfastsetting`` true: its skattemelding is filed as soon as
@@ -473,6 +618,14 @@ async def year_overview(
     nsp = prepared.nsp
     payout = naeringsspesifikasjon.payout(nsp)
     current_hash = _current_hash(prepared, filings)
+    naeringstyper = (
+        [
+            CodeOptionResponse(code=item.code, name=item.name)
+            for item in codes.codes(year, codes.NAERINGSTYPE)
+        ]
+        if nsp.is_enk
+        else []
+    )
     return YearResponse(
         company_id=company.id,
         year=year,
@@ -538,7 +691,16 @@ async def year_overview(
         ),
         findings=[_finding(f) for f in prepared.findings],
         blocked=prepared.blocked,
-        filings=[_filing_response(f, current_hash=current_hash) for f in filings],
+        filings=[
+            _filing_response(f, current_hash=current_hash, is_enk=nsp.is_enk) for f in filings
+        ],
+        er_enk=nsp.is_enk,
+        naeringstype_forslag=prepared.naeringstype_forslag,
+        naeringstyper=naeringstyper,
+        kommunenummer_forslag=prepared.kommunenummer_forslag,
+        naeringsbeskrivelse_forslag=prepared.naeringsbeskrivelse_forslag,
+        antall_maaneder_forslag=prepared.antall_maaneder_forslag,
+        personinntekt=_personinntekt_response(prepared.personinntekt),
     )
 
 
@@ -547,16 +709,28 @@ async def year_overview(
 
 class ValidationPayload(BaseModel):
     aar: int = Field(ge=2000, le=2100)
-    # «Skal selskapet rapportere opplysninger om ytelser mellom selskap og
+    # AS only: «Skal selskapet rapportere opplysninger om ytelser mellom selskap og
     # personlig aksjonær, deltaker eller nærstående til denne», as the
-    # skattemelding asks it. Not in the books: only the person can answer.
-    ytelser_til_aksjonaerer: bool
-    # A wound-up company's last year only: what the shareholders were paid in
+    # skattemelding asks it. Required for AS, ignored for ENK.
+    ytelser_til_aksjonaerer: bool | None = None
+    # A wound-up AS's last year only: what the shareholders were paid in
     # all when it was dissolved, in whole kroner (likvidasjonsvederlag).
     likvidasjonsvederlag: int | None = Field(default=None, ge=0)
     # A company the register has deleted only, when it no longer lists the
     # roles: whether the company had a revisor.
     revisor: bool | None = None
+    # ENK only: industry type from Skatteetaten's naeringstype code list.
+    naeringstype: str | None = Field(default=None, max_length=64)
+    # ENK only: 4-digit municipality number for the business.
+    kommunenummer: str | None = Field(default=None, pattern=r"^\d{4}$")
+    # ENK only: short description of the business activity.
+    naeringsbeskrivelse: str | None = Field(default=None, max_length=255)
+    # ENK only: "ikkeKomplett" (default hand-off to skatteetaten.no) or "komplett".
+    innsendingstype: Literal["ikkeKomplett", "komplett"] | None = None
+    # ENK only: months operated in the year (1-12, default 12).
+    antall_maaneder: int | None = Field(default=None, ge=1, le=12)
+    # ENK only: owner's percentage share of profit and personinntekt (0-100, default 100).
+    andel_innehaver: Decimal | None = Field(default=None, ge=Decimal("0"), le=Decimal("100"))
 
 
 @router.post(
@@ -579,40 +753,38 @@ async def validate_year(
     the person's to say, by Skatteetaten's policy, and nothing leaves Myntos
     without a person's yes (docs/agents-and-api.md rule 5).
 
-    It builds the næringsspesifikasjon from the books, fetches the company's
-    current skattemelding from Skatteetaten, adds the formue and
-    ``ytelser_til_aksjonaerer`` (the skattemelding's question whether the
-    company has benefits to report between it and a personal shareholder or
-    someone close to one: loans, pay, rent or gifts, say), sends the pair to
-    Skatteetaten's validation and keeps the exact envelope with the answer as
-    a new filing: ``validert`` when Skatteetaten would take it, with what it
-    computed (``beregnet_skatt``), and ``avvist`` when it would not, with
-    ``veiledninger`` and ``avvik`` saying why. A submission later sends
-    exactly this envelope.
+    For an **aksjeselskap (AS)**, it builds the næringsspesifikasjon from the
+    books, fetches the company's current ``skattemeldingUpersonlig`` on orgnr,
+    adds formue and ``ytelser_til_aksjonaerer`` (required for AS), sends the
+    pair to Skatteetaten's validation, and stores the exact envelope as a new
+    filing (``validert`` or ``avvist``).
 
-    **A wound-up company's last year** (``forhaandsfastsetting`` in ``GET
+    For an **enkeltpersonforetak (ENK)**, it fetches the logged-in owner's
+    personal ``skattemeldingPersonlig`` on their fødselsnummer from ID-porten
+    (never orgnr), preserves every personal item untouched (salary, bank
+    accounts, loans, deductions), builds the ENK næringsspesifikasjon
+    (including beregnet personinntekt, skjermingsgrunnlag, and omløpsmidler),
+    and validates with ``innsendingstype`` (default ``ikkeKomplett`` so the
+    owner finishes personal items on skatteetaten.no, or ``komplett``). Optional
+    ENK fields ``naeringstype``, ``kommunenummer``, ``naeringsbeskrivelse``,
+    ``antall_maaneder``, and ``andel_innehaver`` default to the suggestions
+    returned by ``GET /companies/{company_id}/skattemelding``.
+
+    **A wound-up AS's last year** (``forhaandsfastsetting`` in ``GET
     /companies/{company_id}/skattemelding``) can be checked the day after its
-    last day. The body then needs ``likvidasjonsvederlag``: what the
-    shareholders were paid in all when the company was dissolved, in whole
-    kroner (0 when nothing). When Skatteetaten has no melding for the year
-    yet, Myntos asks it to prepare one (``klargjoerforhaandsfastsetting``)
-    and waits up to half a minute for it. The melding goes back marked as
-    fully wound up (``erFulltAvvikletIInntektsaaret``) with the payout, and
-    the filing says ``forhaandsfastsetting: true``. For a company
-    Enhetsregisteret has deleted, the body also needs ``revisor`` (whether it
-    had one) when ``revisor_unknown`` is true.
+    last day and needs ``likvidasjonsvederlag`` in whole kroner (0 when
+    nothing). For a company Enhetsregisteret has deleted, the body also needs
+    ``revisor`` when ``revisor_unknown`` is true.
 
     Refusals: 409 ``skattemelding_not_ready`` while the year's review has a
     ``feil`` (the message lists them); 422 ``skattemelding_year_not_supported``
     for a year Myntos cannot file or one not over yet; 422
-    ``skattemelding_answer_required`` when ``likvidasjonsvederlag`` or
-    ``revisor`` is needed and missing; 409 ``skattemelding_not_available`` when
-    Skatteetaten is still preparing the melding (press again in a minute) or
-    refuses to prepare one (the message says why, for instance that
-    Enhetsregisteret has not registered the company as dissolved); 404
+    ``skattemelding_answer_required`` when a required answer is missing or
+    invalid; 409 ``skattemelding_not_available`` when Skatteetaten is still
+    preparing a forhåndsfastsetting melding or refuses to prepare one; 404
     ``financial_year_not_found``; 409 without a code when the person has no
-    valid ID-porten login (log in again on the page); 502 when Skatteetaten
-    does not answer or answers something unreadable; 503 when this
+    valid ID-porten login (or no fødselsnummer on an ENK login); 502 when
+    Skatteetaten does not answer or answers something unreadable; 503 when this
     installation cannot file. Needs ``ledger:write``.
     """
     require_permission(context.membership.role, Permission.LEDGER_WRITE)
@@ -625,6 +797,7 @@ async def validate_year(
         raise SkattemeldingYearNotSupportedError(
             f"skattemeldingen for {year} kan kontrolleres fra {first:%d.%m.%Y}"
         )
+    er_enk = service.is_enk(company)
     final = service.is_final(company, year)
     prepared = await service.prepare(
         db, company=company, year=year, user=user, auditor_answer=payload.revisor
@@ -637,6 +810,135 @@ async def validate_year(
     if prepared.blocked:
         raise SkattemeldingNotReadyError(
             " ".join(f.message for f in prepared.findings if f.severity is Severity.FEIL)
+        )
+    if er_enk:
+        valid_naeringstyper = codes.by_code(year, codes.NAERINGSTYPE)
+        chosen_naeringstype = (
+            payload.naeringstype or prepared.naeringstype_forslag or personlig.DEFAULT_NAERINGSTYPE
+        )
+        if chosen_naeringstype not in valid_naeringstyper:
+            raise SkattemeldingAnswerRequiredError(
+                f"ugyldig næringstype «{chosen_naeringstype}» for {year}"
+            )
+        chosen_innsendingstype = (
+            envelope.Innsendingstype(payload.innsendingstype)
+            if payload.innsendingstype is not None
+            else envelope.Innsendingstype.IKKE_KOMPLETT
+        )
+        enk_answers = personlig.EnkAnswers(
+            naeringstype=chosen_naeringstype,
+            kommunenummer=payload.kommunenummer or prepared.kommunenummer_forslag,
+            naeringsbeskrivelse=(
+                (payload.naeringsbeskrivelse or prepared.naeringsbeskrivelse_forslag or "").strip()
+                or None
+            ),
+            innsendingstype=chosen_innsendingstype,
+            antall_maaneder=(
+                payload.antall_maaneder
+                if payload.antall_maaneder is not None
+                else (prepared.antall_maaneder_forslag or personlig.DEFAULT_MONTHS)
+            ),
+            andel_innehaver=(
+                payload.andel_innehaver
+                if payload.andel_innehaver is not None
+                else personlig.DEFAULT_OWNER_SHARE
+            ),
+        )
+        client = _client()
+        attempt, government_token = await government_login_for(db, user, missing=_NO_LOGIN)
+        pid = _require_pid(attempt)
+        try:
+            fetched_raw = await client.fetch(
+                inntektsaar=year, identifier=pid, id_porten_token=government_token
+            )
+            fetched = envelope.parse_fetch(fetched_raw)
+        except (skattemelding_integration.SkatteetatenError, envelope.EnvelopeError) as error:
+            logger.error("skattemelding fetch failed for company %s: %s", company.id, error)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Skatteetaten svarte ikke med skattemeldingen for året. Prøv igjen om litt.",
+            ) from error
+        partsnummer = fetched.partsnummer
+        if partsnummer is None or not fetched.personal:
+            logger.error(
+                "company %s: Skatteetaten served %s without a personal partsreferanse",
+                company.id,
+                fetched.type,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="skattemeldingen Skatteetaten sendte er ikke en personlig skattemelding",
+            )
+        pi, pi_findings = personlig.compute_personinntekt(
+            prepared.nsp, accounts=prepared.accounts, answers=enk_answers
+        )
+        enk_details = personlig.document_details(
+            prepared.nsp, answers=enk_answers, personinntekt=pi, formue_values=prepared.formue
+        )
+        try:
+            nsp_xml = service.naeringsspesifikasjon_xml(
+                prepared.nsp, partsnummer=partsnummer, enk_details=enk_details
+            )
+            completed, added_findings = personlig.complete(fetched, prepared.nsp)
+        except xmlwriter.DocumentError as error:
+            logger.exception("company %s: the ENK skattemelding could not be written", company.id)
+            raise SkattemeldingNotReadyError(
+                "Myntos klarte ikke å lage skattemeldingen fra regnskapet. Det er en feil i "
+                "Myntos; meld den gjerne under Meld feil eller ønsker."
+            ) from error
+        request = envelope.request_xml(
+            year=year,
+            melding=replace(fetched, content=completed),
+            naeringsspesifikasjon=nsp_xml,
+            innsendingstype=enk_answers.innsendingstype,
+            tin=None,
+            forhaandsfastsetting=False,
+        )
+        try:
+            answer = await client.validate(
+                inntektsaar=year,
+                identifier=pid,
+                payload=request,
+                id_porten_token=government_token,
+            )
+            result = envelope.parse_validation(answer.content)
+        except (skattemelding_integration.SkatteetatenError, envelope.EnvelopeError) as error:
+            logger.error("skattemelding validation failed for company %s: %s", company.id, error)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Skatteetatens kontroll av skattemeldingen svarte ikke. Prøv igjen om litt.",
+            ) from error
+        prepared = replace(
+            prepared,
+            findings=(
+                *prepared.findings,
+                *(f for f in (*pi_findings, *added_findings) if f not in prepared.findings),
+            ),
+        )
+        filing = await service.record_validation(
+            db,
+            company=company,
+            prepared=prepared,
+            melding=fetched,
+            partsnummer=partsnummer,
+            answers=enk_answers,
+            nsp_xml=nsp_xml,
+            request_xml=request,
+            validation_xml=answer.content,
+            result=result,
+            user_id=user.id,
+            forhaandsfastsetting=False,
+        )
+        return _filing_response(filing, is_enk=True)
+
+    if payload.ytelser_til_aksjonaerer is None:
+        raise SkattemeldingAnswerRequiredError(
+            "svar på om selskapet skal rapportere opplysninger om ytelser mellom selskap og "
+            "aksjonær"
+        )
+    if payload.innsendingstype == envelope.Innsendingstype.IKKE_KOMPLETT.value:
+        raise SkattemeldingAnswerRequiredError(
+            "et aksjeselskap kan bare levere komplett skattemelding"
         )
     if final and payload.likvidasjonsvederlag is None:
         raise SkattemeldingAnswerRequiredError(
@@ -881,21 +1183,18 @@ async def submit_filing(
         )
     # The revisor as the check had it: for a deleted company that was the
     # person's answer, which the register cannot give again.
+    er_enk = service.is_enk(company)
     prepared = await service.prepare(
         db, company=company, year=filing.year, user=user, auditor_answer=filing.has_auditor
     )
-    try:
-        current = service.content_hash(
-            service.naeringsspesifikasjon_xml(prepared.nsp, partsnummer=filing.partsnummer)
-        )
-    except xmlwriter.DocumentError:
-        current = None
+    current = _current_hash_for(prepared, filing)
     if current != filing.content_hash:
         raise SkattemeldingChangedError(
             "regnskapet for året er endret etter kontrollen; kontroller skattemeldingen på nytt"
         )
     client = _client()
-    _, government_token = await government_login_for(db, user, missing=_NO_LOGIN)
+    attempt, government_token = await government_login_for(db, user, missing=_NO_LOGIN)
+    pid = _require_pid(attempt) if er_enk else None
     filer = await _filer_name(db, user)
     try:
         altinn_token = (await exchange_id_porten_token(government_token)).value
@@ -903,12 +1202,20 @@ async def submit_filing(
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)) from error
 
     try:
-        instance = await client.create_instance(
-            altinn_token=altinn_token,
-            inntektsaar=filing.year,
-            organisation_number=company.orgnr,
-            skal_bekreftes_av_revisor=filing.has_auditor,
-        )
+        if er_enk:
+            instance = await client.create_instance(
+                altinn_token=altinn_token,
+                inntektsaar=filing.year,
+                person_number=pid,
+                skal_bekreftes_av_revisor=filing.has_auditor,
+            )
+        else:
+            instance = await client.create_instance(
+                altinn_token=altinn_token,
+                inntektsaar=filing.year,
+                organisation_number=company.orgnr,
+                skal_bekreftes_av_revisor=filing.has_auditor,
+            )
     except AltinnInstanceError as error:
         logger.error("skattemelding instance failed for company %s: %s", company.id, error)
         return _failed(filing, f"opprettelse av instans: {error}")
@@ -945,7 +1252,7 @@ async def submit_filing(
     except Exception:  # nothing may undo the filing
         logger.exception("skattemelding answer not stored yet for filing %s", filing.id)
     await db.flush()
-    return _filing_response(filing)
+    return _filing_response(filing, is_enk=er_enk)
 
 
 @router.post(
@@ -997,7 +1304,7 @@ async def fetch_feedback(
     except (AltinnError, AltinnInstanceError) as error:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)) from error
     await _store_answer(db, storage, filing, answer)
-    return _filing_response(filing)
+    return _filing_response(filing, is_enk=service.is_enk(context.company))
 
 
 # --- Reading what was filed -------------------------------------------------------
@@ -1039,7 +1346,10 @@ async def get_filing(filing_id: int, context: CurrentCompany, db: DbSession) -> 
     key needs ``read``.
     """
     require_permission(context.membership.role, Permission.LEDGER_READ)
-    return _filing_response(await service.get_filing(db, context.company, filing_id))
+    return _filing_response(
+        await service.get_filing(db, context.company, filing_id),
+        is_enk=service.is_enk(context.company),
+    )
 
 
 @router.get(

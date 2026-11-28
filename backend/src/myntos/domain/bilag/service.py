@@ -198,7 +198,6 @@ async def thumbnail_of(storage: DocumentStorage, attachment: Attachment) -> byte
             key, content=picture, content_type=derived.THUMBNAIL_CONTENT_TYPE
         )
     except StorageError:
-        # Not kept, still shown. The next request makes it again, which costs a
-        # fraction of a second and loses nothing.
-        logger.warning("A thumbnail was made but could not be stored")
+        # Not kept, still shown. Logged at ERROR so storage outages reach /drift/.
+        logger.exception("A thumbnail was made but could not be stored")
     return picture

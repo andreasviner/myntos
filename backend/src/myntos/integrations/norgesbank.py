@@ -157,7 +157,17 @@ async def rate_for(currency_code: str, *, on: date) -> Rate:
             response.raise_for_status()
             body = response.text
     except httpx.HTTPError as error:
-        logger.info("Norges Bank did not answer for %s: %s", code, type(error).__name__)
+        if isinstance(error, httpx.HTTPStatusError) and error.response.status_code == 404:
+            logger.warning("Norges Bank does not quote %s (HTTP 404)", code)
+        else:
+            logger.error(
+                "Norges Bank did not answer for %s: %s",
+                code,
+                f"HTTP {error.response.status_code}"
+                if isinstance(error, httpx.HTTPStatusError)
+                else type(error).__name__,
+                exc_info=error,
+            )
         raise RateUnavailableError(f"fikk ikke kurs for {code}") from error
 
     rate = _parse(body, currency_code=code)

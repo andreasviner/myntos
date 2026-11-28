@@ -31,8 +31,9 @@ leaves no gap.
    drafts show «utkast» under «Nr.»; issued invoices and credit notes show
    their number.
 2. To see what the next number will probably be, look at the grey «KID» field
-   in the form: the six digits after the first five are the coming invoice
-   number. The review shows the KID as «settes ved utstedelse, trolig …».
+   in the form: the digits between the eight-digit date at the front and the
+   final check digit are the coming invoice number. The review shows the KID as
+   «settes ved utstedelse, trolig …».
 3. The number is fixed when «Utsted fakturaen» is pressed, and shown on the
    card «Faktura … er utstedt».
 

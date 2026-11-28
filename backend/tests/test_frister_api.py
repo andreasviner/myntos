@@ -26,6 +26,8 @@ from myntos.api.v1 import frister as frister_api
 from myntos.db.session import get_session
 from myntos.domain.ledger.models import Company, CompanyRegisterSnapshot
 from tests.conftest import (
+    insert_aarsregnskap_filing,
+    insert_aksjonaer_filing,
     insert_mva_filing,
     insert_skattemelding_filing,
     join_company,
@@ -159,7 +161,8 @@ def test_an_aksjeselskap_sees_its_year_soonest_first(client: TestClient) -> None
     assert skattemelding["files_from_myntos"] is True
     assert skattemelding["done"] is None
     assert rows["Årsregnskapet for 2026"]["recipient"] == "bronnoysund"
-    assert rows["Aksjonærregisteroppgaven for 2026"]["files_from_myntos"] is False
+    assert rows["Aksjonærregisteroppgaven for 2026"]["files_from_myntos"] is True
+    assert rows["Aksjonærregisteroppgaven for 2026"]["done"] is None
 
 
 def test_a_term_in_the_books_with_nothing_filed_is_overdue(client: TestClient) -> None:
@@ -227,6 +230,38 @@ def test_a_checked_skattemelding_is_not_met(client: TestClient) -> None:
     assert by_label(frister(client, company["id"]))["Skattemeldingen for 2026"]["done"] is None
 
 
+def test_an_aksjonaerregisteroppgave_sent_from_myntos_is_met(client: TestClient) -> None:
+    company = books(client, vat_registered=False)
+    insert_aksjonaer_filing(client, company["id"], year=2026, status="bekreftet")
+    row = by_label(frister(client, company["id"]))["Aksjonærregisteroppgaven for 2026"]
+    assert (row["done"], row["done_by"]) == (True, "myntos")
+
+
+def test_a_failed_aksjonaerregisteroppgave_is_not_met(client: TestClient) -> None:
+    company = books(client, vat_registered=False)
+    insert_aksjonaer_filing(client, company["id"], year=2026, status="feilet")
+    assert (
+        by_label(frister(client, company["id"]))["Aksjonærregisteroppgaven for 2026"]["done"]
+        is None
+    )
+
+
+def test_annual_accounts_sent_from_myntos_is_met(client: TestClient) -> None:
+    company = books(client, vat_registered=False)
+    insert_aarsregnskap_filing(client, company["id"], year=2026, status="mottatt")
+    row = by_label(frister(client, company["id"]))["Årsregnskapet for 2026"]
+    assert row["files_from_myntos"] is True
+    assert (row["done"], row["done_by"]) == (True, "myntos")
+
+
+def test_locked_annual_accounts_not_signed_yet_is_not_met(client: TestClient) -> None:
+    company = books(client, vat_registered=False)
+    insert_aarsregnskap_filing(client, company["id"], year=2026, status="laast")
+    row = by_label(frister(client, company["id"]))["Årsregnskapet for 2026"]
+    assert row["files_from_myntos"] is True
+    assert row["done"] is None
+
+
 def test_annual_accounts_brreg_has_not_received_after_the_deadline(client: TestClient) -> None:
     company = books(client, vat_registered=False)
     register_answer(
@@ -288,8 +323,12 @@ def test_an_enk_owner_pays_forskuddsskatt_in_the_year(client: TestClient) -> Non
         ("forskuddsskatt", "2027-09-15"),
     ]
     skattemelding = by_label(body)["Skattemeldingen for 2026"]
-    assert skattemelding["files_from_myntos"] is False
-    assert "innehaverens egen" in skattemelding["note"]
+    assert skattemelding["files_from_myntos"] is True
+    assert "skatteetaten.no" in skattemelding["note"]
+
+    insert_skattemelding_filing(client, company["id"], year=2026, status="mottatt")
+    filed = by_label(frister(client, company["id"]))["Skattemeldingen for 2026"]
+    assert (filed["done"], filed["done_by"]) == (True, "myntos")
 
 
 def test_a_form_the_list_does_not_know_gets_its_mva_terms_only(client: TestClient) -> None:

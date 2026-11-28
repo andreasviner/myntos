@@ -102,6 +102,67 @@ registration and access, which cannot be done from a repository.
 - [ ] **2026-12-01: Altinn roles stop counting in access checks** (tilgangspakker
       replace them). The proven fetch works because daglig leder is a role, so
       re-verify the whole org path before that date
+- [ ] **Use the second grant round (all granted by 2026-11-25).** Production
+      Maskinporten `a7693ab9` issues tokens for the aksjonærregisteroppgave,
+      skattekort, RF-1321, A-melding, Frister, Krav og betalinger and
+      Dialogporten (skatteetaten.md «Where it stands»). There is nothing left
+      to apply for. The rest is ours to do, and the first two items gate
+      everything after them:
+      - [x] Register `938193045_myntos` in **production**, done 2026-11-25:
+            every item below reaches a customer through that customer's
+            systembruker. It declares the skattemelding app and the seven
+            Skatteetaten resources, and MVA as the `merverdiavgift` access
+            package. Production refused the MVA app as a resource
+            (maskinporten.md, Systembruker)
+      - [ ] Our own company's systembruker. **UI + API built 2026-11-27**
+            (`domain/altinn/`, `api/v1/systembruker.py`, `/organisasjon/#altinn`):
+            any company admin can now create a systembruker request, follow
+            Altinn's `confirm_url`, and refresh status. Remaining: Lindeman
+            Technologies AS approves its own request in Altinn (production/TT02)
+            once deployed.
+      - [x] A new key on the **test** Maskinporten client `f8293b48`, done
+            2026-11-25: its private key had been lost in the 2026-09-06
+            rebuild. It issues tokens for all seven scopes, so TT02 can be used
+            again through Maskinporten
+      - [x] The TT02 system registration brought to production's list,
+            2026-11-25. It had August's two apps, with MVA as a resource,
+            which TT02 no longer allows either
+      - [ ] `altinn:clientdelegations/myclients.read` on the test ID-porten
+            client `5aa404aa`, once the client list below is built
+      - [x] **Aksjonærregisteroppgaven (RF-1086)**, FEATURES.md 3 (**built
+            2026-11-27**, `docs/integrations/aksjonaer.md`, `/aksjonaer/`):
+            aksjeeierbok (share classes, shareholders, events), ledger account
+            `2000` cross-check, XSD-validated Hovedskjema + Underskjema XML,
+            Skatteetaten prefill import, direct RF-1086 API v1.3.0 submission
+            (`1086H` -> `1086U` -> `bekreft`) via Altinn 3 systembruker,
+            document archiving, `/frister/` completion tracking, agent skill
+            and help articles. Ready for TT02 smoke test after migration
+            `b8e4c2a19d07` is applied.
+      - [ ] **Skatteetaten's own dates in `/frister/`** through the Frister
+            API, FEATURES.md 22. Skatteetaten's date wins over the computed
+            one, which stays as the answer for a company with no systembruker
+            or none filed through Myntos (skatteetaten.md)
+      - [ ] **Krav og betalinger**: what the company owes Skatteetaten, has
+            paid and has been repaid, for FEATURES.md 41, 43 and 45. Shown to
+            that company only, and only once it has filed through Myntos.
+            During Skatteetaten's pilot production answers for Lindeman
+            Technologies AS alone: build and try it on our own company, and
+            promise customers nothing until the pilot ends
+      - [ ] **Payroll and a-melding**, FEATURES.md 14: tax cards through
+            `skattekorttilarbeidsgiver`, and the a-melding and its A07
+            avstemmingsrapport through `innrapporteringamelding` (the A07 is
+            also FEATURES.md 43). The largest of these, and it brings the
+            a-melding deadline to `/frister/`
+      - [ ] **Skatteetaten's letters and the skatteoppgjør through
+            Dialogporten**, FEATURES.md 41. The same work as the Dialogporten
+            item under «Continuous». `formueinntekt/skattemelding` reaches the
+            dialogdokument service, by Skatteetaten's answer of 2026-11-19
+      - [ ] **The regnskapsfører's client list from Altinn**
+            (`altinn:clientdelegations/myclients.read`, on production ID-porten
+            `7af0f9b3` since 2026-11-21), FEATURES.md 23 and the
+            regnskapsfører item in Phase 5
+      - [ ] **RF-1321**, payments to sole traders: granted, not ranked. Find
+            out whether the duty falls on Myntos's customers before building it
 - [x] Altinn test platform: the Maskinporten-to-Altinn token exchange against
       `platform.tt02.altinn.no` works (verified 2026-08-23)
 - [x] A first real instance on both TT02 apps, **verified 2026-08-24**:
@@ -318,15 +379,19 @@ and full digital bokføring from 2030-01-01. See docs/integrations/efaktura.md.
       (`SalesDocument.bank_account_id`). The column it replaced could hold one
       account, so a business keeping its skattetrekk apart — skattebetalingsloven
       § 5-12 — had nowhere to put the second one
-- [x] **Peppol access point: Recommand** (BRBX BV, Belgium), contracted
-      2026-11-01 in place of invoice.be, the earlier plan. Sending only, never
-      by e-mail, and the default on `/faktura/`: the review's main button
-      issues and sends to a customer who can receive
-      (docs/integrations/peppol.md). Migration `8d7b599c0754`
-- [ ] **The first real send**, and what is owed before a customer relies on
-      it: a test run against a separate Recommand team, one invoice between
-      two of the owner's companies, the data processing agreement, and the
-      privacy notice by e-mail (peppol.md «Before the first customer»)
+- [x] **Peppol access point: Ademico Software** (Belgium, EEA), replacing
+      Recommand on 2026-11-25. Supports both sending (default on `/faktura/`,
+      with public SML/SMP recipient lookup) and opt-in receiving of supplier
+      EHF invoices into `/innkommende/` via Ademico's webhook (a sweep every
+      15 minutes behind it, in place of the first per-minute poller), with
+      direct booking and PDF bilag archiving
+      (docs/integrations/peppol.md). Migrations `8d7b599c0754` and
+      `c7e3b91a4f20`
+- [ ] **The first real send and receive in PROD**, and what is owed before a
+      customer relies on it: one invoice between two of the owner's companies
+      through Ademico PROD, the signed data processing agreement with Ademico,
+      and updating existing users per `/personvern/` § 12 (peppol.md «Before
+      the first external customer»)
 - [ ] Foreign-currency invoicing: needs the § 5-1-1 nr. 6 restatement of VAT in
       NOK plus `TaxCurrencyCode` and a second `TaxTotal` in the XML. Refused
       outright until then, rather than issued without it
@@ -356,6 +421,18 @@ and full digital bokføring from 2030-01-01. See docs/integrations/efaktura.md.
       Originals byte for byte; derived copies stripped of EXIF/GPS and decoded
       in a sandboxed child process. No PDF thumbnails: that needs a native
       renderer, which was decided against
+- [x] **Unified «Mottatt» inbox (EHF + email bilagsmottak)**
+      (2026-11-25, FEATURES.md #12, [integrations/mottak.md](integrations/mottak.md),
+      migration `d9f1a4c82b31`): top-level **Mottatt** tab (`/innkommende/`)
+      combining received Peppol EHF invoices and per-company `@myntos.no` email
+      invoice intake (`test@myntos.no`, falling back to `testas@myntos.no` when
+      taken or reserved), a clear source toggle (Alle / Kun e-faktura / Kun
+      e-postfaktura), sender identity & SPF/DKIM/DMARC authentication badges,
+      optional strict allowlist mode, Cloudflare Email Worker
+      (`infra/cloudflare/email-worker/`), and direct booking into the ledger +
+      bilag archive. Production activation requires setting
+      `INBOUND_EMAIL_WEBHOOK_SECRET` and deploying the Email Worker + catch-all
+      rule
 - [ ] Unique filenames per melding and the other Altinn attachment rules, when
       bilag start travelling with a submission
 
@@ -461,12 +538,23 @@ and full digital bokføring from 2030-01-01. See docs/integrations/efaktura.md.
       Skatteetaten's viewer, which is tested against stubs only: the synthetic
       AS has none. See skatteetaten.md (Filing from Myntos). Production needs
       the three settings named there in `.env` before the page offers filing
-- [ ] An enkeltpersonforetak's næringsspesifikasjon, which goes with the
-      owner's personal skattemelding on fødselsnummer (`enk_ikke_ferdig` until
-      then)
+- [x] **Enkeltpersonforetak (ENK) skattemelding and næringsspesifikasjon, built
+      2026-11-28** (`skattemelding/personlig.py`, `naeringsspesifikasjon.py`,
+      `api/v1/skattemelding.py`, `/skattemelding/`, `/frister/`): vendored
+      `skattemelding_v13`/`v14` XSDs and ENK code lists (`naeringstype`,
+      `skjermingsgrunnlagstype`, `satserIFormuesOgInntektsskatt`),
+      `ingenRegnskapsplikt` (or `fullRegnskapsplikt` > 20M assets) with
+      auto-derived post omission and `spesifikasjonAvOmloepsmiddel` (including
+      `buskap.year_count`), `beregnetPersoninntekt` and
+      `spesifikasjonAvSkjermingsgrunnlag` (skatteloven § 12-10 ff.), private
+      withdrawals/injections (`2055`/`2060`) in equity reconciliation, personal
+      skattemelding merge on owner's fødselsnummer preserving all personal items
+      untouched, and default `ikkeKomplett` hand-off to skatteetaten.no (or
+      `komplett`). Pending live TT02 ENK smoke test
 - [ ] Real estate and shares in the formue (their formue value, not their book
-      value), saldo groups beyond a–j, PDF attachments, and the async job API
-      for næringsspesifikasjoner over 10 MB
+      value), farm special cards (`jordbrukskonto`, `skogOgToemmerkonto`), saldo
+      groups beyond a-j, PDF attachments, and the async job API for
+      næringsspesifikasjoner over 10 MB
 - [ ] The revisor path once in TT02, with a synthetic AS that has one
 - [ ] Regnskapsfører/multi-client: `consumer_org` delegation now; Altinn 3
       systembruker is built (phase 0b above). Altinn 2 shut down 2026-06-19,
@@ -475,14 +563,29 @@ and full digital bokføring from 2030-01-01. See docs/integrations/efaktura.md.
 ## Phase 6 — Årsregnskap til Regnskapsregisteret
 
 "Regnskapsmelding" is not a live API (July 2026); the real channel is
-Brønnøysundregistrene's **maskinell innrapportering** — see
-docs/integrations/skatteetaten.md.
+Brønnøysundregistrene's **maskinell innrapportering** (see
+[integrations/aarsregnskap.md](integrations/aarsregnskap.md) and
+docs/integrations/skatteetaten.md). **Built 2026-11-28** (migration
+`c9f3a7d21e40`, `/aarsregnskap/`, skill `myntos-aarsregnskap`):
 
-- [ ] Altinn 3 client for the brreg årsregnskap apps
-      (`aarsregnskap-vanlig-202406` et al.) — reuses our Maskinporten/Altinn
-      plumbing, only needs `altinn:instances.read/write`
-- [ ] Fill-with-systembruker → **sign with ID-porten** (signing auto-submits;
-      a personnummer is legally attached to the signature)
+- [x] Resultatregnskap, disponeringer and balanse computed from the closed
+      financial year with comparative prior-year figures (automatic from prior
+      year in Myntos, plus manual whole-NOK overrides when prior year was kept
+      elsewhere), mandatory small-company notes (regnskapsloven § 7-35 ff.)
+      plus editable custom notes, board and general-meeting minutes PDFs, and
+      RR-0002 + RR-0002-U XML validated against Brønnøysundregistrene's
+      official XSDs (both current live and stricter January 2027 schemas)
+- [x] Altinn 3 client for Brønnøysundregistrene's `brg/aarsregnskap-vanlig-202406`
+      app (`backend/src/myntos/integrations/aarsregnskap.py`), reusing our
+      Maskinporten/Altinn plumbing (`altinn:instances.read/write` and system
+      resource `app_brg_aarsregnskap-vanlig-202406`)
+- [x] Two-step fill-with-systembruker (`POST .../aarsregnskap/klargjor`) +
+      **sign with ID-porten** (`POST .../innsendinger/{id}/signer`, which
+      auto-submits and legally attaches the board member's fødselsnummer), plus
+      direct ID-porten flow, status polling, document archiving, partial-failure
+      persistence, `key_send` approval holds, and `/frister/` status integration
+- [ ] Live TT02 verification of `brg/aarsregnskap-vanlig-202406` once migration
+      `c9f3a7d21e40` is deployed and `ALTINN_AARSREGNSKAP_APP_URL` is set
 
 ## Phase 7 — Agents and the public API
 
@@ -509,6 +612,28 @@ to every feature from now on, not only to this phase.
 - [ ] OAuth 2.1 with PKCE and a remote MCP server, so agents connect without a
       pasted key
 - [ ] Developers: webhooks, sandbox companies, a developer page
+
+## Phase A: Analyse
+
+Started 2026-11-26. How the business is going, as figures and charts read off
+the books, with KI reading every voucher in the background for the company
+that has it on, and two reviews a person starts. The plan, the contract between
+the work packages and what each left out are in [analyse.md](analyse.md).
+
+- [x] WP1: `/ki/` linked from where KI is used, the company menu, the
+      «Funksjoner» dropdown and the footer (2026-11-26, uncommitted)
+- [x] WP2: the figures (`GET …/analyse`, the datasets, the sentences) and the
+      `myntos-analyse` skill (2026-11-26, uncommitted)
+- [x] WP3: the chart kit, `lib/charts.ts` (2026-11-26, uncommitted)
+- [x] WP4: the `/analyse/` page, «Analyse» in the top bar in place of «KI»,
+      its help article (2026-11-27, uncommitted)
+- [x] WP5: the KI data layer, summaries and tags on every voucher, with no
+      route yet (2026-11-26, uncommitted)
+- [x] WP5b: the page with tags: the pies by what a cost was for, the line
+      while KI reads (2026-11-27, uncommitted)
+- [x] WP6: «Dyp KI-analyse» (2026-11-27, uncommitted)
+- [ ] WP7: «KI-revisor»
+- [ ] WP8: afterwards
 
 ## Phase L — Landbruk, an add-on for farms (pilot: Reime Gard)
 

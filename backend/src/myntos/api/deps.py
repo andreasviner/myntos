@@ -35,7 +35,16 @@ body runs:
 - **the key's company is the only company**: any other id in the path is the
   same 404 a stranger gets (:func:`get_company_context`).
 
-And a fourth, which belongs to no company and no person: the operator key
+A fourth kind of bearer is a server's integration key (``myntos_ik_``,
+:mod:`myntos.auth.integration_keys`, rule 15): a static secret an owner made
+for one purpose. It is admitted here too, by checks of its own and in this
+order (:func:`_admit_integration_key`): the request must come from one of its
+addresses, the route must declare its purpose (:data:`INTEGRATION_EXTENSION`,
+which no ID-porten send may carry), the request limit, and the company wall
+as for any key. Then the route runs, a send included, with no approval: the
+owner's decision of 2026-11-26.
+
+And a fifth, which belongs to no company and no person: the operator key
 (:mod:`myntos.auth.operator`), read by :func:`require_operator` on the routes
 under ``/api/v1/drift`` and nowhere else. Those routes read no session and no
 agent key, so neither can open them.
@@ -49,7 +58,7 @@ from typing import Annotated, Any, NoReturn
 from fastapi import Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from myntos.auth import agent_keys, approvals
+from myntos.auth import agent_keys, approvals, integration_keys
 from myntos.auth.agent_keys import KeyAccess
 from myntos.auth.operator import NotTheOperatorError, OperatorPageOffError, is_operator_key
 from myntos.auth.sessions import resolve_session
@@ -58,11 +67,13 @@ from myntos.core.config import get_settings
 from myntos.core.mail import Mailer, build_mailer
 from myntos.db.session import get_session
 from myntos.domain.identity import service
-from myntos.domain.identity.agent_key_mail import key_stopped_mail
+from myntos.domain.identity.agent_key_mail import integration_key_stopped_mail, key_stopped_mail
 from myntos.domain.identity.errors import (
     AgentRateLimitedError,
+    IntegrationKeyWrongAddressError,
     MissingScopeError,
     NotForAgentKeysError,
+    NotForIntegrationKeysError,
 )
 from myntos.domain.identity.models import (
     AgentKey,
@@ -111,11 +122,14 @@ KEY_APPROVAL_ATTACHMENTS_EXTENSION = "x-myntos-approval-attachments"
 ATTACH_TO_VOUCHER = "/api/v1/companies/{company_id}/cashflow/{id}/dokument"
 
 # A route that sends something out of Myntos: to Skatteetaten and Altinn now,
-# to a Peppol access point or a bank when those are built. A key's request to
-# one always waits for its person on /godkjenning/, whatever the key may do on
-# its own: the owner's rule (2026-10-22) is that an agent may do everything,
-# and that nothing leaves the program without a person's yes, because what has
-# been sent cannot be called back (docs/agents-and-api.md rule 5).
+# to a Peppol access point or a bank when those are built. An agent key's
+# request to one always waits for its person on /godkjenning/, whatever the
+# key may do on its own: the owner's rule (2026-10-22) is that an agent may do
+# everything, and that nothing leaves the program without a person's yes,
+# because what has been sent cannot be called back (docs/agents-and-api.md
+# rule 5). The one exception is the owner's decision of 2026-11-26 (rule 15):
+# a server's integration key, made by an owner, bound to IP addresses and
+# limited to invoicing, sends an invoice as EHF on its own. Nothing else may.
 KEY_SEND_EXTENSION = "x-myntos-key-send"
 
 # A send that goes as the person, with their own ID-porten login, which is
@@ -123,6 +137,15 @@ KEY_SEND_EXTENSION = "x-myntos-key-send"
 # when they approve (409 ``id_porten_login_required`` until they do), and the
 # request then runs with it.
 KEY_ID_PORTEN_EXTENSION = "x-myntos-key-id-porten"
+
+# The purpose a route serves for a server's integration key (rule 15), and the
+# only thing such a key may call: a route without it is closed to every
+# integration key, whatever else it declares. ``faktura`` is the one purpose
+# there is, on the routes that make, issue and send an invoice and read back
+# what became of it. Never on a payment, a credit note, access or anything
+# sent with ID-porten (test_no_id_porten_route_is_open_to_integrations).
+INTEGRATION_EXTENSION = "x-myntos-integration"
+FAKTURA_INTEGRATION: dict[str, Any] = {INTEGRATION_EXTENSION: "faktura"}
 
 
 def _for_keys(scope: AgentKeyScope) -> dict[str, Any]:
@@ -179,6 +202,13 @@ def key_send(label: str, *, id_porten: bool = False) -> dict[str, Any]:
 # document answers the question for every route, and so the documentation test
 # can tell a public route a skill may teach from one that is closed to keys.
 NO_KEY_NEEDED: dict[str, Any] = {KEY_SCOPE_EXTENSION: "none"}
+
+
+def integration_purpose_of(route: object) -> str | None:
+    """The integration purpose a route declares, or ``None`` when no integration may call it."""
+    extra = getattr(route, "openapi_extra", None) or {}
+    value = extra.get(INTEGRATION_EXTENSION)
+    return value if isinstance(value, str) else None
 
 
 def key_scope_of(route: object) -> AgentKeyScope | None:
@@ -302,14 +332,16 @@ async def refuse_key(
         agent_keys.stop_key(key, AgentKeyStop.REFUSALS)
         await db.commit()
         if post.configured:
+            mail = integration_key_stopped_mail if key.is_integration else key_stopped_mail
+            section = "#integrasjoner" if key.is_integration else "#tilgang"
             await post.send(
-                key_stopped_mail(
+                mail(
                     to=access.user.email,
                     full_name=access.user.full_name,
                     key_name=key.name,
                     company_name=access.company_name,
                     reason=AgentKeyStop.REFUSALS,
-                    url=_frontend_url("/organisasjon/#tilgang"),
+                    url=_frontend_url("/organisasjon/" + section),
                 )
             )
     raise error
@@ -391,6 +423,56 @@ async def _admit_key(request: Request, db: AsyncSession, post: Mailer, access: K
     await approvals.hold(request, db, key, scope=needed, label=label)
 
 
+async def _admit_integration_key(
+    request: Request, db: AsyncSession, post: Mailer, access: KeyAccess
+) -> None:
+    """Let a server's integration key through to this route, or say why not (rule 15).
+
+    In this order, each for a reason. The address first, because a secret
+    used from anywhere else is a copied secret, and it should learn nothing
+    about which routes exist. Then the route, which must declare the key's
+    purpose and must not be a send that goes with somebody's ID-porten login;
+    a refusal for either counts towards the stop, as an agent key's probing
+    does. Then the request limit. The company wall is
+    :func:`get_company_context`'s, as for any key. There is no approval to
+    hold for: an owner made this key so that the server need not ask.
+    """
+    key = access.key
+    host = request.client.host if request.client is not None else None
+    if not integration_keys.address_allowed(key.allowed_ips, host):
+        await refuse_key(
+            db,
+            post,
+            access,
+            IntegrationKeyWrongAddressError(
+                f"integrasjonsnøkkelen kan ikke brukes fra adressen {host or 'ukjent'}. En eier "
+                "kan lage en ny nøkkel med riktig adresse under Innstillinger for selskapet → "
+                "Integrasjoner i Myntos."
+            ),
+        )
+    route = request.scope.get("route")
+    purpose = integration_purpose_of(route)
+    extra = getattr(route, "openapi_extra", None) or {}
+    if (
+        key.purpose is None
+        or purpose != key.purpose.value
+        or extra.get(KEY_ID_PORTEN_EXTENSION) is True
+    ):
+        await refuse_key(
+            db,
+            post,
+            access,
+            NotForIntegrationKeysError(
+                "dette kan ikke gjøres med en integrasjonsnøkkel. Den kan bare lage, utstede og "
+                "sende fakturaer, og lese hva som skjedde med dem."
+            ),
+        )
+    if not agent_keys.admit_request(key.id):
+        raise AgentRateLimitedError(
+            "for mange forespørsler med denne nøkkelen det siste minuttet. Vent litt og prøv igjen."
+        )
+
+
 async def get_caller(request: Request, db: DbSession, post: OutgoingMail) -> Caller:
     """The session or key behind this request, or 401.
 
@@ -412,6 +494,12 @@ async def get_caller(request: Request, db: DbSession, post: OutgoingMail) -> Cal
         return Caller(session=None, key=access)
 
     token = _bearer_token(request)
+    if token is not None and integration_keys.is_integration_key(token):
+        access = await integration_keys.resolve_integration_key(db, token)
+        await _admit_integration_key(request, db, post, access)
+        db.info[agent_keys.AGENT_KEY_INFO] = access.key.id
+        return Caller(session=None, key=access)
+
     if token is not None and agent_keys.is_agent_credential(token):
         access = await agent_keys.resolve_access_token(db, token)
         await _admit_key(request, db, post, access)

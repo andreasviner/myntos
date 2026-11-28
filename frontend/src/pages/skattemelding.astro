@@ -4,14 +4,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
 <BaseLayout
   title="Skattemelding | Myntos"
-  description="Se næringsspesifikasjonen for aksjeselskapet, kontroller skattemeldingen hos Skatteetaten og send den inn."
+  description="Se næringsspesifikasjonen for aksjeselskap eller enkeltpersonforetak, kontroller skattemeldingen hos Skatteetaten og send den inn."
   width="wide"
 >
   <header class="page-head">
     <div>
       <p class="eyebrow">Skattemelding</p>
       {/* Selskapet er overskriften, som på mva-siden: skattemeldingen sendes
-          for ett bestemt organisasjonsnummer, og det skal stå der knappen er. */}
+          for ett bestemt organisasjonsnummer (eller innehaverens fødselsnummer
+          for ENK), og det skal stå der knappen er. */}
       <h1 data-session-company></h1>
       <p class="muted orgnr" id="orgnr"></p>
     </div>
@@ -26,7 +27,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     </div>
   </header>
 
-  <p class="lead">
+  <p class="lead" id="lead">
     Skattemeldingen for et aksjeselskap lages av regnskapet for et avsluttet år: resultatet og
     balansen post for post (næringsspesifikasjonen), saldoene fra anleggsregisteret og formuen.
     Skatteetaten kontrollerer den og regner ut skatten før noe sendes, og den sendes bare når du
@@ -65,12 +66,39 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         <dt>Skattemessig resultat</dt>
         <dd class="grand" id="skattemessig"></dd>
       </dl>
-      <p class="card-hint">
+      <p class="card-hint" id="year-hint">
         Slik regner Skatteetaten ut resultatet av tallene som sendes: skattekostnaden i regnskapet
         legges til igjen, fordi den ikke er fradragsberettiget. Skatten selv regner Skatteetaten ut i
         kontrollen.
       </p>
       <ul class="findings notes" id="notes" hidden></ul>
+    </section>
+
+    {/* Beregnet personinntekt gjelder bare enkeltpersonforetak (skatteloven § 12-10 flg.). */}
+    <section class="card" id="personinntekt-card" hidden>
+      <h2 class="card-title">Beregnet personinntekt</h2>
+      <dl class="totals" id="personinntekt-totals"></dl>
+      <div id="skjerming-block" hidden>
+        <h3>Skjermingsgrunnlag</h3>
+        <div class="table-scroll">
+          <table class="data">
+            <thead>
+              <tr>
+                <th>Grunnlag</th>
+                <th class="num">Inngående</th>
+                <th class="num">Utgående</th>
+                <th class="num">Gjennomsnitt</th>
+              </tr>
+            </thead>
+            <tbody id="skjerming-rows"></tbody>
+          </table>
+        </div>
+      </div>
+      <p class="card-hint">
+        Regnet ut etter skatteloven § 12-10 flg. fra driftsmidler, varelager, kundefordringer,
+        leverandørgjeld og foretaksgjeld i balansen. Myntos sender bare grunnlaget og satsene;
+        Skatteetaten regner selv ut skjermingsfradraget og den endelige personinntekten.
+      </p>
     </section>
 
     <section class="card">
@@ -83,7 +111,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         <dt>Gjeld</dt>
         <dd id="formue-gjeld"></dd>
       </dl>
-      <p class="card-hint">
+      <p class="card-hint" id="formue-hint">
         Verdiene i balansen per <span id="formue-dag">31. desember</span>, i hele kroner. Fast eiendom
         og aksjer er ikke med, fordi verdien for formue ikke er den i regnskapet; merknadene over
         sier hvilke.
@@ -146,15 +174,15 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         Det er den som kan føre i regnskapet, som kontrollerer og sender skattemeldingen.
       </p>
       <p class="card-hint" id="step-not_configured" hidden>
-        Innsending av skattemeldingen er ikke satt opp her. Et aksjeselskap kan bare sende den fra et
+        Innsending av skattemeldingen er ikke satt opp her. Næringsspesifikasjonen må sendes fra et
         regnskapsprogram, ikke fra Skatteetatens egne sider.
       </p>
       <a class="btn btn-primary" id="login" href="#" hidden>Logg inn med ID-porten</a>
 
       <form id="check-form" novalidate hidden>
-        {/* Skatteetatens eget spørsmål, med deres ord. Det står ikke i regnskapet,
-            så Myntos gjetter ikke: det må besvares før kontrollen. */}
-        <fieldset class="question">
+        {/* Skatteetatens eget spørsmål for aksjeselskap, med deres ord. Det står
+            ikke i regnskapet, så Myntos gjetter ikke: det må besvares før kontrollen. */}
+        <fieldset class="question" id="as-ytelser">
           <legend>
             Skal selskapet rapportere opplysninger om ytelser mellom selskap og personlig aksjonær,
             deltaker eller nærstående til denne?
@@ -167,6 +195,65 @@ import BaseLayout from '../layouts/BaseLayout.astro';
           <label class="radio"><input type="radio" name="ytelser" value="nei" /> Nei</label>
           <label class="radio"><input type="radio" name="ytelser" value="ja" /> Ja</label>
         </fieldset>
+
+        {/* For enkeltpersonforetak: næringstype, kommune, driftstid, eierandel og
+            valg mellom ufullstendig (anbefalt) og komplett innsending. */}
+        <div id="enk-fields" class="enk-fields" hidden>
+          <p class="card-hint">
+            For enkeltpersonforetak hentes og kontrolleres skattemeldingen på ditt fødselsnummer fra
+            ID-porten. Alle private poster (lønn, bank, lån og fradrag) beholdes urørt.
+          </p>
+          <label class="field">
+            <span>Næringstype</span>
+            <select id="enk-naeringstype"></select>
+          </label>
+          <label class="field">
+            <span>Næringsbeskrivelse</span>
+            <input type="text" id="enk-beskrivelse" maxlength="255" autocomplete="off" />
+          </label>
+          <div class="enk-grid">
+            <label class="field">
+              <span>Kommunenummer (4 sifre)</span>
+              <input
+                type="text"
+                id="enk-kommune"
+                inputmode="numeric"
+                maxlength="4"
+                placeholder="f.eks. 0301"
+                autocomplete="off"
+              />
+              <span class="field-hint">Hentes fra Enhetsregisteret når selskapet er oppdatert.</span>
+            </label>
+            <label class="field">
+              <span>Måneder drevet i året</span>
+              <input type="number" id="enk-maaneder" min="1" max="12" value="12" />
+            </label>
+            <label class="field">
+              <span>Innehavers andel (%)</span>
+              <input type="text" id="enk-andel" inputmode="decimal" value="100" autocomplete="off" />
+              <span class="field-hint">Normalt 100. Lavere ved fordeling med ektefelle.</span>
+            </label>
+          </div>
+          <fieldset class="question">
+            <legend>Hvordan vil du levere?</legend>
+            <label class="radio">
+              <input type="radio" name="innsendingstype" value="ikkeKomplett" checked />
+              Send inn næringsdelen og fullfør på skatteetaten.no (anbefalt)
+            </label>
+            <span class="field-hint">
+              Næringsspesifikasjonen overføres til din personlige skattemelding. Du åpner
+              skatteetaten.no etterpå, ser over private poster og trykker «Lever».
+            </span>
+            <label class="radio">
+              <input type="radio" name="innsendingstype" value="komplett" />
+              Send inn komplett personlig skattemelding direkte
+            </label>
+            <span class="field-hint">
+              Leverer hele din personlige skattemelding med en gang, med de forhåndsutfylte private
+              postene slik de står hos Skatteetaten nå.
+            </span>
+          </fieldset>
+        </div>
         {/* Bare for et oppløst selskaps siste år: hva aksjonærene fikk, som
             gevinsten eller tapet på aksjene regnes ut fra. Foreslått fra
             regnskapet, men det er den som sender som oppgir det. */}
@@ -226,6 +313,22 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         Regnskapet for året er endret etter kontrollen. Kontroller skattemeldingen på nytt før den
         sendes.
       </p>
+
+      {/* Etter ufullstendig ENK-innsending: tydelig lenke for å fullføre den
+          personlige skattemeldingen på skatteetaten.no. */}
+      <div class="handoff" id="enk-handoff" hidden>
+        <h3>Fullfør på skatteetaten.no</h3>
+        <p id="enk-handoff-text"></p>
+        <a
+          class="btn btn-primary"
+          id="enk-handoff-link"
+          href="#"
+          target="_blank"
+          rel="noopener"
+        >
+          Åpne skattemeldingen på skatteetaten.no
+        </a>
+      </div>
 
       <div id="history" hidden>
         <h3>Skattemeldinger for året</h3>
@@ -370,6 +473,28 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     border-radius: var(--radius-small);
     max-width: 40rem;
   }
+  .handoff {
+    margin-top: 1.5rem;
+    padding: 1rem 1.2rem;
+    border: 2px solid var(--accent);
+    background: var(--accent-soft);
+    border-radius: var(--radius-small);
+    max-width: 40rem;
+  }
+  .handoff h3 {
+    margin-top: 0;
+  }
+  .enk-fields {
+    display: grid;
+    gap: 0.9rem;
+    margin-bottom: 1rem;
+    max-width: 40rem;
+  }
+  .enk-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    gap: 0.9rem;
+  }
   .review h3,
   #history h3 {
     margin-top: 0;
@@ -427,6 +552,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 <script>
   import {
     ApiError,
+    checkEnkSkattemelding,
     checkSkattemelding,
     fetchSkattemeldingAnswer,
     getGovernmentLoginStatus,
@@ -435,9 +561,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     skattemeldingDocumentUrl,
     submitSkattemelding,
     type Company,
+    type EnkCheckAnswers,
     type FinalYearAnswers,
     type GovernmentLoginStatus,
     type SkattemeldingFinding,
+    type SkattemeldingInnsendingstype,
     type SkattemeldingYear,
   } from '../lib/api';
   import { currentCompany, loadCompanies } from '../lib/company';
@@ -447,8 +575,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   import {
     checkableFrom,
     fixLink,
+    INNSENDINGSTYPE_LABELS,
     isFiled,
+    needsPersonalHandoff,
     nextStep,
+    parseKommunenummer,
+    parseOwnerShare,
     payoutKroner,
     payoutSuggestion,
     postGroups,
@@ -544,15 +676,35 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   // --- Tallene -------------------------------------------------------------------
 
   function renderFigures(current: SkattemeldingYear): void {
+    const isEnk = current.er_enk === true;
+    el('#lead').textContent = isEnk
+      ? 'Skattemeldingen for et enkeltpersonforetak lages av regnskapet for et avsluttet år: ' +
+        'næringsspesifikasjonen, beregnet personinntekt og næringsformue. Næringsdelen sendes ' +
+        'til din personlige skattemelding på ditt fødselsnummer, uten å røre lønn, bank, lån eller ' +
+        'private fradrag. Som standard leveres den klar til fullføring på skatteetaten.no.'
+      : 'Skattemeldingen for et aksjeselskap lages av regnskapet for et avsluttet år: resultatet og ' +
+        'balansen post for post (næringsspesifikasjonen), saldoene fra anleggsregisteret og formuen. ' +
+        'Skatteetaten kontrollerer den og regner ut skatten før noe sendes, og den sendes bare når ' +
+        'du bekrefter det skattemessige resultatet du så.';
     el('#year-title').textContent = `Inntektsåret ${current.year}`;
+    el('#year-hint').textContent = isEnk
+      ? 'Slik regner Skatteetaten ut næringsinntekten fra regnskapet. Skatten beregnes samlet i ' +
+        'din personlige skattemelding i kontrollen.'
+      : 'Slik regner Skatteetaten ut resultatet av tallene som sendes: skattekostnaden i regnskapet ' +
+        'legges til igjen, fordi den ikke er fradragsberettiget. Skatten selv regner Skatteetaten ' +
+        'ut i kontrollen.';
     show(el('#forhand'), current.forhaandsfastsetting);
     el('#forhand-tekst').textContent =
       `Selskapet er oppløst, og regnskapet sluttet ${isoDate(current.last_day)}. Skattemeldingen ` +
       `for ${current.year} sendes nå, merket som fullt avviklet i inntektsåret, med det aksjonærene ` +
       'fikk utbetalt.';
-    el('#formue-dag').textContent = current.forhaandsfastsetting
-      ? isoDate(current.last_day)
-      : '31. desember';
+    el('#formue-hint').textContent = isEnk
+      ? 'Næringsformue og næringsgjeld som Skatteetaten overfører fra balansen (driftsmidler, ' +
+        'varelager, kundefordringer, leverandørgjeld og skyldig mva). Bankinnskudd (1920), ' +
+        'banklån (2220), fast eiendom og aksjer står i din personlige skattemelding.'
+      : `Verdiene i balansen per ${current.forhaandsfastsetting ? isoDate(current.last_day) : '31. desember'}, ` +
+        'i hele kroner. Fast eiendom og aksjer er ikke med, fordi verdien for formue ikke er den i ' +
+        'regnskapet; merknadene over sier hvilke.';
     el('#aarsresultat').textContent = kroner(current.aarsresultat);
     el('#tillegg').textContent = kroner(current.tillegg);
     el('#fradrag').textContent = kroner(current.fradrag);
@@ -560,6 +712,57 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     el('#formue-rabatt').textContent = wholeKroner(current.formue.with_discount);
     el('#formue-annet').textContent = wholeKroner(current.formue.without_discount);
     el('#formue-gjeld').textContent = wholeKroner(current.formue.debt);
+
+    const pi = current.personinntekt ?? null;
+    show(el('#personinntekt-card'), isEnk && pi !== null);
+    if (isEnk && pi !== null) {
+      const piRows: [string, string, boolean?][] = [
+        ['Skattemessig resultat', kroner(current.skattemessig_resultat)],
+      ];
+      if (pi.kapitalinntekt !== '0.00') {
+        piRows.push(['Kapitalinntekt trukket fra', `− ${kroner(pi.kapitalinntekt)}`]);
+      }
+      if (pi.kapitalkostnad !== '0.00') {
+        piRows.push(['Kapitalkostnad lagt til', `+ ${kroner(pi.kapitalkostnad)}`]);
+      }
+      if (pi.rentekostnad_foretaksgjeld !== '0.00') {
+        piRows.push(['Rentekostnad på foretaksgjeld', `− ${kroner(pi.rentekostnad_foretaksgjeld)}`]);
+      }
+      piRows.push(
+        ['Skjermingsgrunnlag før gjeld', kroner(pi.sum_foer_gjeld)],
+        ['Skjermingsgrunnlag etter gjeld', kroner(pi.sum_etter_gjeld)],
+        [
+          `Skjermingsfradrag (${pi.skjermingsrente.replace('.', ',')} %)`,
+          `− ${kroner(pi.skjermingsfradrag)}`,
+        ],
+        ['Beregnet personinntekt', kroner(pi.beregnet_personinntekt), true],
+      );
+      el('#personinntekt-totals').replaceChildren(
+        ...piRows.flatMap(([label, value, grand]) => {
+          const dt = document.createElement('dt');
+          dt.textContent = label;
+          const dd = document.createElement('dd');
+          dd.textContent = value;
+          if (grand) dd.className = 'grand';
+          return [dt, dd];
+        }),
+      );
+      const tbody = el<HTMLTableSectionElement>('#skjerming-rows');
+      tbody.replaceChildren(
+        ...pi.skjermingsgrunnlag.map((line) => {
+          const tr = document.createElement('tr');
+          const prefix = line.is_debt ? '− ' : '';
+          tr.append(
+            cell(line.is_debt ? `${line.name} (trekkes fra)` : line.name),
+            cell(`${prefix}${kroner(line.opening)}`, 'num'),
+            cell(`${prefix}${kroner(line.closing)}`, 'num'),
+            cell(`${prefix}${kroner(line.average)}`, 'num'),
+          );
+          return tr;
+        }),
+      );
+      show(el('#skjerming-block'), pi.skjermingsgrunnlag.length > 0);
+    }
   }
 
   function renderPosts(current: SkattemeldingYear): void {
@@ -639,6 +842,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   // --- Kontroll og innsending ------------------------------------------------------
 
   function renderActions(current: SkattemeldingYear): void {
+    const isEnk = current.er_enk === true;
     const step = nextStep(current, government, mayWrite());
     for (const name of ['not_over', 'blocked', 'read_only', 'not_configured']) {
       show(el(`#step-${name}`), step === name);
@@ -649,7 +853,51 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     login.href = governmentLoginStartUrl(`/skattemelding/#${current.year}`);
     show(login, step === 'login');
     show(checkForm, step === 'check');
-    show(el('#payout-field'), current.forhaandsfastsetting);
+    show(el('#as-ytelser'), !isEnk);
+    show(el('#enk-fields'), isEnk);
+    if (isEnk) {
+      const select = el<HTMLSelectElement>('#enk-naeringstype');
+      const options = current.naeringstyper ?? [];
+      const lastFiling = current.filings[0];
+      const suggestedType = lastFiling?.naeringstype ?? current.naeringstype_forslag ?? 'annenNaering';
+      if (select.dataset.year !== String(current.year)) {
+        select.replaceChildren(
+          ...options.map((opt) => {
+            const option = document.createElement('option');
+            option.value = opt.code;
+            option.textContent = opt.name;
+            return option;
+          }),
+        );
+        select.value = suggestedType;
+        select.dataset.year = String(current.year);
+      }
+      const desc = el<HTMLInputElement>('#enk-beskrivelse');
+      const suggestedDesc = lastFiling?.naeringsbeskrivelse ?? current.naeringsbeskrivelse_forslag ?? '';
+      if (desc.value.trim() === '' || desc.dataset.suggested === desc.value) {
+        desc.value = suggestedDesc;
+        desc.dataset.suggested = desc.value;
+      }
+      const kommune = el<HTMLInputElement>('#enk-kommune');
+      const suggestedKommune = lastFiling?.kommunenummer ?? current.kommunenummer_forslag ?? '';
+      if (kommune.value.trim() === '' || kommune.dataset.suggested === kommune.value) {
+        kommune.value = suggestedKommune;
+        kommune.dataset.suggested = kommune.value;
+      }
+      const months = el<HTMLInputElement>('#enk-maaneder');
+      const suggestedMonths = String(lastFiling?.antall_maaneder ?? current.antall_maaneder_forslag ?? 12);
+      if (months.dataset.suggested === undefined || months.dataset.suggested === months.value) {
+        months.value = suggestedMonths;
+        months.dataset.suggested = months.value;
+      }
+      const share = el<HTMLInputElement>('#enk-andel');
+      const suggestedShare = lastFiling?.andel_innehaver ?? '100';
+      if (share.dataset.suggested === undefined || share.dataset.suggested === share.value) {
+        share.value = suggestedShare;
+        share.dataset.suggested = share.value;
+      }
+    }
+    show(el('#payout-field'), !isEnk && current.forhaandsfastsetting);
     const payout = el<HTMLInputElement>('#payout');
     // Fylt ut fra regnskapet første gang, og aldri over noe den som sender
     // har skrevet selv.
@@ -722,19 +970,43 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     }
     show(el('#review-revisor'), shown.has_auditor);
     show(el('#review-send'), true);
-    el('#confirm-text').textContent =
-      `Jeg har gått gjennom skattemeldingen og vil sende den inn for ${company.name} ` +
-      `(${orgnummer(company.orgnr)}), inntektsåret ${shown.year}` +
-      (shown.forhaandsfastsetting ? ' som forhåndsfastsetting' : '') +
-      `: skattemessig resultat ${kroner(shown.skattemessig_resultat)}` +
-      (shown.likvidasjonsvederlag != null
-        ? `, utbetalt til aksjonærene ${kroner(String(shown.likvidasjonsvederlag))}`
-        : '') +
-      '.';
+    if (current.er_enk === true) {
+      const modeText =
+        shown.innsendingstype === 'komplett'
+          ? 'som komplett personlig skattemelding'
+          : 'som næringsdel (fullføres på skatteetaten.no)';
+      el('#confirm-text').textContent =
+        `Jeg har gått gjennom næringsspesifikasjonen for ${company.name} ` +
+        `(${orgnummer(company.orgnr)}), inntektsåret ${shown.year}, og vil sende den til min ` +
+        `personlige skattemelding ${modeText}: skattemessig resultat ` +
+        `${kroner(shown.skattemessig_resultat)}.`;
+    } else {
+      el('#confirm-text').textContent =
+        `Jeg har gått gjennom skattemeldingen og vil sende den inn for ${company.name} ` +
+        `(${orgnummer(company.orgnr)}), inntektsåret ${shown.year}` +
+        (shown.forhaandsfastsetting ? ' som forhåndsfastsetting' : '') +
+        `: skattemessig resultat ${kroner(shown.skattemessig_resultat)}` +
+        (shown.likvidasjonsvederlag != null
+          ? `, utbetalt til aksjonærene ${kroner(String(shown.likvidasjonsvederlag))}`
+          : '') +
+        '.';
+    }
     confirmBox.checked = false;
     submitButton.disabled = true;
     submitButton.dataset.filing = String(shown.id);
     submitButton.dataset.figure = shown.skattemessig_resultat;
+  }
+
+  function renderHandoff(current: SkattemeldingYear): void {
+    const latest = current.filings[0];
+    const active = latest !== undefined && needsPersonalHandoff(latest);
+    show(el('#enk-handoff'), active);
+    if (!active || latest === undefined || !latest.skatteetaten_portal_url) return;
+    el('#enk-handoff-text').textContent =
+      `Næringsspesifikasjonen for ${latest.year} er sendt til din personlige skattemelding. ` +
+      'Åpne skattemeldingen på skatteetaten.no for å se over lønn, bank, lån og private fradrag, ' +
+      'og trykk «Lever» der for å fullføre innleveringen.';
+    el<HTMLAnchorElement>('#enk-handoff-link').href = latest.skatteetaten_portal_url;
   }
 
   function renderHistory(current: SkattemeldingYear): void {
@@ -753,6 +1025,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       meta.className = 'filing-meta muted';
       const parts = [`Kontrollert ${dateTime(filing.validated_at)}`];
       if (filing.forhaandsfastsetting) parts.unshift('Forhåndsfastsetting');
+      if (current.er_enk === true && filing.innsendingstype !== undefined) {
+        parts.unshift(INNSENDINGSTYPE_LABELS[filing.innsendingstype]);
+      }
       if (filing.likvidasjonsvederlag != null) {
         parts.push(`utbetalt til aksjonærene ${kroner(String(filing.likvidasjonsvederlag))}`);
       }
@@ -802,6 +1077,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         viewer.target = '_blank';
         viewer.rel = 'noopener';
         links.append(viewer);
+      }
+      if (needsPersonalHandoff(filing) && filing.skatteetaten_portal_url) {
+        const portal = link(filing.skatteetaten_portal_url, 'Fullfør på skatteetaten.no');
+        portal.className = 'btn-link';
+        portal.target = '_blank';
+        portal.rel = 'noopener';
+        links.append(portal);
       }
       if (isFiled(filing.status) && filing.status !== 'mottatt' && mayWrite()) {
         if (government.logged_in) {
@@ -856,6 +1138,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     renderPosts(current);
     renderActions(current);
     renderReview(current);
+    renderHandoff(current);
     renderHistory(current);
   }
 
@@ -866,38 +1149,89 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   checkForm.addEventListener('submit', (event) => {
     event.preventDefault();
     if (view === null) return;
-    const answer = new FormData(checkForm).get('ytelser');
-    if (answer !== 'ja' && answer !== 'nei') {
-      setStatus(actionStatus, 'Svar på spørsmålet først.');
-      return;
-    }
     const current = view;
-    const extra: FinalYearAnswers = {};
-    if (current.forhaandsfastsetting) {
-      const payout = payoutKroner(el<HTMLInputElement>('#payout').value);
-      if (payout === null) {
-        setStatus(actionStatus, 'Skriv hva aksjonærene fikk utbetalt, i hele kroner. Fikk de ingenting, skriv 0.');
-        return;
-      }
-      extra.likvidasjonsvederlag = payout;
-    }
+    const isEnk = current.er_enk === true;
+    let revisorAnswer: boolean | undefined;
     if (current.revisor_unknown) {
       const revisor = new FormData(checkForm).get('revisor');
       if (revisor !== 'ja' && revisor !== 'nei') {
         setStatus(actionStatus, 'Svar på om selskapet hadde revisor.');
         return;
       }
-      extra.revisor = revisor === 'ja';
+      revisorAnswer = revisor === 'ja';
     }
-    checkButton.disabled = true;
-    setStatus(
-      actionStatus,
-      current.forhaandsfastsetting
-        ? 'Ber Skatteetaten gjøre klar skattemeldingen og sender den til kontroll. Det kan ta et halvt minutt …'
-        : 'Henter skattemeldingen fra Skatteetaten og sender den til kontroll …',
-      'ok',
-    );
-    void checkSkattemelding(company.id, current.year, answer === 'ja', extra)
+
+    let request: Promise<unknown>;
+    if (isEnk) {
+      const naeringstype = el<HTMLSelectElement>('#enk-naeringstype').value;
+      if (!naeringstype) {
+        setStatus(actionStatus, 'Velg næringstype.');
+        return;
+      }
+      const kommune = parseKommunenummer(el<HTMLInputElement>('#enk-kommune').value);
+      if (kommune === null) {
+        setStatus(actionStatus, 'Kommunenummer må være 4 sifre (eller stå tomt).');
+        return;
+      }
+      const months = Number(el<HTMLInputElement>('#enk-maaneder').value);
+      if (!Number.isInteger(months) || months < 1 || months > 12) {
+        setStatus(actionStatus, 'Måneder drevet i året må være et helt tall mellom 1 og 12.');
+        return;
+      }
+      const share = parseOwnerShare(el<HTMLInputElement>('#enk-andel').value);
+      if (share === null) {
+        setStatus(actionStatus, 'Innehavers andel må være et tall mellom 0 og 100.');
+        return;
+      }
+      const modeRaw = new FormData(checkForm).get('innsendingstype');
+      const innsendingstype: SkattemeldingInnsendingstype =
+        modeRaw === 'komplett' ? 'komplett' : 'ikkeKomplett';
+      const desc = el<HTMLInputElement>('#enk-beskrivelse').value.trim();
+      const answers: EnkCheckAnswers = {
+        naeringstype,
+        innsendingstype,
+        antall_maaneder: months,
+        andel_innehaver: share,
+        ...(kommune !== '' ? { kommunenummer: kommune } : {}),
+        ...(desc !== '' ? { naeringsbeskrivelse: desc } : {}),
+        ...(revisorAnswer !== undefined ? { revisor: revisorAnswer } : {}),
+      };
+      checkButton.disabled = true;
+      setStatus(
+        actionStatus,
+        'Henter din personlige skattemelding fra Skatteetaten og sender næringsspesifikasjonen til kontroll …',
+        'ok',
+      );
+      request = checkEnkSkattemelding(company.id, current.year, answers);
+    } else {
+      const answer = new FormData(checkForm).get('ytelser');
+      if (answer !== 'ja' && answer !== 'nei') {
+        setStatus(actionStatus, 'Svar på spørsmålet først.');
+        return;
+      }
+      const extra: FinalYearAnswers = {};
+      if (current.forhaandsfastsetting) {
+        const payout = payoutKroner(el<HTMLInputElement>('#payout').value);
+        if (payout === null) {
+          setStatus(actionStatus, 'Skriv hva aksjonærene fikk utbetalt, i hele kroner. Fikk de ingenting, skriv 0.');
+          return;
+        }
+        extra.likvidasjonsvederlag = payout;
+      }
+      if (revisorAnswer !== undefined) {
+        extra.revisor = revisorAnswer;
+      }
+      checkButton.disabled = true;
+      setStatus(
+        actionStatus,
+        current.forhaandsfastsetting
+          ? 'Ber Skatteetaten gjøre klar skattemeldingen og sender den til kontroll. Det kan ta et halvt minutt …'
+          : 'Henter skattemeldingen fra Skatteetaten og sender den til kontroll …',
+        'ok',
+      );
+      request = checkSkattemelding(company.id, current.year, answer === 'ja', extra);
+    }
+    void request
       .then(async () => {
         setStatus(actionStatus, '');
         await refresh();

@@ -162,9 +162,12 @@ def _generate(out: Path) -> int:
     print(f"  MASKINPORTEN_KID={jwk['kid']}")
     print("or the IDPORTEN_ or BANKID_ equivalents for those clients.")
     print()
-    print("Read the kid back from the portal after registering: Digdir assigns")
-    print("its own (a UUID) rather than keeping the one above, and the portal's")
-    print("value is the one the JWT header has to carry.")
+    # Both have happened: the 2026-10-09 ID-porten test key came back with a
+    # UUID, and the 2026-11-25 Maskinporten test key kept the kid printed here.
+    # So read it back rather than predict it.
+    print("Read the kid back from the portal after registering: it may keep the")
+    print("one above or assign its own (a UUID), and the portal's value is the")
+    print("one the JWT header has to carry.")
     return 0
 
 
